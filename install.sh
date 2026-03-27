@@ -49,18 +49,25 @@ echo -e "  ${GREEN}✓${NC} Ollama"
 
 echo ""
 
-# ── 2. Create install directory ──
-echo "Setting up arkiv at $INSTALL_DIR..."
-mkdir -p "$INSTALL_DIR"
+# ── 2. Get arkiv source ──
+REPO="https://github.com/ourladypeace2011-commits/arkiv.git"
 
-# Copy files (if running from source)
 if [ -f "$(dirname "$0")/server.py" ]; then
+    # Running from local clone — copy files
     SRC="$(cd "$(dirname "$0")" && pwd)"
-    echo "  Copying from $SRC..."
-    for f in server.py db.py config.py health.py index.html ingest.py transcribe.py embed.py frames.py vision.py vectordb.py requirements.txt .env.example smoke-test.sh LICENSE README.md; do
+    echo "Setting up arkiv at $INSTALL_DIR (from local)..."
+    mkdir -p "$INSTALL_DIR"
+    for f in server.py db.py config.py health.py index.html ingest.py transcribe.py embed.py frames.py vision.py vectordb.py requirements.txt .env.example smoke-test.sh install.sh uninstall.sh arkiv.command LICENSE README.md watch.py; do
         [ -f "$SRC/$f" ] && cp "$SRC/$f" "$INSTALL_DIR/"
     done
-    [ -d "$SRC/pages" ] && cp -r "$SRC/pages" "$INSTALL_DIR/"
+else
+    # Running via curl — clone repo
+    echo "Cloning arkiv from GitHub..."
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        git -C "$INSTALL_DIR" pull --quiet
+    else
+        git clone --quiet "$REPO" "$INSTALL_DIR"
+    fi
 fi
 
 # ── 3. Virtual environment ──
@@ -101,12 +108,20 @@ fi
 cd "$INSTALL_DIR"
 python3 -c "import db; db.init_db(); print('  DB initialized')"
 
+# ── 8. Create desktop shortcut ──
+SHORTCUT="$HOME/Desktop/arkiv.command"
+if [ -f "$INSTALL_DIR/arkiv.command" ]; then
+    cp "$INSTALL_DIR/arkiv.command" "$SHORTCUT"
+    chmod +x "$SHORTCUT"
+    echo -e "  ${GREEN}✓${NC} Desktop shortcut created"
+fi
+
 echo ""
 echo -e "${GREEN}${BOLD}═══ arkiv installed successfully ═══${NC}"
 echo ""
-echo "  Location: $INSTALL_DIR"
-echo "  Start:    cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT"
-echo "  Ingest:   python ingest.py /path/to/your/footage"
-echo "  Health:   python health.py"
-echo ""
-echo "  Or use the desktop shortcut: double-click arkiv.command"
+echo "  Location:  $INSTALL_DIR"
+echo "  Launch:    double-click ~/Desktop/arkiv.command"
+echo "  Or:        cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT"
+echo "  Ingest:    python ingest.py /path/to/your/footage"
+echo "  Health:    python health.py"
+echo "  Uninstall: bash $INSTALL_DIR/uninstall.sh"
