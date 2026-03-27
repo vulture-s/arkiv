@@ -130,6 +130,12 @@ def main():
 
     db.init_db()
 
+    # Warm up models before batch processing
+    print("Warming up models...", flush=True)
+    tr.warm_up()
+    tr.warm_up_ollama()
+    print("")
+
     media_dir = Path(args.dir)
     if not media_dir.exists():
         print(f"Error: {media_dir} does not exist")

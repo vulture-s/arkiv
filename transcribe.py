@@ -7,6 +7,32 @@ NO_SPEECH_THRESHOLD = 0.6
 DEFAULT_LANGUAGE = "zh"  # 強制繁體中文，避免簡體/日文亂跳
 LLM_POLISH = True  # 用 Ollama LLM 後處理校正逐字稿
 
+# ── Model Singleton ──────────────────────────────────────────────────────────
+_whisper_loaded = False
+
+
+def warm_up():
+    """Pre-load Whisper model into memory. Call once before batch processing."""
+    global _whisper_loaded
+    if _whisper_loaded:
+        return
+    import mlx_whisper
+    # Transcribe 1 second of silence to force model load + compile
+    import numpy as np
+    silence = tempfile.mktemp(suffix=".wav")
+    try:
+        subprocess.run([
+            "ffmpeg", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+            "-t", "1", "-loglevel", "error", silence, "-y"
+        ], capture_output=True)
+        mlx_whisper.transcribe(silence, path_or_hf_repo=WHISPER_MODEL, language="zh")
+    except Exception:
+        pass
+    finally:
+        Path(silence).unlink(missing_ok=True)
+    _whisper_loaded = True
+    print("  [whisper model loaded]", flush=True)
+
 
 def transcribe(media_path: str, language: str = DEFAULT_LANGUAGE) -> tuple[str, str]:
     """
@@ -14,6 +40,8 @@ def transcribe(media_path: str, language: str = DEFAULT_LANGUAGE) -> tuple[str, 
     Returns (transcript_text, language). Returns ("", "") if no speech detected.
     """
     import mlx_whisper
+    global _whisper_loaded
+    _whisper_loaded = True  # mark loaded after first real call
 
     wav = _to_wav(media_path)
     if not wav:
@@ -105,11 +133,29 @@ def _remove_char_loops(text: str) -> str:
     return re.sub(r'(.{2,4})\1{2,}', r'\1', text)
 
 
+_ollama_warm = False
+
+
+def warm_up_ollama():
+    """Pre-load Ollama model to avoid cold start."""
+    global _ollama_warm
+    if _ollama_warm:
+        return
+    import requests as _req
+    try:
+        _req.post("http://localhost:11434/api/generate", json={
+            "model": "qwen2.5:14b", "prompt": "hi", "stream": False,
+            "options": {"num_predict": 1}
+        }, timeout=30)
+        _ollama_warm = True
+    except Exception:
+        pass
+
+
 def _llm_polish(text: str, language: str = "zh") -> str:
     """Use Ollama LLM to fix Whisper transcription errors."""
     import requests as _req
     OLLAMA_URL = "http://localhost:11434"
-    # Use a small fast model for correction
     MODEL = "qwen2.5:14b"
 
     lang_name = {"zh": "繁體中文", "en": "English", "ja": "日本語", "ko": "한국어"}.get(language, language)

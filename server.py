@@ -296,6 +296,68 @@ def reingest_media(media_id: int):
         raise HTTPException(500, str(e))
 
 
+# ── Cache Management ──────────────────────────────────────────────────────────
+
+@app.get("/api/cache/info")
+def cache_info():
+    """Show cache sizes."""
+    import shutil
+    caches = {}
+    # HuggingFace model cache
+    hf_cache = Path.home() / ".cache" / "huggingface"
+    if hf_cache.exists():
+        size = sum(f.stat().st_size for f in hf_cache.rglob("*") if f.is_file())
+        caches["huggingface"] = {"path": str(hf_cache), "size_mb": round(size / 1048576)}
+    # Ollama models
+    ollama_dir = Path.home() / ".ollama" / "models"
+    if ollama_dir.exists():
+        size = sum(f.stat().st_size for f in ollama_dir.rglob("*") if f.is_file())
+        caches["ollama"] = {"path": str(ollama_dir), "size_mb": round(size / 1048576)}
+    # ChromaDB
+    chroma = ROOT / "chroma_db"
+    if chroma.exists():
+        size = sum(f.stat().st_size for f in chroma.rglob("*") if f.is_file())
+        caches["chromadb"] = {"path": str(chroma), "size_mb": round(size / 1048576)}
+    # Thumbnails
+    thumbs = ROOT / "thumbnails"
+    if thumbs.exists():
+        count = len(list(thumbs.glob("*")))
+        size = sum(f.stat().st_size for f in thumbs.rglob("*") if f.is_file())
+        caches["thumbnails"] = {"path": str(thumbs), "count": count, "size_mb": round(size / 1048576)}
+    # Python __pycache__
+    pycache = ROOT / "__pycache__"
+    if pycache.exists():
+        size = sum(f.stat().st_size for f in pycache.rglob("*") if f.is_file())
+        caches["pycache"] = {"path": str(pycache), "size_mb": round(size / 1048576)}
+    # Total
+    total_mb = sum(c.get("size_mb", 0) for c in caches.values())
+    return {"caches": caches, "total_mb": total_mb}
+
+
+@app.post("/api/cache/clear")
+def clear_cache(target: str = Query("app", description="app|thumbnails|chromadb|all")):
+    """Clear caches. target: app (pycache+thumbnails), thumbnails, chromadb, all."""
+    import shutil
+    cleared = []
+    if target in ("app", "thumbnails", "all"):
+        thumbs = ROOT / "thumbnails"
+        if thumbs.exists():
+            for f in thumbs.iterdir():
+                f.unlink(missing_ok=True)
+            cleared.append(f"thumbnails ({len(list(thumbs.glob('*')))} removed)")
+    if target in ("app", "all"):
+        pycache = ROOT / "__pycache__"
+        if pycache.exists():
+            shutil.rmtree(pycache, ignore_errors=True)
+            cleared.append("__pycache__")
+    if target in ("chromadb", "all"):
+        chroma = ROOT / "chroma_db"
+        if chroma.exists():
+            shutil.rmtree(chroma, ignore_errors=True)
+            cleared.append("chromadb")
+    return {"ok": True, "cleared": cleared}
+
+
 # ── Export ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/media/{media_id}/export/{fmt}")
