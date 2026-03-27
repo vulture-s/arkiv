@@ -197,6 +197,72 @@ def size_by_ext():
         return [dict(r) for r in rows]
 
 
+# ── Export ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/media/{media_id}/export/{fmt}")
+def export_media(media_id: int, fmt: str):
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "Not found")
+    transcript = rec.get("transcript", "") or ""
+    filename = rec.get("filename", f"media_{media_id}")
+    stem = filename.rsplit(".", 1)[0]
+    duration = rec.get("duration_s", 0) or 0
+
+    def _ts(seconds: float, sep: str = ",") -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        ms = int((seconds % 1) * 1000)
+        return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
+
+    if fmt == "txt":
+        return HTMLResponse(
+            content=transcript,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.txt"'},
+        )
+
+    if fmt == "srt":
+        lines = [l.strip() for l in transcript.split("\n") if l.strip()]
+        srt = ""
+        for i, line in enumerate(lines, 1):
+            t_start = (i - 1) * (duration / max(len(lines), 1))
+            t_end = i * (duration / max(len(lines), 1))
+            srt += f"{i}\n{_ts(t_start)} --> {_ts(t_end)}\n{line}\n\n"
+        return HTMLResponse(
+            content=srt,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.srt"'},
+        )
+
+    if fmt == "vtt":
+        lines = [l.strip() for l in transcript.split("\n") if l.strip()]
+        vtt = "WEBVTT\n\n"
+        for i, line in enumerate(lines, 1):
+            t_start = (i - 1) * (duration / max(len(lines), 1))
+            t_end = i * (duration / max(len(lines), 1))
+            vtt += f"{_ts(t_start, '.')} --> {_ts(t_end, '.')}\n{line}\n\n"
+        return HTMLResponse(
+            content=vtt,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.vtt"'},
+        )
+
+    if fmt == "edl":
+        # Simple CMX3600 EDL
+        edl = f"TITLE: {stem}\nFCM: NON-DROP FRAME\n\n"
+        edl += f"001  AX       V     C        00:00:00:00 {_ts(duration, ':').replace(',', ':')} 00:00:00:00 {_ts(duration, ':').replace(',', ':')}\n"
+        edl += f"* FROM CLIP NAME: {filename}\n"
+        return HTMLResponse(
+            content=edl,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.edl"'},
+        )
+
+    raise HTTPException(400, f"Unsupported format: {fmt}. Use srt/vtt/txt/edl")
+
+
 # ── Serve Frontend ───────────────────────────────────────────────────────────
 
 # Cache index.html at startup to avoid fd leak on repeated read_text()
