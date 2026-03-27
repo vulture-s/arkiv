@@ -1,0 +1,22 @@
+# arkiv — Media Asset Manager
+# Core
+fastapi>=0.100.0
+uvicorn>=0.20.0
+pydantic>=2.0
+chromadb>=1.0
+requests>=2.28
+
+# Media processing
+pillow>=9.0
+
+# Dashboard (optional, for Streamlit fallback)
+# streamlit>=1.20
+# pandas>=1.5
+
+# ── Platform-specific (install ONE) ──────────────
+# macOS Apple Silicon:
+#   pip install mlx-whisper
+# NVIDIA GPU:
+#   pip install faster-whisper torch
+# CPU fallback:
+#   pip install faster-whisper

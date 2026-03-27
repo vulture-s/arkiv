@@ -1,0 +1,32 @@
+# arkiv — Docker Compose
+version: "3.8"
+
+services:
+  arkiv:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./media.db:/app/media.db
+      - ./chroma_db:/app/chroma_db
+      - ./thumbnails:/app/thumbnails
+    environment:
+      - ARKIV_OLLAMA_URL=http://host.docker.internal:11434
+    restart: unless-stopped
+
+  # Optional: Ollama sidecar (if not running on host)
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   # GPU passthrough (NVIDIA):
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - capabilities: [gpu]
+
+# volumes:
+#   ollama_data:

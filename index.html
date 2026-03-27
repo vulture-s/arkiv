@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Media Asset Manager</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        surface: { DEFAULT: 'var(--c-surface)', 50: 'var(--c-surface-50)', 100: 'var(--c-surface-100)', 200: 'var(--c-surface-200)' },
+        panel: { DEFAULT: 'var(--c-panel)', border: 'var(--c-panel-border)' },
+        accent: { DEFAULT: '#3b82f6', hover: '#2563eb', muted: '#1d4ed8' },
+        danger: '#ef4444', success: '#22c55e', warning: '#f59e0b',
+        txt: { primary: 'var(--c-txt-primary)', secondary: 'var(--c-txt-secondary)', tertiary: 'var(--c-txt-tertiary)' },
+      },
+      fontFamily: { sans: ['Inter','-apple-system','BlinkMacSystemFont','system-ui','sans-serif'], mono: ['SF Mono','JetBrains Mono','Menlo','monospace'] },
+      fontSize: { '2xs': ['10px','14px'] }
+    }
+  }
+}
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  * { box-sizing: border-box; }
+  body { margin: 0; overflow: hidden; transition: background 0.2s, color 0.2s; }
+
+  :root, .dark {
+    --c-surface: #1a1a1e; --c-surface-50: #222226; --c-surface-100: #2a2a2e; --c-surface-200: #323236;
+    --c-panel: #1e1e22; --c-panel-border: #2e2e34;
+    --c-txt-primary: #e4e4e7; --c-txt-secondary: #a1a1aa; --c-txt-tertiary: #71717a;
+    --c-scrollbar: #3a3a40; --c-scrollbar-hover: #52525b;
+    --c-thumb-bg1: #2a2a2e; --c-thumb-bg2: #1e1e22;
+    --c-card-hover: #2a2a2e; --c-active-bg: #3b82f620; --c-hover-bg: #ffffff08;
+    --c-chip-bg: #2a2a2e; --c-chip-border: #3a3a40;
+    --c-tag-auto-bg: #3b82f610; --c-tag-auto-border: #3b82f630; --c-tag-manual-bg: #22c55e20;
+    --c-waveform-bg: #1a1a1e; --c-input-bg: #1a1a1e;
+    --c-autocomplete-bg: #222226;
+  }
+  .light {
+    --c-surface: #f5f5f7; --c-surface-50: #eaeaed; --c-surface-100: #e0e0e4; --c-surface-200: #d5d5da;
+    --c-panel: #ffffff; --c-panel-border: #e0e0e4;
+    --c-txt-primary: #1a1a1e; --c-txt-secondary: #52525b; --c-txt-tertiary: #a1a1aa;
+    --c-scrollbar: #c8c8cc; --c-scrollbar-hover: #a1a1aa;
+    --c-thumb-bg1: #e0e0e4; --c-thumb-bg2: #d5d5da;
+    --c-card-hover: #eaeaed; --c-active-bg: #3b82f615; --c-hover-bg: #00000008;
+    --c-chip-bg: #eaeaed; --c-chip-border: #d5d5da;
+    --c-tag-auto-bg: #3b82f610; --c-tag-auto-border: #3b82f630; --c-tag-manual-bg: #22c55e15;
+    --c-waveform-bg: #eaeaed; --c-input-bg: #f5f5f7; --c-autocomplete-bg: #ffffff;
+  }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--c-scrollbar); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--c-scrollbar-hover); }
+
+  .panel-resize { cursor: col-resize; }
+  .panel-resize:hover { background: #3b82f6; }
+  .thumb-placeholder { background: linear-gradient(135deg, var(--c-thumb-bg1) 0%, var(--c-thumb-bg2) 100%); display: flex; align-items: center; justify-content: center; }
+  .source-item.active { background: var(--c-active-bg); border-left: 2px solid #3b82f6; }
+  .source-item:hover { background: var(--c-hover-bg); }
+  .media-card { transition: all 0.15s ease; }
+  .media-card:hover { background: var(--c-card-hover); transform: translateY(-1px); }
+
+  .tag { background: #3b82f620; color: #3b82f6; border-radius: 3px; padding: 1px 6px; font-size: 10px; display: inline-flex; align-items: center; gap: 3px; }
+  .tag .tag-remove { cursor: pointer; opacity: 0.5; font-size: 8px; }
+  .tag .tag-remove:hover { opacity: 1; }
+  .tag.tag-auto { background: var(--c-tag-auto-bg); color: #60a5fa; border: 1px dashed var(--c-tag-auto-border); }
+  .tag.tag-manual { background: var(--c-tag-manual-bg); color: #4ade80; }
+  .dark .tag.tag-auto { color: #60a5fa80; }
+  .dark .tag.tag-manual { color: #4ade80; }
+
+  .collapse-toggle { cursor: pointer; user-select: none; }
+  .filter-chip { background: var(--c-chip-bg); border: 1px solid var(--c-chip-border); border-radius: 6px; padding: 3px 10px; font-size: 11px; color: var(--c-txt-secondary); cursor: pointer; transition: all 0.1s; }
+  .filter-chip:hover { border-color: #3b82f6; color: var(--c-txt-primary); }
+  .filter-chip.active { background: var(--c-active-bg); border-color: #3b82f6; color: #3b82f6; }
+
+  .view-btn { padding: 4px 8px; border-radius: 4px; cursor: pointer; color: var(--c-txt-tertiary); }
+  .view-btn.active { background: var(--c-active-bg); color: #3b82f6; }
+  .view-btn:hover { color: var(--c-txt-primary); }
+
+  .export-btn { background: var(--c-chip-bg); border: 1px solid var(--c-chip-border); border-radius: 6px; padding: 3px 10px; font-size: 11px; color: var(--c-txt-secondary); cursor: pointer; transition: all 0.1s; display: flex; align-items: center; gap: 4px; }
+  .export-btn:hover { border-color: #22c55e; color: #4ade80; }
+
+  .sparkline { height: 24px; background: linear-gradient(90deg, #3b82f620, #3b82f640, #3b82f620); border-radius: 3px; }
+
+  .rating-btn { padding: 3px 10px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.1s; border: 1px solid transparent; }
+  .rating-btn:hover { filter: brightness(1.2); }
+  .rating-good { background: #22c55e20; color: #4ade80; border-color: #22c55e40; }
+  .rating-good.selected { background: #22c55e; color: #000; }
+  .rating-ng { background: #ef444420; color: #f87171; border-color: #ef444440; }
+  .rating-ng.selected { background: #ef4444; color: #fff; }
+  .rating-review { background: #f59e0b20; color: #fbbf24; border-color: #f59e0b40; }
+  .rating-review.selected { background: #f59e0b; color: #000; }
+  .rating-none { background: #3a3a40; color: #71717a; }
+
+  .badge-good { background: #22c55e; color: #000; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; }
+  .badge-ng { background: #ef4444; color: #fff; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; }
+  .badge-review { background: #f59e0b; color: #000; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; }
+
+  .filmstrip { display: flex; gap: 1px; overflow: hidden; border-radius: 4px; background: #1a1a1e; }
+  .filmstrip-frame { flex: 1; height: 32px; background: linear-gradient(135deg, #2a2a2e, #323236); position: relative; }
+  .filmstrip-frame::after { content: ''; position: absolute; inset: 0; border-right: 1px solid #1a1a1e; }
+
+  .waveform { height: 28px; border-radius: 4px; overflow: hidden; background: var(--c-waveform-bg); position: relative; }
+  .waveform-bars { display: flex; align-items: center; height: 100%; gap: 1px; padding: 0 2px; }
+  .waveform-bar { flex: 1; background: #3b82f6; border-radius: 1px; min-width: 2px; }
+  .waveform-marker-in, .waveform-marker-out { position: absolute; top: 0; bottom: 0; width: 2px; }
+  .waveform-marker-in { background: #22c55e; left: 15%; }
+  .waveform-marker-out { background: #ef4444; left: 72%; }
+  .waveform-selected { position: absolute; top: 0; bottom: 0; background: #22c55e10; left: 15%; width: 57%; border-left: 1px solid #22c55e60; border-right: 1px solid #ef444460; }
+
+  .tag-input { width: 100%; height: 22px; background: var(--c-input-bg); border: 1px solid var(--c-panel-border); border-radius: 4px; padding: 0 6px; font-size: 10px; color: var(--c-txt-primary); outline: none; }
+  .tag-input:focus { border-color: #3b82f6; }
+  .tag-input::placeholder { color: var(--c-txt-tertiary); }
+  .tag-input-wrapper { position: relative; }
+  .tag-autocomplete { position: absolute; top: 100%; left: 0; right: 0; z-index: 10; background: var(--c-autocomplete-bg); border: 1px solid var(--c-panel-border); border-radius: 4px; margin-top: 2px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.2); display: none; }
+  .tag-autocomplete.show { display: block; }
+  .tag-autocomplete-item { padding: 4px 8px; font-size: 10px; color: var(--c-txt-secondary); cursor: pointer; display: flex; justify-content: space-between; }
+  .tag-autocomplete-item:hover { background: var(--c-active-bg); color: var(--c-txt-primary); }
+
+  .theme-toggle { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--c-chip-border); background: var(--c-chip-bg); cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--c-txt-secondary); transition: all 0.15s; }
+  .theme-toggle:hover { border-color: #3b82f6; color: var(--c-txt-primary); }
+
+  .ng-card { opacity: 0.6; }
+  .ng-card .card-title { text-decoration: line-through; }
+
+  .light .filmstrip-frame { background: linear-gradient(135deg, #d5d5da, #e0e0e4); }
+  .light .filmstrip { background: #f5f5f7; }
+  .light .badge-ng { background: #ef4444; color: #fff; }
+  .light .badge-good { background: #16a34a; color: #fff; }
+  .light .badge-review { background: #d97706; color: #fff; }
+</style>
+</head>
+
+<body class="dark bg-surface text-txt-primary font-sans h-screen flex flex-col">
+
+<!-- ═══ Toolbar ═══ -->
+<header class="h-10 flex items-center gap-3 px-3 bg-panel border-b border-panel-border shrink-0">
+  <div class="flex items-center gap-2 shrink-0">
+    <svg class="w-4 h-4 text-accent" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"/></svg>
+    <span class="text-xs font-semibold tracking-wide text-txt-secondary">MEDIA ASSET MANAGER</span>
+  </div>
+
+  <div class="flex-1 max-w-xl mx-auto relative">
+    <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-txt-tertiary" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="searchInput" type="text" placeholder="Search media... (Ctrl+K)" class="w-full h-7 pl-8 pr-3 bg-surface-50 border border-panel-border rounded-md text-xs text-txt-primary placeholder-txt-tertiary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30" />
+  </div>
+
+  <div id="filterChips" class="flex items-center gap-1.5 shrink-0">
+    <button class="filter-chip active" data-filter="type" data-value="all">All</button>
+    <button class="filter-chip" data-filter="type" data-value="video">Video</button>
+    <button class="filter-chip" data-filter="type" data-value="audio">Audio</button>
+    <span class="text-panel-border mx-0.5">|</span>
+    <button class="filter-chip" data-filter="rating" data-value="good" style="border-color:#22c55e40;color:#4ade80">GOOD</button>
+    <button class="filter-chip" data-filter="rating" data-value="ng" style="border-color:#ef444440;color:#f87171">NG</button>
+    <button class="filter-chip" data-filter="rating" data-value="review" style="border-color:#f59e0b40;color:#fbbf24">Review</button>
+    <span class="text-panel-border mx-0.5">|</span>
+    <button class="filter-chip" data-filter="lang" data-value="zh">zh</button>
+    <button class="filter-chip" data-filter="lang" data-value="en">en</button>
+    <button class="filter-chip" data-filter="lang" data-value="ja">ja</button>
+  </div>
+
+  <div class="flex items-center gap-0.5 ml-2 bg-surface-50 rounded-md p-0.5 shrink-0">
+    <button class="view-btn active" title="Grid" onclick="setView('grid')">
+      <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+    </button>
+    <button class="view-btn" title="List" onclick="setView('list')">
+      <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="2.5" rx="0.5"/><rect x="1" y="6.75" width="14" height="2.5" rx="0.5"/><rect x="1" y="11.5" width="14" height="2.5" rx="0.5"/></svg>
+    </button>
+  </div>
+
+  <button class="export-btn ml-1.5 shrink-0" title="Export GOOD takes as EDL">
+    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+    EDL Export
+  </button>
+
+  <button class="theme-toggle ml-1.5 shrink-0" onclick="toggleTheme()" title="Toggle theme" id="theme-btn">
+    <svg class="w-3.5 h-3.5 dark-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+    <svg class="w-3.5 h-3.5 light-icon" style="display:none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+  </button>
+
+  <div class="flex items-center gap-3 ml-2 text-2xs text-txt-tertiary shrink-0" id="headerStats"></div>
+</header>
+
+<script>
+function toggleTheme() {
+  const h = document.documentElement;
+  const isDark = h.classList.contains('dark');
+  h.classList.toggle('dark', !isDark);
+  h.classList.toggle('light', isDark);
+  document.querySelectorAll('.dark-icon').forEach(el => el.style.display = isDark ? 'none' : 'block');
+  document.querySelectorAll('.light-icon').forEach(el => el.style.display = isDark ? 'block' : 'none');
+}
+</script>
+
+<!-- ═══ Main ═══ -->
+<div class="flex flex-1 overflow-hidden">
+
+  <!-- ─── Media Pool ─── -->
+  <aside class="w-48 shrink-0 bg-panel border-r border-panel-border flex flex-col overflow-hidden">
+    <div class="h-7 flex items-center justify-between px-3 border-b border-panel-border shrink-0">
+      <span class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">Media Pool</span>
+      <button class="text-txt-tertiary hover:text-txt-primary"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg></button>
+    </div>
+    <div class="flex-1 overflow-y-auto py-1" id="mediaPool"></div>
+    <div class="border-t border-panel-border px-3 py-1.5 text-2xs text-txt-tertiary shrink-0" id="poolStats"></div>
+  </aside>
+
+  <div class="panel-resize w-px bg-panel-border hover:w-0.5 shrink-0"></div>
+
+  <!-- ─── Content ─── -->
+  <main class="flex-1 flex flex-col overflow-hidden bg-surface">
+    <div class="h-7 flex items-center justify-between px-3 border-b border-panel-border shrink-0">
+      <span class="text-xs text-txt-secondary" id="contentTitle">All Assets</span>
+      <div class="flex items-center gap-2 text-2xs text-txt-tertiary">
+        <span>Sort:</span>
+        <select id="sortSelect" class="bg-surface-50 border border-panel-border rounded px-1.5 py-0.5 text-2xs text-txt-secondary focus:outline-none">
+          <option value="date">Date Added</option><option value="rating">Rating</option><option value="duration">Duration</option><option value="size">Size</option><option value="name">Name</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex-1 overflow-y-auto p-2">
+      <div class="grid grid-cols-4 gap-2" id="mediaGrid"></div>
+    </div>
+    <div class="h-6 flex items-center justify-center gap-3 border-t border-panel-border text-2xs text-txt-tertiary shrink-0" id="pagination"></div>
+  </main>
+
+  <div class="panel-resize w-px bg-panel-border hover:w-0.5 shrink-0"></div>
+
+  <!-- ─── Inspector ─── -->
+  <aside class="w-72 shrink-0 bg-panel border-l border-panel-border flex flex-col overflow-hidden" id="inspectorPanel">
+    <div class="h-7 flex items-center px-3 border-b border-panel-border shrink-0">
+      <span class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">Inspector</span>
+    </div>
+    <div class="flex-1 overflow-y-auto" id="inspectorContent">
+      <div class="flex items-center justify-center h-full text-txt-tertiary text-xs">Select a media asset</div>
+    </div>
+    <div class="border-t border-panel-border p-2 flex gap-1.5 shrink-0" id="inspectorActions"></div>
+  </aside>
+</div>
+
+<!-- ═══ Analytics Bar ═══ -->
+<footer class="border-t border-panel-border bg-panel shrink-0">
+  <div class="collapse-toggle h-5 flex items-center justify-center gap-2 text-2xs text-txt-tertiary hover:text-txt-secondary" onclick="document.getElementById('analyticsContent').classList.toggle('hidden')">
+    <svg class="w-2.5 h-2.5 rotate-180" fill="currentColor" viewBox="0 0 10 10"><path d="M2 3l3 4 3-4z"/></svg>Analytics
+  </div>
+  <div class="flex items-center gap-6 px-4 pb-2" id="analyticsContent"></div>
+</footer>
+
+<script>
+const API = '';
+const PAGE_SIZE = 50;
+const VIDEO_EXT = ['.mp4','.mov','.m4v','.mts'];
+const AUDIO_EXT = ['.wav','.mp3','.m4a','.aac'];
+
+let state = { items: [], total: 0, page: 0, selectedId: null, selectedRec: null, allTags: [],
+  filters: { type: 'all', rating: null, lang: null }, sort: 'date', query: '', view: 'grid' };
+
+// ── Utils ───────────────────────────────────────────────────────────────────
+
+function fmtDur(s) {
+  if (!s || s <= 0) return '0s'; s = Math.round(s);
+  if (s < 60) return s+'s';
+  const m = Math.floor(s/60), sec = s%60;
+  if (m < 60) return sec ? `${m}m ${sec}s` : `${m}m`;
+  const h = Math.floor(m/60), mn = m%60;
+  return mn ? `${h}h ${mn}m` : `${h}h`;
+}
+function fmtHMS(s) {
+  if (!s) return '00:00:00'; s=Math.round(s);
+  const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+function fmtSize(mb) { if (!mb||mb<=0) return '0 MB'; return mb>=1024 ? `${(mb/1024).toFixed(1)} GB` : `${Math.round(mb)} MB`; }
+function mediaType(ext) { if(VIDEO_EXT.includes(ext)) return 'video'; if(AUDIO_EXT.includes(ext)) return 'audio'; return 'other'; }
+
+function rBadge(r) {
+  if(r==='good') return '<span class="badge-good">GOOD</span>';
+  if(r==='ng') return '<span class="badge-ng">NG</span>';
+  if(r==='review') return '<span class="badge-review">REV</span>';
+  return '';
+}
+function tagHtml(tags) { return (tags||[]).map(t=>`<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${t.name}</span>`).join(' '); }
+function thumbUrl(rec) { if(rec.thumbnail_path){ return `/thumbnails/${rec.thumbnail_path.split('/').pop()}`; } return null; }
+
+const videoSvg = '<svg class="w-8 h-8 text-txt-tertiary/30" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"/></svg>';
+const audioSvg = '<svg class="w-8 h-8 text-warning/40" fill="currentColor" viewBox="0 0 20 20"><path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"/></svg>';
+const videoSmall = '<svg class="w-3 h-3 text-txt-tertiary shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/></svg>';
+const videoSmallActive = '<svg class="w-3 h-3 text-accent shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/></svg>';
+const audioSmall = '<svg class="w-3 h-3 text-warning shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"/></svg>';
+
+function waveformBars() {
+  const heights = [30,45,60,40,75,55,80,90,70,85,65,50,75,95,80,60,45,70,55,85,90,75,60,40,55,70,80,65,50,35,45,60,75,55,40,30];
+  return heights.map(h=>`<div class="waveform-bar" style="height:${h}%"></div>`).join('');
+}
+function filmstripFrames() {
+  const frames = [];
+  for(let i=0;i<10;i++) { const bg = i%3===1 ? ' style="background:linear-gradient(135deg,#2e3035,#383840)"' : i%3===2 ? ' style="background:linear-gradient(135deg,#30333a,#3a3a42)"' : '';
+    frames.push(`<div class="filmstrip-frame"${bg}></div>`); }
+  return frames.join('');
+}
+
+// ── API ─────────────────────────────────────────────────────────────────────
+
+async function fetchMedia() {
+  const p = new URLSearchParams({ offset: state.page*PAGE_SIZE, limit: PAGE_SIZE, sort: state.sort });
+  if(state.query) p.set('q', state.query);
+  if(state.filters.lang) p.set('lang', state.filters.lang);
+  if(state.filters.rating) p.set('rating', state.filters.rating);
+  if(state.filters.type && state.filters.type!=='all') p.set('media_type', state.filters.type);
+  const r = await fetch(`${API}/api/media?${p}`); const d = await r.json();
+  state.items = d.items; state.total = d.total;
+}
+async function fetchDetail(id) { const r = await fetch(`${API}/api/media/${id}`); state.selectedRec = await r.json(); state.selectedId = id; }
+async function setRating(id, rating, note) { await fetch(`${API}/api/media/${id}/rating`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({rating,note}) }); }
+async function addTagApi(id, name) { await fetch(`${API}/api/media/${id}/tags`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name,source:'manual'}) }); }
+async function removeTagApi(id, name) { await fetch(`${API}/api/media/${id}/tags/${encodeURIComponent(name)}`, {method:'DELETE'}); }
+async function fetchStats() { return (await fetch(`${API}/api/stats`)).json(); }
+async function fetchAllTags() { state.allTags = await (await fetch(`${API}/api/tags`)).json(); }
+
+// ── Renderers ───────────────────────────────────────────────────────────────
+
+function renderPool(items) {
+  const el = document.getElementById('mediaPool');
+  const videos = items.filter(i=>mediaType(i.ext)==='video');
+  const audios = items.filter(i=>mediaType(i.ext)==='audio');
+  let h = '';
+  if(videos.length) {
+    h += `<div class="collapse-toggle flex items-center gap-1.5 px-3 py-1 text-2xs text-txt-tertiary uppercase tracking-wider">
+      <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 10 10"><path d="M3 2l5 3-5 3z"/></svg>Video<span class="ml-auto text-txt-tertiary">${videos.length}</span></div>`;
+    videos.forEach(v => {
+      const active = v.id===state.selectedId;
+      const icon = active ? videoSmallActive : videoSmall;
+      const badge = rBadge(v.rating);
+      h += `<div class="source-item${active?' active':''} flex items-center gap-2 px-3 py-1 text-xs cursor-pointer" onclick="selectMedia(${v.id})">
+        ${icon}<span class="truncate">${v.filename}</span>
+        ${badge ? `<span class="ml-auto shrink-0">${badge}</span>` : `<span class="ml-auto text-2xs text-txt-tertiary">${fmtDur(v.duration_s)}</span>`}
+      </div>`;
+    });
+  }
+  if(audios.length) {
+    h += `<div class="collapse-toggle flex items-center gap-1.5 px-3 py-1 mt-1 text-2xs text-txt-tertiary uppercase tracking-wider">
+      <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 10 10"><path d="M3 2l5 3-5 3z"/></svg>Audio<span class="ml-auto text-txt-tertiary">${audios.length}</span></div>`;
+    audios.forEach(a => {
+      const active = a.id===state.selectedId;
+      const badge = rBadge(a.rating);
+      h += `<div class="source-item${active?' active':''} flex items-center gap-2 px-3 py-1 text-xs cursor-pointer" onclick="selectMedia(${a.id})">
+        ${audioSmall}<span class="truncate">${a.filename}</span>
+        ${badge ? `<span class="ml-auto shrink-0">${badge}</span>` : `<span class="ml-auto text-2xs text-txt-tertiary">${fmtDur(a.duration_s)}</span>`}
+      </div>`;
+    });
+  }
+  el.innerHTML = h;
+}
+
+function renderGrid() {
+  const grid = document.getElementById('mediaGrid');
+  if(!state.items.length) { grid.innerHTML = '<div class="col-span-4 text-center text-txt-tertiary py-8">No assets match filters.</div>'; return; }
+  grid.innerHTML = state.items.map(rec => {
+    const isNg = rec.rating==='ng', isAudio = mediaType(rec.ext)==='audio';
+    const thumb = thumbUrl(rec), dur = fmtDur(rec.duration_s);
+    const res = rec.width ? `${rec.width}×${rec.height}` : 'audio';
+    const fps = rec.fps ? `${rec.fps}fps` : '';
+    const badge = rBadge(rec.rating);
+    const score = rec.score!=null ? `<div class="absolute top-1 right-1 bg-accent/80 text-white text-2xs px-1.5 rounded font-medium">${Math.round(rec.score*100)}%</div>` : '';
+    const sel = rec.id===state.selectedId ? ' border-accent/40 ring-1 ring-accent/20' : ' border-panel-border';
+    return `<div class="media-card rounded-lg bg-surface-50 border${sel} cursor-pointer overflow-hidden ${isNg?'ng-card':''}" onclick="selectMedia(${rec.id})">
+      <div class="thumb-placeholder aspect-video relative ${isAudio?'bg-gradient-to-br from-warning/10 to-surface-50':''}">
+        ${thumb ? `<img src="${thumb}" class="w-full h-full object-cover" onerror="this.style.display='none'"/>` : ''}
+        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none"></div>
+        ${!thumb ? `<div class="absolute inset-0 flex items-center justify-center">${isAudio?audioSvg:videoSvg}</div>` : ''}
+        <div class="absolute bottom-1 right-1 bg-black/70 text-white text-2xs px-1 rounded font-mono">${dur}</div>
+        ${badge ? `<div class="absolute top-1 left-1">${badge}</div>` : ''}${score}
+      </div>
+      <div class="p-2">
+        <div class="text-xs font-medium truncate card-title">${rec.filename}</div>
+        <div class="flex items-center gap-1.5 mt-1 text-2xs text-txt-tertiary">
+          <span>${res}</span>${fps?`<span>·</span><span>${fps}</span>`:''}<span>·</span><span>${rec.lang||'?'}</span>
+        </div>
+        ${rec.tags&&rec.tags.length ? `<div class="flex gap-1 mt-1.5 flex-wrap">${tagHtml(rec.tags.slice(0,4))}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderPagination() {
+  const el = document.getElementById('pagination');
+  const tp = Math.max(1, Math.ceil(state.total/PAGE_SIZE));
+  if(tp<=1){el.innerHTML='';return;}
+  el.innerHTML = `<button class="hover:text-txt-primary ${state.page===0?'opacity-30':''}" onclick="changePage(-1)" ${state.page===0?'disabled':''}>&laquo; Prev</button>
+    <span>Page <span class="text-txt-secondary">${state.page+1}</span> / ${tp}</span>
+    <button class="hover:text-txt-primary ${state.page>=tp-1?'opacity-30':''}" onclick="changePage(1)" ${state.page>=tp-1?'disabled':''}>Next &raquo;</button>`;
+}
+
+function renderContentTitle() {
+  document.getElementById('contentTitle').innerHTML = state.query
+    ? `Search: "${state.query}" <span class="text-txt-tertiary">&mdash; ${state.total} results</span>`
+    : `All Assets <span class="text-txt-tertiary">&mdash; ${state.total} items</span>`;
+}
+
+async function renderInspector() {
+  const content = document.getElementById('inspectorContent');
+  const actions = document.getElementById('inspectorActions');
+  if(!state.selectedRec) {
+    content.innerHTML = '<div class="flex items-center justify-center h-full text-txt-tertiary text-xs">Select a media asset</div>';
+    actions.innerHTML = '';
+    return;
+  }
+  const rec = state.selectedRec, thumb = thumbUrl(rec), isAudio = mediaType(rec.ext)==='audio';
+  const dur = fmtDur(rec.duration_s), durHMS = fmtHMS(rec.duration_s), size = fmtSize(rec.size_mb);
+  const res = rec.width ? `${rec.width} × ${rec.height}` : 'audio';
+
+  const tagsHtml = (rec.tags||[]).map(t =>
+    `<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${t.name} <span class="tag-remove" onclick="doRemoveTag(${rec.id},'${t.name}')">&times;</span></span>`
+  ).join(' ');
+
+  const framesHtml = (rec.frame_tags_parsed||[]).map((f,i) =>
+    `<div class="bg-surface-50 rounded p-2 text-xs mb-1"><div class="text-txt-secondary">Frame ${i+1}</div><div class="text-txt-primary mt-0.5">${f.description||''}</div></div>`
+  ).join('');
+
+  content.innerHTML = `
+    <div class="thumb-placeholder aspect-video relative mx-3 mt-3 rounded-md overflow-hidden">
+      ${thumb ? `<img src="${thumb}" class="w-full h-full object-cover" onerror="this.style.display='none'"/>` : ''}
+      <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+      ${!thumb ? `<div class="absolute inset-0 flex items-center justify-center">${isAudio?audioSvg:videoSvg}</div>` : ''}
+      <button class="absolute inset-0 flex items-center justify-center">
+        <div class="w-10 h-10 bg-white/20 backdrop-blur rounded-full flex items-center justify-center hover:bg-white/30 transition">
+          <svg class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
+        </div>
+      </button>
+    </div>
+
+    <div class="px-3 mt-2"><div class="filmstrip">${filmstripFrames()}</div></div>
+
+    <div class="px-3 mt-1">
+      <div class="waveform"><div class="waveform-selected"></div><div class="waveform-bars">${waveformBars()}</div><div class="waveform-marker-in"></div><div class="waveform-marker-out"></div></div>
+      <div class="flex justify-between mt-1 text-2xs font-mono"><span class="text-success">IN ${fmtHMS(0)}</span><span class="text-txt-tertiary">${dur}</span><span class="text-danger">OUT ${durHMS}</span></div>
+    </div>
+
+    <div class="px-3 mt-3">
+      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Rating</div>
+      <div class="flex gap-1.5">
+        <button class="rating-btn rating-good ${rec.rating==='good'?'selected':''}" onclick="doSetRating(${rec.id},'good')">&#9733; GOOD</button>
+        <button class="rating-btn rating-ng ${rec.rating==='ng'?'selected':''}" onclick="doSetRating(${rec.id},'ng')">&#10005; NG</button>
+        <button class="rating-btn rating-review ${rec.rating==='review'?'selected':''}" onclick="doSetRating(${rec.id},'review')">? Review</button>
+        <button class="rating-btn rating-none" onclick="doSetRating(${rec.id},null)">&mdash; Clear</button>
+      </div>
+      <textarea id="ratingNote" class="w-full mt-1.5 h-12 bg-surface text-xs text-txt-secondary border border-panel-border rounded p-2 resize-none focus:outline-none focus:border-accent"
+        placeholder="Rating note... (e.g. 前 30 秒可用)" onblur="doSaveNote(${rec.id})">${rec.rating_note||''}</textarea>
+    </div>
+
+    <div class="px-3 mt-3"><div class="text-sm font-semibold">${rec.filename}</div><div class="text-2xs text-txt-tertiary mt-0.5 font-mono truncate">${rec.path}</div></div>
+
+    <div class="px-3 mt-2">
+      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Metadata</div>
+      <table class="w-full text-xs"><tbody>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary w-24">Duration</td><td class="py-1 font-mono">${dur}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">Resolution</td><td class="py-1 font-mono">${res}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">FPS</td><td class="py-1 font-mono">${rec.fps||'-'}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">Size</td><td class="py-1 font-mono">${size}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">Language</td><td class="py-1"><span class="bg-accent/20 text-accent text-2xs px-1.5 rounded">${rec.lang||'-'}</span></td></tr>
+        <tr><td class="py-1 text-txt-tertiary">Processed</td><td class="py-1 font-mono text-2xs">${(rec.processed_at||'-').slice(0,19)}</td></tr>
+      </tbody></table>
+    </div>
+
+    <div class="px-3 mt-3">
+      <div class="flex items-center justify-between mb-1.5">
+        <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">Tags</div>
+        <div class="flex items-center gap-2 text-2xs text-txt-tertiary">
+          <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-accent/40"></span>auto</span>
+          <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>manual</span>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-1">${tagsHtml}</div>
+      <div class="tag-input-wrapper mt-1.5">
+        <input class="tag-input" id="tagInput" placeholder="Add tag... (type to search)" oninput="onTagInput(${rec.id})" onkeydown="if(event.key==='Enter'){doAddTag(${rec.id},this.value);this.value='';hideAutocomplete();}" />
+        <div class="tag-autocomplete" id="tagAutocomplete"></div>
+      </div>
+    </div>
+
+    ${framesHtml ? `<div class="px-3 mt-3"><div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Frame Descriptions</div>${framesHtml}</div>` : ''}
+
+    <div class="px-3 mt-3 pb-3">
+      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Transcript</div>
+      ${rec.transcript ? `<div class="bg-surface-50 rounded p-2 text-xs text-txt-secondary leading-relaxed max-h-32 overflow-y-auto">${rec.transcript}</div>` : '<div class="text-2xs text-txt-tertiary italic">No transcript</div>'}
+    </div>`;
+
+  actions.innerHTML = `
+    <button class="flex-1 h-7 bg-accent hover:bg-accent-hover text-white text-xs rounded-md transition">Open File</button>
+    <div class="relative"><button class="h-7 px-3 bg-surface-50 border border-panel-border text-txt-secondary text-xs rounded-md hover:text-txt-primary transition flex items-center gap-1" onclick="this.nextElementSibling.classList.toggle('hidden')">
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>Export &#9662;
+    </button>
+    <div class="hidden absolute bottom-full left-0 mb-1 w-44 rounded-md border border-panel-border overflow-hidden" style="background:var(--c-autocomplete-bg);box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:20">
+      <button class="w-full px-3 py-1.5 text-left text-xs hover:bg-accent/10 flex items-center gap-2" style="color:var(--c-txt-secondary)"><span class="font-mono text-2xs px-1 rounded" style="background:var(--c-chip-bg)">SRT</span>DaVinci 字幕檔</button>
+      <button class="w-full px-3 py-1.5 text-left text-xs hover:bg-accent/10 flex items-center gap-2" style="color:var(--c-txt-secondary)"><span class="font-mono text-2xs px-1 rounded" style="background:var(--c-chip-bg)">VTT</span>Web 字幕檔</button>
+      <button class="w-full px-3 py-1.5 text-left text-xs hover:bg-accent/10 flex items-center gap-2" style="color:var(--c-txt-secondary)"><span class="font-mono text-2xs px-1 rounded" style="background:var(--c-chip-bg)">TXT</span>複製純文字逐字稿</button>
+      <div style="border-top:1px solid var(--c-panel-border)"></div>
+      <button class="w-full px-3 py-1.5 text-left text-xs hover:bg-accent/10 flex items-center gap-2" style="color:var(--c-txt-secondary)"><span class="font-mono text-2xs px-1 rounded" style="background:var(--c-chip-bg)">EDL</span>DaVinci Timeline</button>
+    </div></div>
+    <button class="h-7 px-3 bg-surface-50 border border-panel-border text-txt-secondary text-xs rounded-md hover:text-warning transition" title="Re-run Whisper">Re-ingest</button>`;
+}
+
+async function renderAnalytics() {
+  try {
+    const stats = await fetchStats();
+    const r = stats.rating||{}, total = stats.total||1;
+    const goodPct = Math.round((r.good||0)/total*100), ngPct = Math.round((r.ng||0)/total*100), unrPct = Math.round((r.unrated||0)/total*100);
+    const topTags = (stats.top_tags||[]).map(t=>`<span class="tag tag-auto">${t.name} <sup>${t.count}</sup></span>`).join(' ');
+
+    document.getElementById('analyticsContent').innerHTML = `
+      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">Total</div><div class="text-sm font-semibold">${stats.total}</div></div><div class="sparkline w-16"></div></div>
+      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">GOOD</div><div class="text-sm font-semibold text-success">${r.good||0}</div></div>
+        <div class="w-16 h-1.5 bg-surface-200 rounded-full overflow-hidden"><div class="h-full bg-success rounded-full" style="width:${goodPct}%"></div></div></div>
+      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">NG</div><div class="text-sm font-semibold text-danger">${r.ng||0}</div></div>
+        <div class="w-16 h-1.5 bg-surface-200 rounded-full overflow-hidden"><div class="h-full bg-danger rounded-full" style="width:${ngPct}%"></div></div></div>
+      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">Unrated</div><div class="text-sm font-semibold text-txt-tertiary">${r.unrated||0}</div></div>
+        <div class="w-16 h-1.5 bg-surface-200 rounded-full overflow-hidden"><div class="h-full bg-txt-tertiary rounded-full" style="width:${unrPct}%"></div></div></div>
+      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">Duration</div><div class="text-sm font-semibold">${fmtDur(stats.total_duration_s)}</div></div><div class="sparkline w-16"></div></div>
+      <div class="flex items-center gap-3 ml-auto text-2xs text-txt-tertiary"><span>Top tags:</span>${topTags}</div>`;
+
+    document.getElementById('headerStats').innerHTML = `<span>${stats.total} files</span><span>·</span><span class="text-success">${r.good||0} GOOD</span><span>·</span><span class="text-danger">${r.ng||0} NG</span>`;
+
+    document.getElementById('poolStats').innerHTML = `
+      <div class="flex justify-between"><span>Total</span><span>${stats.total} files</span></div>
+      <div class="flex justify-between"><span>GOOD</span><span class="text-success">${r.good||0} (${goodPct}%)</span></div>
+      <div class="flex justify-between"><span>NG</span><span class="text-danger">${r.ng||0} (${ngPct}%)</span></div>
+      <div class="flex justify-between"><span>Unrated</span><span>${r.unrated||0}</span></div>`;
+  } catch(e) { console.error(e); }
+}
+
+// ── Actions ─────────────────────────────────────────────────────────────────
+
+async function selectMedia(id) { await fetchDetail(id); renderGrid(); renderPool(state.items); renderInspector(); }
+
+async function doSetRating(id, rating) {
+  const cur = state.selectedRec?.rating;
+  await setRating(id, cur===rating?null:rating, state.selectedRec?.rating_note);
+  await fetchDetail(id); renderInspector(); await refresh();
+}
+async function doSaveNote(id) { const n = document.getElementById('ratingNote')?.value||''; await setRating(id, state.selectedRec?.rating, n); }
+async function doAddTag(id, name) { if(!name.trim())return; await addTagApi(id,name.trim()); await fetchDetail(id); renderInspector(); await refresh(); }
+async function doRemoveTag(id, name) { await removeTagApi(id,name); await fetchDetail(id); renderInspector(); await refresh(); }
+async function changePage(d) { state.page=Math.max(0,state.page+d); await refresh(); }
+
+function onTagInput(mediaId) {
+  const input = document.getElementById('tagInput');
+  const dropdown = document.getElementById('tagAutocomplete');
+  const val = input.value.trim().toLowerCase();
+  if(!val) { dropdown.classList.remove('show'); return; }
+  const matches = state.allTags.filter(t=>t.name.includes(val)).slice(0,5);
+  let h = matches.map(t=>
+    `<div class="tag-autocomplete-item" onclick="doAddTag(${mediaId},'${t.name}');document.getElementById('tagInput').value='';hideAutocomplete();">
+      <span>${t.name}</span><span class="text-txt-tertiary" style="font-size:9px">${t.count} uses</span></div>`
+  ).join('');
+  if(!matches.find(t=>t.name===val)) {
+    h += `<div class="tag-autocomplete-item" style="border-top:1px solid var(--c-panel-border)" onclick="doAddTag(${mediaId},'${val}');document.getElementById('tagInput').value='';hideAutocomplete();">
+      <span style="color:#4ade80">+ Create "${val}"</span><span class="text-txt-tertiary" style="font-size:9px">new</span></div>`;
+  }
+  dropdown.innerHTML = h;
+  dropdown.classList.add('show');
+}
+function hideAutocomplete() { document.getElementById('tagAutocomplete')?.classList.remove('show'); }
+
+function setView(v) {
+  state.view = v;
+  document.querySelectorAll('.view-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.view-btn[title="${v==='grid'?'Grid':'List'}"]`).classList.add('active');
+  const grid = document.getElementById('mediaGrid');
+  grid.className = v==='grid' ? 'grid grid-cols-4 gap-2' : 'flex flex-col gap-1';
+  renderGrid();
+}
+
+async function refresh() {
+  await fetchMedia(); await fetchAllTags();
+  renderGrid(); renderPool(state.items); renderPagination(); renderContentTitle(); renderAnalytics();
+}
+
+// ── Filter Chips ────────────────────────────────────────────────────────────
+
+document.getElementById('filterChips').addEventListener('click', async e => {
+  const btn = e.target.closest('.filter-chip'); if(!btn) return;
+  const ft = btn.dataset.filter, val = btn.dataset.value;
+  if(ft==='type') {
+    document.querySelectorAll('.filter-chip[data-filter="type"]').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active'); state.filters.type = val;
+  } else {
+    const isActive = btn.classList.contains('active');
+    document.querySelectorAll(`.filter-chip[data-filter="${ft}"]`).forEach(b=>b.classList.remove('active'));
+    if(!isActive) { btn.classList.add('active'); state.filters[ft]=val; } else { state.filters[ft]=null; }
+  }
+  state.page=0; await refresh();
+});
+
+document.getElementById('sortSelect').addEventListener('change', async e => { state.sort=e.target.value; state.page=0; await refresh(); });
+
+let searchTimer;
+document.getElementById('searchInput').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async()=>{ state.query=e.target.value.trim(); state.page=0; await refresh(); }, 300);
+});
+
+// ── Init ────────────────────────────────────────────────────────────────────
+refresh();
+</script>
+</body>
+</html>

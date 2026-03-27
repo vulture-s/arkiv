@@ -1,0 +1,17 @@
+# arkiv
+__pycache__/
+*.pyc
+.env
+media.db
+chroma_db/
+thumbnails/
+*.egg-info/
+dist/
+build/
+.streamlit/
+*.log
+.DS_Store
+.venv/
+venv/
+*.db-journal
+pages/
