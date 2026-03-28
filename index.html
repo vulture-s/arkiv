@@ -270,6 +270,37 @@ function toggleTheme() {
 <script>
 const API = '';
 const PAGE_SIZE = 50;
+
+// ── Tauri Native Dialog Helpers ────────────────────────────────────────
+async function tauriMessage(msg) {
+  try { await window.__TAURI__.dialog.message(msg, { title: 'arkiv' }); }
+  catch(e) { /* fallback silently */ }
+}
+async function tauriAsk(msg) {
+  try { return await window.__TAURI__.dialog.ask(msg, { title: 'arkiv' }); }
+  catch(e) { return false; }
+}
+function showLimitModal(total, newCount) {
+  return new Promise((resolve) => {
+    const m = document.createElement('div');
+    m.style.cssText = 'position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6)';
+    m.innerHTML = `<div class="modal-panel" style="min-width:360px">
+      <div class="text-txt-primary" style="font-size:16px;font-weight:600;margin-bottom:8px">找到 ${total} 個媒體檔案（${newCount} 個新的）</div>
+      <div class="text-txt-secondary" style="font-size:12px;margin-bottom:16px">要處理幾個？（0 = 全部，建議先試 3）</div>
+      <input id="limitInput" type="number" value="${newCount > 3 ? 3 : 0}" min="0"
+        class="w-full h-8 bg-surface border border-panel-border rounded px-3 text-sm text-txt-primary focus:outline-none focus:border-accent" />
+      <div style="display:flex;gap:8px;margin-top:16px;justify-content:center">
+        <button id="limitCancel" style="padding:6px 16px;font-size:12px;border:1px solid #555;border-radius:6px;cursor:pointer" class="text-txt-secondary">取消</button>
+        <button id="limitOk" style="padding:6px 16px;font-size:12px;border-radius:6px;cursor:pointer;background:#3b82f6;color:#fff;border:none">確認</button>
+      </div>
+    </div>`;
+    document.body.appendChild(m);
+    document.getElementById('limitInput').focus();
+    document.getElementById('limitOk').onclick = () => { const v = parseInt(document.getElementById('limitInput').value) || 0; m.remove(); resolve(v); };
+    document.getElementById('limitCancel').onclick = () => { m.remove(); resolve(null); };
+    document.getElementById('limitInput').onkeydown = (e) => { if(e.key==='Enter') document.getElementById('limitOk').click(); };
+  });
+}
 const VIDEO_EXT = ['.mp4','.mov','.m4v','.mts'];
 const AUDIO_EXT = ['.wav','.mp3','.m4a','.aac'];
 
@@ -612,38 +643,59 @@ function onTagInput(mediaId) {
 }
 function hideAutocomplete() { document.getElementById('tagAutocomplete')?.classList.remove('show'); }
 
-function doExport(id, fmt) {
-  window.open(`/api/media/${id}/export/${fmt}`, '_blank');
+async function doExport(id, fmt) {
+  try {
+    const rec = state.selectedRec || state.items.find(r => r.id === id);
+    const basename = rec ? rec.filename.replace(/\.[^.]+$/, '') : `media_${id}`;
+    const filename = `${basename}.${fmt}`;
+    const resp = await fetch(`/api/media/${id}/export/${fmt}`);
+    if (!resp.ok) { await tauriMessage('Export 失敗：HTTP ' + resp.status); return; }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) { await tauriMessage('Export 錯誤：' + e.message); }
 }
 
-function doExportGoodEdl() {
-  // Export all GOOD-rated takes as combined EDL
+async function doExportGoodEdl() {
   const goodItems = state.items.filter(r => r.rating === 'good');
-  if (goodItems.length === 0) { alert('沒有 GOOD 評級的素材'); return; }
-  // Export first GOOD item's EDL (future: combine multiple)
-  window.open(`/api/media/${goodItems[0].id}/export/edl`, '_blank');
+  if (goodItems.length === 0) { await tauriMessage('沒有 GOOD 評級的素材'); return; }
+  await doExport(goodItems[0].id, 'edl');
 }
 
-function doOpenFile(id) {
+async function doOpenFile(id) {
   const rec = state.items.find(r => r.id === id) || state.selectedRec;
   if (rec && rec.path) {
-    navigator.clipboard.writeText(rec.path).then(() => {
-      alert('檔案路徑已複製到剪貼簿：\n' + rec.path);
-    });
+    try {
+      const { openPath } = window.__TAURI__.opener;
+      await openPath(rec.path);
+    } catch(e) {
+      await tauriMessage('無法開啟檔案：' + e.message);
+    }
   }
 }
 
-function doPlayMedia(id) {
+async function doPlayMedia(id) {
   const rec = state.items.find(r => r.id === id) || state.selectedRec;
   if (rec && rec.path) {
-    navigator.clipboard.writeText(rec.path).then(() => {
-      alert('瀏覽器無法直接播放本機檔案。\n路徑已複製到剪貼簿，請在 DaVinci Resolve 或 Finder 開啟：\n\n' + rec.path);
-    });
+    try {
+      const { openPath } = window.__TAURI__.opener;
+      await openPath(rec.path);
+    } catch(e) {
+      await tauriMessage('無法播放：' + e.message);
+    }
   }
 }
 
 async function doAddMediaFolder() {
-  const path = prompt('輸入素材資料夾路徑：\n\n例如：/Volumes/SSD/影片/\n或 ~/Movies/rushes/');
+  let path;
+  try {
+    const { open } = window.__TAURI__.dialog;
+    path = await open({ directory: true, title: '選擇素材資料夾' });
+  } catch(e) {
+    await tauriMessage('無法開啟資料夾選擇器：' + e.message);
+    return;
+  }
   if (!path) return;
 
   // Step 1: Scan (fast)
@@ -654,18 +706,16 @@ async function doAddMediaFolder() {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({path})
     });
-    if (!r.ok) { hideIngestModal(); alert('路徑不存在：' + path); return; }
+    if (!r.ok) { hideIngestModal(); await tauriMessage('路徑不存在：' + path); return; }
     scan = await r.json();
-  } catch(e) { hideIngestModal(); alert('掃描錯誤：' + e.message); return; }
+  } catch(e) { hideIngestModal(); await tauriMessage('掃描錯誤：' + e.message); return; }
 
-  if (scan.total === 0) { hideIngestModal(); alert('找不到媒體檔案'); return; }
+  if (scan.total === 0) { hideIngestModal(); await tauriMessage('找不到媒體檔案'); return; }
 
-  // Show scan result, ask to proceed
+  // Show scan result, ask to proceed via in-app modal
   hideIngestModal();
-  const msg = `找到 ${scan.total} 個媒體檔案（${scan.new} 個新的）\n\n要處理幾個？（0 = 全部，建議先試 3）`;
-  const limitStr = prompt(msg, scan.new > 3 ? '3' : '0');
-  if (limitStr === null) return;
-  const limit = parseInt(limitStr) || 0;
+  const limit = await showLimitModal(scan.total, scan.new);
+  if (limit === null) return;
 
   // Step 2: Ingest with WebSocket real-time progress
   const targetCount = limit > 0 ? Math.min(limit, scan.new) : scan.new;
@@ -684,11 +734,11 @@ async function doAddMediaFolder() {
     } else if (msg.type === 'complete') {
       ws.close();
       hideIngestModal();
-      alert(`完成！新增 ${msg.ok} 個素材（跳過 ${msg.skipped}，失敗 ${msg.failed}）`);
+      tauriMessage(`完成！新增 ${msg.ok} 個素材（跳過 ${msg.skipped}，失敗 ${msg.failed}）`);
       refresh(); renderAnalytics();
     }
   };
-  ws.onerror = () => { hideIngestModal(); alert('WebSocket 連線錯誤'); };
+  ws.onerror = () => { hideIngestModal(); tauriMessage('WebSocket 連線錯誤'); };
 
   // Wait for WS to connect before triggering ingest (avoid race condition)
   ws.onopen = async () => {
@@ -697,14 +747,14 @@ async function doAddMediaFolder() {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({path, limit})
       });
-    } catch(e) { ws.close(); hideIngestModal(); alert('錯誤：' + e.message); }
+    } catch(e) { ws.close(); hideIngestModal(); tauriMessage('錯誤：' + e.message); }
   };
 
   // Timeout fallback: if no WS message in 30s, close modal
   setTimeout(() => {
     if (document.getElementById('ingestModal')) {
       ws.close(); hideIngestModal();
-      alert('Ingest 逾時，請重試或檢查 server logs');
+      tauriMessage('Ingest 逾時，請重試或檢查 server logs');
     }
   }, 30000);
 }
@@ -748,7 +798,7 @@ function hideIngestModal() {
 }
 
 async function doChangeLang(id, lang) {
-  if (!confirm(`切換語言為 ${lang} 並重新轉錄？`)) { await fetchDetail(id); renderInspector(); return; }
+  if (!(await tauriAsk(`切換語言為 ${lang} 並重新轉錄？`))) { await fetchDetail(id); renderInspector(); return; }
   showIngestModal('重新轉錄中...', `語言: ${lang}`);
   try {
     const r = await fetch(`/api/media/${id}/retranscribe`, {
@@ -756,13 +806,13 @@ async function doChangeLang(id, lang) {
       body: JSON.stringify({language: lang})
     });
     hideIngestModal();
-    if (r.ok) { alert('轉錄完成'); await fetchDetail(id); renderInspector(); }
-    else { const d = await r.json().catch(()=>({})); alert('轉錄失敗: ' + (d.error || r.status)); }
-  } catch(e) { hideIngestModal(); alert('錯誤: ' + e.message); }
+    if (r.ok) { await tauriMessage('轉錄完成'); await fetchDetail(id); renderInspector(); }
+    else { const d = await r.json().catch(()=>({})); await tauriMessage('轉錄失敗: ' + (d.error || r.status)); }
+  } catch(e) { hideIngestModal(); await tauriMessage('錯誤: ' + e.message); }
 }
 
 async function doReIngest(id) {
-  if (!confirm('重新處理此檔案？（probe + 轉錄 + 縮圖 + 視覺分析，需要幾分鐘）')) return;
+  if (!(await tauriAsk('重新處理此檔案？（probe + 轉錄 + 縮圖 + 視覺分析，需要幾分鐘）'))) return;
   showIngestModal('Re-ingest 處理中...', '正在重新分析影片');
   try {
     const r = await fetch(`/api/media/${id}/reingest`, { method: 'POST' });
@@ -770,17 +820,17 @@ async function doReIngest(id) {
     if (r.ok) {
       const data = await r.json();
       if (data.ok) {
-        alert('Re-ingest 完成！');
+        await tauriMessage('Re-ingest 完成！');
         await fetchDetail(id);
         renderInspector();
         await refresh();
       } else {
-        alert('Re-ingest 失敗：\n' + (data.stderr || data.error || ''));
+        await tauriMessage('Re-ingest 失敗：\n' + (data.stderr || data.error || ''));
       }
     } else {
-      alert('Re-ingest 失敗: HTTP ' + r.status);
+      await tauriMessage('Re-ingest 失敗: HTTP ' + r.status);
     }
-  } catch(e) { hideIngestModal(); alert('Re-ingest 錯誤：' + e.message); }
+  } catch(e) { hideIngestModal(); await tauriMessage('Re-ingest 錯誤：' + e.message); }
 }
 
 function setView(v) {

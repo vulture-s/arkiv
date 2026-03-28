@@ -11,22 +11,28 @@ services:
       - ./chroma_db:/app/chroma_db
       - ./thumbnails:/app/thumbnails
     environment:
-      - ARKIV_OLLAMA_URL=http://host.docker.internal:11434
+      - ARKIV_OLLAMA_URL=http://ollama:11434
+      - ARKIV_WHISPER_MODEL=large-v3
+    depends_on:
+      - ollama
     restart: unless-stopped
 
-  # Optional: Ollama sidecar (if not running on host)
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama_data:/root/.ollama
-  #   # GPU passthrough (NVIDIA):
-  #   # deploy:
-  #   #   resources:
-  #   #     reservations:
-  #   #       devices:
-  #   #         - capabilities: [gpu]
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # NVIDIA GPU passthrough (uncomment for CUDA):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    # macOS: GPU passthrough not needed (Ollama uses Metal natively on host)
+    restart: unless-stopped
 
-# volumes:
-#   ollama_data:
+volumes:
+  ollama_data:

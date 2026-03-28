@@ -103,6 +103,16 @@ def main():
     except Exception:
         check("NVIDIA GPU", False, required=False)
 
+    # ── Disk Space ───────────────────────────────────────────────────────
+    print("\n-- Disk Space --")
+    try:
+        import shutil as _sh
+        usage = _sh.disk_usage(Path(__file__).parent)
+        free_gb = usage.free / (1024**3)
+        check("disk free >= 2 GB", free_gb >= 2.0, f"({free_gb:.1f} GB free)")
+    except Exception as e:
+        check("disk space", False, f"({e})")
+
     # ── Database ─────────────────────────────────────────────────────────
     print("\n-- Database --")
     try:
