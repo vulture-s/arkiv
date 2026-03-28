@@ -541,10 +541,10 @@ async function renderAnalytics() {
     let langBars = '', sizeBars = '';
     try {
       const langs = await (await fetch('/api/duration-by-lang')).json();
-      const totalDur = langs.reduce((s,l) => s+l.total_duration_s, 0) || 1;
+      const totalDur = langs.reduce((s,l) => s+l.total_s, 0) || 1;
       langBars = langs.map(l => {
-        const pct = Math.round(l.total_duration_s/totalDur*100);
-        return `<div class="flex items-center gap-1 text-2xs"><span class="w-6 text-txt-tertiary">${l.lang||'?'}</span><div class="w-16 h-1.5 bg-surface-200 rounded-full overflow-hidden"><div class="h-full bg-accent rounded-full" style="width:${pct}%"></div></div><span class="text-txt-tertiary">${fmtDur(l.total_duration_s)}</span></div>`;
+        const pct = Math.round(l.total_s/totalDur*100);
+        return `<div class="flex items-center gap-1 text-2xs"><span class="w-6 text-txt-tertiary">${l.lang||'?'}</span><div class="w-16 h-1.5 bg-surface-200 rounded-full overflow-hidden"><div class="h-full bg-accent rounded-full" style="width:${pct}%"></div></div><span class="text-txt-tertiary">${fmtDur(l.total_s)}</span></div>`;
       }).join('');
     } catch(e) {}
     try {
@@ -625,7 +625,7 @@ function doExportGoodEdl() {
 }
 
 function doOpenFile(id) {
-  const rec = state.items.find(r => r.id === id) || state.detail;
+  const rec = state.items.find(r => r.id === id) || state.selectedRec;
   if (rec && rec.path) {
     navigator.clipboard.writeText(rec.path).then(() => {
       alert('檔案路徑已複製到剪貼簿：\n' + rec.path);
@@ -634,7 +634,7 @@ function doOpenFile(id) {
 }
 
 function doPlayMedia(id) {
-  const rec = state.items.find(r => r.id === id) || state.detail;
+  const rec = state.items.find(r => r.id === id) || state.selectedRec;
   if (rec && rec.path) {
     navigator.clipboard.writeText(rec.path).then(() => {
       alert('瀏覽器無法直接播放本機檔案。\n路徑已複製到剪貼簿，請在 DaVinci Resolve 或 Finder 開啟：\n\n' + rec.path);
@@ -690,13 +690,23 @@ async function doAddMediaFolder() {
   };
   ws.onerror = () => { hideIngestModal(); alert('WebSocket 連線錯誤'); };
 
-  // Trigger ingest via WS-enabled endpoint
-  try {
-    await fetch('/api/ingest/ws', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({path, limit})
-    });
-  } catch(e) { ws.close(); hideIngestModal(); alert('錯誤：' + e.message); }
+  // Wait for WS to connect before triggering ingest (avoid race condition)
+  ws.onopen = async () => {
+    try {
+      await fetch('/api/ingest/ws', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({path, limit})
+      });
+    } catch(e) { ws.close(); hideIngestModal(); alert('錯誤：' + e.message); }
+  };
+
+  // Timeout fallback: if no WS message in 30s, close modal
+  setTimeout(() => {
+    if (document.getElementById('ingestModal')) {
+      ws.close(); hideIngestModal();
+      alert('Ingest 逾時，請重試或檢查 server logs');
+    }
+  }, 30000);
 }
 
 function showIngestModal(title, detail) {
@@ -709,6 +719,7 @@ function showIngestModal(title, detail) {
       <div id="ingestTitle" class="text-txt-primary" style="font-size:16px;font-weight:600;margin-bottom:8px"></div>
       <div id="ingestDetail" class="text-txt-secondary" style="font-size:12px;margin-bottom:16px"></div>
       <div class="bg-surface-200" style="width:100%;height:4px;border-radius:2px;overflow:hidden"><div id="ingestBar" style="height:100%;background:#3b82f6;border-radius:2px;transition:width 0.3s;width:0%"></div></div>
+      <button onclick="hideIngestModal()" style="margin-top:12px;padding:4px 12px;font-size:12px;border:1px solid #555;border-radius:4px;cursor:pointer" class="text-txt-secondary">取消</button>
     </div>`;
     document.body.appendChild(m);
   }

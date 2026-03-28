@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui/main/tauri/src-tauri/capabilities/default.json",
+  "identifier": "default",
+  "description": "default permissions for arkiv",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "dialog:default"
+  ]
+}

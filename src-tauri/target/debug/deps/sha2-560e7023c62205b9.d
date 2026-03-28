@@ -1,0 +1,13 @@
+<home>/.arkiv/src-tauri/target/debug/deps/sha2-560e7023c62205b9.d: <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/lib.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/core_api.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/consts.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/soft.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/soft.rs
+
+<home>/.arkiv/src-tauri/target/debug/deps/libsha2-560e7023c62205b9.rlib: <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/lib.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/core_api.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/consts.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/soft.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/soft.rs
+
+<home>/.arkiv/src-tauri/target/debug/deps/libsha2-560e7023c62205b9.rmeta: <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/lib.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/core_api.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/consts.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/soft.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/soft.rs
+
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/lib.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/core_api.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/consts.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/soft.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/soft.rs:

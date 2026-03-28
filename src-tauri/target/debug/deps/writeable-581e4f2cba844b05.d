@@ -1,0 +1,12 @@
+<home>/.arkiv/src-tauri/target/debug/deps/writeable-581e4f2cba844b05.d: <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/lib.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/cmp.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/impls.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/ops.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/parts_write_adapter.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/try_writeable.rs
+
+<home>/.arkiv/src-tauri/target/debug/deps/libwriteable-581e4f2cba844b05.rlib: <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/lib.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/cmp.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/impls.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/ops.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/parts_write_adapter.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/try_writeable.rs
+
+<home>/.arkiv/src-tauri/target/debug/deps/libwriteable-581e4f2cba844b05.rmeta: <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/lib.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/cmp.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/impls.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/ops.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/parts_write_adapter.rs <home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/try_writeable.rs
+
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/lib.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/cmp.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/impls.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/ops.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/parts_write_adapter.rs:
+<home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.2/src/try_writeable.rs:

@@ -36,15 +36,10 @@
       "icons/icon.ico"
     ],
     "resources": [],
-    "externalBin": ["arkiv-server"],
+    "externalBin": [],
     "macOS": {
       "minimumSystemVersion": "10.15"
     }
   },
-  "plugins": {
-    "opener": {
-      "allowedUrls": ["file://*"]
-    },
-    "dialog": {}
-  }
+  "plugins": {}
 }
