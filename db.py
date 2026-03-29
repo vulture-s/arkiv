@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "media.db"
+from config import DB_PATH
 
 
 def get_conn():

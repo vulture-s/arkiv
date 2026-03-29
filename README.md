@@ -110,7 +110,7 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `ARKIV_EMBED_MODEL` | `nomic-embed-text` | Embedding model |
 | `ARKIV_VISION_MODEL` | `llava:7b` | Vision model for frames |
-| `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-mlx` | Whisper model |
+| `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-mlx` | Whisper model (Docker: `large-v3-turbo`) |
 | `ARKIV_HOST` | `0.0.0.0` | Server bind address |
 | `ARKIV_PORT` | `8501` | Server port |
 

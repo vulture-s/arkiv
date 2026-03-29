@@ -5,12 +5,10 @@ import json
 import re
 import requests
 import chromadb
-from pathlib import Path
 
-CHROMA_PATH = Path(__file__).parent / "chroma_db"
-COLLECTION_NAME = "media_assets"
-EMBED_MODEL = "nomic-embed-text"
-OLLAMA_URL = "http://localhost:11434/api/embeddings"
+from config import CHROMA_PATH, COLLECTION_NAME, EMBED_MODEL, OLLAMA_URL
+
+OLLAMA_EMBED_URL = f"{OLLAMA_URL}/api/embeddings"
 CHUNK_SIZE = 180      # words per chunk (Latin) or chars×4 (CJK)
 CHUNK_OVERLAP = 20    # words / chars overlap
 CHUNK_CHARS = 500     # character limit per chunk for CJK
@@ -22,7 +20,7 @@ EMBED_MAX_CHARS = 2000  # hard cap before sending to Ollama
 def embed(text: str) -> list[float]:
     """Embed a single text via Ollama."""
     text = text[:EMBED_MAX_CHARS]
-    r = requests.post(OLLAMA_URL, json={"model": EMBED_MODEL, "prompt": text}, timeout=30)
+    r = requests.post(OLLAMA_EMBED_URL, json={"model": EMBED_MODEL, "prompt": text}, timeout=30)
     r.raise_for_status()
     return r.json()["embedding"]
 

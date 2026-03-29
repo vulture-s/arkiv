@@ -51,7 +51,8 @@ def main():
     ollama_ok = False
     try:
         import requests
-        r = requests.get("http://localhost:11434/api/tags", timeout=3)
+        import config
+        r = requests.get(f"{config.OLLAMA_URL}/api/tags", timeout=3)
         models = [m["name"] for m in r.json().get("models", [])]
         ollama_ok = True
         check("ollama server", True, f"({len(models)} models)")

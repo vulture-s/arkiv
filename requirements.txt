@@ -13,10 +13,9 @@ pillow>=9.0
 # ── Platform-specific Whisper (install ONE) ──────────────
 # macOS Apple Silicon:
 #   pip install mlx-whisper
-# NVIDIA GPU (recommended):
-#   pip install faster-whisper torch --index-url https://download.pytorch.org/whl/cu121
-# CPU fallback (no GPU):
+# NVIDIA GPU / CPU (Docker default):
 #   pip install faster-whisper
+faster-whisper>=1.0;platform_system!="Darwin"
 
 # ── Optional ─────────────────────────────────────────────
 # streamlit>=1.20          # Legacy Streamlit UI

@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .env
+.env.local
 media.db
 chroma_db/
 thumbnails/

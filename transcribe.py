@@ -2,7 +2,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
+from config import WHISPER_MODEL, OLLAMA_URL
 NO_SPEECH_THRESHOLD = 0.6
 DEFAULT_LANGUAGE = "zh"  # 強制繁體中文，避免簡體/日文亂跳
 LLM_POLISH = True  # 用 Ollama LLM 後處理校正逐字稿
@@ -143,7 +143,7 @@ def warm_up_ollama():
         return
     import requests as _req
     try:
-        _req.post("http://localhost:11434/api/generate", json={
+        _req.post(f"{OLLAMA_URL}/api/generate", json={
             "model": "qwen2.5:14b", "prompt": "hi", "stream": False,
             "options": {"num_predict": 1}
         }, timeout=30)
@@ -155,7 +155,6 @@ def warm_up_ollama():
 def _llm_polish(text: str, language: str = "zh") -> str:
     """Use Ollama LLM to fix Whisper transcription errors."""
     import requests as _req
-    OLLAMA_URL = "http://localhost:11434"
     MODEL = "qwen2.5:14b"
 
     lang_name = {"zh": "繁體中文", "en": "English", "ja": "日本語", "ko": "한국어"}.get(language, language)
