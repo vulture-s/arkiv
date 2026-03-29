@@ -4,31 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Media Asset Manager</title>
-<script>
-document.title = 'DEBUG: JS runs! isTauri=' + !!(window.__TAURI__);
-document.addEventListener('DOMContentLoaded', function() {
-  var d = document.createElement('div');
-  d.id = 'dbgBar';
-  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:lime;color:black;padding:8px;font-size:11px;font-family:monospace;max-height:120px;overflow:auto';
-  d.textContent = 'INIT | __TAURI__=' + !!(window.__TAURI__) + ' | tailwind=' + (typeof tailwind);
-  document.body.prepend(d);
-
-  // Test fetch API directly
-  fetch('/api/media?offset=0&limit=3&sort=date')
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      d.textContent += ' | FETCH OK: ' + data.items.length + ' items, total=' + data.total;
-      // Check if refresh function exists
-      d.textContent += ' | refresh=' + (typeof refresh);
-      d.textContent += ' | renderGrid=' + (typeof renderGrid);
-      d.textContent += ' | state=' + (typeof state !== 'undefined' ? 'items=' + (state.items||[]).length : 'UNDEF');
-    })
-    .catch(function(e) {
-      d.style.background = 'red'; d.style.color = 'white';
-      d.textContent += ' | FETCH FAIL: ' + e.message;
-    });
-});
-</script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 tailwind.config = {
@@ -293,23 +268,8 @@ function toggleTheme() {
 </footer>
 
 <script>
-try {
 const API = '';
 const PAGE_SIZE = 50;
-
-// ── DEBUG: visual error overlay ──────────────────────────────────────
-window.onerror = function(msg, src, line, col, err) {
-  const d = document.createElement('div');
-  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:red;color:white;padding:8px;font-size:12px;font-family:monospace;white-space:pre-wrap';
-  d.textContent = `JS ERROR: ${msg}\n  at ${src}:${line}:${col}\n  ${err?.stack||''}`;
-  document.body.appendChild(d);
-};
-window.addEventListener('unhandledrejection', function(e) {
-  const d = document.createElement('div');
-  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:orange;color:black;padding:8px;font-size:12px;font-family:monospace;white-space:pre-wrap';
-  d.textContent = `PROMISE REJECT: ${e.reason?.message||e.reason}\n${e.reason?.stack||''}`;
-  document.body.appendChild(d);
-});
 
 // ── Tauri Detection + Dialog Helpers ──────────────────────────────────
 const isTauri = !!(window.__TAURI__);
@@ -899,19 +859,15 @@ function setView(v) {
 }
 
 async function refresh() {
-  const dbg = document.getElementById('mediaGrid');
   try {
-    dbg.innerHTML = '<div class="col-span-4 text-center text-warning py-4 text-xs">DEBUG: fetchMedia()...</div>';
-    await fetchMedia();
-    dbg.innerHTML = `<div class="col-span-4 text-center text-warning py-4 text-xs">DEBUG: fetchMedia OK — ${state.items.length} items, total=${state.total}</div>`;
-    await fetchAllTags();
+    await fetchMedia(); await fetchAllTags();
     renderGrid(); renderPool(state.items); renderPagination(); renderContentTitle(); renderAnalytics();
   } catch(e) {
     console.error('[arkiv] refresh() failed:', e);
-    if (dbg) dbg.innerHTML = `<div class="col-span-4 text-center text-danger py-8">
+    const grid = document.getElementById('mediaGrid');
+    if (grid) grid.innerHTML = `<div class="col-span-4 text-center text-danger py-8">
       <div class="text-sm font-semibold mb-2">載入失敗</div>
       <div class="text-xs text-txt-secondary">${e.message}</div>
-      <div class="text-2xs text-txt-tertiary mt-1">${e.stack||''}</div>
       <button class="mt-3 px-4 py-1.5 bg-accent text-white text-xs rounded-md" onclick="refresh()">重試</button>
     </div>`;
   }
@@ -943,10 +899,6 @@ document.getElementById('searchInput').addEventListener('input', e => {
 
 // ── Init ────────────────────────────────────────────────────────────────────
 refresh().catch(e => console.error('[arkiv] init failed:', e));
-} catch(_mainErr) {
-  var _b = document.getElementById('dbgBar');
-  if(_b) { _b.style.background='red'; _b.style.color='white'; _b.textContent += ' | MAIN SCRIPT ERROR: ' + _mainErr.message + ' | stack: ' + (_mainErr.stack||'').split('\n').slice(0,3).join(' > '); }
-}
 </script>
 </body>
 </html>
