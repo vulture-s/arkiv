@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Set
+from typing import Optional, Set
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,8 +68,8 @@ if thumbs_dir.exists():
 # ── Models ───────────────────────────────────────────────────────────────────
 
 class RatingUpdate(BaseModel):
-    rating: str | None = None
-    note: str | None = None
+    rating: Optional[str] = None
+    note: Optional[str] = None
 
 
 class TagCreate(BaseModel):
@@ -84,10 +84,10 @@ def list_media(
     offset: int = 0,
     limit: int = 50,
     sort: str = "date",
-    lang: str | None = None,
-    rating: str | None = None,
-    media_type: str | None = None,
-    q: str | None = None,
+    lang: Optional[str] = None,
+    rating: Optional[str] = None,
+    media_type: Optional[str] = None,
+    q: Optional[str] = None,
 ):
     """List media with filters, sorting, and pagination."""
     if q:
@@ -558,7 +558,7 @@ async def ingest_media_ws(body: IngestRequest):
 # ── Serve Frontend ───────────────────────────────────────────────────────────
 
 # Cache index.html at startup to avoid fd leak on repeated read_text()
-_INDEX_HTML: str | None = None
+_INDEX_HTML: Optional[str] = None
 
 def _load_index() -> str:
     global _INDEX_HTML
