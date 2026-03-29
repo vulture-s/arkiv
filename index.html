@@ -873,15 +873,19 @@ function setView(v) {
 }
 
 async function refresh() {
+  const dbg = document.getElementById('mediaGrid');
   try {
-    await fetchMedia(); await fetchAllTags();
+    dbg.innerHTML = '<div class="col-span-4 text-center text-warning py-4 text-xs">DEBUG: fetchMedia()...</div>';
+    await fetchMedia();
+    dbg.innerHTML = `<div class="col-span-4 text-center text-warning py-4 text-xs">DEBUG: fetchMedia OK — ${state.items.length} items, total=${state.total}</div>`;
+    await fetchAllTags();
     renderGrid(); renderPool(state.items); renderPagination(); renderContentTitle(); renderAnalytics();
   } catch(e) {
     console.error('[arkiv] refresh() failed:', e);
-    const grid = document.getElementById('mediaGrid');
-    if (grid) grid.innerHTML = `<div class="col-span-4 text-center text-danger py-8">
+    if (dbg) dbg.innerHTML = `<div class="col-span-4 text-center text-danger py-8">
       <div class="text-sm font-semibold mb-2">載入失敗</div>
       <div class="text-xs text-txt-secondary">${e.message}</div>
+      <div class="text-2xs text-txt-tertiary mt-1">${e.stack||''}</div>
       <button class="mt-3 px-4 py-1.5 bg-accent text-white text-xs rounded-md" onclick="refresh()">重試</button>
     </div>`;
   }
