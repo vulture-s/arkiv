@@ -873,32 +873,34 @@ async function refresh() {
   }
 }
 
-// ── Filter Chips ────────────────────────────────────────────────────────────
+// ── Filter Chips + Init (wait for DOM) ──────────────────────────────────────
 
-document.getElementById('filterChips').addEventListener('click', async e => {
-  const btn = e.target.closest('.filter-chip'); if(!btn) return;
-  const ft = btn.dataset.filter, val = btn.dataset.value;
-  if(ft==='type') {
-    document.querySelectorAll('.filter-chip[data-filter="type"]').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active'); state.filters.type = val;
-  } else {
-    const isActive = btn.classList.contains('active');
-    document.querySelectorAll(`.filter-chip[data-filter="${ft}"]`).forEach(b=>b.classList.remove('active'));
-    if(!isActive) { btn.classList.add('active'); state.filters[ft]=val; } else { state.filters[ft]=null; }
-  }
-  state.page=0; await refresh();
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('filterChips').addEventListener('click', async e => {
+    const btn = e.target.closest('.filter-chip'); if(!btn) return;
+    const ft = btn.dataset.filter, val = btn.dataset.value;
+    if(ft==='type') {
+      document.querySelectorAll('.filter-chip[data-filter="type"]').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active'); state.filters.type = val;
+    } else {
+      const isActive = btn.classList.contains('active');
+      document.querySelectorAll(`.filter-chip[data-filter="${ft}"]`).forEach(b=>b.classList.remove('active'));
+      if(!isActive) { btn.classList.add('active'); state.filters[ft]=val; } else { state.filters[ft]=null; }
+    }
+    state.page=0; await refresh();
+  });
+
+  document.getElementById('sortSelect').addEventListener('change', async e => { state.sort=e.target.value; state.page=0; await refresh(); });
+
+  let searchTimer;
+  document.getElementById('searchInput').addEventListener('input', e => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async()=>{ state.query=e.target.value.trim(); state.page=0; await refresh(); }, 300);
+  });
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  refresh().catch(e => console.error('[arkiv] init failed:', e));
 });
-
-document.getElementById('sortSelect').addEventListener('change', async e => { state.sort=e.target.value; state.page=0; await refresh(); });
-
-let searchTimer;
-document.getElementById('searchInput').addEventListener('input', e => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(async()=>{ state.query=e.target.value.trim(); state.page=0; await refresh(); }, 300);
-});
-
-// ── Init ────────────────────────────────────────────────────────────────────
-refresh().catch(e => console.error('[arkiv] init failed:', e));
 </script>
 </body>
 </html>
