@@ -557,18 +557,13 @@ async def ingest_media_ws(body: IngestRequest):
 
 # ── Serve Frontend ───────────────────────────────────────────────────────────
 
-# Cache index.html at startup to avoid fd leak on repeated read_text()
-_INDEX_HTML: Optional[str] = None
-
+# Dev mode: always read fresh index.html (no cache)
 def _load_index() -> str:
-    global _INDEX_HTML
     index = ROOT / "index.html"
     if index.exists():
-        _INDEX_HTML = index.read_text(encoding="utf-8")
-    return _INDEX_HTML or "<h1>arkiv</h1><p>index.html not found</p>"
-
-_load_index()
+        return index.read_text(encoding="utf-8")
+    return "<h1>arkiv</h1><p>index.html not found</p>"
 
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
-    return _INDEX_HTML or _load_index()
+    return _load_index()
