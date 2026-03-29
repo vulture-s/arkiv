@@ -741,7 +741,7 @@ async function doAddMediaFolder() {
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${wsProto}//${location.host}/ws/ingest`);
 
-  ws.onmessage = (ev) => {
+  ws.onmessage = async (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'file') {
       const statusMap = { scanning: '掃描中', transcribing: '轉錄中', analyzing: '分析中', done: '完成', skipped: '已跳過', error: '錯誤' };
@@ -750,11 +750,11 @@ async function doAddMediaFolder() {
     } else if (msg.type === 'complete') {
       ws.close();
       hideIngestModal();
-      tauriMessage(`完成！新增 ${msg.ok} 個素材（跳過 ${msg.skipped}，失敗 ${msg.failed}）`);
+      await tauriMessage(`完成！新增 ${msg.ok} 個素材（跳過 ${msg.skipped}，失敗 ${msg.failed}）`);
       refresh(); renderAnalytics();
     }
   };
-  ws.onerror = () => { hideIngestModal(); tauriMessage('WebSocket 連線錯誤'); };
+  ws.onerror = async () => { hideIngestModal(); await tauriMessage('WebSocket 連線錯誤'); };
 
   // Wait for WS to connect before triggering ingest (avoid race condition)
   ws.onopen = async () => {
@@ -763,14 +763,14 @@ async function doAddMediaFolder() {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({path, limit})
       });
-    } catch(e) { ws.close(); hideIngestModal(); tauriMessage('錯誤：' + e.message); }
+    } catch(e) { ws.close(); hideIngestModal(); await tauriMessage('錯誤：' + e.message); }
   };
 
   // Timeout fallback: if no WS message in 30s, close modal
-  setTimeout(() => {
+  setTimeout(async () => {
     if (document.getElementById('ingestModal')) {
       ws.close(); hideIngestModal();
-      tauriMessage('Ingest 逾時，請重試或檢查 server logs');
+      await tauriMessage('Ingest 逾時，請重試或檢查 server logs');
     }
   }, 30000);
 }
@@ -859,8 +859,18 @@ function setView(v) {
 }
 
 async function refresh() {
-  await fetchMedia(); await fetchAllTags();
-  renderGrid(); renderPool(state.items); renderPagination(); renderContentTitle(); renderAnalytics();
+  try {
+    await fetchMedia(); await fetchAllTags();
+    renderGrid(); renderPool(state.items); renderPagination(); renderContentTitle(); renderAnalytics();
+  } catch(e) {
+    console.error('[arkiv] refresh() failed:', e);
+    const grid = document.getElementById('mediaGrid');
+    if (grid) grid.innerHTML = `<div class="col-span-4 text-center text-danger py-8">
+      <div class="text-sm font-semibold mb-2">載入失敗</div>
+      <div class="text-xs text-txt-secondary">${e.message}</div>
+      <button class="mt-3 px-4 py-1.5 bg-accent text-white text-xs rounded-md" onclick="refresh()">重試</button>
+    </div>`;
+  }
 }
 
 // ── Filter Chips ────────────────────────────────────────────────────────────
@@ -888,7 +898,7 @@ document.getElementById('searchInput').addEventListener('input', e => {
 });
 
 // ── Init ────────────────────────────────────────────────────────────────────
-refresh();
+refresh().catch(e => console.error('[arkiv] init failed:', e));
 </script>
 </body>
 </html>
