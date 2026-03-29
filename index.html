@@ -271,14 +271,39 @@ function toggleTheme() {
 const API = '';
 const PAGE_SIZE = 50;
 
-// ── Tauri Native Dialog Helpers ────────────────────────────────────────
+// ── Tauri Detection + Dialog Helpers ──────────────────────────────────
+const isTauri = !!(window.__TAURI__);
+
 async function tauriMessage(msg) {
-  try { await window.__TAURI__.dialog.message(msg, { title: 'arkiv' }); }
-  catch(e) { /* fallback silently */ }
+  if (isTauri) {
+    try { await window.__TAURI__.dialog.message(msg, { title: 'arkiv' }); return; }
+    catch(e) {}
+  }
+  alert(msg);
 }
 async function tauriAsk(msg) {
-  try { return await window.__TAURI__.dialog.ask(msg, { title: 'arkiv' }); }
-  catch(e) { return false; }
+  if (isTauri) {
+    try { return await window.__TAURI__.dialog.ask(msg, { title: 'arkiv' }); }
+    catch(e) {}
+  }
+  return confirm(msg);
+}
+async function nativeOpenPath(filePath) {
+  if (isTauri) {
+    const { openPath } = window.__TAURI__.opener;
+    await openPath(filePath);
+  } else {
+    // Browser fallback: copy path to clipboard
+    await navigator.clipboard.writeText(filePath);
+    alert('路徑已複製到剪貼簿：\n' + filePath);
+  }
+}
+async function nativePickFolder() {
+  if (isTauri) {
+    const { open } = window.__TAURI__.dialog;
+    return await open({ directory: true, title: '選擇素材資料夾' });
+  }
+  return prompt('輸入素材資料夾路徑：\n\n例如：/Volumes/SSD/影片/\n或 ~/Movies/rushes/');
 }
 function showLimitModal(total, newCount) {
   return new Promise((resolve) => {
@@ -666,32 +691,23 @@ async function doExportGoodEdl() {
 async function doOpenFile(id) {
   const rec = state.items.find(r => r.id === id) || state.selectedRec;
   if (rec && rec.path) {
-    try {
-      const { openPath } = window.__TAURI__.opener;
-      await openPath(rec.path);
-    } catch(e) {
-      await tauriMessage('無法開啟檔案：' + e.message);
-    }
+    try { await nativeOpenPath(rec.path); }
+    catch(e) { await tauriMessage('無法開啟檔案：' + e.message); }
   }
 }
 
 async function doPlayMedia(id) {
   const rec = state.items.find(r => r.id === id) || state.selectedRec;
   if (rec && rec.path) {
-    try {
-      const { openPath } = window.__TAURI__.opener;
-      await openPath(rec.path);
-    } catch(e) {
-      await tauriMessage('無法播放：' + e.message);
-    }
+    try { await nativeOpenPath(rec.path); }
+    catch(e) { await tauriMessage('無法播放：' + e.message); }
   }
 }
 
 async function doAddMediaFolder() {
   let path;
   try {
-    const { open } = window.__TAURI__.dialog;
-    path = await open({ directory: true, title: '選擇素材資料夾' });
+    path = await nativePickFolder();
   } catch(e) {
     await tauriMessage('無法開啟資料夾選擇器：' + e.message);
     return;
