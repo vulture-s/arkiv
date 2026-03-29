@@ -8,9 +8,25 @@
 document.title = 'DEBUG: JS runs! isTauri=' + !!(window.__TAURI__);
 document.addEventListener('DOMContentLoaded', function() {
   var d = document.createElement('div');
-  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:lime;color:black;padding:12px;font-size:14px;font-family:monospace';
-  d.textContent = 'DEBUG OK | __TAURI__=' + !!(window.__TAURI__) + ' | ' + new Date().toISOString();
+  d.id = 'dbgBar';
+  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:lime;color:black;padding:8px;font-size:11px;font-family:monospace;max-height:120px;overflow:auto';
+  d.textContent = 'INIT | __TAURI__=' + !!(window.__TAURI__);
   document.body.prepend(d);
+
+  // Test fetch API directly
+  fetch('/api/media?offset=0&limit=3&sort=date')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      d.textContent += ' | FETCH OK: ' + data.items.length + ' items, total=' + data.total;
+      // Check if refresh function exists
+      d.textContent += ' | refresh=' + (typeof refresh);
+      d.textContent += ' | renderGrid=' + (typeof renderGrid);
+      d.textContent += ' | state=' + (typeof state !== 'undefined' ? 'items=' + (state.items||[]).length : 'UNDEF');
+    })
+    .catch(function(e) {
+      d.style.background = 'red'; d.style.color = 'white';
+      d.textContent += ' | FETCH FAIL: ' + e.message;
+    });
 });
 </script>
 <script src="https://cdn.tailwindcss.com"></script>
