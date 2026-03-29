@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:8501 ws://localhost:8501; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' http://localhost:8501 data:"
+      "csp": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:"
     }
   },
   "bundle": {
