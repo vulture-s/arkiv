@@ -271,6 +271,20 @@ function toggleTheme() {
 const API = '';
 const PAGE_SIZE = 50;
 
+// ── DEBUG: visual error overlay ──────────────────────────────────────
+window.onerror = function(msg, src, line, col, err) {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:red;color:white;padding:8px;font-size:12px;font-family:monospace;white-space:pre-wrap';
+  d.textContent = `JS ERROR: ${msg}\n  at ${src}:${line}:${col}\n  ${err?.stack||''}`;
+  document.body.appendChild(d);
+};
+window.addEventListener('unhandledrejection', function(e) {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:orange;color:black;padding:8px;font-size:12px;font-family:monospace;white-space:pre-wrap';
+  d.textContent = `PROMISE REJECT: ${e.reason?.message||e.reason}\n${e.reason?.stack||''}`;
+  document.body.appendChild(d);
+});
+
 // ── Tauri Detection + Dialog Helpers ──────────────────────────────────
 const isTauri = !!(window.__TAURI__);
 
