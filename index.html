@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Media Asset Manager</title>
+<script>
+document.title = 'DEBUG: JS runs! isTauri=' + !!(window.__TAURI__);
+document.addEventListener('DOMContentLoaded', function() {
+  var d = document.createElement('div');
+  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:lime;color:black;padding:12px;font-size:14px;font-family:monospace';
+  d.textContent = 'DEBUG OK | __TAURI__=' + !!(window.__TAURI__) + ' | ' + new Date().toISOString();
+  document.body.prepend(d);
+});
+</script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 tailwind.config = {
