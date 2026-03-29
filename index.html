@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
   var d = document.createElement('div');
   d.id = 'dbgBar';
   d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:lime;color:black;padding:8px;font-size:11px;font-family:monospace;max-height:120px;overflow:auto';
-  d.textContent = 'INIT | __TAURI__=' + !!(window.__TAURI__);
+  d.textContent = 'INIT | __TAURI__=' + !!(window.__TAURI__) + ' | tailwind=' + (typeof tailwind);
   document.body.prepend(d);
 
   // Test fetch API directly
@@ -293,6 +293,7 @@ function toggleTheme() {
 </footer>
 
 <script>
+try {
 const API = '';
 const PAGE_SIZE = 50;
 
@@ -942,6 +943,10 @@ document.getElementById('searchInput').addEventListener('input', e => {
 
 // ── Init ────────────────────────────────────────────────────────────────────
 refresh().catch(e => console.error('[arkiv] init failed:', e));
+} catch(_mainErr) {
+  var _b = document.getElementById('dbgBar');
+  if(_b) { _b.style.background='red'; _b.style.color='white'; _b.textContent += ' | MAIN SCRIPT ERROR: ' + _mainErr.message + ' | stack: ' + (_mainErr.stack||'').split('\n').slice(0,3).join(' > '); }
+}
 </script>
 </body>
 </html>
