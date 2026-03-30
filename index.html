@@ -532,10 +532,8 @@ async function renderInspector() {
       </button>
     </div>
 
-    <div class="px-3 mt-2"><div class="filmstrip">${filmstripFrames()}</div></div>
-
-    <div class="px-3 mt-1">
-      <div class="waveform" id="inspectorWaveform"><div class="waveform-selected"></div><div class="waveform-bars">${waveformBars()}</div><div class="waveform-marker-in"></div><div class="waveform-marker-out"></div></div>
+    <div class="px-3 mt-2">
+      <div class="waveform" id="inspectorWaveform" title="Click to seek (waveform data coming soon)"><div class="waveform-selected"></div><div class="waveform-bars">${waveformBars()}</div><div class="waveform-marker-in"></div><div class="waveform-marker-out"></div></div>
       <div class="flex justify-between mt-1 text-2xs font-mono"><span class="text-success" id="inTimeDisplay">IN ${fmtHMS(0)}</span><span class="text-txt-tertiary" id="currentTimeDisplay">${dur}</span><span class="text-danger" id="outTimeDisplay">OUT ${durHMS}</span></div>
     </div>
 
@@ -778,7 +776,7 @@ async function doPlayMedia(id) {
   vid.src = '/api/stream/' + id;
   vid.autoplay = true;
   vid.volume = 0.8;
-  vid.style.cssText = 'width:100%;height:auto;max-height:280px;object-fit:contain;background:#000;position:relative;z-index:4;display:block';
+  vid.style.cssText = 'width:100%;height:auto;max-height:400px;object-fit:contain;background:#000;position:relative;z-index:4;display:block';
   container.appendChild(vid);
 
   // Minimal controls (play/pause + volume only — seek via waveform)
