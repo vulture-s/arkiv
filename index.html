@@ -116,6 +116,7 @@ window.onunhandledrejection = function(e) {
   .waveform-marker-in { background: #22c55e; left: 15%; }
   .waveform-marker-out { background: #ef4444; left: 72%; }
   .waveform-selected { position: absolute; top: 0; bottom: 0; background: #22c55e10; left: 15%; width: 57%; border-left: 1px solid #22c55e60; border-right: 1px solid #ef444460; }
+  .waveform-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #ffffff; z-index: 5; pointer-events: none; left: 0%; }
 
   .tag-input { width: 100%; height: 22px; background: #f5f5f7; border: 1px solid #e0e0e4; border-radius: 4px; padding: 0 6px; font-size: 10px; color: #1a1a1e; outline: none; }
   .dark .tag-input { background: #1a1a1e; border-color: #2e2e34; color: #e4e4e7; }
@@ -180,11 +181,15 @@ window.onunhandledrejection = function(e) {
 
   <div class="flex items-center gap-0.5 ml-2 bg-surface-50 rounded-md p-0.5 shrink-0">
     <button class="view-btn active" title="Grid" onclick="setView('grid')">
-      <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+      <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16" style="width:14px;height:14px"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
     </button>
     <button class="view-btn" title="List" onclick="setView('list')">
-      <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="2.5" rx="0.5"/><rect x="1" y="6.75" width="14" height="2.5" rx="0.5"/><rect x="1" y="11.5" width="14" height="2.5" rx="0.5"/></svg>
+      <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16" style="width:14px;height:14px"><rect x="1" y="2" width="14" height="2.5" rx="0.5"/><rect x="1" y="6.75" width="14" height="2.5" rx="0.5"/><rect x="1" y="11.5" width="14" height="2.5" rx="0.5"/></svg>
     </button>
+    <span class="text-panel-border mx-0.5">|</span>
+    <button class="view-btn" title="Fewer columns" onclick="setGridCols(Math.max(2,gridCols-1))" style="font-size:14px;line-height:1;padding:2px 6px">−</button>
+    <span class="text-2xs text-txt-tertiary" id="colsLabel" style="min-width:16px;text-align:center">4</span>
+    <button class="view-btn" title="More columns" onclick="setGridCols(Math.min(8,gridCols+1))" style="font-size:14px;line-height:1;padding:2px 6px">+</button>
   </div>
 
   <button class="export-btn ml-1.5 shrink-0" title="Export GOOD takes as EDL" onclick="doExportGoodEdl()">
@@ -238,7 +243,7 @@ function toggleTheme() {
       </div>
     </div>
     <div class="flex-1 overflow-y-auto p-2">
-      <div class="grid grid-cols-4 gap-2" id="mediaGrid"></div>
+      <div class="grid gap-2" id="mediaGrid" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
     </div>
     <div class="h-6 flex items-center justify-center gap-3 border-t border-panel-border text-2xs text-txt-tertiary shrink-0" id="pagination"></div>
   </main>
@@ -333,6 +338,7 @@ function showLimitModal(total, newCount) {
 var VIDEO_EXT = ['.mp4','.mov','.m4v','.mts'];
 var AUDIO_EXT = ['.wav','.mp3','.m4a','.aac'];
 
+var gridCols = 4;
 var state = { items: [], total: 0, page: 0, selectedId: null, selectedRec: null, allTags: [],
   filters: { type: 'all', rating: null, lang: null }, sort: 'date', query: '', view: 'grid' };
 
@@ -363,11 +369,11 @@ function rBadge(r) {
 function tagHtml(tags) { return (tags||[]).map(t=>`<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${t.name}</span>`).join(' '); }
 function thumbUrl(rec) { if(rec.thumbnail_path){ return `/thumbnails/${rec.thumbnail_path.split('/').pop()}`; } return null; }
 
-var videoSvg = '<svg class="w-8 h-8 text-txt-tertiary/30" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"/></svg>';
-var audioSvg = '<svg class="w-8 h-8 text-warning/40" fill="currentColor" viewBox="0 0 20 20"><path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"/></svg>';
-var videoSmall = '<svg class="w-3 h-3 text-txt-tertiary shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/></svg>';
-var videoSmallActive = '<svg class="w-3 h-3 text-accent shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/></svg>';
-var audioSmall = '<svg class="w-3 h-3 text-warning shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"/></svg>';
+var videoSvg = '<svg class="w-8 h-8 text-txt-tertiary/30" fill="currentColor" viewBox="0 0 20 20" style="width:32px;height:32px"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"/></svg>';
+var audioSvg = '<svg class="w-8 h-8 text-warning/40" fill="currentColor" viewBox="0 0 20 20" style="width:32px;height:32px"><path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"/></svg>';
+var videoSmall = '<svg class="w-3 h-3 text-txt-tertiary shrink-0" fill="currentColor" viewBox="0 0 20 20" style="width:12px;height:12px"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/></svg>';
+var videoSmallActive = '<svg class="w-3 h-3 text-accent shrink-0" fill="currentColor" viewBox="0 0 20 20" style="width:12px;height:12px"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4z"/></svg>';
+var audioSmall = '<svg class="w-3 h-3 text-warning shrink-0" fill="currentColor" viewBox="0 0 20 20" style="width:12px;height:12px"><path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"/></svg>';
 
 function waveformBars() {
   const heights = [30,45,60,40,75,55,80,90,70,85,65,50,75,95,80,60,45,70,55,85,90,75,60,40,55,70,80,65,50,35,45,60,75,55,40,30];
@@ -409,10 +415,10 @@ function renderPool(items) {
   const el = document.getElementById('mediaPool');
   const videos = items.filter(i=>mediaType(i.ext)==='video');
   const audios = items.filter(i=>mediaType(i.ext)==='audio');
-  let h = '';
+  var h = '';
   if(videos.length) {
     h += `<div class="collapse-toggle flex items-center gap-1.5 px-3 py-1 text-2xs text-txt-tertiary uppercase tracking-wider">
-      <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 10 10"><path d="M3 2l5 3-5 3z"/></svg>Video<span class="ml-auto text-txt-tertiary">${videos.length}</span></div>`;
+      <svg fill="currentColor" viewBox="0 0 10 10" style="width:10px;height:10px"><path d="M3 2l5 3-5 3z"/></svg>Video <span class="ml-auto text-txt-tertiary">(${videos.length})</span></div>`;
     videos.forEach(v => {
       var active = v.id===state.selectedId;
       var icon = active ? videoSmallActive : videoSmall;
@@ -429,7 +435,7 @@ function renderPool(items) {
   }
   if(audios.length) {
     h += `<div class="collapse-toggle flex items-center gap-1.5 px-3 py-1 mt-1 text-2xs text-txt-tertiary uppercase tracking-wider">
-      <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 10 10"><path d="M3 2l5 3-5 3z"/></svg>Audio<span class="ml-auto text-txt-tertiary">${audios.length}</span></div>`;
+      <svg fill="currentColor" viewBox="0 0 10 10" style="width:10px;height:10px"><path d="M3 2l5 3-5 3z"/></svg>Audio <span class="ml-auto text-txt-tertiary">(${audios.length})</span></div>`;
     audios.forEach(a => {
       var active = a.id===state.selectedId;
       var badge = rBadge(a.rating);
@@ -492,8 +498,11 @@ function renderContentTitle() {
 }
 
 async function renderInspector() {
-  const content = document.getElementById('inspectorContent');
-  const actions = document.getElementById('inspectorActions');
+  // Fix 7: Safari video cleanup — prevent connection leak
+  var oldVid = document.getElementById('arkivPlayer');
+  if (oldVid) { oldVid.pause(); oldVid.removeAttribute('src'); oldVid.load(); }
+  var content = document.getElementById('inspectorContent');
+  var actions = document.getElementById('inspectorActions');
   if(!state.selectedRec) {
     content.innerHTML = '<div class="flex items-center justify-center h-full text-txt-tertiary text-xs">Select a media asset</div>';
     actions.innerHTML = '';
@@ -527,7 +536,7 @@ async function renderInspector() {
 
     <div class="px-3 mt-1">
       <div class="waveform"><div class="waveform-selected"></div><div class="waveform-bars">${waveformBars()}</div><div class="waveform-marker-in"></div><div class="waveform-marker-out"></div></div>
-      <div class="flex justify-between mt-1 text-2xs font-mono"><span class="text-success">IN ${fmtHMS(0)}</span><span class="text-txt-tertiary">${dur}</span><span class="text-danger">OUT ${durHMS}</span></div>
+      <div class="flex justify-between mt-1 text-2xs font-mono"><span class="text-success" id="inTimeDisplay">IN ${fmtHMS(0)}</span><span class="text-txt-tertiary" id="currentTimeDisplay">${dur}</span><span class="text-danger" id="outTimeDisplay">OUT ${durHMS}</span></div>
     </div>
 
     <div class="px-3 mt-3">
@@ -740,38 +749,85 @@ async function doOpenFile(id) {
 }
 
 async function doPlayMedia(id) {
-  var rec = state.items.find(r => r.id === id) || state.selectedRec;
+  var rec = state.items.find(function(r){return r.id===id}) || state.selectedRec;
   if (!rec) return;
   var container = document.getElementById('inspectorPreview');
-  if (container) {
-    container.style.background = '#000';
-    container.innerHTML = `
-      <video id="arkivPlayer" src="/api/stream/${id}" autoplay
-        style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000"></video>
-      <div id="playerControls" style="position:absolute;bottom:0;left:0;right:0;z-index:5;background:linear-gradient(transparent,rgba(0,0,0,0.8));padding:6px 8px;display:flex;align-items:center;gap:6px">
-        <button onclick="var v=document.getElementById('arkivPlayer');v.paused?v.play():v.pause()" style="background:none;border:none;cursor:pointer;padding:0">
-          <svg width="16" height="16" fill="#fff" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
-        </button>
-        <input type="range" id="playerSeek" min="0" max="100" value="0" style="flex:1;height:4px;accent-color:#3b82f6;cursor:pointer" oninput="var v=document.getElementById('arkivPlayer');v.currentTime=v.duration*(this.value/100)"/>
-        <span id="playerTime" style="color:#a1a1aa;font-size:10px;font-family:monospace;min-width:40px">0:00</span>
-        <input type="range" id="playerVol" min="0" max="100" value="80" style="width:50px;height:4px;accent-color:#3b82f6;cursor:pointer" oninput="document.getElementById('arkivPlayer').volume=this.value/100"/>
-      </div>`;
-    var vid = document.getElementById('arkivPlayer');
-    vid.volume = 0.8;
-    vid.ontimeupdate = function() {
-      var pct = vid.duration ? (vid.currentTime / vid.duration * 100) : 0;
-      document.getElementById('playerSeek').value = pct;
-      var s = Math.floor(vid.currentTime), m = Math.floor(s/60); s = s%60;
-      document.getElementById('playerTime').textContent = m + ':' + (s<10?'0':'') + s;
-    };
-    vid.onplay = function() { document.querySelector('#playerControls button svg').innerHTML = '<rect x="5" y="3" width="3" height="14" fill="#fff"/><rect x="12" y="3" width="3" height="14" fill="#fff"/>'; };
-    vid.onpause = function() { document.querySelector('#playerControls button svg').innerHTML = '<path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" fill="#fff"/>'; };
+  if (!container) {
+    if (rec.path) { try { await nativeOpenPath(rec.path); } catch(e) { await tauriMessage('無法播放：' + e.message); } }
     return;
   }
-  if (rec.path) {
-    try { await nativeOpenPath(rec.path); }
-    catch(e) { await tauriMessage('無法播放：' + e.message); }
+  // Hide play button + gradient, keep thumbnail as poster
+  var playBtn = container.querySelector('button');
+  if (playBtn) playBtn.style.display = 'none';
+  var grad = container.querySelectorAll('[style*="z-index:2"]');
+  grad.forEach(function(el){ el.style.display = 'none'; });
+
+  // Create video overlay
+  var vid = document.createElement('video');
+  vid.id = 'arkivPlayer';
+  vid.src = '/api/stream/' + id;
+  vid.autoplay = true;
+  vid.volume = 0.8;
+  vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:4';
+  container.appendChild(vid);
+
+  // Minimal controls (play/pause + volume only — seek via waveform)
+  var ctrl = document.createElement('div');
+  ctrl.id = 'playerControls';
+  ctrl.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:5;background:linear-gradient(transparent,rgba(0,0,0,0.7));padding:4px 8px;display:flex;align-items:center;gap:6px';
+  ctrl.innerHTML = '<button id="ppBtn" style="background:none;border:none;cursor:pointer;padding:0"><svg width="14" height="14" fill="#fff" viewBox="0 0 20 20" style="width:14px;height:14px"><rect x="5" y="3" width="3" height="14"/><rect x="12" y="3" width="3" height="14"/></svg></button>'
+    + '<span id="playerTime" style="color:#a1a1aa;font-size:10px;font-family:monospace;flex:1">0:00</span>'
+    + '<input type="range" id="playerVol" min="0" max="100" value="80" style="width:50px;height:3px;accent-color:#3b82f6;cursor:pointer"/>';
+  container.appendChild(ctrl);
+
+  // Play/pause toggle
+  document.getElementById('ppBtn').onclick = function(){ vid.paused ? vid.play() : vid.pause(); };
+  document.getElementById('playerVol').oninput = function(){ vid.volume = this.value / 100; };
+
+  // Waveform playhead + seek
+  var waveform = document.querySelector('.waveform');
+  if (waveform) {
+    var playhead = document.createElement('div');
+    playhead.className = 'waveform-playhead';
+    waveform.appendChild(playhead);
+    waveform.style.cursor = 'pointer';
+    waveform.onclick = function(e) {
+      if (!vid.duration) return;
+      var rect = this.getBoundingClientRect();
+      var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      vid.currentTime = vid.duration * pct;
+    };
   }
+
+  // Sync timeupdate → waveform playhead + time displays
+  vid.ontimeupdate = function() {
+    var pct = vid.duration ? (vid.currentTime / vid.duration * 100) : 0;
+    if (playhead) playhead.style.left = pct + '%';
+    var el = document.getElementById('currentTimeDisplay');
+    if (el) el.textContent = fmtHMS(vid.currentTime);
+    var pt = document.getElementById('playerTime');
+    if (pt) { var s = Math.floor(vid.currentTime), m = Math.floor(s/60); s = s%60; pt.textContent = m + ':' + (s<10?'0':'') + s; }
+  };
+  vid.onplay = function() {
+    var svg = document.querySelector('#ppBtn svg');
+    if (svg) svg.innerHTML = '<rect x="5" y="3" width="3" height="14" fill="#fff"/><rect x="12" y="3" width="3" height="14" fill="#fff"/>';
+  };
+  vid.onpause = function() {
+    var svg = document.querySelector('#ppBtn svg');
+    if (svg) svg.innerHTML = '<path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" fill="#fff"/>';
+  };
+  // Error handling — restore thumbnail on stream failure
+  vid.onerror = function() {
+    vid.remove();
+    if (ctrl) ctrl.remove();
+    if (playBtn) playBtn.style.display = '';
+    grad.forEach(function(el){ el.style.display = ''; });
+    var errDiv = document.createElement('div');
+    errDiv.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:4;background:rgba(0,0,0,0.7)';
+    errDiv.innerHTML = '<div style="text-align:center;color:#f87171;font-size:12px"><div style="font-size:20px;margin-bottom:4px">&#9888;</div>串流失敗 — 檔案可能不存在</div>';
+    container.appendChild(errDiv);
+    setTimeout(function(){ errDiv.remove(); }, 3000);
+  };
 }
 
 async function doAddMediaFolder() {
@@ -921,11 +977,23 @@ async function doReIngest(id) {
 
 function setView(v) {
   state.view = v;
-  document.querySelectorAll('.view-btn').forEach(b=>b.classList.remove('active'));
-  document.querySelector(`.view-btn[title="${v==='grid'?'Grid':'List'}"]`).classList.add('active');
-  const grid = document.getElementById('mediaGrid');
-  grid.className = v==='grid' ? 'grid grid-cols-4 gap-2' : 'flex flex-col gap-1';
+  document.querySelectorAll('.view-btn[title="Grid"],.view-btn[title="List"]').forEach(function(b){b.classList.remove('active')});
+  var sel = document.querySelector('.view-btn[title="' + (v==='grid'?'Grid':'List') + '"]');
+  if (sel) sel.classList.add('active');
+  var grid = document.getElementById('mediaGrid');
+  grid.className = v==='grid' ? 'grid gap-2' : 'flex flex-col gap-1';
+  if (v==='grid') grid.style.gridTemplateColumns = 'repeat(' + gridCols + ', minmax(0, 1fr))';
+  else grid.style.gridTemplateColumns = '';
   renderGrid();
+}
+function setGridCols(n) {
+  gridCols = n;
+  var label = document.getElementById('colsLabel');
+  if (label) label.textContent = n;
+  if (state.view === 'grid') {
+    var grid = document.getElementById('mediaGrid');
+    grid.style.gridTemplateColumns = 'repeat(' + n + ', minmax(0, 1fr))';
+  }
 }
 
 async function refresh() {
