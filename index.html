@@ -272,13 +272,22 @@ async function tauriAsk(msg) {
 }
 async function nativeOpenPath(filePath) {
   if (isTauri) {
-    const { openPath } = window.__TAURI__.opener;
-    await openPath(filePath);
-  } else {
-    // Browser fallback: copy path to clipboard
-    await navigator.clipboard.writeText(filePath);
-    alert('路徑已複製到剪貼簿：\n' + filePath);
+    try {
+      // Try opener plugin
+      if (window.__TAURI__.opener && window.__TAURI__.opener.openPath) {
+        await window.__TAURI__.opener.openPath(filePath);
+        return;
+      }
+      // Fallback: core invoke
+      if (window.__TAURI__.core) {
+        await window.__TAURI__.core.invoke('plugin:opener|open_path', { path: filePath });
+        return;
+      }
+    } catch(e) { console.log('openPath err:', e); }
   }
+  // Browser/fallback: copy path to clipboard
+  try { await navigator.clipboard.writeText(filePath); } catch(e) {}
+  alert('路徑已複製到剪貼簿：\n' + filePath);
 }
 async function nativePickFolder() {
   if (isTauri) {
