@@ -27,7 +27,7 @@ def probe(path: str) -> dict | None:
         "-print_format", "json",
         "-show_streams", "-show_format", path
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         return None
     try:
@@ -178,7 +178,7 @@ def main():
             print(f" [ERROR: {e}]")
             failed += 1
 
-    print(f"\nDone. ✓ {ok}  skip {skipped}  fail {failed}")
+    print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}")
     print(f"DB: {db.DB_PATH}")
 
 
