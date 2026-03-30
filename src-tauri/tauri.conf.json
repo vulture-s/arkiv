@@ -8,6 +8,7 @@
     "frontendDist": "../index.html"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "arkiv — Media Asset Manager",
