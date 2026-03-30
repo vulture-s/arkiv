@@ -500,15 +500,22 @@ async function renderInspector() {
   ).join('');
 
   content.innerHTML = `
-    <div class="thumb-placeholder aspect-video relative mx-3 mt-3 rounded-md overflow-hidden">
-      ${thumb ? `<img src="${thumb}" class="w-full h-full object-cover" onerror="this.style.display='none'"/>` : ''}
-      <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-      ${!thumb ? `<div class="absolute inset-0 flex items-center justify-center">${isAudio?audioSvg:videoSvg}</div>` : ''}
-      <button class="absolute inset-0 flex items-center justify-center" onclick="doPlayMedia(${rec.id})">
-        <div class="w-10 h-10 bg-white/20 backdrop-blur rounded-full flex items-center justify-center hover:bg-white/30 transition">
-          <svg class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
-        </div>
-      </button>
+    <div class="aspect-video relative mx-3 mt-3 rounded-md overflow-hidden bg-black" id="inspectorPreview">
+      <video id="inspectorVideo" class="w-full h-full" controls preload="metadata"
+        poster="${thumb||''}" src="/api/stream/${rec.id}"
+        style="display:none; background:#000;">
+      </video>
+      ${!isAudio ? `
+      <div id="inspectorThumb" class="absolute inset-0">
+        ${thumb ? `<img src="${thumb}" class="w-full h-full object-cover"/>` : `<div class="w-full h-full flex items-center justify-center">${videoSvg}</div>`}
+        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+        <button class="absolute inset-0 flex items-center justify-center" onclick="startPreview(${rec.id})">
+          <div class="w-10 h-10 bg-white/20 backdrop-blur rounded-full flex items-center justify-center hover:bg-white/30 transition">
+            <svg class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
+          </div>
+        </button>
+      </div>` : `
+      <audio controls class="w-full mt-2" src="/api/stream/${rec.id}" preload="metadata"></audio>`}
     </div>
 
     <div class="px-3 mt-2"><div class="filmstrip">${filmstripFrames()}</div></div>
@@ -699,6 +706,13 @@ async function doOpenFile(id) {
     try { await nativeOpenPath(rec.path); }
     catch(e) { await tauriMessage('無法開啟檔案：' + e.message); }
   }
+}
+
+function startPreview(id) {
+  const thumbEl = document.getElementById('inspectorThumb');
+  const videoEl = document.getElementById('inspectorVideo');
+  if (thumbEl) thumbEl.style.display = 'none';
+  if (videoEl) { videoEl.style.display = 'block'; videoEl.play(); }
 }
 
 async function doPlayMedia(id) {
