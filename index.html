@@ -767,17 +767,16 @@ async function doPlayMedia(id) {
     if (rec.path) { try { await nativeOpenPath(rec.path); } catch(e) { await tauriMessage('無法播放：' + e.message); } }
     return;
   }
-  // Replace preview with fixed-size video player
+  // Keep container's aspect-ratio + max-height, just swap content
   container.innerHTML = '';
-  container.className = '';
-  container.style.cssText = 'position:relative;margin:12px;border-radius:6px;overflow:hidden;background:#000;height:200px';
+  container.style.background = '#000';
 
   var vid = document.createElement('video');
   vid.id = 'arkivPlayer';
   vid.src = '/api/stream/' + id;
   vid.autoplay = true;
   vid.volume = 0.8;
-  vid.style.cssText = 'width:100%;height:100%;object-fit:contain';
+  vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
   container.appendChild(vid);
 
   // Minimal controls (play/pause + volume only — seek via waveform)
