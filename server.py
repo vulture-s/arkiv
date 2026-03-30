@@ -595,6 +595,30 @@ def serve_tailwind_static():
     return Response(content=b"/* tailwind-static.css not found */", media_type="text/css")
 
 
+# ── Video Streaming ──────────────────────────────────────────────────────────
+
+from fastapi.responses import StreamingResponse
+import mimetypes
+
+@app.get("/api/stream/{media_id}")
+def stream_media(media_id: int):
+    """Stream a media file with range request support for seeking."""
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "Media not found")
+    file_path = Path(rec["path"])
+    if not file_path.exists():
+        raise HTTPException(404, f"File not found: {file_path}")
+    mime, _ = mimetypes.guess_type(str(file_path))
+    if not mime:
+        mime = "video/mp4"
+    return FileResponse(
+        path=str(file_path),
+        media_type=mime,
+        filename=file_path.name,
+    )
+
+
 # ── Serve Frontend ───────────────────────────────────────────────────────────
 
 # Dev mode: always read fresh index.html (no cache)
