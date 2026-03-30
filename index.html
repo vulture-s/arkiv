@@ -232,7 +232,7 @@ function toggleTheme() {
       <button class="text-txt-tertiary hover:text-txt-primary" onclick="doAddMediaFolder()" title="Ingest folder"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg></button>
     </div>
     <div class="flex-1 overflow-y-auto py-1" id="mediaPool"></div>
-    <div class="border-t border-panel-border px-3 py-1.5 text-2xs text-txt-tertiary shrink-0" id="poolStats"></div>
+    <div class="border-t border-panel-border px-3 py-1.5 text-txt-tertiary shrink-0" id="poolStats" style="font-size:0.7rem;line-height:1.4"></div>
   </aside>
 
   <div class="panel-resize bg-panel-border" id="resizeLeft"></div>
@@ -668,9 +668,9 @@ async function renderAnalytics() {
     document.getElementById('headerStats').innerHTML = `<span>${stats.total} files</span><span>·</span><span class="text-success">${r.good||0} GOOD</span><span>·</span><span class="text-danger">${r.ng||0} NG</span>`;
 
     document.getElementById('poolStats').innerHTML = `
-      <div class="flex justify-between"><span>Total</span><span>${stats.total} files</span></div>
-      <div class="flex justify-between"><span>GOOD</span><span class="text-success">${r.good||0} (${goodPct}%)</span></div>
-      <div class="flex justify-between"><span>NG</span><span class="text-danger">${r.ng||0} (${ngPct}%)</span></div>
+      <div class="flex justify-between" style="margin-bottom:2px"><span>Total</span><span>${stats.total} files</span></div>
+      <div class="flex justify-between" style="margin-bottom:2px"><span>GOOD</span><span class="text-success">${r.good||0} (${goodPct}%)</span></div>
+      <div class="flex justify-between" style="margin-bottom:2px"><span>NG</span><span class="text-danger">${r.ng||0} (${ngPct}%)</span></div>
       <div class="flex justify-between"><span>Unrated</span><span>${r.unrated||0}</span></div>`;
   } catch(e) { console.error(e); }
 }

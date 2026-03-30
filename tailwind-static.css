@@ -150,7 +150,7 @@ html.dark {
 /* ===== TYPOGRAPHY ===== */
 .text-xs { font-size: 0.75rem; line-height: 1rem; }
 .text-sm { font-size: 0.875rem; line-height: 1.25rem; }
-.text-2xs { font-size: 10px; line-height: 14px; }
+.text-2xs { font-size: 0.625rem; line-height: 0.875rem; }
 .text-center { text-align: center; }
 .text-left { text-align: left; }
 .font-sans { font-family: Inter, -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
