@@ -628,6 +628,16 @@ def _load_index() -> str:
         return index.read_text(encoding="utf-8")
     return "<h1>arkiv</h1><p>index.html not found</p>"
 
+@app.post("/api/client-log")
+async def client_log(request: __import__('starlette.requests', fromlist=['Request']).Request):
+    """Receive client-side logs (errors, info) and print to server terminal."""
+    body = await request.json()
+    level = body.get("level", "info").upper()
+    msg = body.get("msg", "")
+    print(f"[WebView {level}] {msg}", flush=True)
+    return {"ok": True}
+
+
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
     return _load_index()
