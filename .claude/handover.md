@@ -61,6 +61,19 @@ cd ~/.arkiv && git add -A && git commit -m "描述" && git push
 | ingest.py | rotation metadata 處理 |
 | media.db | 3 筆素材（1 橫幅 + 2 直幅），dimension 已修正 |
 
+## Mac 快照（明天 PC 端對照用）
+- **Tag**: `mac-snapshot-20260331`
+- **Commit**: `f913fd9`
+- **Repo**: `github.com/ourladypeace2011-commits/arkiv`
+
+```bash
+# PC 端同步
+cd ~/.arkiv
+git pull
+git log mac-snapshot-20260331..HEAD   # 看 PC 之後多了什麼
+git diff mac-snapshot-20260331        # 對比差異
+```
+
 ## Environment
 - Server: uvicorn port 8501 (--reload)
 - Tauri: cargo tauri dev
