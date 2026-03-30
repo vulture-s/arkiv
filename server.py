@@ -606,7 +606,7 @@ def serve_tailwind_static():
     css_path = ROOT / "tailwind-static.css"
     if css_path.exists():
         return Response(content=css_path.read_bytes(), media_type="text/css",
-                        headers={"Cache-Control": "public, max-age=86400"})
+                        headers={"Cache-Control": "no-cache"})
     return Response(content=b"/* tailwind-static.css not found */", media_type="text/css")
 
 
