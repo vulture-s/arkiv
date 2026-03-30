@@ -19,7 +19,10 @@ EMBED_MODEL = os.getenv("ARKIV_EMBED_MODEL", "nomic-embed-text")
 VISION_MODEL = os.getenv("ARKIV_VISION_MODEL", "llava:7b")
 
 # ── Whisper ──────────────────────────────────────────────────────────────────
-WHISPER_MODEL = os.getenv("ARKIV_WHISPER_MODEL", "mlx-community/whisper-large-v3-mlx")
+import platform as _plat
+_IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
+_DEFAULT_WHISPER = "mlx-community/whisper-large-v3-mlx" if _IS_MLX else "large-v3"
+WHISPER_MODEL = os.getenv("ARKIV_WHISPER_MODEL", _DEFAULT_WHISPER)
 
 # ── Server ───────────────────────────────────────────────────────────────────
 HOST = os.getenv("ARKIV_HOST", "0.0.0.0")
