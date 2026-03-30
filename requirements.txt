@@ -11,11 +11,23 @@ pandas>=1.5
 pillow>=9.0
 
 # ── Platform-specific Whisper (install ONE) ──────────────
-# macOS Apple Silicon:
+#
+# macOS Apple Silicon (recommended):
 #   pip install mlx-whisper
-# NVIDIA GPU / CPU (Docker default):
+#   Uses Metal GPU — fastest on Apple Silicon
+#
+# NVIDIA GPU (CUDA):
+#   pip install faster-whisper torch
+#   Requires CUDA toolkit; torch enables GPU acceleration
+#
+# CPU only (Docker default):
 #   pip install faster-whisper
+#   No GPU needed, slower but works everywhere
+#
 faster-whisper>=1.0;platform_system!="Darwin"
+
+# ── CUDA / GPU support (install manually if needed) ──────
+# torch>=2.0              # Required for CUDA Whisper; skip on macOS (MLX)
 
 # ── Optional ─────────────────────────────────────────────
 # streamlit>=1.20          # Legacy Streamlit UI
