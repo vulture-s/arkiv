@@ -300,7 +300,11 @@ async function nativeOpenPath(filePath) {
 }
 async function nativePickFolder() {
   if (isTauri) {
+    console.log('__TAURI__ keys:', Object.keys(window.__TAURI__));
+    console.log('__TAURI__.dialog:', window.__TAURI__.dialog);
+    if (window.__TAURI__.dialog) console.log('dialog keys:', Object.keys(window.__TAURI__.dialog));
     const { open } = window.__TAURI__.dialog;
+    console.log('open fn:', open);
     return await open({ directory: true, title: '選擇素材資料夾' });
   }
   return prompt('輸入素材資料夾路徑：\n\n例如：/Volumes/SSD/影片/\n或 ~/Movies/rushes/');
