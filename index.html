@@ -535,7 +535,7 @@ async function renderInspector() {
     <div class="px-3 mt-2"><div class="filmstrip">${filmstripFrames()}</div></div>
 
     <div class="px-3 mt-1">
-      <div class="waveform"><div class="waveform-selected"></div><div class="waveform-bars">${waveformBars()}</div><div class="waveform-marker-in"></div><div class="waveform-marker-out"></div></div>
+      <div class="waveform" id="inspectorWaveform"><div class="waveform-selected"></div><div class="waveform-bars">${waveformBars()}</div><div class="waveform-marker-in"></div><div class="waveform-marker-out"></div></div>
       <div class="flex justify-between mt-1 text-2xs font-mono"><span class="text-success" id="inTimeDisplay">IN ${fmtHMS(0)}</span><span class="text-txt-tertiary" id="currentTimeDisplay">${dur}</span><span class="text-danger" id="outTimeDisplay">OUT ${durHMS}</span></div>
     </div>
 
@@ -741,11 +741,16 @@ async function doExportGoodEdl() {
 }
 
 async function doOpenFile(id) {
-  const rec = state.items.find(r => r.id === id) || state.selectedRec;
-  if (rec && rec.path) {
-    try { await nativeOpenPath(rec.path); }
-    catch(e) { await tauriMessage('無法開啟檔案：' + e.message); }
+  var rec = state.items.find(function(r){return r.id===id}) || state.selectedRec;
+  if (!rec || !rec.path) return;
+  if (isTauri) {
+    try { await nativeOpenPath(rec.path); return; } catch(e) {}
   }
+  // Browser: use server-side open (reveal in Finder)
+  try {
+    var r = await fetch('/api/open-file', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path:rec.path, reveal:true}) });
+    if (!r.ok) await tauriMessage('找不到檔案');
+  } catch(e) { await tauriMessage('開啟失敗：' + e.message); }
 }
 
 async function doPlayMedia(id) {
@@ -762,13 +767,18 @@ async function doPlayMedia(id) {
   var grad = container.querySelectorAll('[style*="z-index:2"]');
   grad.forEach(function(el){ el.style.display = 'none'; });
 
+  // Expand container for better video size
+  container.style.aspectRatio = '';
+  container.style.height = 'auto';
+  container.style.minHeight = '160px';
+
   // Create video overlay
   var vid = document.createElement('video');
   vid.id = 'arkivPlayer';
   vid.src = '/api/stream/' + id;
   vid.autoplay = true;
   vid.volume = 0.8;
-  vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:4';
+  vid.style.cssText = 'width:100%;height:auto;max-height:280px;object-fit:contain;background:#000;position:relative;z-index:4;display:block';
   container.appendChild(vid);
 
   // Minimal controls (play/pause + volume only — seek via waveform)
@@ -785,7 +795,7 @@ async function doPlayMedia(id) {
   document.getElementById('playerVol').oninput = function(){ vid.volume = this.value / 100; };
 
   // Waveform playhead + seek
-  var waveform = document.querySelector('.waveform');
+  var waveform = document.getElementById('inspectorWaveform');
   if (waveform) {
     var playhead = document.createElement('div');
     playhead.className = 'waveform-playhead';

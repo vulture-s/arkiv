@@ -643,6 +643,22 @@ def _load_index() -> str:
         return index.read_text(encoding="utf-8")
     return "<h1>arkiv</h1><p>index.html not found</p>"
 
+@app.post("/api/open-file")
+async def open_file(request: __import__('starlette.requests', fromlist=['Request']).Request):
+    """Open file in OS default app or reveal in Finder."""
+    import subprocess
+    body = await request.json()
+    file_path = body.get("path", "")
+    reveal = body.get("reveal", False)
+    if not Path(file_path).exists():
+        raise HTTPException(404, f"File not found: {file_path}")
+    if reveal:
+        subprocess.Popen(["open", "-R", file_path])
+    else:
+        subprocess.Popen(["open", file_path])
+    return {"ok": True}
+
+
 @app.post("/api/client-log")
 async def client_log(request: __import__('starlette.requests', fromlist=['Request']).Request):
     """Receive client-side logs (errors, info) and print to server terminal."""
