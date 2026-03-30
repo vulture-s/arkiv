@@ -525,7 +525,7 @@ async function renderInspector() {
   var previewRatio = isPortrait ? (rec.width + '/' + rec.height) : '16/9';
 
   content.innerHTML = `
-    <div class="thumb-placeholder relative mx-3 mt-3 rounded-md overflow-hidden" id="inspectorPreview" style="background:#0a0a0c;aspect-ratio:${previewRatio};max-height:${isPortrait?'360px':'240px'}"
+    <div class="thumb-placeholder relative mx-3 mt-3 rounded-md overflow-hidden" id="inspectorPreview" style="background:#0a0a0c;aspect-ratio:${previewRatio};max-height:${isPortrait?'360px':'240px'}">
       <div class="absolute inset-0 flex items-center justify-center">${isAudio?audioSvg:videoSvg}</div>
       ${thumb ? `<img src="${thumb}" class="absolute inset-0 w-full h-full object-cover" style="z-index:1" onerror="this.style.display='none'"/>` : ''}
       <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" style="z-index:2"></div>
