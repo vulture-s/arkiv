@@ -525,7 +525,8 @@ async function renderInspector() {
   var previewRatio = isPortrait ? (rec.width + '/' + rec.height) : '16/9';
 
   content.innerHTML = `
-    <div class="thumb-placeholder relative mx-3 mt-3 rounded-md overflow-hidden" id="inspectorPreview" style="background:#0a0a0c;aspect-ratio:${previewRatio};max-height:${isPortrait?'360px':'240px'}">
+    <div style="display:flex;justify-content:center;padding:12px 12px 0">
+    <div class="relative rounded-lg overflow-hidden" id="inspectorPreview" style="background:#0a0a0c;aspect-ratio:${previewRatio};max-height:${isPortrait?'360px':'240px'};width:100%;border:3px solid rgba(255,255,255,0.12);box-shadow:0 0 20px rgba(0,0,0,0.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)">
       <div class="absolute inset-0 flex items-center justify-center">${isAudio?audioSvg:videoSvg}</div>
       ${thumb ? `<img src="${thumb}" class="absolute inset-0 w-full h-full object-cover" style="z-index:1" onerror="this.style.display='none'"/>` : ''}
       <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" style="z-index:2"></div>
@@ -534,6 +535,7 @@ async function renderInspector() {
           <svg class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
         </div>
       </button>
+    </div>
     </div>
 
     <div class="px-3 mt-2">
