@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import urllib.request
 from pathlib import Path
 from typing import Optional, Set
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -553,6 +554,45 @@ async def ingest_media_ws(body: IngestRequest):
         raise HTTPException(400, f"Path not found: {body.path}")
     asyncio.create_task(_run_ingest_with_ws(target, body.limit))
     return {"ok": True, "message": "Ingest started — connect to /ws/ingest for progress"}
+
+
+# ── Tailwind CDN proxy (cached locally so Tauri WKWebView never blocks) ────────
+_TAILWIND_CDN_URL = "https://cdn.tailwindcss.com"
+_tailwind_js: Optional[bytes] = None
+
+def _fetch_tailwind() -> bytes:
+    """Download Tailwind CDN JS once and cache on disk. Skip empty cache files."""
+    cache_path = ROOT / "tailwind.cdn.js"
+    if cache_path.exists() and cache_path.stat().st_size > 1000:
+        return cache_path.read_bytes()
+    try:
+        req = urllib.request.Request(_TAILWIND_CDN_URL,
+                                     headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = r.read()
+        if len(data) > 1000:
+            cache_path.write_bytes(data)
+            return data
+    except Exception as e:
+        print(f"[arkiv] Tailwind CDN download failed: {e}")
+    return b"/* tailwind cdn unavailable */"
+
+# Pre-fetch at import time (runs before uvicorn starts serving)
+_tailwind_js = _fetch_tailwind()
+
+@app.get("/tailwind.cdn.js")
+def serve_tailwind():
+    return Response(content=_tailwind_js, media_type="text/javascript",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/tailwind-static.css")
+def serve_tailwind_static():
+    css_path = ROOT / "tailwind-static.css"
+    if css_path.exists():
+        return Response(content=css_path.read_bytes(), media_type="text/css",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    return Response(content=b"/* tailwind-static.css not found */", media_type="text/css")
 
 
 # ── Serve Frontend ───────────────────────────────────────────────────────────

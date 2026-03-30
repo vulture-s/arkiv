@@ -4,25 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Media Asset Manager</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-tailwind.config = {
-  darkMode: 'class',
-  theme: {
-    extend: {
-      colors: {
-        surface: { DEFAULT: '#f5f5f7', 50: '#eaeaed', 100: '#e0e0e4', 200: '#d5d5da' },
-        panel: { DEFAULT: '#ffffff', border: '#e0e0e4' },
-        accent: { DEFAULT: '#3b82f6', hover: '#2563eb', muted: '#1d4ed8' },
-        danger: '#ef4444', success: '#22c55e', warning: '#f59e0b',
-        txt: { primary: '#1a1a1e', secondary: '#52525b', tertiary: '#a1a1aa' },
-      },
-      fontFamily: { sans: ['Inter','-apple-system','BlinkMacSystemFont','system-ui','sans-serif'], mono: ['SF Mono','JetBrains Mono','Menlo','monospace'] },
-      fontSize: { '2xs': ['10px','14px'] }
-    }
-  }
-}
-</script>
+<link rel="stylesheet" href="/tailwind-static.css">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   * { box-sizing: border-box; }
@@ -877,34 +859,83 @@ async function refresh() {
   }
 }
 
-// ── Filter Chips + Init (wait for DOM) ──────────────────────────────────────
+// ── Filter Chips + Init ──────────────────────────────────────────────────────
+// Note: <script> is at end of body, so DOM is already ready — no DOMContentLoaded needed.
+// Tauri WKWebView has timing issues with DOMContentLoaded; direct init is more reliable.
 
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('filterChips').addEventListener('click', async e => {
-    const btn = e.target.closest('.filter-chip'); if(!btn) return;
-    const ft = btn.dataset.filter, val = btn.dataset.value;
-    if(ft==='type') {
-      document.querySelectorAll('.filter-chip[data-filter="type"]').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active'); state.filters.type = val;
-    } else {
-      const isActive = btn.classList.contains('active');
-      document.querySelectorAll(`.filter-chip[data-filter="${ft}"]`).forEach(b=>b.classList.remove('active'));
-      if(!isActive) { btn.classList.add('active'); state.filters[ft]=val; } else { state.filters[ft]=null; }
-    }
-    state.page=0; await refresh();
-  });
-
-  document.getElementById('sortSelect').addEventListener('change', async e => { state.sort=e.target.value; state.page=0; await refresh(); });
-
-  let searchTimer;
-  document.getElementById('searchInput').addEventListener('input', e => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(async()=>{ state.query=e.target.value.trim(); state.page=0; await refresh(); }, 300);
-  });
-
-  // ── Init ──────────────────────────────────────────────────────────────────
-  refresh().catch(e => console.error('[arkiv] init failed:', e));
+document.getElementById('filterChips').addEventListener('click', async e => {
+  const btn = e.target.closest('.filter-chip'); if(!btn) return;
+  const ft = btn.dataset.filter, val = btn.dataset.value;
+  if(ft==='type') {
+    document.querySelectorAll('.filter-chip[data-filter="type"]').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active'); state.filters.type = val;
+  } else {
+    const isActive = btn.classList.contains('active');
+    document.querySelectorAll(`.filter-chip[data-filter="${ft}"]`).forEach(b=>b.classList.remove('active'));
+    if(!isActive) { btn.classList.add('active'); state.filters[ft]=val; } else { state.filters[ft]=null; }
+  }
+  state.page=0; await refresh();
 });
+
+document.getElementById('sortSelect').addEventListener('change', async e => { state.sort=e.target.value; state.page=0; await refresh(); });
+
+let searchTimer;
+document.getElementById('searchInput').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async()=>{ state.query=e.target.value.trim(); state.page=0; await refresh(); }, 300);
+});
+
+// ── Diagnostic Overlay (remove after fix confirmed) ────────────────────────
+function _diag(msg, color) {
+  color = color || '#22c55e';
+  let el = document.getElementById('_diagBox');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = '_diagBox';
+    el.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:9999;background:#111;border:1px solid #333;border-radius:6px;padding:8px 12px;font-size:11px;font-family:monospace;max-width:380px;max-height:200px;overflow-y:auto';
+    document.body.appendChild(el);
+  }
+  const line = document.createElement('div');
+  line.style.color = color;
+  line.textContent = new Date().toISOString().slice(11,23) + ' ' + msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+  console.log('[arkiv diag]', msg);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async () => {
+  _diag('init start — isTauri=' + isTauri);
+  try {
+    _diag('fetchMedia...');
+    await fetchMedia();
+    _diag('fetchMedia OK — items=' + state.items.length);
+    _diag('fetchAllTags...');
+    await fetchAllTags();
+    _diag('fetchAllTags OK — tags=' + state.allTags.length);
+    _diag('renderGrid...');
+    renderGrid();
+    _diag('renderPool...');
+    renderPool(state.items);
+    renderPagination();
+    renderContentTitle();
+    _diag('ALL OK ✓', '#22c55e');
+    renderAnalytics();
+    setTimeout(() => {
+      const b = document.getElementById('_diagBox');
+      if (b) b.remove();
+    }, 5000);
+  } catch(e) {
+    _diag('ERROR: ' + e.message, '#ef4444');
+    _diag('stack: ' + (e.stack||'').slice(0,200), '#f97316');
+    const grid = document.getElementById('mediaGrid');
+    if (grid) grid.innerHTML = `<div class="col-span-4 text-center py-8" style="color:#ef4444">
+      <div style="font-size:14px;font-weight:600;margin-bottom:8px">載入失敗</div>
+      <div style="font-size:12px">${e.message}</div>
+      <button style="margin-top:12px;padding:4px 16px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer" onclick="location.reload()">重新載入</button>
+    </div>`;
+  }
+})();
 </script>
 </body>
 </html>
