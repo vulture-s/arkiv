@@ -779,27 +779,31 @@ async function doPlayMedia(id) {
   vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
   container.appendChild(vid);
 
-  // Minimal controls (play/pause + volume only — seek via waveform)
-  var ctrl = document.createElement('div');
-  ctrl.id = 'playerControls';
-  ctrl.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:5;background:linear-gradient(transparent,rgba(0,0,0,0.7));padding:4px 8px;display:flex;align-items:center;gap:6px';
-  ctrl.innerHTML = '<button id="ppBtn" style="background:none;border:none;cursor:pointer;padding:0"><svg width="14" height="14" fill="#fff" viewBox="0 0 20 20" style="width:14px;height:14px"><rect x="5" y="3" width="3" height="14"/><rect x="12" y="3" width="3" height="14"/></svg></button>'
-    + '<span id="playerTime" style="color:#a1a1aa;font-size:10px;font-family:monospace;flex:1">0:00</span>'
-    + '<input type="range" id="playerVol" min="0" max="100" value="80" style="width:50px;height:3px;accent-color:#3b82f6;cursor:pointer"/>';
-  container.appendChild(ctrl);
+  // Integrate controls into waveform area
+  var waveform = document.getElementById('inspectorWaveform');
+  var waveformParent = waveform ? waveform.parentElement : null;
+  if (waveformParent) {
+    // Replace waveform area with integrated transport bar
+    waveformParent.innerHTML = ''
+      + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+      +   '<button id="ppBtn" style="background:none;border:none;cursor:pointer;padding:0;flex-shrink:0"><svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20" style="width:16px;height:16px;color:#e4e4e7"><rect x="5" y="3" width="3" height="14"/><rect x="12" y="3" width="3" height="14"/></svg></button>'
+      +   '<span id="playerTime" style="color:#a1a1aa;font-size:10px;font-family:monospace;min-width:32px">0:00</span>'
+      +   '<div id="inspectorWaveform" class="waveform" style="flex:1;cursor:pointer" title="Click to seek"><div class="waveform-bars">' + waveformBars() + '</div><div class="waveform-playhead" id="wavePlayhead"></div></div>'
+      +   '<svg width="14" height="14" fill="none" stroke="#71717a" stroke-width="2" viewBox="0 0 24 24" style="width:14px;height:14px;flex-shrink:0"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>'
+      +   '<input type="range" id="playerVol" min="0" max="100" value="80" style="width:44px;height:3px;accent-color:#3b82f6;cursor:pointer;flex-shrink:0"/>'
+      + '</div>'
+      + '<div class="flex justify-between text-2xs font-mono"><span class="text-success" id="inTimeDisplay">IN ' + fmtHMS(0) + '</span><span class="text-txt-tertiary" id="currentTimeDisplay">' + fmtDur(rec.duration_s) + '</span><span class="text-danger" id="outTimeDisplay">OUT ' + fmtHMS(rec.duration_s) + '</span></div>';
+  }
 
   // Play/pause toggle
   document.getElementById('ppBtn').onclick = function(){ vid.paused ? vid.play() : vid.pause(); };
   document.getElementById('playerVol').oninput = function(){ vid.volume = this.value / 100; };
 
-  // Waveform playhead + seek
-  var waveform = document.getElementById('inspectorWaveform');
-  if (waveform) {
-    var playhead = document.createElement('div');
-    playhead.className = 'waveform-playhead';
-    waveform.appendChild(playhead);
-    waveform.style.cursor = 'pointer';
-    waveform.onclick = function(e) {
+  // Waveform seek
+  var playhead = document.getElementById('wavePlayhead');
+  var seekBar = document.getElementById('inspectorWaveform');
+  if (seekBar) {
+    seekBar.onclick = function(e) {
       if (!vid.duration) return;
       var rect = this.getBoundingClientRect();
       var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -807,7 +811,7 @@ async function doPlayMedia(id) {
     };
   }
 
-  // Sync timeupdate → waveform playhead + time displays
+  // Sync timeupdate
   vid.ontimeupdate = function() {
     var pct = vid.duration ? (vid.currentTime / vid.duration * 100) : 0;
     if (playhead) playhead.style.left = pct + '%';
@@ -818,11 +822,11 @@ async function doPlayMedia(id) {
   };
   vid.onplay = function() {
     var svg = document.querySelector('#ppBtn svg');
-    if (svg) svg.innerHTML = '<rect x="5" y="3" width="3" height="14" fill="#fff"/><rect x="12" y="3" width="3" height="14" fill="#fff"/>';
+    if (svg) svg.innerHTML = '<rect x="5" y="3" width="3" height="14"/><rect x="12" y="3" width="3" height="14"/>';
   };
   vid.onpause = function() {
     var svg = document.querySelector('#ppBtn svg');
-    if (svg) svg.innerHTML = '<path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" fill="#fff"/>';
+    if (svg) svg.innerHTML = '<path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>';
   };
   // Error handling — show error in preview
   vid.onerror = function() {
