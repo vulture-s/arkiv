@@ -463,7 +463,7 @@ function renderGrid() {
     var badge = rBadge(rec.rating);
     var cardPortrait = rec.height && rec.width && rec.height > rec.width;
     var score = rec.score!=null ? '<div class="absolute top-1 right-1 bg-accent/80 text-white text-2xs px-1.5 rounded font-medium">'+Math.round(rec.score*100)+'%</div>' : '';
-    var orientBadge = cardPortrait ? '<div class="absolute top-1 right-1 bg-black/70 text-white text-2xs px-1 rounded" style="z-index:3">9:16</div>' : '';
+    var orientBadge = '<div class="absolute top-1 right-1 bg-black/70 text-white text-2xs px-1 rounded" style="z-index:3">' + (cardPortrait ? '9:16' : '16:9') + '</div>';
     var sel = rec.id===state.selectedId ? ' border-accent/40 ring-1 ring-accent/20' : ' border-panel-border';
     return `<div class="media-card rounded-lg bg-surface-50 border${sel} cursor-pointer overflow-hidden ${isNg?'ng-card':''}" onclick="selectMedia(${rec.id})">
       <div class="thumb-placeholder aspect-video relative overflow-hidden ${isAudio?'bg-gradient-to-br from-warning/10 to-surface-50':''}">
