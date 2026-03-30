@@ -69,7 +69,7 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
     If `existing` is provided (refresh mode), skip transcription and reuse existing
     transcript/lang — only re-run thumbnail + vision.
     """
-    print(" → probe", end="", flush=True)
+    print(" >probe", end="", flush=True)
     meta = probe(str(path))
     if meta is None:
         print(" [ffprobe failed]")
@@ -89,7 +89,7 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
 
     # Audio transcription (skip on refresh — reuse existing)
     if meta["has_audio"] and not existing:
-        print(" → whisper", end="", flush=True)
+        print(" >whisper", end="", flush=True)
         text, lang = tr.transcribe(str(path))
         record["transcript"] = text or None
         record["lang"] = lang or None
@@ -97,12 +97,12 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
     # Thumbnail (video only, always extracted)
     is_video = path.suffix.lower() in VIDEO_EXT
     if is_video and meta["duration_s"] > 0:
-        print(" → thumb", end="", flush=True)
+        print(" >thumb", end="", flush=True)
         record["thumbnail_path"] = frm.extract_thumbnail(str(path), meta["duration_s"])
 
     # Frame description (video only)
     if is_video and not skip_vision and meta["duration_s"] > 0:
-        print(" → llava", end="", flush=True)
+        print(" >llava", end="", flush=True)
         frame_paths = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30)
         if frame_paths:
             frame_results = vis.describe_frames(frame_paths)
@@ -112,7 +112,7 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
                 Path(fp).unlink(missing_ok=True)
             shutil.rmtree(Path(frame_paths[0]).parent, ignore_errors=True)
 
-    print(" ✓")
+    print(" [OK]")
     return record
 
 
