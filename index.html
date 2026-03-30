@@ -678,14 +678,31 @@ function hideAutocomplete() { document.getElementById('tagAutocomplete')?.classL
 
 async function doExport(id, fmt) {
   try {
-    const rec = state.selectedRec || state.items.find(r => r.id === id);
-    const basename = rec ? rec.filename.replace(/\.[^.]+$/, '') : `media_${id}`;
-    const filename = `${basename}.${fmt}`;
-    const resp = await fetch(`/api/media/${id}/export/${fmt}`);
+    var rec = state.selectedRec || state.items.find(r => r.id === id);
+    var basename = rec ? rec.filename.replace(/\.[^.]+$/, '') : 'media_' + id;
+    var filename = basename + '.' + fmt;
+
+    if (isTauri && window.__TAURI__ && window.__TAURI__.dialog) {
+      // Tauri: pick save path, then server writes file directly
+      try {
+        var savePath = await window.__TAURI__.dialog.save({ defaultPath: filename, title: 'Export ' + fmt.toUpperCase() });
+        if (!savePath) return;
+        var resp = await fetch('/api/media/' + id + '/export-to', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({fmt: fmt, dest: savePath})
+        });
+        if (resp.ok) { await tauriMessage('已匯出：' + savePath); }
+        else { await tauriMessage('Export 失敗：HTTP ' + resp.status); }
+        return;
+      } catch(te) { console.log('Tauri export fallback:', te); }
+    }
+    // Browser fallback: blob download
+    var resp = await fetch('/api/media/' + id + '/export/' + fmt);
     if (!resp.ok) { await tauriMessage('Export 失敗：HTTP ' + resp.status); return; }
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    var blob = new Blob([await resp.text()], {type:'text/plain;charset=utf-8'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a'); a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch(e) { await tauriMessage('Export 錯誤：' + e.message); }
 }

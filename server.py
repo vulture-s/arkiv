@@ -452,6 +452,21 @@ def export_media(media_id: int, fmt: str):
     raise HTTPException(400, f"Unsupported format: {fmt}. Use srt/vtt/txt/edl")
 
 
+class ExportToRequest(BaseModel):
+    fmt: str
+    dest: str
+
+@app.post("/api/media/{media_id}/export-to")
+def export_to_file(media_id: int, body: ExportToRequest):
+    """Export and write directly to a local path (for Tauri native save dialog)."""
+    resp = export_media(media_id, body.fmt)
+    content = resp.body.decode("utf-8")
+    dest = Path(body.dest).expanduser()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(content, encoding="utf-8")
+    return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
+
+
 # ── WebSocket: Ingest Progress ───────────────────────────────────────────
 
 @app.websocket("/ws/ingest")
