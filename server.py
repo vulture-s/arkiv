@@ -60,10 +60,10 @@ app.add_middleware(
 
 ROOT = Path(__file__).parent
 
-# Serve thumbnails as static files
+# Serve thumbnails as static files (create dir if missing so mount always works)
 thumbs_dir = ROOT / "thumbnails"
-if thumbs_dir.exists():
-    app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnails")
+thumbs_dir.mkdir(exist_ok=True)
+app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnails")
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
