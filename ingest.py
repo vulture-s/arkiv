@@ -53,11 +53,30 @@ def probe(path: str) -> dict | None:
         except (ValueError, ZeroDivisionError):
             fps = 0.0
 
+    # Handle rotation metadata — swap width/height for 90/270 degree rotation
+    w = video_stream.get("width") if video_stream else None
+    h = video_stream.get("height") if video_stream else None
+    if video_stream and w and h:
+        rot = 0
+        # Check tags.rotate
+        rot_str = (video_stream.get("tags") or {}).get("rotate", "")
+        if rot_str:
+            try: rot = int(rot_str)
+            except ValueError: pass
+        # Check side_data_list rotation
+        if not rot:
+            for sd in (video_stream.get("side_data_list") or []):
+                if "rotation" in sd:
+                    try: rot = abs(int(sd["rotation"]))
+                    except (ValueError, TypeError): pass
+        if rot in (90, 270):
+            w, h = h, w
+
     return {
         "duration_s": round(duration, 2),
         "size_mb": round(size_mb, 2),
-        "width": video_stream.get("width") if video_stream else None,
-        "height": video_stream.get("height") if video_stream else None,
+        "width": w,
+        "height": h,
         "fps": round(fps, 2) if fps else None,
         "has_audio": 1 if audio_stream else 0,
     }
