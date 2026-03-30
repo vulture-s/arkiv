@@ -254,7 +254,7 @@ const API = '';
 const PAGE_SIZE = 50;
 
 // ── Tauri Detection + Dialog Helpers ──────────────────────────────────
-const isTauri = !!(window.__TAURI__);
+var isTauri = !!(window.__TAURI__);
 
 async function tauriMessage(msg) {
   if (isTauri) {
