@@ -768,15 +768,21 @@ async function doPlayMedia(id) {
     return;
   }
   // Replace preview content with video player
+  // Read container's current max-height before clearing
+  var maxH = container.style.maxHeight || '240px';
   container.innerHTML = '';
+  container.style.aspectRatio = '';
+  container.style.overflow = 'hidden';
+  container.style.maxHeight = maxH;
   container.style.position = 'relative';
+  container.style.background = '#000';
 
   var vid = document.createElement('video');
   vid.id = 'arkivPlayer';
   vid.src = '/api/stream/' + id;
   vid.autoplay = true;
   vid.volume = 0.8;
-  vid.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;background:#000';
+  vid.style.cssText = 'display:block;width:100%;max-height:' + maxH + ';object-fit:contain;background:#000';
   container.appendChild(vid);
 
   // Minimal controls (play/pause + volume only — seek via waveform)
