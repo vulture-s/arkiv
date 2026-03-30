@@ -202,6 +202,12 @@ window.onunhandledrejection = function(e) {
     <svg class="w-3.5 h-3.5 light-icon" style="display:none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
   </button>
 
+  <div class="flex items-center gap-1 ml-2 shrink-0" title="UI Scale">
+    <svg width="12" height="12" fill="none" stroke="#71717a" stroke-width="2" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+    <input type="range" id="uiScale" min="70" max="130" value="100" step="5" style="width:60px;height:3px;accent-color:#3b82f6;cursor:pointer" oninput="setUiScale(this.value)"/>
+    <svg width="16" height="16" fill="none" stroke="#71717a" stroke-width="2" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+  </div>
+
   <div class="flex items-center gap-3 ml-2 text-2xs text-txt-tertiary shrink-0" id="headerStats"></div>
 </header>
 
@@ -1048,6 +1054,11 @@ document.getElementById('searchInput').addEventListener('input', e => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(async()=>{ state.query=e.target.value.trim(); state.page=0; await refresh(); }, 300);
 });
+
+// ── UI Scale ─────────────────────────────────────────────────────────────────
+function setUiScale(val) {
+  document.documentElement.style.fontSize = val + '%';
+}
 
 // ── Panel Resize ─────────────────────────────────────────────────────────────
 (function() {
