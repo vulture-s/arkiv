@@ -633,7 +633,7 @@ async function renderAnalytics() {
 
 // ── Actions ─────────────────────────────────────────────────────────────────
 
-async function selectMedia(id) { await fetchDetail(id); renderGrid(); renderPool(state.items); renderInspector(); }
+async function selectMedia(id) { console.log('selectMedia:', id); await fetchDetail(id); console.log('selectedRec:', state.selectedRec); renderGrid(); renderPool(state.items); renderInspector(); }
 
 async function doSetRating(id, rating) {
   const cur = state.selectedRec?.rating;
