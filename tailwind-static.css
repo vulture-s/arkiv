@@ -15,7 +15,8 @@
   --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
 }
 body { margin: 0; line-height: 1.5; }
-img, svg, video { display: block; max-width: 100%; }
+img, video { display: block; max-width: 100%; }
+svg { display: block; max-width: 100%; flex-shrink: 0; }
 
 /* ===== DESIGN TOKENS ===== */
 :root {

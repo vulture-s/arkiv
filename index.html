@@ -4,6 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Media Asset Manager</title>
+<script>
+// Early error handler — catches any JS error and reports to server + screen
+window.onerror = function(msg, src, line, col, err) {
+  var payload = msg + ' at ' + (src||'?') + ':' + line + ':' + col;
+  try { fetch('/api/client-log', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({level:'error', msg:payload}) }); } catch(e){}
+  var box = document.getElementById('_errBox');
+  if (!box) { box = document.createElement('div'); box.id='_errBox'; box.style.cssText='position:fixed;top:8px;left:8px;z-index:99999;background:#1a0000;border:2px solid #ef4444;border-radius:8px;padding:12px;font:12px/1.4 monospace;color:#f87171;max-width:500px;max-height:300px;overflow-y:auto'; document.body.appendChild(box); }
+  box.innerHTML += '<div>' + payload + '</div>';
+  return false;
+};
+window.onunhandledrejection = function(e) {
+  var msg = 'Unhandled rejection: ' + (e.reason ? (e.reason.message || e.reason) : 'unknown');
+  try { fetch('/api/client-log', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({level:'error', msg:msg}) }); } catch(ex){}
+  window.onerror(msg, '', 0, 0, null);
+};
+</script>
 <link rel="stylesheet" href="/tailwind-static.css">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -282,22 +298,14 @@ async function nativeOpenPath(filePath) {
 }
 async function nativePickFolder() {
   if (isTauri) {
-    try { console.log('TAURI type:', typeof window.__TAURI__); } catch(e) {}
-    try { console.log('TAURI:', window.__TAURI__); } catch(e) {}
-    try { console.log('dialog:', window.__TAURI__.dialog); } catch(e) { console.log('dialog access err:', e); }
-    try { console.log('core:', window.__TAURI__.core); } catch(e) { console.log('core access err:', e); }
-    try { for (var k in window.__TAURI__) console.log('  key:', k); } catch(e) { console.log('enum err:', e); }
-    // v2 dialog
     try {
       if (window.__TAURI__.dialog && window.__TAURI__.dialog.open)
         return await window.__TAURI__.dialog.open({ directory: true, title: 'Select folder' });
-    } catch(e) { console.log('dialog.open err:', e); }
-    // v2 core invoke
+    } catch(e) {}
     try {
       if (window.__TAURI__.core)
         return await window.__TAURI__.core.invoke('plugin:dialog|open', { options: { directory: true, title: 'Select folder' } });
-    } catch(e) { console.log('invoke err:', e); }
-    console.warn('No Tauri dialog — fallback to prompt');
+    } catch(e) {}
   }
   return prompt('Enter media folder path:');
 }
@@ -404,8 +412,10 @@ function renderPool(items) {
       const active = v.id===state.selectedId;
       const icon = active ? videoSmallActive : videoSmall;
       const badge = rBadge(v.rating);
+      const t = thumbUrl(v);
+      const thumbEl = t ? `<img src="${t}" class="w-6 h-4 object-cover rounded" style="flex-shrink:0" onerror="this.style.display='none'"/>` : icon;
       h += `<div class="source-item${active?' active':''} flex items-center gap-2 px-3 py-1 text-xs cursor-pointer" onclick="selectMedia(${v.id})">
-        ${icon}<span class="truncate">${v.filename}</span>
+        ${thumbEl}<span class="truncate">${v.filename}</span>
         ${badge ? `<span class="ml-auto shrink-0">${badge}</span>` : `<span class="ml-auto text-2xs text-txt-tertiary">${fmtDur(v.duration_s)}</span>`}
       </div>`;
     });
@@ -416,8 +426,10 @@ function renderPool(items) {
     audios.forEach(a => {
       const active = a.id===state.selectedId;
       const badge = rBadge(a.rating);
+      const t = thumbUrl(a);
+      const thumbEl = t ? `<img src="${t}" class="w-6 h-4 object-cover rounded" style="flex-shrink:0" onerror="this.style.display='none'"/>` : audioSmall;
       h += `<div class="source-item${active?' active':''} flex items-center gap-2 px-3 py-1 text-xs cursor-pointer" onclick="selectMedia(${a.id})">
-        ${audioSmall}<span class="truncate">${a.filename}</span>
+        ${thumbEl}<span class="truncate">${a.filename}</span>
         ${badge ? `<span class="ml-auto shrink-0">${badge}</span>` : `<span class="ml-auto text-2xs text-txt-tertiary">${fmtDur(a.duration_s)}</span>`}
       </div>`;
     });
@@ -694,7 +706,18 @@ async function doOpenFile(id) {
 
 async function doPlayMedia(id) {
   const rec = state.items.find(r => r.id === id) || state.selectedRec;
-  if (rec && rec.path) {
+  if (!rec) return;
+  // Show inline player in inspector thumbnail area
+  const thumb = document.querySelector('#inspectorContent .thumb-placeholder');
+  if (thumb) {
+    thumb.innerHTML = `<video src="/api/stream/${id}" controls autoplay
+      class="w-full h-full object-contain bg-black" style="max-height:240px"
+      onerror="this.outerHTML='<div class=\\'text-center text-danger text-xs py-4\\'>串流失敗 — 檔案可能不存在</div>'">
+    </video>`;
+    return;
+  }
+  // Fallback: open externally
+  if (rec.path) {
     try { await nativeOpenPath(rec.path); }
     catch(e) { await tauriMessage('無法播放：' + e.message); }
   }
@@ -895,55 +918,22 @@ document.getElementById('searchInput').addEventListener('input', e => {
   searchTimer = setTimeout(async()=>{ state.query=e.target.value.trim(); state.page=0; await refresh(); }, 300);
 });
 
-// ── Diagnostic Overlay (remove after fix confirmed) ────────────────────────
-function _diag(msg, color) {
-  color = color || '#22c55e';
-  let el = document.getElementById('_diagBox');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = '_diagBox';
-    el.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:9999;background:#111;border:1px solid #333;border-radius:6px;padding:8px 12px;font-size:11px;font-family:monospace;max-width:380px;max-height:200px;overflow-y:auto';
-    document.body.appendChild(el);
-  }
-  const line = document.createElement('div');
-  line.style.color = color;
-  line.textContent = new Date().toISOString().slice(11,23) + ' ' + msg;
-  el.appendChild(line);
-  el.scrollTop = el.scrollHeight;
-  console.log('[arkiv diag]', msg);
-}
-
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
-  _diag('init start — isTauri=' + isTauri);
   try {
-    _diag('fetchMedia...');
+    fetch('/api/client-log', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({level:'info', msg:'init start — isTauri=' + isTauri + ' UA=' + navigator.userAgent.slice(0,80)}) });
     await fetchMedia();
-    _diag('fetchMedia OK — items=' + state.items.length);
-    _diag('fetchAllTags...');
     await fetchAllTags();
-    _diag('fetchAllTags OK — tags=' + state.allTags.length);
-    _diag('renderGrid...');
     renderGrid();
-    _diag('renderPool...');
     renderPool(state.items);
     renderPagination();
     renderContentTitle();
-    _diag('ALL OK ✓', '#22c55e');
     renderAnalytics();
-    setTimeout(() => {
-      const b = document.getElementById('_diagBox');
-      if (b) b.remove();
-    }, 5000);
+    fetch('/api/client-log', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({level:'info', msg:'init OK — items=' + state.items.length + ' tags=' + state.allTags.length}) });
   } catch(e) {
-    _diag('ERROR: ' + e.message, '#ef4444');
-    _diag('stack: ' + (e.stack||'').slice(0,200), '#f97316');
-    const grid = document.getElementById('mediaGrid');
-    if (grid) grid.innerHTML = `<div class="col-span-4 text-center py-8" style="color:#ef4444">
-      <div style="font-size:14px;font-weight:600;margin-bottom:8px">載入失敗</div>
-      <div style="font-size:12px">${e.message}</div>
-      <button style="margin-top:12px;padding:4px 16px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer" onclick="location.reload()">重新載入</button>
-    </div>`;
+    fetch('/api/client-log', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({level:'error', msg:'init failed: ' + e.message + ' stack=' + (e.stack||'').slice(0,300)}) });
+    var grid = document.getElementById('mediaGrid');
+    if (grid) grid.innerHTML = '<div class="col-span-4 text-center py-8" style="color:#ef4444"><div style="font-size:14px;font-weight:600;margin-bottom:8px">載入失敗</div><div style="font-size:12px">' + e.message + '</div><button style="margin-top:12px;padding:4px 16px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer" onclick="location.reload()">重新載入</button></div>';
   }
 })();
 </script>

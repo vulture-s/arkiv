@@ -31,3 +31,20 @@
 - Tauri: cargo tauri dev
 - Python: 3.9
 - DB: ~/.arkiv/media.db (8 筆素材)
+
+## Mac 開發效率指南（從 PC 端 debug session 學到的）
+
+### 核心原則：Chrome first, Tauri last
+1. 開發時用 `uvicorn server:app --reload`（自動重載，不快取）
+2. Chrome localhost:8501 + F12 做 90% debug
+3. Safari localhost:8501 測相容性
+4. `WEBKIT_INSPECTOR=1 cargo tauri dev` 只用於最終驗證
+
+### 排錯順序
+Chrome OK → Safari OK → Tauri WebInspector
+
+### 已修復的 Mac 陷阱
+- server.py HTML 快取已移除（dev mode 每次重讀）
+- tailwind-static.css 小數點跳脫已修正
+- withGlobalTauri:true 已設定（dialog API 可用）
+- var isTauri 避免 Tauri inject 衝突
