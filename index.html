@@ -272,22 +272,13 @@ async function tauriAsk(msg) {
 }
 async function nativeOpenPath(filePath) {
   if (isTauri) {
-    try {
-      // Try opener plugin
-      if (window.__TAURI__.opener && window.__TAURI__.opener.openPath) {
-        await window.__TAURI__.opener.openPath(filePath);
-        return;
-      }
-      // Fallback: core invoke
-      if (window.__TAURI__.core) {
-        await window.__TAURI__.core.invoke('plugin:opener|open_path', { path: filePath });
-        return;
-      }
-    } catch(e) { console.log('openPath err:', e); }
+    const { openPath } = window.__TAURI__.opener;
+    await openPath(filePath);
+  } else {
+    // Browser fallback: copy path to clipboard
+    await navigator.clipboard.writeText(filePath);
+    alert('路徑已複製到剪貼簿：\n' + filePath);
   }
-  // Browser/fallback: copy path to clipboard
-  try { await navigator.clipboard.writeText(filePath); } catch(e) {}
-  alert('路徑已複製到剪貼簿：\n' + filePath);
 }
 async function nativePickFolder() {
   if (isTauri) {
@@ -362,7 +353,7 @@ function rBadge(r) {
   return '';
 }
 function tagHtml(tags) { return (tags||[]).map(t=>`<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${t.name}</span>`).join(' '); }
-function thumbUrl(rec) { if(rec.thumbnail_path){ const name = rec.thumbnail_path.replace(/\\/g,'/').split('/').pop(); return `/thumbnails/${name}`; } return null; }
+function thumbUrl(rec) { if(rec.thumbnail_path){ return `/thumbnails/${rec.thumbnail_path.split('/').pop()}`; } return null; }
 
 const videoSvg = '<svg class="w-8 h-8 text-txt-tertiary/30" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"/></svg>';
 const audioSvg = '<svg class="w-8 h-8 text-warning/40" fill="currentColor" viewBox="0 0 20 20"><path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"/></svg>';
@@ -500,22 +491,15 @@ async function renderInspector() {
   ).join('');
 
   content.innerHTML = `
-    <div class="aspect-video relative mx-3 mt-3 rounded-md overflow-hidden bg-black" id="inspectorPreview">
-      <video id="inspectorVideo" class="w-full h-full" controls preload="metadata"
-        poster="${thumb||''}" src="/api/stream/${rec.id}"
-        style="display:none; background:#000;">
-      </video>
-      ${!isAudio ? `
-      <div id="inspectorThumb" class="absolute inset-0">
-        ${thumb ? `<img src="${thumb}" class="w-full h-full object-cover"/>` : `<div class="w-full h-full flex items-center justify-center">${videoSvg}</div>`}
-        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-        <button class="absolute inset-0 flex items-center justify-center" onclick="startPreview(${rec.id})">
-          <div class="w-10 h-10 bg-white/20 backdrop-blur rounded-full flex items-center justify-center hover:bg-white/30 transition">
-            <svg class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
-          </div>
-        </button>
-      </div>` : `
-      <audio controls class="w-full mt-2" src="/api/stream/${rec.id}" preload="metadata"></audio>`}
+    <div class="thumb-placeholder aspect-video relative mx-3 mt-3 rounded-md overflow-hidden">
+      ${thumb ? `<img src="${thumb}" class="w-full h-full object-cover" onerror="this.style.display='none'"/>` : ''}
+      <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+      ${!thumb ? `<div class="absolute inset-0 flex items-center justify-center">${isAudio?audioSvg:videoSvg}</div>` : ''}
+      <button class="absolute inset-0 flex items-center justify-center" onclick="doPlayMedia(${rec.id})">
+        <div class="w-10 h-10 bg-white/20 backdrop-blur rounded-full flex items-center justify-center hover:bg-white/30 transition">
+          <svg class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
+        </div>
+      </button>
     </div>
 
     <div class="px-3 mt-2"><div class="filmstrip">${filmstripFrames()}</div></div>
@@ -649,7 +633,7 @@ async function renderAnalytics() {
 
 // ── Actions ─────────────────────────────────────────────────────────────────
 
-async function selectMedia(id) { console.log('selectMedia:', id); await fetchDetail(id); console.log('selectedRec:', state.selectedRec); renderGrid(); renderPool(state.items); renderInspector(); }
+async function selectMedia(id) { await fetchDetail(id); renderGrid(); renderPool(state.items); renderInspector(); }
 
 async function doSetRating(id, rating) {
   const cur = state.selectedRec?.rating;
@@ -706,13 +690,6 @@ async function doOpenFile(id) {
     try { await nativeOpenPath(rec.path); }
     catch(e) { await tauriMessage('無法開啟檔案：' + e.message); }
   }
-}
-
-function startPreview(id) {
-  const thumbEl = document.getElementById('inspectorThumb');
-  const videoEl = document.getElementById('inspectorVideo');
-  if (thumbEl) thumbEl.style.display = 'none';
-  if (videoEl) { videoEl.style.display = 'block'; videoEl.play(); }
 }
 
 async function doPlayMedia(id) {
