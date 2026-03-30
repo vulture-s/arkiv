@@ -5,10 +5,10 @@
   "identifier": "com.hevin.arkiv",
   "build": {
     "devUrl": "http://localhost:8501",
-    "frontendDist": "../index.html",
-    "withGlobalTauri": true
+    "frontendDist": "../index.html"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "arkiv — Media Asset Manager",
