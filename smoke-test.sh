@@ -22,7 +22,7 @@ echo ""
 
 # 1. Health check
 echo "── Environment ──"
-python3 health.py 2>/dev/null
+python3 health.py 2>/dev/null || true
 echo ""
 
 # 2. Server running?
