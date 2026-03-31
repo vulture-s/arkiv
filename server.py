@@ -440,37 +440,31 @@ def export_media(media_id: int, fmt: str):
             headers={"Content-Disposition": f'attachment; filename="{stem}.vtt"'},
         )
 
-    if fmt == "edl":
-        # Simple CMX3600 EDL
+    if fmt in ("edl", "edl-markers"):
+        # CMX3600 EDL — full clip + optional frame markers
+        tc_end_full = _ts(duration, ":").replace(",", ":")
         edl = f"TITLE: {stem}\nFCM: NON-DROP FRAME\n\n"
-        edl += f"001  AX       V     C        00:00:00:00 {_ts(duration, ':').replace(',', ':')} 00:00:00:00 {_ts(duration, ':').replace(',', ':')}\n"
-        edl += f"* FROM CLIP NAME: {filename}\n"
+        edl += f"001  AX       V     C        00:00:00:00 {tc_end_full} 00:00:00:00 {tc_end_full}\n"
+        edl += f"* FROM CLIP NAME: {filename}\n\n"
+
+        if fmt == "edl-markers":
+            frames = db.get_frames(media_id)
+            for i, fr in enumerate(frames, 2):
+                tc = _ts(fr["timestamp_s"], ":").replace(",", ":")
+                tc_end_s = min(fr["timestamp_s"] + 1.0, duration)
+                tc_end = _ts(tc_end_s, ":").replace(",", ":")
+                desc = (fr.get("description") or f"Frame {fr['frame_index']+1}")[:60]
+                edl += f"{i:03d}  AX       V     C        {tc} {tc_end} {tc} {tc_end}\n"
+                edl += f"* FROM CLIP NAME: {filename}\n"
+                edl += f"* COMMENT: MARKER — {desc}\n\n"
+
         return HTMLResponse(
             content=edl,
             media_type="text/plain; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{stem}.edl"'},
         )
 
-    if fmt == "markers":
-        # EDL with frame markers for DaVinci Resolve import
-        frames = db.get_frames(media_id)
-        fps_val = rec.get("fps") or 24
-        edl = f"TITLE: {stem}_markers\nFCM: NON-DROP FRAME\n\n"
-        for i, fr in enumerate(frames, 1):
-            tc = _ts(fr["timestamp_s"], ":").replace(",", ":")
-            tc_end_s = min(fr["timestamp_s"] + 1.0, duration)
-            tc_end = _ts(tc_end_s, ":").replace(",", ":")
-            desc = (fr.get("description") or f"Frame {fr['frame_index']+1}")[:60]
-            edl += f"{i:03d}  AX       V     C        {tc} {tc_end} {tc} {tc_end}\n"
-            edl += f"* FROM CLIP NAME: {filename}\n"
-            edl += f"* COMMENT: {desc}\n\n"
-        return HTMLResponse(
-            content=edl,
-            media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{stem}_markers.edl"'},
-        )
-
-    raise HTTPException(400, f"Unsupported format: {fmt}. Use srt/vtt/txt/edl/markers")
+    raise HTTPException(400, f"Unsupported format: {fmt}. Use srt/vtt/txt/edl/edl-markers")
 
 
 class ExportToRequest(BaseModel):
