@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-Hant" class="dark" style="font-size:130%">
+<html lang="zh-Hant" class="dark" style="font-size:120%">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -193,10 +193,11 @@ window.onunhandledrejection = function(e) {
     <svg class="w-3.5 h-3.5 light-icon" style="display:none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
   </button>
 
-  <div class="flex items-center gap-0.5 ml-2 shrink-0" title="UI Scale">
-    <button class="view-btn" onclick="setUiScale(Math.max(100,currentScale-10))" style="font-size:12px;padding:2px 5px">A-</button>
-    <span class="text-2xs text-txt-tertiary" id="scaleLabel" style="min-width:28px;text-align:center">130%</span>
-    <button class="view-btn" onclick="setUiScale(Math.min(160,currentScale+10))" style="font-size:14px;padding:2px 5px">A+</button>
+  <div class="flex items-center gap-1 ml-2 shrink-0" title="UI Scale">
+    <svg width="12" height="12" fill="none" stroke="var(--txt-tertiary)" stroke-width="2" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+    <input type="range" id="uiScale" min="0" max="3" value="1" step="1" list="scaleTicks" style="width:50px;height:3px;accent-color:#3b82f6;cursor:pointer" oninput="setUiScale(this.value)"/>
+    <datalist id="scaleTicks"><option value="0"></option><option value="1"></option><option value="2"></option><option value="3"></option></datalist>
+    <span class="text-2xs text-txt-tertiary" id="scaleLabel" style="min-width:24px;text-align:center">130%</span>
   </div>
 
   <div class="flex items-center gap-3 ml-2 text-2xs text-txt-tertiary shrink-0" id="headerStats"></div>
@@ -1074,13 +1075,16 @@ document.getElementById('searchInput').addEventListener('input', e => {
 });
 
 // ── UI Scale ─────────────────────────────────────────────────────────────────
-var currentScale = 130;
-function setUiScale(val) {
-  currentScale = parseInt(val);
-  document.documentElement.style.fontSize = currentScale + '%';
+var scaleSteps = [100, 120, 140, 160];
+var currentScale = 1;
+function setUiScale(idx) {
+  currentScale = parseInt(idx);
+  var pct = scaleSteps[currentScale] || 120;
+  document.documentElement.style.fontSize = pct + '%';
   var el = document.getElementById('scaleLabel');
-  if (el) el.textContent = currentScale + '%';
+  if (el) el.textContent = pct + '%';
 }
+setUiScale(1);
 
 // ── Panel Resize ─────────────────────────────────────────────────────────────
 (function() {
