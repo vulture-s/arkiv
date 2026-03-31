@@ -1,3 +1,4 @@
+from __future__ import annotations
 #!/usr/bin/env python3
 """
 Local Media Asset Manager — Phase 2: Build Vector Index

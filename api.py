@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Media Asset Manager — Service Layer
 All UI modules (app.py, pages/) import api, not db/vectordb directly.
