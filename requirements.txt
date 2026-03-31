@@ -25,6 +25,7 @@ pillow>=9.0
 #   No GPU needed, slower but works everywhere
 #
 faster-whisper>=1.0;platform_system!="Darwin"
+mlx-whisper>=0.4;platform_system=="Darwin"
 
 # ── CUDA / GPU support (install manually if needed) ──────
 # torch>=2.0              # Required for CUDA Whisper; skip on macOS (MLX)
