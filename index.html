@@ -614,13 +614,13 @@ async function renderInspector() {
     <div class="relative"><button class="h-7 px-3 bg-surface-50 border border-panel-border text-txt-secondary text-xs rounded-md hover:text-txt-primary transition flex items-center gap-1" onclick="this.nextElementSibling.classList.toggle('hidden')">
       <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>Export &#9662;
     </button>
-    <div class="hidden absolute bottom-full left-0 mb-1 w-44 rounded-md border border-panel-border overflow-hidden dropdown-panel shadow-lg" style="z-index:20">
+    <div class="hidden absolute bottom-full left-0 mb-1 w-52 rounded-md border border-panel-border dropdown-panel shadow-lg" style="z-index:20">
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'srt')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">SRT</span>DaVinci 字幕檔</button>
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'vtt')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">VTT</span>Web 字幕檔</button>
-      <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'txt')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">TXT</span>複製純文字逐字稿</button>
-      <div class="border-t border-panel-border"></div>
+      <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'txt')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">TXT</span>純文字逐字稿</button>
+      <div class="border-t border-panel-border" style="margin:2px 0"></div>
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id}, document.getElementById('edlMarkersCb')?.checked ? 'edl-markers' : 'edl')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">EDL</span>DaVinci Timeline</button>
-      <label class="flex items-center gap-1.5 px-3 py-1 text-2xs cursor-pointer" style="color:var(--txt-tertiary)"><input type="checkbox" id="edlMarkersCb" style="accent-color:#3b82f6;width:12px;height:12px"/>With Frame Markers</label>
+      <label class="w-full flex items-center gap-1.5 px-3 py-1.5 text-2xs cursor-pointer" style="color:var(--txt-tertiary);border-top:1px solid var(--panel-border)" onclick="event.stopPropagation()"><input type="checkbox" id="edlMarkersCb" style="accent-color:#3b82f6;width:12px;height:12px"/>With Frame Markers</label>
     </div></div>
     <button class="h-7 px-3 bg-surface-50 border border-panel-border text-txt-secondary text-xs rounded-md hover:text-warning transition" title="Re-run Whisper" onclick="doReIngest(${rec.id})">Re-ingest</button>`;
 }
