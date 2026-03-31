@@ -182,10 +182,11 @@ window.onunhandledrejection = function(e) {
     <button class="view-btn" title="More columns" onclick="setGridCols(Math.min(8,gridCols+1))" style="font-size:14px;line-height:1;padding:2px 6px">+</button>
   </div>
 
-  <button class="export-btn ml-1.5 shrink-0" title="Export GOOD takes as EDL" onclick="doExportGoodEdl()">
+  <button class="export-btn ml-1.5 shrink-0" title="Export GOOD takes as EDL (with markers if checked)" onclick="doExportGoodEdl()">
     <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
     EDL Export
   </button>
+  <label class="flex items-center gap-1 shrink-0 text-2xs cursor-pointer" style="color:var(--txt-tertiary)" title="Include frame analysis markers in EDL"><input type="checkbox" id="edlMarkersCb" style="accent-color:#3b82f6;width:11px;height:11px;cursor:pointer"/>Markers</label>
 
   <button class="theme-toggle ml-1.5 shrink-0" onclick="toggleTheme()" title="Toggle theme" id="theme-btn">
     <svg class="w-3.5 h-3.5 dark-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
@@ -620,7 +621,6 @@ async function renderInspector() {
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'txt')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">TXT</span>純文字逐字稿</button>
       <div class="border-t border-panel-border" style="margin:2px 0"></div>
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id}, document.getElementById('edlMarkersCb')?.checked ? 'edl-markers' : 'edl')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">EDL</span>DaVinci Timeline</button>
-      <label class="w-full flex items-center gap-1.5 px-3 py-1.5 text-2xs cursor-pointer" style="color:var(--txt-tertiary);border-top:1px solid var(--panel-border)" onclick="event.stopPropagation()"><input type="checkbox" id="edlMarkersCb" style="accent-color:#3b82f6;width:12px;height:12px"/>With Frame Markers</label>
     </div></div>
     <button class="h-7 px-3 bg-surface-50 border border-panel-border text-txt-secondary text-xs rounded-md hover:text-warning transition" title="Re-run Whisper" onclick="doReIngest(${rec.id})">Re-ingest</button>`;
 }
@@ -750,7 +750,8 @@ async function doExport(id, fmt) {
 async function doExportGoodEdl() {
   const goodItems = state.items.filter(r => r.rating === 'good');
   if (goodItems.length === 0) { await tauriMessage('沒有 GOOD 評級的素材'); return; }
-  await doExport(goodItems[0].id, 'edl');
+  var fmt = document.getElementById('edlMarkersCb')?.checked ? 'edl-markers' : 'edl';
+  await doExport(goodItems[0].id, fmt);
 }
 
 async function doOpenFile(id) {
