@@ -1,82 +1,82 @@
-# Handover: arkiv Mac 前端大修完成
+# Handover: arkiv PC 端功能修復 + Frame Analysis
 
-## Current State (2026-03-31)
+## Current State (2026-03-31, PC → Mac)
 
-### 已修復
-- **WKWebView 空白** ✅ — `var isTauri` + `withGlobalTauri` 從 PC 修回來就好了
-- **SVG 爆掉** ✅ — CSS reset 改 `width:auto;height:auto` + 所有 SVG 常數加 inline style
-- **Grid 卡片 thumbnail** ✅ — SVG fallback 底層 + img 覆蓋 + onerror 不破壞 DOM
-- **Inspector 串流播放器** ✅ — overlay video + 波形整合（seek + playhead + 時間同步）
-- **Panel resize** ✅ — 左右拖曳調整 Pool/Inspector 寬度
-- **Card size 控制** ✅ — +/- 按鈕調整 2-8 欄
-- **UI Scale** ✅ — 100-200% 滑桿，預設 130%
-- **Open File** ✅ — 瀏覽器模式用 server-side `open -R` 開 Finder
-- **Export** ✅ — Tauri 用 dialog.save + server 寫檔，瀏覽器用 blob download
-- **Ratio 自適應** ✅ — 直幅/橫幅素材在 Inspector 正確顯示
-- **Rotation 修正** ✅ — ingest.py 處理 ffprobe rotate metadata，DB 已更新
+### 本次修復
+- **Thumbnail 路徑修復** ✅ — `thumbUrl()` 加 `replace(/\\/g,'/')` 處理 Windows 反斜線
+- **Theme 暗亮模式重構** ✅ — 全套 CSS 改用 CSS custom properties (`var(--surface)` 等)
+  - `:root` = light, `:root.dark` = dark, `toggleTheme()` 切 `<html>` class 即全局生效
+  - 移除所有 `.dark .xxx` 重複選擇器
+  - JS inline style 從 hardcoded hex 改用 `var()`
+  - localStorage 記住 theme 選擇
+- **Frame Analysis 功能** ✅ — 完整實作
+  - `db.py`: 新增 `frames` table (media_id, frame_index, timestamp_s, thumbnail_path, description, tags)
+  - `frames.py`: frame thumbnails 持久化到 `thumbnails/{stem}_frame{i}.jpg`，回傳 timestamp
+  - `ingest.py`: frame 資料寫入 `frames` table
+  - `server.py`: detail API 回傳 `frames` 陣列 + `edl-markers` export 格式
+  - 前端: frame 卡片帶 thumbnail + 時間碼，點擊跳轉串流播放器
+- **EDL Export 合併** ✅ — toolbar Markers checkbox 控制是否包含 frame markers
+- **路徑縮短** ✅ — Inspector 路徑顯示用 `{~}` 縮短中間路徑，hover 顯示完整
+- **UI Scale** ✅ — 改為 4 段圓點選擇器 (100/120/140/160%)
+- **Toolbar** ✅ — 標題精簡 `ARKIV`，flex-wrap 避免擠壓
 
-### 已知限制（明天繼續）
-- **波形是假資料** — `waveformBars()` 是固定高度陣列，非真實音頻波形
-- **In/Out marker** — 靜態顯示，不可拖曳（排 Phase 6）
-- **Filmstrip** — 移到 Frame Analysis section，仍是 placeholder
-- **Watchdog re-ingest** — 已加入 Phase 6 roadmap，未實作
+### 已知限制
+- **波形是假資料** — `waveformBars()` 固定高度陣列
+- **In/Out marker** — 靜態顯示，不可拖曳
+- **Vision 描述** — PC 端 Ollama llava 未測試，frame description 目前為空
+- **Theme light mode** — 大部分 OK，少數 JS 生成的 inline color 可能仍需微調
 
-## 跨裝置開發注意事項
-
-### PC → Mac 同步
-```bash
-cd ~/.arkiv && git pull
+### DB Schema 變更
+```sql
+CREATE TABLE frames (
+    id             INTEGER PRIMARY KEY,
+    media_id       INTEGER REFERENCES media(id) ON DELETE CASCADE,
+    frame_index    INTEGER NOT NULL,
+    timestamp_s    REAL NOT NULL,
+    thumbnail_path TEXT,
+    description    TEXT,
+    tags           TEXT,
+    UNIQUE(media_id, frame_index)
+);
 ```
-- DB 不在 git 裡（`.gitignore`），兩端各自 ingest
-- `thumbnails/` 也不在 git，各端自動產生
-- `tailwind-static.css` + `index.html` 是共用的，pull 即生效
+Mac 端 pull 後需要重新 ingest 或跑一次 frame 生成腳本來填充 frames table。
 
-### Mac → PC 同步
-```bash
-cd ~/.arkiv && git add -A && git commit -m "描述" && git push
-```
-
-### 跨平台陷阱清單
+### 跨平台陷阱清單（更新）
 | 陷阱 | Mac | PC |
 |------|-----|-----|
 | Whisper | mlx-whisper | faster-whisper (CUDA) |
-| Path separator | `/` | `\`（thumbUrl 已有 `.replace()` 處理） |
+| Path separator | `/` | `\`（thumbUrl + shortenPath 已處理） |
 | ffprobe encoding | UTF-8 | cp950（已用 `encoding='utf-8'` 修正） |
 | Tauri inject | `var` not `const` | 同 |
-| video rotate | ffprobe `tags.rotate` or `side_data_list` | 同 |
-| Tauri dialog | `window.__TAURI__.dialog.open()` | 同，已有 fallback chain |
+| CSS theming | CSS vars `:root` / `:root.dark` | 同 |
 
-### Chrome first, Tauri last
-1. `uvicorn server:app --host 0.0.0.0 --port 8501 --reload`
-2. Chrome `localhost:8501` — 做 90% debug
-3. Safari `localhost:8501` — 測相容性
-4. `WEBKIT_INSPECTOR=1 cargo tauri dev` — 最終驗證
+## Key Files Changed
+| File | What |
+|------|------|
+| index.html | CSS vars theme + Frame Analysis UI + scale dots + path shorten |
+| db.py | frames table + CRUD |
+| frames.py | persistent frame thumbnails with timestamps |
+| ingest.py | frame data → frames table |
+| server.py | frames in detail API + edl-markers export |
 
-## Key Files
-| File | Status |
-|------|--------|
-| index.html | 大修完成（~1070 行） |
-| tailwind-static.css | SVG/img reset 修正 |
-| server.py | 加 `/api/open-file` + `/api/export-to` + `/api/client-log` |
-| ingest.py | rotation metadata 處理 |
-| media.db | 3 筆素材（1 橫幅 + 2 直幅），dimension 已修正 |
-
-## Mac 快照（明天 PC 端對照用）
-- **Tag**: `mac-snapshot-20260331`
-- **Commit**: `f913fd9`
-- **Repo**: `github.com/ourladypeace2011-commits/arkiv`
-
+## Mac 同步
 ```bash
-# PC 端同步
 cd ~/.arkiv
 git pull
-git log mac-snapshot-20260331..HEAD   # 看 PC 之後多了什麼
-git diff mac-snapshot-20260331        # 對比差異
+# 重新生成 frames（Mac 端 DB 不在 git 裡）
+python -c "
+import db, frames as frm
+db.init_db()
+for rec in db.get_all_records():
+    if rec['ext'] in ('.mp4','.mov','.m4v','.mts') and rec.get('duration_s',0) > 0:
+        mid = rec['id']
+        if db.get_frames(mid): continue
+        fd = frm.extract_frames(rec['path'], rec['duration_s'], rec['fps'] or 30)
+        for f in fd: db.upsert_frame(mid, f['index'], f['timestamp_s'], f.get('thumbnail_path'))
+        print(f'{rec[\"filename\"]}: {len(fd)} frames')
+"
 ```
 
-## Environment
-- Server: uvicorn port 8501 (--reload)
-- Tauri: cargo tauri dev
-- Python: 3.9
-- Rust: 1.94.1
-- DB: ~/.arkiv/media.db
+## Tag & Snapshot
+- **Tag**: `pc-snapshot-20260331`
+- **Repo**: `github.com/ourladypeace2011-commits/arkiv`
