@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Media Asset Manager — Styles & Theme (DaVinci Resolve Dark)
 Colors from mockup_ui.html v2, format utilities, CSS injection.

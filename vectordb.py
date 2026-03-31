@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Vector DB module — ChromaDB + Ollama nomic-embed-text
 """
