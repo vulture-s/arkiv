@@ -356,6 +356,7 @@ function fmtHMS(s) {
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
 }
 function fmtSize(mb) { if (!mb||mb<=0) return '0 MB'; return mb>=1024 ? `${(mb/1024).toFixed(1)} GB` : `${Math.round(mb)} MB`; }
+function shortenPath(p) { if(!p) return ''; var s=p.replace(/\\/g,'/'); var parts=s.split('/'); if(parts.length<=3) return s; return parts[0]+'/'+parts[1]+'/{~}/'+parts[parts.length-2]+'/'+parts[parts.length-1]; }
 function mediaType(ext) { if(VIDEO_EXT.includes(ext)) return 'video'; if(AUDIO_EXT.includes(ext)) return 'audio'; return 'other'; }
 
 function rBadge(r) {
@@ -559,7 +560,7 @@ async function renderInspector() {
         placeholder="Rating note... (e.g. 前 30 秒可用)" onblur="doSaveNote(${rec.id})">${rec.rating_note||''}</textarea>
     </div>
 
-    <div class="px-3 mt-3"><div class="text-sm font-semibold">${rec.filename}</div><div class="text-2xs text-txt-tertiary mt-0.5 font-mono truncate">${rec.path}</div></div>
+    <div class="px-3 mt-3"><div class="text-sm font-semibold">${rec.filename}</div><div class="text-2xs text-txt-tertiary mt-0.5 font-mono truncate" title="${rec.path}">${shortenPath(rec.path)}</div></div>
 
     <div class="px-3 mt-2">
       <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Metadata</div>
