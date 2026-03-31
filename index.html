@@ -193,10 +193,10 @@ window.onunhandledrejection = function(e) {
     <svg class="w-3.5 h-3.5 light-icon" style="display:none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
   </button>
 
-  <div class="flex items-center gap-1 ml-2 shrink-0" title="UI Scale">
-    <svg width="12" height="12" fill="none" stroke="#71717a" stroke-width="2" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
-    <input type="range" id="uiScale" min="100" max="160" value="130" step="10" style="width:60px;height:3px;accent-color:#3b82f6;cursor:pointer" oninput="setUiScale(this.value)"/>
-    <svg width="16" height="16" fill="none" stroke="#71717a" stroke-width="2" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+  <div class="flex items-center gap-0.5 ml-2 shrink-0" title="UI Scale">
+    <button class="view-btn" onclick="setUiScale(Math.max(100,currentScale-10))" style="font-size:12px;padding:2px 5px">A-</button>
+    <span class="text-2xs text-txt-tertiary" id="scaleLabel" style="min-width:28px;text-align:center">130%</span>
+    <button class="view-btn" onclick="setUiScale(Math.min(160,currentScale+10))" style="font-size:14px;padding:2px 5px">A+</button>
   </div>
 
   <div class="flex items-center gap-3 ml-2 text-2xs text-txt-tertiary shrink-0" id="headerStats"></div>
@@ -1074,8 +1074,12 @@ document.getElementById('searchInput').addEventListener('input', e => {
 });
 
 // ── UI Scale ─────────────────────────────────────────────────────────────────
+var currentScale = 130;
 function setUiScale(val) {
-  document.documentElement.style.fontSize = val + '%';
+  currentScale = parseInt(val);
+  document.documentElement.style.fontSize = currentScale + '%';
+  var el = document.getElementById('scaleLabel');
+  if (el) el.textContent = currentScale + '%';
 }
 
 // ── Panel Resize ─────────────────────────────────────────────────────────────
