@@ -517,7 +517,7 @@ async function renderInspector() {
   ).join(' ');
 
   var framesHtml = (rec.frames||[]).map(function(f) {
-    var fThumb = f.thumbnail_path ? `/thumbnails/${f.thumbnail_path.replace(/\\\\/g,'/').split('/').pop()}` : '';
+    var fThumb = f.thumbnail_path ? `/thumbnails/${f.thumbnail_path.replace(/\\/g,'/').split('/').pop()}` : '';
     var fTime = fmtHMS(f.timestamp_s);
     var fDesc = f.description || ('Frame ' + (f.frame_index+1));
     return `<div class="bg-surface-50 rounded overflow-hidden cursor-pointer mb-1.5 flex" style="border:1px solid var(--panel-border)" onclick="seekToFrame(${f.timestamp_s})">
