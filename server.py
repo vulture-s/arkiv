@@ -146,12 +146,14 @@ def list_media(
 
 @app.get("/api/media/{media_id}")
 def get_media_detail(media_id: int):
-    """Get full media record with tags."""
+    """Get full media record with tags and frames."""
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "Not found")
     rec["tags"] = db.get_tags(media_id)
-    # Parse frame_tags JSON
+    # Structured frame analysis data
+    rec["frames"] = db.get_frames(media_id)
+    # Legacy frame_tags_parsed for backwards compat
     if rec.get("frame_tags"):
         try:
             rec["frame_tags_parsed"] = json.loads(rec["frame_tags"])
@@ -449,7 +451,26 @@ def export_media(media_id: int, fmt: str):
             headers={"Content-Disposition": f'attachment; filename="{stem}.edl"'},
         )
 
-    raise HTTPException(400, f"Unsupported format: {fmt}. Use srt/vtt/txt/edl")
+    if fmt == "markers":
+        # EDL with frame markers for DaVinci Resolve import
+        frames = db.get_frames(media_id)
+        fps_val = rec.get("fps") or 24
+        edl = f"TITLE: {stem}_markers\nFCM: NON-DROP FRAME\n\n"
+        for i, fr in enumerate(frames, 1):
+            tc = _ts(fr["timestamp_s"], ":").replace(",", ":")
+            tc_end_s = min(fr["timestamp_s"] + 1.0, duration)
+            tc_end = _ts(tc_end_s, ":").replace(",", ":")
+            desc = (fr.get("description") or f"Frame {fr['frame_index']+1}")[:60]
+            edl += f"{i:03d}  AX       V     C        {tc} {tc_end} {tc} {tc_end}\n"
+            edl += f"* FROM CLIP NAME: {filename}\n"
+            edl += f"* COMMENT: {desc}\n\n"
+        return HTMLResponse(
+            content=edl,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{stem}_markers.edl"'},
+        )
+
+    raise HTTPException(400, f"Unsupported format: {fmt}. Use srt/vtt/txt/edl/markers")
 
 
 class ExportToRequest(BaseModel):

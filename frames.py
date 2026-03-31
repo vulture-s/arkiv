@@ -26,50 +26,91 @@ def extract_thumbnail(video_path: str, duration_s: float) -> str | None:
     return str(out) if out.exists() else None
 
 
-def extract_frames(video_path: str, duration_s: float, fps: float) -> list[str]:
+def extract_frames(video_path: str, duration_s: float, fps: float) -> list[dict]:
     """
-    Extract representative frames from a video.
+    Extract representative frames from a video and persist thumbnails.
+    Returns list of {index, timestamp_s, thumbnail_path}.
     - Short clip (< 60s): 3 fixed frames at 25%, 50%, 75%
     - Long clip (>= 60s): ffmpeg scene detect threshold=0.3
-    Returns list of temp jpg paths (caller must clean up).
     """
-    tmp_dir = tempfile.mkdtemp(prefix="media_frames_")
+    THUMBNAILS_DIR.mkdir(exist_ok=True)
+    stem = Path(video_path).stem
 
     if duration_s < 60:
-        frames = _extract_fixed(video_path, duration_s, fps, tmp_dir)
+        results = _extract_fixed_persistent(video_path, duration_s, fps, stem)
     else:
-        frames = _extract_scene(video_path, tmp_dir)
-        if not frames:
-            frames = _extract_fixed(video_path, duration_s, fps, tmp_dir)
+        results = _extract_scene_persistent(video_path, duration_s, stem)
+        if not results:
+            results = _extract_fixed_persistent(video_path, duration_s, fps, stem)
 
-    return frames
+    return results
 
 
-def _extract_fixed(video_path: str, duration_s: float, fps: float, out_dir: str) -> list[str]:
+def _extract_fixed_persistent(video_path: str, duration_s: float, fps: float, stem: str) -> list[dict]:
     positions = [0.25, 0.5, 0.75]
-    output = []
+    results = []
     for i, pct in enumerate(positions):
         t = duration_s * pct
-        frame_n = int(t * fps)
-        out = Path(out_dir) / f"frame_{i:02d}.jpg"
-        cmd = [
-            "ffmpeg", "-i", video_path,
-            "-vf", f"select='eq(n\\,{frame_n})',scale=640:-1",
-            "-vsync", "vfr", "-frames:v", "1",
-            str(out), "-y"
-        ]
-        subprocess.run(cmd, capture_output=True)
+        out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
+        if not out.exists():
+            cmd = [
+                "ffmpeg", "-ss", str(t), "-i", video_path,
+                "-vf", "scale=320:-1",
+                "-frames:v", "1", str(out), "-y"
+            ]
+            subprocess.run(cmd, capture_output=True)
         if out.exists():
-            output.append(str(out))
-    return output
+            results.append({
+                "index": i,
+                "timestamp_s": round(t, 2),
+                "thumbnail_path": str(out),
+            })
+    return results
 
 
-def _extract_scene(video_path: str, out_dir: str) -> list[str]:
-    out_pattern = str(Path(out_dir) / "scene_%04d.jpg")
+def _extract_scene_persistent(video_path: str, duration_s: float, stem: str) -> list[dict]:
+    """Use scene detection, then persist top 3 frames."""
+    tmp_dir = tempfile.mkdtemp(prefix="media_frames_")
+    # First pass: detect scene timestamps
     cmd = [
         "ffmpeg", "-i", video_path,
-        "-vf", "select='gt(scene,0.3)',scale=640:-1",
-        "-vsync", "vfr", out_pattern, "-y"
+        "-vf", "select='gt(scene,0.3)',showinfo",
+        "-vsync", "vfr", "-f", "null", "-"
     ]
-    subprocess.run(cmd, capture_output=True)
-    return sorted(str(p) for p in Path(out_dir).glob("scene_*.jpg"))
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+    # Parse timestamps from showinfo output
+    timestamps = []
+    for line in proc.stderr.splitlines():
+        if "pts_time:" in line:
+            try:
+                pts = float(line.split("pts_time:")[1].split()[0])
+                timestamps.append(pts)
+            except (ValueError, IndexError):
+                pass
+
+    if not timestamps:
+        return []
+
+    # Pick up to 3 evenly spaced scene changes
+    if len(timestamps) > 3:
+        step = len(timestamps) // 3
+        timestamps = [timestamps[step * i] for i in range(3)]
+
+    results = []
+    for i, t in enumerate(timestamps[:3]):
+        out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
+        if not out.exists():
+            cmd = [
+                "ffmpeg", "-ss", str(t), "-i", video_path,
+                "-vf", "scale=320:-1",
+                "-frames:v", "1", str(out), "-y"
+            ]
+            subprocess.run(cmd, capture_output=True)
+        if out.exists():
+            results.append({
+                "index": i,
+                "timestamp_s": round(t, 2),
+                "thumbnail_path": str(out),
+            })
+    return results

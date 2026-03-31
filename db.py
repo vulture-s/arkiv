@@ -42,6 +42,19 @@ def init_db():
                 UNIQUE(media_id, name)
             )
         """)
+        # frames table (persistent frame analysis)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS frames (
+                id             INTEGER PRIMARY KEY,
+                media_id       INTEGER REFERENCES media(id) ON DELETE CASCADE,
+                frame_index    INTEGER NOT NULL,
+                timestamp_s    REAL NOT NULL,
+                thumbnail_path TEXT,
+                description    TEXT,
+                tags           TEXT,
+                UNIQUE(media_id, frame_index)
+            )
+        """)
         # migrations: add columns if upgrading from older schema
         for col, typ in [
             ("thumbnail_path", "TEXT"),
@@ -218,6 +231,35 @@ def get_top_tags(limit: int = 10) -> list[dict]:
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ── Frame Operations ─────────────────────────────────────────────────────────
+
+def upsert_frame(media_id: int, frame_index: int, timestamp_s: float,
+                 thumbnail_path: str | None = None, description: str = "",
+                 tags: str = ""):
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO frames (media_id, frame_index, timestamp_s, thumbnail_path, description, tags)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(media_id, frame_index) DO UPDATE SET
+                timestamp_s=excluded.timestamp_s, thumbnail_path=excluded.thumbnail_path,
+                description=excluded.description, tags=excluded.tags
+        """, (media_id, frame_index, timestamp_s, thumbnail_path, description, tags))
+
+
+def get_frames(media_id: int) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM frames WHERE media_id = ? ORDER BY frame_index",
+            (media_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_frames(media_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM frames WHERE media_id = ?", (media_id,))
 
 
 # ── Enhanced Queries (Phase 4 UI) ─────────────────────────────────────────────

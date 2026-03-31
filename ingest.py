@@ -119,17 +119,22 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
         print(" >thumb", end="", flush=True)
         record["thumbnail_path"] = frm.extract_thumbnail(str(path), meta["duration_s"])
 
-    # Frame description (video only)
-    if is_video and not skip_vision and meta["duration_s"] > 0:
-        print(" >llava", end="", flush=True)
-        frame_paths = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30)
-        if frame_paths:
-            frame_results = vis.describe_frames(frame_paths)
+    # Frame extraction (video only) — persistent thumbnails + DB records
+    if is_video and meta["duration_s"] > 0:
+        print(" >frames", end="", flush=True)
+        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30)
+        record["_frames"] = frame_data  # pass to caller for DB insert
+
+        # Vision description (optional)
+        if not skip_vision and frame_data:
+            print(" >llava", end="", flush=True)
+            frame_paths_for_vision = [f["thumbnail_path"] for f in frame_data]
+            frame_results = vis.describe_frames(frame_paths_for_vision)
+            for fd, vr in zip(frame_data, frame_results):
+                fd["description"] = vr.get("description", "")
+                fd["tags"] = ",".join(vr.get("tags", []))
+            # Also store legacy frame_tags for backwards compat
             record["frame_tags"] = vis.frames_to_json(frame_results)
-            # Clean up temp frames
-            for fp in frame_paths:
-                Path(fp).unlink(missing_ok=True)
-            shutil.rmtree(Path(frame_paths[0]).parent, ignore_errors=True)
 
     print(" [OK]")
     return record
@@ -189,7 +194,25 @@ def main():
         try:
             record = process_file(f, args.skip_vision, existing=existing)
             if record:
+                frames = record.pop("_frames", [])
                 db.upsert(record)
+                # Store frame analysis data
+                if frames:
+                    # Get media_id for frame storage
+                    with db.get_conn() as conn:
+                        row = conn.execute("SELECT id FROM media WHERE path=?", (str(f),)).fetchone()
+                        if row:
+                            mid = row[0]
+                            db.delete_frames(mid)
+                            for fd in frames:
+                                db.upsert_frame(
+                                    media_id=mid,
+                                    frame_index=fd["index"],
+                                    timestamp_s=fd["timestamp_s"],
+                                    thumbnail_path=fd.get("thumbnail_path"),
+                                    description=fd.get("description", ""),
+                                    tags=fd.get("tags", ""),
+                                )
                 ok += 1
             else:
                 failed += 1
