@@ -3,8 +3,10 @@
 arkiv — DaVinci Resolve Plugin
 Search arkiv media library and import selected files into the current Resolve project.
 
-Install:
-    cp arkiv_resolve.py ~/Library/Application\ Support/Blackmagic\ Design/DaVinci\ Resolve/Fusion/Scripts/Utility/
+Install (macOS):
+    cp arkiv_resolve.py ~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/
+Install (Windows):
+    copy arkiv_resolve.py "%APPDATA%\\Blackmagic Design\\DaVinci Resolve\\Support\\Fusion\\Scripts\\Utility\\"
 
 Usage:
     In DaVinci Resolve → Workspace → Scripts → arkiv_resolve
@@ -18,10 +20,25 @@ ARKIV_API = "http://localhost:8501"
 
 def get_resolve():
     """Get the DaVinci Resolve scripting object."""
+    import sys
+    import os
+    # Windows: set up Resolve scripting paths
+    if sys.platform == "win32":
+        script_api = os.environ.get(
+            "RESOLVE_SCRIPT_API",
+            r"C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting"
+        )
+        modules_path = os.path.join(script_api, "Modules")
+        if modules_path not in sys.path:
+            sys.path.append(modules_path)
     try:
         import DaVinciResolveScript as dvr
-        return dvr.scriptapp("Resolve")
-    except ImportError:
+        resolve = dvr.scriptapp("Resolve")
+        if resolve is None:
+            print("[arkiv] DaVinciResolveScript loaded but Resolve not responding")
+        return resolve
+    except ImportError as e:
+        print(f"[arkiv] Cannot import DaVinciResolveScript: {e}")
         return None
 
 
@@ -92,8 +109,9 @@ def create_ui(resolve):
     """Create the arkiv search UI using Fusion's UIManager."""
     fusion = resolve.Fusion() if resolve else None
     if not fusion:
-        print("[arkiv] Cannot access Fusion UIManager — running in standalone mode")
-        return run_cli_mode(resolve)
+        print("[arkiv] Cannot access Fusion UIManager")
+        print("[arkiv] Tip: Make sure DaVinci Resolve is running and script is launched from Workspace → Scripts")
+        return None
 
     ui = fusion.UIManager
     disp = bmd.UIDispatcher(ui)  # noqa: F821 — bmd is injected by Resolve
@@ -177,13 +195,14 @@ def create_ui(resolve):
         results_map.clear()
         for item in items:
             row = tree.NewItem()
-            row.Text[0] = item.get("filename", "")
+            fname = item.get("filename", "")
+            row.Text[0] = fname
             row.Text[1] = format_duration(item.get("duration_s"))
             row.Text[2] = (item.get("rating") or "—").upper()
             row.Text[3] = item.get("lang") or "?"
             row.Text[4] = f"{round(item.get('score', 0) * 100)}%" if item.get("score") else ""
             tree.AddTopLevelItem(row)
-            results_map[id(row)] = item
+            results_map[fname] = item
         win.Find("StatusLabel").Text = f"Found {len(items)} results"
 
     def on_search(ev):
@@ -206,7 +225,9 @@ def create_ui(resolve):
             return
         paths = []
         for sel_id in selected:
-            item_data = results_map.get(id(selected[sel_id]))
+            row = selected[sel_id]
+            fname = row.Text[0]
+            item_data = results_map.get(fname)
             if item_data and item_data.get("path"):
                 paths.append(item_data["path"])
         if paths:
