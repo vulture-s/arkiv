@@ -75,14 +75,16 @@ ollama pull llava:7b  # optional, for frame descriptions
 python health.py
 ```
 
-### Option A: Web UI
+### Option A: Web UI — browse, search, rate, and tag in the browser
 
 ```bash
 uvicorn server:app --host 0.0.0.0 --port 8501
 # Open http://localhost:8501 → click + to ingest media
 ```
 
-### Option B: CLI only
+### Option B: CLI only — ingest and search without opening a browser
+
+> Both options use the same database. You can mix and match — ingest via CLI, then browse in Web UI, or vice versa.
 
 ```bash
 cd arkiv
