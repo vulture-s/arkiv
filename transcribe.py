@@ -1,3 +1,4 @@
+import os
 import subprocess
 import tempfile
 import platform
@@ -25,7 +26,7 @@ def warm_up():
     if _USE_MLX:
         import mlx_whisper
         import numpy as np
-        silence = tempfile.mktemp(suffix=".wav")
+        _fd, silence = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
         try:
             subprocess.run([
                 "ffmpeg", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
@@ -234,7 +235,7 @@ def _llm_polish(text: str, language: str = "zh") -> str:
 
 
 def _to_wav(media_path: str):
-    out = tempfile.mktemp(suffix=".wav")
+    _fd, out = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
     cmd = [
         "ffmpeg", "-i", media_path,
         "-ac", "1", "-ar", "16000",

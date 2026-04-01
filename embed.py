@@ -1,4 +1,3 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 """
 Local Media Asset Manager — Phase 2: Build Vector Index
@@ -9,6 +8,7 @@ Usage:
     python embed.py --rebuild    # drop and rebuild entire index
     python embed.py --search "drone footage aerial"  # quick CLI search test
 """
+from __future__ import annotations
 import argparse
 import sys
 

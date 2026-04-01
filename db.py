@@ -5,10 +5,21 @@ import sqlite3
 from config import DB_PATH
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -86,16 +97,29 @@ def is_processed(path: str) -> bool:
         return row is not None
 
 
+_ALLOWED_COLS = {
+    "path", "filename", "ext", "duration_s", "size_mb", "width", "height",
+    "fps", "has_audio", "transcript", "lang", "frame_tags", "thumbnail_path",
+    "processed_at", "rating", "rating_note", "camera_make", "camera_model",
+    "lens_model", "gps_lat", "gps_lon", "color_space", "iso", "shutter_speed",
+    "aperture", "focal_length", "creation_date", "content_type",
+}
+
+
 def upsert(record: dict):
-    cols = ", ".join(record.keys())
-    placeholders = ", ".join(["?"] * len(record))
-    updates = ", ".join(f"{k}=excluded.{k}" for k in record if k != "path")
+    # Only allow known column names to prevent SQL injection via dict keys
+    safe = {k: v for k, v in record.items() if k in _ALLOWED_COLS}
+    if not safe:
+        return
+    cols = ", ".join(safe.keys())
+    placeholders = ", ".join(["?"] * len(safe))
+    updates = ", ".join(f"{k}=excluded.{k}" for k in safe if k != "path")
     sql = f"""
         INSERT INTO media ({cols}) VALUES ({placeholders})
         ON CONFLICT(path) DO UPDATE SET {updates}
     """
     with get_conn() as conn:
-        conn.execute(sql, list(record.values()))
+        conn.execute(sql, list(safe.values()))
 
 
 # ── Lightweight queries (Phase 4) ────────────────────────────────────────────

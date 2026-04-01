@@ -19,16 +19,14 @@ Search, browse, rate, and tag your video/audio assets using AI-powered transcrip
 └─────────────┘    └──────┬───────┘    └─────────────┘
                           │
                    ┌──────┴───────┐
-                   │  vectordb.py │◄──► ChromaDB
+                   │  embed.py    │◄──► ChromaDB
                    │  (Ollama)    │     (nomic-embed-text)
                    └──────────────┘
-                          │
-            ┌─────────────┼─────────────┐
-            │             │             │
-      ┌─────┴─────┐ ┌────┴────┐ ┌──────┴──────┐
-      │ ingest.py │ │frames.py│ │transcribe.py│
-      │ (FFmpeg)  │ │(scenes) │ │  (Whisper)  │
-      └───────────┘ └─────────┘ └─────────────┘
+                          
+      ┌───────────┐ ┌─────────┐ ┌─────────────┐ ┌──────────┐
+      │ ingest.py │ │frames.py│ │transcribe.py│ │ vision.py│
+      │ (FFmpeg)  │ │(scenes) │ │  (Whisper)  │ │ (llava)  │
+      └───────────┘ └─────────┘ └─────────────┘ └──────────┘
 ```
 
 ## Screenshots
@@ -59,7 +57,9 @@ Search, browse, rate, and tag your video/audio assets using AI-powered transcrip
 ```bash
 git clone https://github.com/vulture-s/arkiv.git
 cd arkiv
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate        # macOS / Linux
+# .venv\Scripts\activate         # Windows (PowerShell)
 pip install -r requirements.txt
 
 # Install Whisper backend (pick one):
@@ -141,7 +141,8 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `ARKIV_EMBED_MODEL` | `nomic-embed-text` | Embedding model |
 | `ARKIV_VISION_MODEL` | `llava:7b` | Vision model for frames |
-| `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-mlx` | Whisper model (Docker: `large-v3-turbo`) |
+| `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-mlx` (macOS) / `large-v3` (other) | Whisper model |
+| `ARKIV_EXIFTOOL_PATH` | *(empty — auto-detect)* | Path to exiftool binary (optional) |
 | `ARKIV_HOST` | `0.0.0.0` | Server bind address |
 | `ARKIV_PORT` | `8501` | Server port |
 
@@ -176,8 +177,8 @@ Use the `+` button in the Media Pool sidebar, or run `python ingest.py --dir /pa
 Yes — the native Python install is the primary workflow. Docker is optional for deployment.
 
 **Q: What file formats are supported?**
-Video: `.mp4`, `.mov`, `.m4v`, `.mts`
-Audio: `.wav`, `.mp3`, `.m4a`, `.aac`
+Video: `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.mts`
+Audio: `.wav`, `.mp3`, `.m4a`, `.aac`, `.flac`, `.ogg`
 
 ## Smoke Test
 

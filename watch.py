@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 MEDIA_EXTS = {
-    ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v",  # video
+    ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts",  # video
     ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg",  # audio
 }
 
@@ -41,7 +41,7 @@ def ingest_file(filepath: Path) -> bool:
     script = Path(__file__).parent / "ingest.py"
     try:
         result = subprocess.run(
-            [sys.executable, str(script), str(filepath)],
+            [sys.executable, str(script), "--dir", str(filepath)],
             capture_output=True,
             text=True,
             timeout=600,  # 10 min per file
