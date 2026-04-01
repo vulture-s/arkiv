@@ -78,17 +78,23 @@ python health.py
 ### Run
 
 ```bash
-# 1. Start the server
+# Start the server
 uvicorn server:app --host 0.0.0.0 --port 8501
+# Open http://localhost:8501
 
-# 2. Open http://localhost:8501
-
-# 3. Click the + button in Media Pool to ingest media
-#    — or use CLI in another terminal:
+# Ingest media (CLI or click + in Media Pool)
 python ingest.py --dir /path/to/media
+python ingest.py --dir ./media --limit 10 --skip-vision
+python ingest.py --dir ./media --refresh    # re-process already-indexed files
 
-# 4. Build vector search index (enables semantic search)
-python embed.py
+# Build vector search index (enables semantic search)
+python embed.py                             # build/update index
+python embed.py --rebuild                   # drop and rebuild from scratch
+python embed.py --search "interview outdoor"  # quick search test
+
+# Watch a folder for new media (auto-ingest)
+python watch.py /path/to/footage
+python watch.py ~/Movies/rushes --interval 10
 ```
 
 ### Docker
@@ -114,28 +120,6 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_HOST` | `0.0.0.0` | Server bind address |
 | `ARKIV_PORT` | `8501` | Server port |
 
-## CLI Usage
-
-```bash
-# Ingest media from a directory
-python ingest.py --dir ./media
-python ingest.py --dir ./media --limit 10 --skip-vision
-python ingest.py --dir ./media --refresh    # re-process already-indexed files
-
-# Vector search index
-python embed.py                             # build/update index
-python embed.py --rebuild                   # drop and rebuild from scratch
-python embed.py --search "interview outdoor"  # quick search test
-
-# Watch a folder for new media (auto-ingest)
-python watch.py /path/to/footage
-python watch.py ~/Movies/rushes --interval 10
-
-# Environment & testing
-python health.py                            # check dependencies
-python health.py --platform pc              # platform-specific checks
-bash smoke-test.sh --platform pc            # full smoke test (pc or docker)
-```
 
 ## Tech Stack
 
