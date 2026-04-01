@@ -29,7 +29,7 @@ Search, browse, rate, and tag your video/audio assets using AI-powered transcrip
 
 ## Screenshots
 
-> Screenshots coming soon. Run `uvicorn server:app --port 8501` and open http://localhost:8501 to see the UI.
+![ARKIV UI](screenshot.jpg)
 
 ## Features
 
