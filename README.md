@@ -118,14 +118,24 @@ Copy `.env.example` to `.env` and customize:
 ## CLI Usage
 
 ```bash
-# Ingest with options
+# Ingest media from a directory
+python ingest.py --dir ./media
 python ingest.py --dir ./media --limit 10 --skip-vision
+python ingest.py --dir ./media --refresh    # re-process already-indexed files
 
-# Rebuild vector index
-python embed.py
+# Vector search index
+python embed.py                             # build/update index
+python embed.py --rebuild                   # drop and rebuild from scratch
+python embed.py --search "interview outdoor"  # quick search test
 
-# Health check
-python health.py
+# Watch a folder for new media (auto-ingest)
+python watch.py /path/to/footage
+python watch.py ~/Movies/rushes --interval 10
+
+# Environment & testing
+python health.py                            # check dependencies
+python health.py --platform pc              # platform-specific checks
+bash smoke-test.sh --platform pc            # full smoke test (pc or docker)
 ```
 
 ## Tech Stack
