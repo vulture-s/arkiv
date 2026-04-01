@@ -189,6 +189,7 @@ def create_ui(resolve):
 
     # Store results for import
     results_map = {}
+    good_filter_on = [False]
 
     def populate_tree(items):
         tree.Clear()
@@ -214,8 +215,15 @@ def create_ui(resolve):
         populate_tree(items)
 
     def on_good(ev):
-        win.Find("StatusLabel").Text = "Loading GOOD takes..."
-        items = list_media(rating="good")
+        good_filter_on[0] = not good_filter_on[0]
+        if good_filter_on[0]:
+            win.Find("GoodBtn").Text = "Show All"
+            win.Find("StatusLabel").Text = "Loading GOOD takes..."
+            items = list_media(rating="good")
+        else:
+            win.Find("GoodBtn").Text = "GOOD Only"
+            win.Find("StatusLabel").Text = "Loading all media..."
+            items = list_media(limit=30)
         populate_tree(items)
 
     def on_import(ev):

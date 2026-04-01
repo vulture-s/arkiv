@@ -60,6 +60,19 @@ def init_db():
             ("thumbnail_path", "TEXT"),
             ("rating", "TEXT"),
             ("rating_note", "TEXT"),
+            # Phase 8: ExifTool metadata + content classification
+            ("camera_make", "TEXT"),
+            ("camera_model", "TEXT"),
+            ("lens_model", "TEXT"),
+            ("gps_lat", "REAL"),
+            ("gps_lon", "REAL"),
+            ("color_space", "TEXT"),
+            ("iso", "INTEGER"),
+            ("shutter_speed", "TEXT"),
+            ("aperture", "REAL"),
+            ("focal_length", "REAL"),
+            ("creation_date", "TEXT"),
+            ("content_type", "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE media ADD COLUMN {col} {typ}")

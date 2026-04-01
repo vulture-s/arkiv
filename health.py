@@ -19,13 +19,13 @@ def check(name: str, ok: bool, detail: str = "", required: bool = True):
     global PASS, FAIL, SKIP
     if ok:
         PASS += 1
-        print(f"  \033[32m✓\033[0m {name} {detail}")
+        print(f"  \033[32m[PASS]\033[0m {name} {detail}")
     elif required:
         FAIL += 1
-        print(f"  \033[31m✗\033[0m {name} {detail}")
+        print(f"  \033[31m[FAIL]\033[0m {name} {detail}")
     else:
         SKIP += 1
-        print(f"  \033[33m⏭\033[0m {name} {detail} (optional)")
+        print(f"  \033[33m[SKIP]\033[0m {name} {detail} (optional)")
 
 
 def main():
