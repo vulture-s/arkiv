@@ -509,81 +509,62 @@ async def ws_ingest(ws: WebSocket):
 
 
 async def _run_ingest_with_ws(target: Path, limit: int):
-    """Run ingest in a background task, broadcasting per-file progress via WebSocket."""
-    import subprocess, sys
+    """Run ingest as a single subprocess, parse stdout for progress."""
+    import re, sys
 
-    # Scan files first, filter out already-processed before applying limit
-    files = sorted(
-        f for f in target.rglob("*")
-        if f.suffix.lower() in MEDIA_EXTS
-    )
+    cmd = [sys.executable, str(ROOT / "ingest.py"), "--dir", str(target)]
     if limit > 0:
-        new_files = [f for f in files if not (db.is_processed(str(f)) if hasattr(db, "is_processed") else False)]
-        files = new_files[:limit]
+        cmd += ["--limit", str(limit)]
 
-    total = len(files)
-    await ingest_ws.broadcast({"type": "start", "total": total})
+    await ingest_ws.broadcast({"type": "start", "total": limit or 0})
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE, cwd=str(ROOT)
+    )
 
     ok, skipped, failed = 0, 0, 0
-    for i, f in enumerate(files):
-        already = db.is_processed(str(f)) if hasattr(db, "is_processed") else False
-        if already:
-            skipped += 1
-            await ingest_ws.broadcast({
-                "type": "file", "index": i + 1, "total": total,
-                "filename": f.name, "status": "skipped"
-            })
+    file_re = re.compile(r"\[(\d+)/(\d+)\]\s+(SKIP\s+)?(\S+)\s+>")
+    done_re = re.compile(r"\[(\d+)/(\d+)\]\s+(\S+)\s+.+\[OK\]")
+
+    async for line in proc.stdout:
+        text = line.decode("utf-8", errors="replace").strip()
+        if not text:
             continue
 
-        # Broadcast scanning
-        await ingest_ws.broadcast({
-            "type": "file", "index": i + 1, "total": total,
-            "filename": f.name, "status": "scanning"
-        })
-
-        # Run single-file ingest via subprocess
-        cmd = [
-            sys.executable, str(ROOT / "ingest.py"),
-            "--dir", str(f.parent), "--limit", "1"
-        ]
-        try:
-            # Broadcast transcribing
-            await ingest_ws.broadcast({
-                "type": "file", "index": i + 1, "total": total,
-                "filename": f.name, "status": "transcribing"
-            })
-
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE, cwd=str(ROOT)
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-
-            if proc.returncode == 0:
-                ok += 1
+        # Parse progress lines like "[1/3] FX30.5365.MP4 >probe >whisper..."
+        m = file_re.match(text)
+        if m:
+            idx, total, skip, fname = m.group(1), m.group(2), m.group(3), m.group(4)
+            if skip:
+                skipped += 1
                 await ingest_ws.broadcast({
-                    "type": "file", "index": i + 1, "total": total,
-                    "filename": f.name, "status": "done"
+                    "type": "file", "index": int(idx), "total": int(total),
+                    "filename": fname.strip(), "status": "skipped"
                 })
             else:
-                failed += 1
                 await ingest_ws.broadcast({
-                    "type": "file", "index": i + 1, "total": total,
-                    "filename": f.name, "status": "error",
-                    "error": (stderr.decode() if stderr else "")[-200:]
+                    "type": "file", "index": int(idx), "total": int(total),
+                    "filename": fname.strip(), "status": "transcribing"
                 })
-        except asyncio.TimeoutError:
-            failed += 1
+
+        # Parse completion "[OK]"
+        d = done_re.match(text)
+        if d:
+            ok += 1
             await ingest_ws.broadcast({
-                "type": "file", "index": i + 1, "total": total,
-                "filename": f.name, "status": "error", "error": "timeout"
+                "type": "file", "index": int(d.group(1)), "total": int(d.group(2)),
+                "filename": d.group(3).strip(), "status": "done"
             })
-        except Exception as e:
-            failed += 1
-            await ingest_ws.broadcast({
-                "type": "file", "index": i + 1, "total": total,
-                "filename": f.name, "status": "error", "error": str(e)
-            })
+
+        # Parse "Found N media files"
+        if text.startswith("Found "):
+            fm = re.search(r"Processing (\d+)", text)
+            if fm:
+                await ingest_ws.broadcast({"type": "start", "total": int(fm.group(1))})
+
+    await proc.wait()
+    failed = (limit or 0) - ok - skipped if limit else 0
 
     await ingest_ws.broadcast({
         "type": "complete", "ok": ok, "skipped": skipped, "failed": failed

@@ -78,7 +78,12 @@ python health.py
 ### Option A: Web UI — browse, search, rate, and tag in the browser
 
 ```bash
+# macOS / Linux
 uvicorn server:app --host 0.0.0.0 --port 8501
+
+# Windows (PowerShell) — UTF-8 required for CJK search
+$env:PYTHONUTF8=1; uvicorn server:app --host 0.0.0.0 --port 8501
+
 # Open http://localhost:8501 → click + to ingest media
 ```
 
