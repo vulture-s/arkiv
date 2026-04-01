@@ -3,13 +3,14 @@ import base64
 import json
 import urllib.request
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-VISION_MODEL = "llava:7b"
+import config
+
+OLLAMA_URL = f"{config.OLLAMA_URL}/api/generate"
+VISION_MODEL = config.VISION_MODEL
 PROMPT = (
-    "請用繁體中文，用1至2句話描述這個影片畫面。"
-    "只描述清楚可見的內容：地點、主要事件、人物。"
-    "不要推測看不清楚的細節，不要過度解釋。"
-    "然後在新的一行列出 5 個關鍵詞標籤，用逗號分隔。"
+    "請用繁體中文分析這個影片畫面，回傳嚴格的 JSON 格式（不要加 markdown 標記）：\n"
+    '{"description": "1-2句描述可見內容（地點、事件、人物）", "tags": ["標籤1", "標籤2", "標籤3", "標籤4", "標籤5"]}\n'
+    "規則：只描述清楚可見的內容，不要推測，不要過度解釋。"
 )
 
 
@@ -44,7 +45,19 @@ def _describe_one(img_path: str) -> dict:
         )
         resp = json.loads(urllib.request.urlopen(req, timeout=60).read())
         raw = resp.get("response", "").strip()
-        lines = [l.strip() for l in raw.splitlines() if l.strip()]
+
+        # Try JSON parse first
+        try:
+            parsed = json.loads(raw)
+            return {
+                "description": parsed.get("description", ""),
+                "tags": parsed.get("tags", []),
+            }
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: free-text parse
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
         description = lines[0] if lines else ""
         tags = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
         return {"description": description, "tags": tags}

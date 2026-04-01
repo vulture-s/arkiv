@@ -29,10 +29,7 @@ Search, browse, rate, and tag your video/audio assets using AI-powered transcrip
 
 ## Screenshots
 
-<!-- TODO: Add screenshots -->
-| Grid View | Inspector | Analytics |
-|-----------|-----------|-----------|
-| ![grid](docs/screenshots/grid.png) | ![inspector](docs/screenshots/inspector.png) | ![analytics](docs/screenshots/analytics.png) |
+> Screenshots coming soon. Run `uvicorn server:app --port 8501` and open http://localhost:8501 to see the UI.
 
 ## Features
 
@@ -56,7 +53,7 @@ Search, browse, rate, and tag your video/audio assets using AI-powered transcrip
 ### Install
 
 ```bash
-git clone https://github.com/yourname/arkiv.git
+git clone https://github.com/vulture-s/arkiv.git
 cd arkiv
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt

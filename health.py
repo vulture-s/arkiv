@@ -65,6 +65,13 @@ def main():
     except Exception:
         check("ollama server", False, "(not running)", required=False)
 
+    # ── ExifTool ─────────────────────────────────────────────────────────
+    print("\n-- ExifTool --")
+    exiftool = shutil.which("exiftool")
+    check("exiftool", exiftool is not None,
+          f"({exiftool})" if exiftool else "(not found — install for rich metadata extraction)",
+          required=False)
+
     # ── Whisper ──────────────────────────────────────────────────────────
     print("\n-- Whisper --")
     has_mlx = False
