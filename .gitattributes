@@ -1,0 +1,17 @@
+# Ensure consistent line endings across platforms
+* text=auto eol=lf
+
+# Shell scripts must be LF
+*.sh text eol=lf
+*.command text eol=lf
+
+# Windows-only files
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.jpg binary
+*.png binary
+*.mp4 binary
+*.mov binary
+*.db binary

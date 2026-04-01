@@ -18,6 +18,9 @@ OLLAMA_URL = os.getenv("ARKIV_OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL = os.getenv("ARKIV_EMBED_MODEL", "nomic-embed-text")
 VISION_MODEL = os.getenv("ARKIV_VISION_MODEL", "llava:7b")
 
+# ── ExifTool ─────────────────────────────────────────────────────────────────
+EXIFTOOL_PATH = os.getenv("ARKIV_EXIFTOOL_PATH", "exiftool")
+
 # ── Whisper ──────────────────────────────────────────────────────────────────
 import platform as _plat
 _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"

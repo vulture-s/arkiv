@@ -13,6 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import config
 import db
 import frames as frm
 import transcribe as tr
@@ -80,6 +81,74 @@ def probe(path: str) -> dict | None:
         "height": h,
         "fps": round(fps, 2) if fps else None,
         "has_audio": 1 if audio_stream else 0,
+    }
+
+
+def exiftool_extract(path: str) -> dict:
+    """Extract EXIF metadata via exiftool -json. Returns dict of 12 fields."""
+    cmd = [
+        config.EXIFTOOL_PATH, "-json",
+        "-Make", "-Model", "-LensModel",
+        "-GPSLatitude", "-GPSLongitude",
+        "-ColorSpace",
+        "-ISO",
+        "-ShutterSpeed", "-ExposureTime",
+        "-FNumber", "-ApertureValue",
+        "-FocalLength",
+        "-CreateDate", "-DateTimeOriginal",
+        "-n",  # numeric output for GPS
+        path,
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=30)
+        if r.returncode != 0:
+            return {}
+        data = json.loads(r.stdout)
+        if not data:
+            return {}
+        d = data[0]
+    except Exception:
+        return {}
+
+    # Parse focal length (may be "50 mm" or numeric)
+    fl_raw = d.get("FocalLength")
+    fl = None
+    if fl_raw is not None:
+        try:
+            fl = float(str(fl_raw).replace("mm", "").strip())
+        except (ValueError, TypeError):
+            pass
+
+    # Parse shutter speed — prefer ExposureTime as string
+    ss = d.get("ShutterSpeed") or d.get("ExposureTime")
+    ss_str = str(ss) if ss else None
+
+    # Parse aperture — prefer FNumber
+    ap_raw = d.get("FNumber") or d.get("ApertureValue")
+    ap = None
+    if ap_raw is not None:
+        try:
+            ap = float(ap_raw)
+        except (ValueError, TypeError):
+            pass
+
+    # Creation date — prefer CreateDate, fallback DateTimeOriginal
+    cdate = d.get("CreateDate") or d.get("DateTimeOriginal")
+    cdate_str = str(cdate) if cdate else None
+
+    return {
+        "camera_make": d.get("Make"),
+        "camera_model": d.get("Model"),
+        "lens_model": d.get("LensModel"),
+        "gps_lat": d.get("GPSLatitude"),
+        "gps_lon": d.get("GPSLongitude"),
+        "color_space": str(d.get("ColorSpace")) if d.get("ColorSpace") else None,
+        "iso": d.get("ISO"),
+        "shutter_speed": ss_str,
+        "aperture": ap,
+        "focal_length": fl,
+        "creation_date": cdate_str,
     }
 
 
