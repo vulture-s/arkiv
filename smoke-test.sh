@@ -77,7 +77,7 @@ done
 
 # 4. Media count
 echo "── Data ──"
-COUNT=$(curl -s --max-time 5 "$BASE/api/stats" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo "0")
+COUNT=$(curl -s --max-time 5 "$BASE/api/stats" 2>/dev/null | $PYTHON -c "import sys,json; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo "0")
 if [ "$PLATFORM" = "docker" ] && [ "$COUNT" = "0" ]; then
     check "Media files indexed" "true" "0 files (fresh Docker — ingest media to populate)"
 else

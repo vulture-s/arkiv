@@ -204,6 +204,9 @@ window.onunhandledrejection = function(e) {
 </header>
 
 <script>
+// HTML escape to prevent XSS from filenames, transcripts, tags
+function esc(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
 function setTheme(dark) {
   const h = document.documentElement;
   h.classList.toggle('dark', dark);
@@ -367,7 +370,7 @@ function rBadge(r) {
   if(r==='review') return '<span class="badge-review">REV</span>';
   return '';
 }
-function tagHtml(tags) { return (tags||[]).map(t=>`<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${t.name}</span>`).join(' '); }
+function tagHtml(tags) { return (tags||[]).map(t=>`<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${esc(t.name)}</span>`).join(' '); }
 function thumbUrl(rec) { if(rec.thumbnail_path){ return `/thumbnails/${rec.thumbnail_path.replace(/\\/g,'/').split('/').pop()}`; } return null; }
 
 var videoSvg = '<svg class="w-8 h-8 text-txt-tertiary/30" fill="currentColor" viewBox="0 0 20 20" style="width:32px;height:32px"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"/></svg>';
@@ -475,7 +478,7 @@ function renderGrid() {
         ${badge ? `<div class="absolute top-1 left-1" style="z-index:3">${badge}</div>` : ''}${orientBadge}${score}
       </div>
       <div class="p-2">
-        <div class="text-xs font-medium truncate card-title">${rec.filename}</div>
+        <div class="text-xs font-medium truncate card-title">${esc(rec.filename)}</div>
         <div class="flex items-center gap-1.5 mt-1 text-2xs text-txt-tertiary">
           <span>${res}</span>${fps?`<span>·</span><span>${fps}</span>`:''}<span>·</span><span>${rec.lang||'?'}</span>
         </div>
@@ -516,7 +519,7 @@ async function renderInspector() {
   const res = rec.width ? `${rec.width} × ${rec.height}` : 'audio';
 
   const tagsHtml = (rec.tags||[]).map(t =>
-    `<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${t.name} <span class="tag-remove" onclick="doRemoveTag(${rec.id},'${t.name}')">&times;</span></span>`
+    `<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${esc(t.name)} <span class="tag-remove" onclick="doRemoveTag(${rec.id},'${esc(t.name)}')">&times;</span></span>`
   ).join(' ');
 
   var framesHtml = (rec.frames||[]).map(function(f) {
@@ -559,10 +562,10 @@ async function renderInspector() {
         <button class="rating-btn rating-none" onclick="doSetRating(${rec.id},null)">&mdash; Clear</button>
       </div>
       <textarea id="ratingNote" class="w-full mt-1.5 h-12 bg-surface text-xs text-txt-secondary border border-panel-border rounded p-2 resize-none focus:outline-none focus:border-accent"
-        placeholder="Rating note... (e.g. 前 30 秒可用)" onblur="doSaveNote(${rec.id})">${rec.rating_note||''}</textarea>
+        placeholder="Rating note... (e.g. 前 30 秒可用)" onblur="doSaveNote(${rec.id})">${esc(rec.rating_note||'')}</textarea>
     </div>
 
-    <div class="px-3 mt-3"><div class="text-sm font-semibold">${rec.filename}</div><div class="text-2xs text-txt-tertiary mt-0.5 font-mono truncate" title="${rec.path}">${shortenPath(rec.path)}</div></div>
+    <div class="px-3 mt-3"><div class="text-sm font-semibold">${esc(rec.filename)}</div><div class="text-2xs text-txt-tertiary mt-0.5 font-mono truncate" title="${esc(rec.path)}">${esc(shortenPath(rec.path))}</div></div>
 
     <div class="px-3 mt-2">
       <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Metadata</div>
@@ -608,7 +611,7 @@ async function renderInspector() {
 
     <div class="px-3 mt-3 pb-3">
       <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Transcript</div>
-      ${rec.transcript ? `<div class="bg-surface-50 rounded p-2 text-xs text-txt-secondary leading-relaxed max-h-32 overflow-y-auto">${rec.transcript}</div>` : '<div class="text-2xs text-txt-tertiary italic">No transcript</div>'}
+      ${rec.transcript ? `<div class="bg-surface-50 rounded p-2 text-xs text-txt-secondary leading-relaxed max-h-32 overflow-y-auto">${esc(rec.transcript)}</div>` : '<div class="text-2xs text-txt-tertiary italic">No transcript</div>'}
     </div>`;
 
   actions.innerHTML = `
@@ -631,7 +634,7 @@ async function renderAnalytics() {
     const stats = await fetchStats();
     const r = stats.rating||{}, total = stats.total||1;
     const goodPct = Math.round((r.good||0)/total*100), ngPct = Math.round((r.ng||0)/total*100), unrPct = Math.round((r.unrated||0)/total*100);
-    const topTags = (stats.top_tags||[]).map(t=>`<span class="tag tag-auto">${t.name} <sup>${t.count}</sup></span>`).join(' ');
+    const topTags = (stats.top_tags||[]).map(t=>`<span class="tag tag-auto">${esc(t.name)} <sup>${t.count}</sup></span>`).join(' ');
 
     // Fetch duration-by-lang and size-by-ext
     let langBars = '', sizeBars = '';
@@ -706,7 +709,7 @@ function onTagInput(mediaId) {
   const matches = state.allTags.filter(t=>t.name.includes(val)).slice(0,5);
   let h = matches.map(t=>
     `<div class="tag-autocomplete-item" onclick="doAddTag(${mediaId},'${t.name}');document.getElementById('tagInput').value='';hideAutocomplete();">
-      <span>${t.name}</span><span class="text-txt-tertiary" style="font-size:9px">${t.count} uses</span></div>`
+      <span>${esc(t.name)}</span><span class="text-txt-tertiary" style="font-size:9px">${t.count} uses</span></div>`
   ).join('');
   if(!matches.find(t=>t.name===val)) {
     h += `<div class="tag-autocomplete-item border-t border-panel-border" onclick="doAddTag(${mediaId},'${val}');document.getElementById('tagInput').value='';hideAutocomplete();">

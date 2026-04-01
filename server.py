@@ -3,13 +3,13 @@ Media Asset Manager — FastAPI Backend
 Serves the UI (index.html) and provides REST API for all CRUD operations.
 
 Usage:
-    cd tools/media-manager
-    uvicorn server:app --host 0.0.0.0 --port 8501 --reload
+    uvicorn server:app --host 0.0.0.0 --port 8501
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import urllib.request
 from pathlib import Path
 from typing import Optional, Set
@@ -53,7 +53,11 @@ db.init_db()
 app = FastAPI(title="Media Asset Manager API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8501",
+        "http://127.0.0.1:8501",
+        "https://tauri.localhost",   # Tauri webview
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -123,8 +127,8 @@ def list_media(
                     rec["tags"] = db.get_tags(mid)
                     enriched.append(rec)
             return {"items": enriched, "total": len(enriched), "search": True}
-        except Exception as e:
-            raise HTTPException(500, f"Search error: {e}")
+        except Exception:
+            raise HTTPException(500, "Search error")
 
     filters = {}
     if lang:
@@ -236,14 +240,14 @@ class IngestRequest(BaseModel):
 class ScanRequest(BaseModel):
     path: str
 
-MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
+MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
 
 @app.post("/api/ingest/scan")
 def scan_media(body: ScanRequest):
     """Quick scan — return file list without processing."""
-    target = Path(body.path).expanduser()
-    if not target.exists():
-        raise HTTPException(400, f"Path not found: {body.path}")
+    target = Path(body.path).expanduser().resolve()
+    if not target.is_dir():
+        raise HTTPException(400, "Path is not a valid directory")
     files = []
     for f in sorted(target.rglob("*")):
         if f.suffix.lower() in MEDIA_EXTS:
@@ -255,9 +259,9 @@ def scan_media(body: ScanRequest):
 def ingest_media(body: IngestRequest):
     """Trigger ingest from the web UI — runs ingest.py as subprocess."""
     import subprocess, sys
-    target = Path(body.path).expanduser()
-    if not target.exists():
-        raise HTTPException(400, f"Path not found: {body.path}")
+    target = Path(body.path).expanduser().resolve()
+    if not target.is_dir():
+        raise HTTPException(400, "Path is not a valid directory")
     cmd = [sys.executable, str(ROOT / "ingest.py"), "--dir", str(target)]
     if body.limit > 0:
         cmd += ["--limit", str(body.limit)]
@@ -476,7 +480,16 @@ def export_to_file(media_id: int, body: ExportToRequest):
     """Export and write directly to a local path (for Tauri native save dialog)."""
     resp = export_media(media_id, body.fmt)
     content = resp.body.decode("utf-8")
-    dest = Path(body.dest).expanduser()
+    dest = Path(body.dest).expanduser().resolve()
+    # Block writes to sensitive system directories
+    _blocked = [Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"),
+                Path("C:/Windows"), Path("C:/Program Files")]
+    for b in _blocked:
+        try:
+            dest.relative_to(b.resolve())
+            raise HTTPException(403, "Export to system directories is not allowed")
+        except ValueError:
+            pass  # not under blocked path — OK
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, encoding="utf-8")
     return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
@@ -627,7 +640,6 @@ def serve_tailwind_static():
 
 # ── Video Streaming ──────────────────────────────────────────────────────────
 
-from fastapi.responses import StreamingResponse
 import mimetypes
 
 @app.get("/api/stream/{media_id}")
@@ -638,7 +650,10 @@ def stream_media(media_id: int):
         raise HTTPException(404, "Media not found")
     file_path = Path(rec["path"])
     if not file_path.exists():
-        raise HTTPException(404, f"File not found: {file_path}")
+        raise HTTPException(404, "File not found")
+    # Only serve known media extensions
+    if file_path.suffix.lower() not in MEDIA_EXTS:
+        raise HTTPException(403, "Not a media file")
     mime, _ = mimetypes.guess_type(str(file_path))
     if not mime:
         mime = "video/mp4"
@@ -660,17 +675,31 @@ def _load_index() -> str:
 
 @app.post("/api/open-file")
 async def open_file(request: __import__('starlette.requests', fromlist=['Request']).Request):
-    """Open file in OS default app or reveal in Finder."""
-    import subprocess
+    """Open file in OS default app or reveal in file manager. Only allows known media files from DB."""
+    import subprocess, platform
     body = await request.json()
     file_path = body.get("path", "")
     reveal = body.get("reveal", False)
+    # Validate: only allow paths that exist in our database
+    if not db.is_processed(file_path):
+        raise HTTPException(403, "Only indexed media files can be opened")
     if not Path(file_path).exists():
-        raise HTTPException(404, f"File not found: {file_path}")
+        raise HTTPException(404, "File not found")
+    system = platform.system()
     if reveal:
-        subprocess.Popen(["open", "-R", file_path])
+        if system == "Darwin":
+            subprocess.Popen(["open", "-R", file_path])
+        elif system == "Windows":
+            subprocess.Popen(["explorer", "/select,", file_path])
+        else:
+            subprocess.Popen(["xdg-open", str(Path(file_path).parent)])
     else:
-        subprocess.Popen(["open", file_path])
+        if system == "Darwin":
+            subprocess.Popen(["open", file_path])
+        elif system == "Windows":
+            os.startfile(file_path)
+        else:
+            subprocess.Popen(["xdg-open", file_path])
     return {"ok": True}
 
 

@@ -1,10 +1,10 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 """
 Local Media Asset Manager — Phase 1 Ingest CLI
 Usage:
     python ingest.py --dir /path/to/media [--limit N] [--skip-vision] [--db /path/to/media.db]
 """
+from __future__ import annotations
 import argparse
 import json
 import shutil
@@ -19,7 +19,7 @@ import frames as frm
 import transcribe as tr
 import vision as vis
 
-SUPPORTED = {".mp4", ".mov", ".m4v", ".mts", ".wav", ".mp3", ".m4a", ".aac"}
+SUPPORTED = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts"}
 
 
