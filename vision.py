@@ -26,7 +26,7 @@ def describe_frames(frame_paths: list[str]) -> list[dict]:
     return results
 
 
-def _describe_one(img_path: str) -> dict:
+def _describe_one(img_path: str, max_retries: int = 2) -> dict:
     with open(img_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
 
@@ -37,32 +37,51 @@ def _describe_one(img_path: str) -> dict:
         "stream": False,
     }).encode()
 
-    try:
-        req = urllib.request.Request(
-            OLLAMA_URL,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        resp = json.loads(urllib.request.urlopen(req, timeout=60).read())
-        raw = resp.get("response", "").strip()
-
-        # Try JSON parse first
+    for attempt in range(max_retries):
         try:
-            parsed = json.loads(raw)
-            return {
-                "description": parsed.get("description", ""),
-                "tags": parsed.get("tags", []),
-            }
-        except json.JSONDecodeError:
-            pass
+            req = urllib.request.Request(
+                OLLAMA_URL,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            resp = json.loads(urllib.request.urlopen(req, timeout=60).read())
+            raw = resp.get("response", "").strip()
 
-        # Fallback: free-text parse
-        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-        description = lines[0] if lines else ""
-        tags = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
-        return {"description": description, "tags": tags}
-    except Exception as e:
-        return {"description": "", "tags": [], "error": str(e)}
+            # Strip markdown code fences
+            import re
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+            raw = raw.strip()
+
+            # Try JSON parse
+            try:
+                parsed = json.loads(raw)
+                desc = parsed.get("description", "")
+                tags = parsed.get("tags", [])
+                # Retry if description is empty or garbage
+                if not desc or desc.startswith("```"):
+                    if attempt < max_retries - 1:
+                        continue
+                return {"description": desc, "tags": tags}
+            except json.JSONDecodeError:
+                pass
+
+            # Fallback: free-text parse
+            lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("```")]
+            description = lines[0] if lines else ""
+            tags = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
+            if description:
+                return {"description": description, "tags": tags}
+            # Empty result — retry
+            if attempt < max_retries - 1:
+                continue
+            return {"description": description, "tags": tags}
+        except Exception as e:
+            if attempt < max_retries - 1:
+                continue
+            return {"description": "", "tags": [], "error": str(e)}
+
+    return {"description": "", "tags": []}
 
 
 def frames_to_json(results: list[dict]) -> str:

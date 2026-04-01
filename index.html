@@ -933,13 +933,20 @@ async function doAddMediaFolder() {
     } catch(e) { ws.close(); hideIngestModal(); await tauriMessage('錯誤：' + e.message); }
   };
 
-  // Timeout fallback: if no WS message in 5min, close modal
-  setTimeout(async () => {
+  // Timeout fallback: reset on every WS message, fire if no message for 5min
+  let _ingestTimer = setTimeout(_ingestTimeout, 300000);
+  const _origOnMsg = ws.onmessage;
+  ws.onmessage = async (ev) => {
+    clearTimeout(_ingestTimer);
+    _ingestTimer = setTimeout(_ingestTimeout, 300000);
+    await _origOnMsg(ev);
+  };
+  async function _ingestTimeout() {
     if (document.getElementById('ingestModal')) {
       ws.close(); hideIngestModal();
       await tauriMessage('Ingest 逾時，請重試或檢查 server logs');
     }
-  }, 300000);
+  }
 }
 
 function showIngestModal(title, detail) {

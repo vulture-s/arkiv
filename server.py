@@ -405,11 +405,49 @@ def export_media(media_id: int, fmt: str):
     duration = rec.get("duration_s", 0) or 0
 
     def _ts(seconds: float, sep: str = ",") -> str:
+        """Subtitle timecode (SRT/VTT): HH:MM:SS,mmm"""
         h = int(seconds // 3600)
         m = int((seconds % 3600) // 60)
         s = int(seconds % 60)
         ms = int((seconds % 1) * 1000)
         return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
+
+    def _edl_tc(seconds: float, fps: float, drop_frame: bool = False) -> str:
+        """EDL timecode: HH:MM:SS:FF (NDF) or HH:MM:SS;FF (DF)"""
+        if fps <= 0:
+            fps = 30.0
+        # Round to nearest frame
+        int_fps = round(fps)
+        total_frames = round(seconds * fps)
+
+        if drop_frame and int_fps in (30, 60):
+            # Drop-frame: skip frame 0,1 (30p) or 0,1,2,3 (60p) each minute except every 10th
+            d = 2 if int_fps == 30 else 4
+            frames_per_min = int_fps * 60 - d
+            frames_per_10min = frames_per_min * 10 + d
+
+            tens = total_frames // frames_per_10min
+            rem = total_frames % frames_per_10min
+
+            if rem < int_fps * 60:
+                adjusted = total_frames + d * 9 * tens
+            else:
+                adjusted = total_frames + d * 9 * tens + d * ((rem - int_fps * 60) // frames_per_min + 1)
+
+            ff = adjusted % int_fps
+            ss = (adjusted // int_fps) % 60
+            mm = (adjusted // (int_fps * 60)) % 60
+            hh = adjusted // (int_fps * 3600)
+        else:
+            ff = total_frames % int_fps
+            remaining = total_frames // int_fps
+            ss = remaining % 60
+            remaining //= 60
+            mm = remaining % 60
+            hh = remaining // 60
+
+        sep = ";" if drop_frame else ":"
+        return f"{hh:02d}:{mm:02d}:{ss:02d}{sep}{ff:02d}"
 
     if fmt == "txt":
         return HTMLResponse(
@@ -446,19 +484,52 @@ def export_media(media_id: int, fmt: str):
 
     if fmt in ("edl", "edl-markers"):
         # CMX3600 EDL — full clip + optional frame markers
-        tc_end_full = _ts(duration, ":").replace(",", ":")
-        edl = f"TITLE: {stem}\nFCM: NON-DROP FRAME\n\n"
-        edl += f"001  AX       V     C        00:00:00:00 {tc_end_full} 00:00:00:00 {tc_end_full}\n"
-        edl += f"* FROM CLIP NAME: {filename}\n\n"
+        clip_fps = rec.get("fps") or 30.0
+        # 29.97/59.94 are drop-frame by convention
+        is_df = round(clip_fps, 2) in (29.97, 59.94)
+        fcm = "DROP FRAME" if is_df else "NON-DROP FRAME"
+
+        # Camera body start timecode (may not be 00:00:00:00)
+        start_tc_str = rec.get("start_tc") or ""
+        start_tc_offset = 0.0
+        if start_tc_str:
+            # Parse HH:MM:SS:FF or HH:MM:SS;FF into seconds
+            _tc = start_tc_str.replace(";", ":").split(":")
+            if len(_tc) == 4:
+                try:
+                    _h, _m, _s, _f = int(_tc[0]), int(_tc[1]), int(_tc[2]), int(_tc[3])
+                    start_tc_offset = _h * 3600 + _m * 60 + _s + _f / clip_fps
+                except (ValueError, ZeroDivisionError):
+                    start_tc_offset = 0.0
+
+        # Source TC = camera start TC + offset into clip
+        src_start = _edl_tc(start_tc_offset, clip_fps, is_df)
+        src_end = _edl_tc(start_tc_offset + duration, clip_fps, is_df)
+        # Record TC = timeline position (starts at 01:00:00:00 by convention)
+        rec_base = 3600.0  # 01:00:00:00
+        rec_start = _edl_tc(rec_base, clip_fps, is_df)
+        rec_end = _edl_tc(rec_base + duration, clip_fps, is_df)
+
+        edl = f"TITLE: {stem}\nFCM: {fcm}\n\n"
+        edl += f"001  AX       V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
+        edl += f"* FROM CLIP NAME: {filename}\n"
+        if start_tc_str:
+            edl += f"* SOURCE START TC: {start_tc_str}\n"
+        edl += "\n"
 
         if fmt == "edl-markers":
             frames = db.get_frames(media_id)
             for i, fr in enumerate(frames, 2):
-                tc = _ts(fr["timestamp_s"], ":").replace(",", ":")
-                tc_end_s = min(fr["timestamp_s"] + 1.0, duration)
-                tc_end = _ts(tc_end_s, ":").replace(",", ":")
+                # Marker source TC = camera start + marker offset
+                marker_offset = fr["timestamp_s"]
+                tc = _edl_tc(start_tc_offset + marker_offset, clip_fps, is_df)
+                tc_end_s = min(marker_offset + 1.0, duration)
+                tc_end = _edl_tc(start_tc_offset + tc_end_s, clip_fps, is_df)
+                # Record TC for marker
+                rtc = _edl_tc(rec_base + marker_offset, clip_fps, is_df)
+                rtc_end = _edl_tc(rec_base + tc_end_s, clip_fps, is_df)
                 desc = (fr.get("description") or f"Frame {fr['frame_index']+1}")[:60]
-                edl += f"{i:03d}  AX       V     C        {tc} {tc_end} {tc} {tc_end}\n"
+                edl += f"{i:03d}  AX       V     C        {tc} {tc_end} {rtc} {rtc_end}\n"
                 edl += f"* FROM CLIP NAME: {filename}\n"
                 edl += f"* COMMENT: MARKER — {desc}\n\n"
 
@@ -531,6 +602,7 @@ async def _run_ingest_with_ws(target: Path, limit: int):
         text = line.decode("utf-8", errors="replace").strip()
         if not text:
             continue
+        print(f"[ingest-ws] {text}", flush=True)
 
         # Parse progress lines like "[1/3] FX30.5365.MP4 >probe >whisper..."
         m = file_re.match(text)
@@ -565,6 +637,7 @@ async def _run_ingest_with_ws(target: Path, limit: int):
 
     await proc.wait()
     failed = (limit or 0) - ok - skipped if limit else 0
+    print(f"[ingest-ws] COMPLETE ok={ok} skipped={skipped} failed={failed}", flush=True)
 
     await ingest_ws.broadcast({
         "type": "complete", "ok": ok, "skipped": skipped, "failed": failed
