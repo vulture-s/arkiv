@@ -78,7 +78,6 @@ python health.py
 ### Option A: Web UI — browse, search, rate, and tag in the browser
 
 ```bash
-cd arkiv
 uvicorn server:app --host 0.0.0.0 --port 8501
 # Open http://localhost:8501 → click + to ingest media
 ```
@@ -88,8 +87,6 @@ uvicorn server:app --host 0.0.0.0 --port 8501
 > Both options use the same database. You can mix and match — ingest via CLI, then browse in Web UI, or vice versa.
 
 ```bash
-cd arkiv
-
 # Step 1 — Ingest your media
 python ingest.py --dir /path/to/media
 
