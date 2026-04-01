@@ -55,6 +55,20 @@ def probe(path: str) -> dict | None:
         except (ValueError, ZeroDivisionError):
             fps = 0.0
 
+    # Extract start timecode (camera body TC, may not start at 00:00:00:00)
+    start_tc = None
+    # Check video stream tags first (most cameras embed here)
+    if video_stream:
+        start_tc = (video_stream.get("tags") or {}).get("timecode")
+    # Fallback: format-level tags
+    if not start_tc:
+        start_tc = (fmt.get("tags") or {}).get("timecode")
+    # Fallback: check for timecode stream
+    if not start_tc:
+        tc_stream = next((s for s in streams if s.get("codec_tag_string") == "tmcd"), None)
+        if tc_stream:
+            start_tc = (tc_stream.get("tags") or {}).get("timecode")
+
     # Handle rotation metadata — swap width/height for 90/270 degree rotation
     w = video_stream.get("width") if video_stream else None
     h = video_stream.get("height") if video_stream else None
@@ -81,6 +95,7 @@ def probe(path: str) -> dict | None:
         "height": h,
         "fps": round(fps, 2) if fps else None,
         "has_audio": 1 if audio_stream else 0,
+        "start_tc": start_tc,
     }
 
 

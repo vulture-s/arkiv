@@ -84,6 +84,7 @@ def init_db():
             ("focal_length", "REAL"),
             ("creation_date", "TEXT"),
             ("content_type", "TEXT"),
+            ("start_tc", "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE media ADD COLUMN {col} {typ}")
@@ -103,6 +104,7 @@ _ALLOWED_COLS = {
     "processed_at", "rating", "rating_note", "camera_make", "camera_model",
     "lens_model", "gps_lat", "gps_lon", "color_space", "iso", "shutter_speed",
     "aperture", "focal_length", "creation_date", "content_type",
+    "start_tc",
 }
 
 
