@@ -180,7 +180,9 @@ def main():
         check("config.py", True)
 
         db_exists = config.DB_PATH.exists()
-        check("media.db", db_exists, f"({config.DB_PATH})")
+        check("media.db", db_exists,
+              f"({config.DB_PATH})" if db_exists else "(will be created on first run)",
+              required=False)
 
         if db_exists:
             import db

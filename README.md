@@ -85,6 +85,8 @@ uvicorn server:app --host 0.0.0.0 --port 8501
 ### Option B: CLI only — ingest and search without opening a browser
 
 > Both options use the same database. You can mix and match — ingest via CLI, then browse in Web UI, or vice versa.
+>
+> **Note:** Do not run CLI and Web UI ingest at the same time. SQLite does not support concurrent writes — run one at a time.
 
 ```bash
 # Step 1 — Ingest your media
