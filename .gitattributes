@@ -1,17 +1,21 @@
-# Ensure consistent line endings across platforms
 * text=auto eol=lf
-
-# Shell scripts must be LF
 *.sh text eol=lf
-*.command text eol=lf
-
-# Windows-only files
-*.bat text eol=crlf
-*.cmd text eol=crlf
-
-# Binary files
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.txt text eol=lf
+Dockerfile text eol=lf
 *.jpg binary
+*.jpeg binary
 *.png binary
 *.mp4 binary
 *.mov binary
+*.wav binary
 *.db binary
