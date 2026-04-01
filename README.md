@@ -161,6 +161,45 @@ Yes — the native Python install is the primary workflow. Docker is optional fo
 Video: `.mp4`, `.mov`, `.m4v`, `.mts`
 Audio: `.wav`, `.mp3`, `.m4a`, `.aac`
 
+## Smoke Test
+
+Run the built-in smoke test to verify your setup:
+
+```bash
+# PC (Windows/macOS)
+bash smoke-test.sh --platform pc
+
+# Docker
+docker exec arkiv-arkiv-1 bash smoke-test.sh --platform docker
+```
+
+The test has two phases: **Health Check** (environment) and **API Smoke Test** (server endpoints).
+
+### What SKIP means
+
+SKIP items are **optional dependencies** — they do not affect functionality. A passing result is **0 FAIL**, regardless of SKIP count.
+
+| Check | PC (Windows) | PC (macOS) | Docker | Notes |
+|-------|:---:|:---:|:---:|-------|
+| Python >= 3.9 | Required | Required | Required | |
+| FFmpeg / ffprobe | Required | Required | Required | |
+| Ollama server | Required | Required | Required | |
+| nomic-embed-text | Required | Required | Required | |
+| llava:7b | Optional | Optional | Optional | For frame descriptions |
+| ExifTool | Optional | Optional | Optional | For rich metadata |
+| faster-whisper | Required | Optional | Required | CUDA/CPU whisper |
+| mlx-whisper | — | Required | — | Apple Silicon only |
+| NVIDIA GPU | Optional | — | — | |
+| Apple Silicon | — | Required | — | |
+| fastapi + uvicorn | Required | Required | Required | |
+
+### Latest Results (v0.1.0)
+
+| Platform | Health Check | Smoke Test |
+|----------|-------------|------------|
+| Windows 11 (RTX 4070) | 16/18 PASS, 0 FAIL, 2 SKIP | 9/9 PASS |
+| Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS |
+
 ## License
 
 MIT
