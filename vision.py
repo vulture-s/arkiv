@@ -44,7 +44,7 @@ def _describe_one(img_path: str, max_retries: int = 2) -> dict:
                 data=payload,
                 headers={"Content-Type": "application/json"},
             )
-            resp = json.loads(urllib.request.urlopen(req, timeout=60).read())
+            resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
             raw = resp.get("response", "").strip()
 
             # Strip markdown code fences
