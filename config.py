@@ -16,7 +16,7 @@ THUMBNAILS_DIR = Path(os.getenv("ARKIV_THUMBNAILS_DIR", str(BASE_DIR / "thumbnai
 # ── Ollama ───────────────────────────────────────────────────────────────────
 OLLAMA_URL = os.getenv("ARKIV_OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL = os.getenv("ARKIV_EMBED_MODEL", "nomic-embed-text")
-VISION_MODEL = os.getenv("ARKIV_VISION_MODEL", "llava:7b")
+VISION_MODEL = os.getenv("ARKIV_VISION_MODEL", "qwen3-vl:8b")
 
 # ── ExifTool ─────────────────────────────────────────────────────────────────
 EXIFTOOL_PATH = os.getenv("ARKIV_EXIFTOOL_PATH", "exiftool")
@@ -24,7 +24,7 @@ EXIFTOOL_PATH = os.getenv("ARKIV_EXIFTOOL_PATH", "exiftool")
 # ── Whisper ──────────────────────────────────────────────────────────────────
 import platform as _plat
 _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
-_DEFAULT_WHISPER = "mlx-community/whisper-large-v3-mlx" if _IS_MLX else "large-v3"
+_DEFAULT_WHISPER = "mlx-community/whisper-large-v3-turbo" if _IS_MLX else "large-v3-turbo"
 WHISPER_MODEL = os.getenv("ARKIV_WHISPER_MODEL", _DEFAULT_WHISPER)
 
 # ── Server ───────────────────────────────────────────────────────────────────
