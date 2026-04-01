@@ -75,21 +75,20 @@ ollama pull llava:7b  # optional, for frame descriptions
 python health.py
 ```
 
-### Ingest Media
-
-```bash
-# Ingest a directory of video/audio files
-python ingest.py --dir /path/to/media
-
-# Build vector search index
-python embed.py
-```
-
 ### Run
 
 ```bash
+# 1. Start the server
 uvicorn server:app --host 0.0.0.0 --port 8501
-# Open http://localhost:8501
+
+# 2. Open http://localhost:8501
+
+# 3. Click the + button in Media Pool to ingest media
+#    — or use CLI in another terminal:
+python ingest.py --dir /path/to/media
+
+# 4. Build vector search index (enables semantic search)
+python embed.py
 ```
 
 ### Docker
