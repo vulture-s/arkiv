@@ -290,6 +290,11 @@ def main():
                                     description=fd.get("description", ""),
                                     tags=fd.get("tags", ""),
                                 )
+                                # Write frame tags as auto tags
+                                for tag_name in fd.get("tags", "").split(","):
+                                    tag_name = tag_name.strip()
+                                    if tag_name and tag_name != "```":
+                                        db.add_tag(mid, tag_name, source="auto")
                 ok += 1
             else:
                 failed += 1
