@@ -1,69 +1,56 @@
-# Handover: arkiv PC 端功能修復 + Frame Analysis
+# Handover: Mac → PC（2026-04-01）
 
-## Current State (2026-03-31, PC → Mac)
+## 本次完成（Mac 端）
 
-### 本次修復
-- **Thumbnail 路徑修復** ✅ — `thumbUrl()` 加 `replace(/\\/g,'/')` 處理 Windows 反斜線
-- **Theme 暗亮模式重構** ✅ — 全套 CSS 改用 CSS custom properties (`var(--surface)` 等)
-  - `:root` = light, `:root.dark` = dark, `toggleTheme()` 切 `<html>` class 即全局生效
-  - 移除所有 `.dark .xxx` 重複選擇器
-  - JS inline style 從 hardcoded hex 改用 `var()`
-  - localStorage 記住 theme 選擇
-- **Frame Analysis 功能** ✅ — 完整實作
-  - `db.py`: 新增 `frames` table (media_id, frame_index, timestamp_s, thumbnail_path, description, tags)
-  - `frames.py`: frame thumbnails 持久化到 `thumbnails/{stem}_frame{i}.jpg`，回傳 timestamp
-  - `ingest.py`: frame 資料寫入 `frames` table
-  - `server.py`: detail API 回傳 `frames` 陣列 + `edl-markers` export 格式
-  - 前端: frame 卡片帶 thumbnail + 時間碼，點擊跳轉串流播放器
-- **EDL Export 合併** ✅ — toolbar Markers checkbox 控制是否包含 frame markers
-- **路徑縮短** ✅ — Inspector 路徑顯示用 `{~}` 縮短中間路徑，hover 顯示完整
-- **UI Scale** ✅ — 改為 4 段圓點選擇器 (100/120/140/160%)
-- **Toolbar** ✅ — 標題精簡 `ARKIV`，flex-wrap 避免擠壓
+- **DB 對齊** ✅ — `~/.arkiv/media.db`（61 筆）複製到 `~/Desktop/arkiv/media.db`
+- **Frames 重建** ✅ — 58 支影片 × 3 = 171 frames，`frames` table 已填充
+- **Server 驗證** ✅ — uvicorn :8501 啟動，API `/api/media/{id}` 回傳 frames 正常
+- **Web UI 驗證** ✅ — Media Pool 61 筆顯示正確，Frame Analysis 卡片正常
+- **DaVinci Plugin** — 已安裝至 `~/Library/.../Scripts/Utility/arkiv_resolve.py`，未實測（需開 Resolve）
 
-### 已知限制
-- **波形是假資料** — `waveformBars()` 固定高度陣列
-- **In/Out marker** — 靜態顯示，不可拖曳
-- **Vision 描述** — PC 端 Ollama llava 未測試，frame description 目前為空
-- **Theme light mode** — 大部分 OK，少數 JS 生成的 inline color 可能仍需微調
+## PC 端待辦
 
-### DB Schema 變更
-```sql
-CREATE TABLE frames (
-    id             INTEGER PRIMARY KEY,
-    media_id       INTEGER REFERENCES media(id) ON DELETE CASCADE,
-    frame_index    INTEGER NOT NULL,
-    timestamp_s    REAL NOT NULL,
-    thumbnail_path TEXT,
-    description    TEXT,
-    tags           TEXT,
-    UNIQUE(media_id, frame_index)
-);
-```
-Mac 端 pull 後需要重新 ingest 或跑一次 frame 生成腳本來填充 frames table。
+### DaVinci Resolve Plugin 測試
+1. 確認 `arkiv_resolve.py` 在 `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\`
+2. 啟動 arkiv server（`python server.py` 或 `uvicorn server:app --port 8501`）
+3. 開 DaVinci Resolve → Workspace → Scripts → arkiv_resolve
+4. 測試：搜尋 → 選取 → Import to Media Pool
+5. 測試：GOOD Only 篩選 → Import
+6. 驗證：imported clips 在 timeline 可正常拖入播放
 
-### 跨平台陷阱清單（更新）
+### Phase 5 剩餘任務
+
+| Task | 狀態 | 說明 |
+|------|------|------|
+| 5.0a Config 統一 | 🟡 | `vision.py` L6-7、`frames.py` L7 仍硬編碼，需改 import config |
+| 5.0b Vision JSON 輸出 | 🟡 | LLM prompt 仍要求自由文字，需改 JSON schema |
+| 5.4 health.py 補 ExifTool | 🟡 | 缺 ExifTool 檢查 |
+| 5.8 vulture-s/arkiv repo | ⬜ | 目前推在 ourladypeace2011-commits，需轉移或建新 repo |
+| 5.A ExifTool metadata | ⬜ | ingest.py 加 `exiftool -json` 步驟 |
+| 5.B 自適應取幀 | ⬜ | frames.py 改 4 級策略 |
+| 5.C Vision 用途分類 | ⬜ | vision.py 加 content_type |
+| 5.D 專有名詞提示 | ⬜ | transcribe.py 加 --initial-prompt |
+| 5.E 過濾詞庫 | ⬜ | transcribe.py 加 filter dictionary |
+
+### 已知問題
+- **Server 重啟才讀到 frames** — frames 重建後需重啟 uvicorn 才能從 API 回傳（SQLite 連線快取）
+- **Waveform 假資料** — `waveformBars()` 固定高度陣列
+- **In/Out markers** — 靜態顯示，不可拖曳
+
+## 跨平台陷阱
 | 陷阱 | Mac | PC |
 |------|-----|-----|
 | Whisper | mlx-whisper | faster-whisper (CUDA) |
 | Path separator | `/` | `\`（thumbUrl + shortenPath 已處理） |
 | ffprobe encoding | UTF-8 | cp950（已用 `encoding='utf-8'` 修正） |
-| Tauri inject | `var` not `const` | 同 |
 | CSS theming | CSS vars `:root` / `:root.dark` | 同 |
 
-## Key Files Changed
-| File | What |
-|------|------|
-| index.html | CSS vars theme + Frame Analysis UI + scale dots + path shorten |
-| db.py | frames table + CRUD |
-| frames.py | persistent frame thumbnails with timestamps |
-| ingest.py | frame data → frames table |
-| server.py | frames in detail API + edl-markers export |
-
-## Mac 同步
+## PC 同步
 ```bash
-cd ~/.arkiv
+cd <arkiv-repo>
 git pull
-# 重新生成 frames（Mac 端 DB 不在 git 裡）
+# DB 不在 git 裡，PC 端應有自己的 media.db
+# 若需重建 frames：
 python -c "
 import db, frames as frm
 db.init_db()
@@ -77,6 +64,7 @@ for rec in db.get_all_records():
 "
 ```
 
-## Tag & Snapshot
-- **Tag**: `pc-snapshot-20260331`
-- **Repo**: `github.com/ourladypeace2011-commits/arkiv`
+## Tags
+- **Mac snapshot**: `mac-snapshot-20260331`
+- **PC snapshot**: `pc-snapshot-20260331`
+- **Current HEAD**: `c1f7a93`（Mac 領先 origin 3 commits，push 後對齊）
