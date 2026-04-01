@@ -75,27 +75,35 @@ ollama pull llava:7b  # optional, for frame descriptions
 python health.py
 ```
 
-### Run
+### Option A: Web UI
 
 ```bash
-# Start the server
 uvicorn server:app --host 0.0.0.0 --port 8501
-# Open http://localhost:8501
+# Open http://localhost:8501 → click + to ingest media
+```
 
-# Ingest media (CLI or click + in Media Pool)
+### Option B: CLI only
+
+```bash
+# Ingest media
 python ingest.py --dir /path/to/media
 python ingest.py --dir ./media --limit 10 --skip-vision
 python ingest.py --dir ./media --refresh    # re-process already-indexed files
 
-# Build vector search index (enables semantic search)
+# Build vector search index
 python embed.py                             # build/update index
 python embed.py --rebuild                   # drop and rebuild from scratch
-python embed.py --search "interview outdoor"  # quick search test
+
+# Search from terminal
+python embed.py --search "interview outdoor"
+curl "http://localhost:8501/api/media?q=keyword&limit=5"
 
 # Watch a folder for new media (auto-ingest)
 python watch.py /path/to/footage
 python watch.py ~/Movies/rushes --interval 10
 ```
+
+> **Note:** The server must be running for API search (`curl`). For offline search, use `python embed.py --search`.
 
 ### Docker
 
