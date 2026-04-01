@@ -949,15 +949,20 @@ async function doAddMediaFolder() {
   }
 }
 
+var _ingestStartTime = 0;
+var _ingestElapsedTimer = null;
+var _ingestDots = 0;
+
 function showIngestModal(title, detail) {
   let m = document.getElementById('ingestModal');
   if (!m) {
     m = document.createElement('div');
     m.id = 'ingestModal';
     m.style.cssText = 'position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6)';
-    m.innerHTML = `<div class="modal-panel">
+    m.innerHTML = `<div class="modal-panel" style="min-width:360px">
       <div id="ingestTitle" class="text-txt-primary" style="font-size:16px;font-weight:600;margin-bottom:8px"></div>
-      <div id="ingestDetail" class="text-txt-secondary" style="font-size:12px;margin-bottom:16px"></div>
+      <div id="ingestDetail" class="text-txt-secondary" style="font-size:12px;margin-bottom:4px"></div>
+      <div id="ingestStatus" style="font-size:11px;color:#71717a;margin-bottom:12px;min-height:16px;font-family:monospace"></div>
       <div class="bg-surface-200" style="width:100%;height:4px;border-radius:2px;overflow:hidden"><div id="ingestBar" style="height:100%;background:#3b82f6;border-radius:2px;transition:width 0.3s;width:0%"></div></div>
       <button onclick="hideIngestModal()" style="margin-top:12px;padding:4px 12px;font-size:12px;border:1px solid #555;border-radius:4px;cursor:pointer" class="text-txt-secondary">取消</button>
     </div>`;
@@ -966,6 +971,21 @@ function showIngestModal(title, detail) {
   m.style.display = 'flex';
   document.getElementById('ingestTitle').textContent = title;
   document.getElementById('ingestDetail').textContent = detail;
+  _ingestStartTime = Date.now();
+  _ingestDots = 0;
+  if (_ingestElapsedTimer) clearInterval(_ingestElapsedTimer);
+  _ingestElapsedTimer = setInterval(_updateIngestElapsed, 1000);
+}
+
+function _updateIngestElapsed() {
+  var el = document.getElementById('ingestStatus');
+  if (!el) return;
+  var elapsed = Math.floor((Date.now() - _ingestStartTime) / 1000);
+  var min = Math.floor(elapsed / 60);
+  var sec = elapsed % 60;
+  var dots = '.'.repeat((_ingestDots++ % 3) + 1);
+  var timeStr = min > 0 ? min + 'm ' + sec + 's' : sec + 's';
+  el.textContent = '⏱ ' + timeStr + '  ' + dots;
 }
 
 function updateIngestModal(title, detail) {
@@ -980,11 +1000,14 @@ function updateIngestModal(title, detail) {
     const bar = document.getElementById('ingestBar');
     if (bar) bar.style.width = pct + '%';
   }
+  // Reset dots animation on each update
+  _ingestDots = 0;
 }
 
 function hideIngestModal() {
   const m = document.getElementById('ingestModal');
   if (m) m.style.display = 'none';
+  if (_ingestElapsedTimer) { clearInterval(_ingestElapsedTimer); _ingestElapsedTimer = null; }
 }
 
 async function doChangeLang(id, lang) {
