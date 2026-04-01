@@ -4,7 +4,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-THUMBNAILS_DIR = Path(__file__).parent / "thumbnails"
+import config
+
+THUMBNAILS_DIR = config.THUMBNAILS_DIR
 
 
 def extract_thumbnail(video_path: str, duration_s: float) -> str | None:

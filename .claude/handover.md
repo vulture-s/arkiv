@@ -22,9 +22,9 @@
 
 | Task | 狀態 | 說明 |
 |------|------|------|
-| 5.0a Config 統一 | 🟡 | `vision.py` L6-7、`frames.py` L7 仍硬編碼，需改 import config |
-| 5.0b Vision JSON 輸出 | 🟡 | LLM prompt 仍要求自由文字，需改 JSON schema |
-| 5.4 health.py 補 ExifTool | 🟡 | 缺 ExifTool 檢查 |
+| 5.0a Config 統一 | ✅ | `vision.py` + `frames.py` 改 `import config`（04-01 完成） |
+| 5.0b Vision JSON 輸出 | ✅ | PROMPT 改 JSON schema + JSON-first 解析（04-01 完成） |
+| 5.4 health.py 補 ExifTool | ✅ | 加入 optional ExifTool check（04-01 完成） |
 | 5.8 vulture-s/arkiv repo | ⬜ | 目前推在 ourladypeace2011-commits，需轉移或建新 repo |
 | 5.A ExifTool metadata | ⬜ | ingest.py 加 `exiftool -json` 步驟 |
 | 5.B 自適應取幀 | ⬜ | frames.py 改 4 級策略 |
