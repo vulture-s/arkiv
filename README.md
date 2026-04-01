@@ -85,6 +85,8 @@ uvicorn server:app --host 0.0.0.0 --port 8501
 ### Option B: CLI only
 
 ```bash
+cd arkiv  # make sure you're in the project directory
+
 # Ingest media
 python ingest.py --dir /path/to/media
 python ingest.py --dir ./media --limit 10 --skip-vision
@@ -94,16 +96,23 @@ python ingest.py --dir ./media --refresh    # re-process already-indexed files
 python embed.py                             # build/update index
 python embed.py --rebuild                   # drop and rebuild from scratch
 
-# Search from terminal
+# Search (offline, no server needed)
 python embed.py --search "interview outdoor"
-curl "http://localhost:8501/api/media?q=keyword&limit=5"
 
 # Watch a folder for new media (auto-ingest)
 python watch.py /path/to/footage
 python watch.py ~/Movies/rushes --interval 10
 ```
 
-> **Note:** The server must be running for API search (`curl`). For offline search, use `python embed.py --search`.
+API search requires the server running:
+
+```bash
+# Linux / macOS / Git Bash
+curl "http://localhost:8501/api/media?q=keyword&limit=5"
+
+# Windows PowerShell
+Invoke-RestMethod "http://localhost:8501/api/media?q=keyword&limit=5"
+```
 
 ### Docker
 
