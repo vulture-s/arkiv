@@ -241,10 +241,17 @@ def main():
     )
 
     total = len(files)
-    if args.limit:
+    if args.limit and not args.refresh:
+        # Filter out already-processed files before applying limit
+        new_files = [f for f in files if not db.is_processed(str(f))]
+        skipped_count = total - len(new_files)
+        files = new_files[:args.limit]
+        print(f"Found {total} media files ({skipped_count} already indexed). Processing {len(files)}...\n")
+    elif args.limit:
         files = files[:args.limit]
-
-    print(f"Found {total} media files. Processing {len(files)}...\n")
+        print(f"Found {total} media files. Processing {len(files)}...\n")
+    else:
+        print(f"Found {total} media files. Processing {len(files)}...\n")
 
     ok, skipped, failed = 0, 0, 0
     for i, f in enumerate(files, 1):

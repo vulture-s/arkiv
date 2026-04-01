@@ -933,13 +933,13 @@ async function doAddMediaFolder() {
     } catch(e) { ws.close(); hideIngestModal(); await tauriMessage('錯誤：' + e.message); }
   };
 
-  // Timeout fallback: if no WS message in 30s, close modal
+  // Timeout fallback: if no WS message in 5min, close modal
   setTimeout(async () => {
     if (document.getElementById('ingestModal')) {
       ws.close(); hideIngestModal();
       await tauriMessage('Ingest 逾時，請重試或檢查 server logs');
     }
-  }, 30000);
+  }, 300000);
 }
 
 function showIngestModal(title, detail) {

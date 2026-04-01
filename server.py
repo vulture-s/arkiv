@@ -512,13 +512,14 @@ async def _run_ingest_with_ws(target: Path, limit: int):
     """Run ingest in a background task, broadcasting per-file progress via WebSocket."""
     import subprocess, sys
 
-    # Scan files first
+    # Scan files first, filter out already-processed before applying limit
     files = sorted(
         f for f in target.rglob("*")
         if f.suffix.lower() in MEDIA_EXTS
     )
     if limit > 0:
-        files = files[:limit]
+        new_files = [f for f in files if not (db.is_processed(str(f)) if hasattr(db, "is_processed") else False)]
+        files = new_files[:limit]
 
     total = len(files)
     await ingest_ws.broadcast({"type": "start", "total": total})
