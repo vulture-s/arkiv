@@ -511,7 +511,9 @@ def export_media(media_id: int, fmt: str):
         rec_end = _edl_tc(rec_base + duration, clip_fps, is_df)
 
         edl = f"TITLE: {stem}\nFCM: {fcm}\n\n"
-        edl += f"001  AX       V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
+        # Use filename stem as reel name (max 8 chars for CMX3600 compat)
+        reel = stem[:8].ljust(8)
+        edl += f"001  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
         edl += f"* FROM CLIP NAME: {filename}\n"
         if start_tc_str:
             edl += f"* SOURCE START TC: {start_tc_str}\n"
