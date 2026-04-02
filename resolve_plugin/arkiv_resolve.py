@@ -74,7 +74,7 @@ def list_media(limit=50, rating=None):
 
 RATING_COLORS = {
     "good": "Green",
-    "ng": "Red",
+    "ng": "Orange",
     "review": "Yellow",
 }
 
