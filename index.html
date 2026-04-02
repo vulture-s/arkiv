@@ -725,7 +725,8 @@ async function doExport(id, fmt) {
   try {
     var rec = state.selectedRec || state.items.find(r => r.id === id);
     var basename = rec ? rec.filename.replace(/\.[^.]+$/, '') : 'media_' + id;
-    var filename = basename + '.' + fmt;
+    var ext = fmt.startsWith('edl') ? 'edl' : fmt;
+    var filename = basename + '.' + ext;
 
     if (isTauri && window.__TAURI__ && window.__TAURI__.dialog) {
       // Tauri: pick save path, then server writes file directly
