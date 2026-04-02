@@ -628,7 +628,6 @@ async function renderInspector() {
       <div class="border-t border-panel-border" style="margin:2px 0"></div>
       <div class="px-3 py-1 text-2xs text-txt-tertiary uppercase tracking-wider">Timeline</div>
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'edl')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">EDL</span>DaVinci Timeline</button>
-      <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'edl-markers')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">EDL+</span>DaVinci + Markers</button>
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'fcpxml')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">XML</span>Final Cut Pro / DaVinci</button>
     </div></div>
     <button class="h-7 px-3 bg-surface-50 border border-panel-border text-txt-secondary text-xs rounded-md hover:text-warning transition" title="Re-run Whisper" onclick="doReIngest(${rec.id})">Re-ingest</button>`;
