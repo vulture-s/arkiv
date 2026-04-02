@@ -9,6 +9,10 @@ pandas>=1.5
 
 # Media processing
 pillow>=9.0
+soundfile>=0.12
+
+# Speech pre-processing
+silero-vad>=6.0
 
 # ── Platform-specific Whisper (install ONE) ──────────────
 #

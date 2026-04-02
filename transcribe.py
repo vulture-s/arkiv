@@ -4,17 +4,61 @@ import tempfile
 import platform
 from pathlib import Path
 
+import numpy as np
+import soundfile as sf
+from silero_vad import load_silero_vad, get_speech_timestamps
+import torch
+
 from config import WHISPER_MODEL, OLLAMA_URL
 NO_SPEECH_THRESHOLD = 0.6
 DEFAULT_LANGUAGE = "zh"  # 強制繁體中文，避免簡體/日文亂跳
 LLM_POLISH = True  # 用 Ollama LLM 後處理校正逐字稿
+VAD_ENABLED = True  # Silero VAD: skip silence segments before Whisper
 
 # ── Platform Detection ───────────────────────────────────────────────────────
 _USE_MLX = platform.system() == "Darwin" and platform.machine() == "arm64"
 
-# ── Model Singleton ──────────────────────────────────────────────────────────
+# ── Model Singletons ────────────────────────────────────────────────────────
 _whisper_loaded = False
 _fw_model = None  # faster-whisper model instance
+_vad_model = None  # Silero VAD model instance
+
+
+def _get_vad_model():
+    """Lazy-load Silero VAD model."""
+    global _vad_model
+    if _vad_model is None:
+        _vad_model = load_silero_vad()
+    return _vad_model
+
+
+def _vad_filter(wav_path: str, sample_rate: int = 16000) -> str | None:
+    """Run Silero VAD on WAV, return new WAV with only speech segments.
+    Returns None if no speech detected. Returns original path if VAD disabled."""
+    if not VAD_ENABLED:
+        return wav_path
+
+    audio, sr = sf.read(wav_path, dtype="float32")
+    if sr != sample_rate:
+        return wav_path  # safety: skip VAD if sample rate mismatch
+
+    tensor = torch.from_numpy(audio)
+    stamps = get_speech_timestamps(tensor, _get_vad_model(),
+                                   sampling_rate=sample_rate,
+                                   min_silence_duration_ms=300,
+                                   speech_pad_ms=150)
+    if not stamps:
+        return None  # no speech at all
+
+    # Concatenate speech segments
+    chunks = [audio[s["start"]:s["end"]] for s in stamps]
+    speech = np.concatenate(chunks)
+
+    _fd, out = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
+    sf.write(out, speech, sample_rate)
+    kept = len(speech) / max(len(audio), 1)
+    print(f"  [VAD] kept {kept:.0%} of audio ({len(stamps)} segments)", flush=True)
+    return out
 
 
 def warm_up():
@@ -61,13 +105,21 @@ def transcribe(media_path: str, language: str = DEFAULT_LANGUAGE) -> tuple:
     if not wav:
         return "", ""
 
+    # Silero VAD: strip silence before Whisper
+    vad_wav = _vad_filter(wav)
+    if vad_wav is None:
+        Path(wav).unlink(missing_ok=True)
+        return "", ""  # no speech detected by VAD
+
     try:
         if _USE_MLX:
-            return _transcribe_mlx(wav, language)
+            return _transcribe_mlx(vad_wav, language)
         else:
-            return _transcribe_faster(wav, language)
+            return _transcribe_faster(vad_wav, language)
     finally:
         Path(wav).unlink(missing_ok=True)
+        if vad_wav != wav:
+            Path(vad_wav).unlink(missing_ok=True)
 
 
 def _transcribe_mlx(wav: str, language: str) -> tuple:
