@@ -98,8 +98,9 @@ def main():
         has_embed = any("nomic-embed" in m for m in models)
         check("nomic-embed-text", has_embed, "" if has_embed else "(run: ollama pull nomic-embed-text)")
 
-        has_vision = any("llava" in m for m in models)
-        check("llava:7b", has_vision, "" if has_vision else "(ollama pull llava:7b)", required=False)
+        vision_model = config.VISION_MODEL.split(":")[0]
+        has_vision = any(vision_model in m for m in models)
+        check(config.VISION_MODEL, has_vision, "" if has_vision else f"(ollama pull {config.VISION_MODEL})", required=False)
     except Exception:
         check("ollama server", False, "(not running)")
 
