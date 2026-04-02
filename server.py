@@ -537,11 +537,25 @@ def export_media(media_id: int, fmt: str):
         )
 
     if fmt == "fcpxml":
-        # FCPXML 1.11 — readable by FCPX, Premiere Pro, and DaVinci Resolve
+        # FCPXML 1.8 — max compatibility: FCPX 10.4+, DaVinci 17+, Premiere via XtoCC
         clip_fps = rec.get("fps") or 30.0
-        # Express fps as integer fraction for FCPXML
-        int_fps = round(clip_fps)
-        # Duration in frames
+
+        # Rational frame duration for FCPXML (must be exact, not rounded)
+        _fps_map = {
+            23.98: ("1001", "24000"), 23.976: ("1001", "24000"),
+            29.97: ("1001", "30000"), 59.94: ("1001", "60000"),
+        }
+        rounded_fps = round(clip_fps, 2)
+        if rounded_fps in _fps_map:
+            _num, _den = _fps_map[rounded_fps]
+        else:
+            _num, _den = "1", str(round(clip_fps))
+
+        # Drop frame for NTSC rates
+        is_df = rounded_fps in (29.97, 59.94)
+        tc_fmt = "DF" if is_df else "NDF"
+
+        # Duration in rational time
         dur_frames = round(duration * clip_fps)
 
         # Camera body start timecode
@@ -555,7 +569,15 @@ def export_media(media_id: int, fmt: str):
             except (ValueError, ZeroDivisionError):
                 pass
 
-        from xml.sax.saxutils import escape as xml_esc
+        from xml.sax.saxutils import escape as xml_esc, quoteattr as xml_qa
+        import pathlib
+
+        # Build file URI with proper file:/// prefix
+        raw_path = rec.get("path", "")
+        file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
+        if not str(file_uri).startswith("/"):
+            file_uri = pathlib.PurePosixPath("/" + str(file_uri))
+        file_uri_str = xml_esc(f"file://{file_uri}")
 
         # Build marker elements from frame analysis
         markers_xml = ""
@@ -563,24 +585,26 @@ def export_media(media_id: int, fmt: str):
         colors = ["Blue", "Red", "Green", "Cyan", "Magenta", "Yellow", "White"]
         for i, fr in enumerate(frames):
             offset_frames = round(fr["timestamp_s"] * clip_fps)
-            desc = xml_esc(fr.get("description") or f"Frame {fr['frame_index']+1}")
+            desc = xml_esc((fr.get("description") or f"Frame {fr['frame_index']+1}")[:60],
+                           {'"': '&quot;'})
             color = colors[i % len(colors)]
-            # FCPXML marker: start is offset from clip start, duration is 1 frame
-            markers_xml += f'                <marker start="{offset_frames}/{int_fps}s" duration="1/{int_fps}s" value="{desc}" />\n'
+            markers_xml += f'                <marker start="{offset_frames * int(_num)}/{_den}s" duration="{_num}/{_den}s" value="{desc}" />\n'
+
+        start_frames = round(start_tc_offset * clip_fps)
 
         fcpxml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE fcpxml>
-<fcpxml version="1.11">
+<fcpxml version="1.8">
     <resources>
-        <format id="r1" frameDuration="1/{int_fps}s" width="{rec.get('width') or 1920}" height="{rec.get('height') or 1080}" />
-        <asset id="r2" name="{xml_esc(stem)}" src="file://{xml_esc(rec.get('path',''))}" start="0s" duration="{dur_frames}/{int_fps}s" format="r1" hasAudio="1" hasVideo="1" />
+        <format id="r1" frameDuration="{_num}/{_den}s" width="{rec.get('width') or 1920}" height="{rec.get('height') or 1080}" />
+        <asset id="r2" name="{xml_esc(stem)}" src="{file_uri_str}" start="0s" duration="{dur_frames * int(_num)}/{_den}s" format="r1" hasAudio="1" hasVideo="1" />
     </resources>
     <library>
         <event name="arkiv Export">
             <project name="{xml_esc(stem)}">
-                <sequence format="r1" tcStart="0s" tcFormat="NDF" duration="{dur_frames}/{int_fps}s">
+                <sequence format="r1" tcStart="0s" tcFormat="{tc_fmt}" duration="{dur_frames * int(_num)}/{_den}s">
                     <spine>
-                        <asset-clip ref="r2" name="{xml_esc(filename)}" offset="0s" duration="{dur_frames}/{int_fps}s" start="{round(start_tc_offset * clip_fps)}/{int_fps}s" tcFormat="NDF">
+                        <asset-clip ref="r2" name="{xml_esc(filename)}" offset="0s" duration="{dur_frames * int(_num)}/{_den}s" start="{start_frames * int(_num)}/{_den}s" tcFormat="{tc_fmt}">
 {markers_xml}                        </asset-clip>
                     </spine>
                 </sequence>
