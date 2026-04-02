@@ -96,6 +96,82 @@ def import_to_resolve(resolve, file_paths):
         return False
 
 
+def get_media_detail(media_id):
+    """Fetch single media detail with frames from arkiv API."""
+    url = f"{ARKIV_API}/api/media/{media_id}"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"[arkiv] Detail fetch error: {e}")
+        return None
+
+
+def add_markers_to_timeline(resolve, media_items):
+    """Add frame analysis markers to the current timeline via AddMarker() API."""
+    if not resolve:
+        print("[arkiv] Resolve not connected")
+        return 0
+
+    pm = resolve.GetProjectManager()
+    project = pm.GetCurrentProject() if pm else None
+    timeline = project.GetCurrentTimeline() if project else None
+    if not timeline:
+        print("[arkiv] No timeline open — open a timeline first")
+        return 0
+
+    # Get timeline FPS
+    fps_str = timeline.GetSetting("timelineFrameRate")
+    try:
+        fps = float(fps_str)
+    except (TypeError, ValueError):
+        fps = 30.0
+    print(f"[arkiv] Timeline FPS: {fps}")
+
+    colors = ["Blue", "Cyan", "Green", "Yellow", "Red", "Pink", "Purple"]
+    total_added = 0
+
+    for item in media_items:
+        media_id = item.get("id")
+        if not media_id:
+            continue
+
+        detail = get_media_detail(media_id)
+        if not detail:
+            continue
+
+        frames = detail.get("frames") or []
+        if not frames:
+            print(f"[arkiv] No frame data for {item.get('filename', '?')}")
+            continue
+
+        print(f"[arkiv] Adding {len(frames)} markers for {item.get('filename', '?')}")
+        for i, fr in enumerate(frames):
+            ts = fr.get("timestamp_s", 0)
+            frame_offset = round(ts * fps)
+            desc = fr.get("description") or f"Frame {fr.get('frame_index', i) + 1}"
+            color = colors[i % len(colors)]
+
+            # Skip garbage descriptions
+            if desc.startswith("```") or not desc.strip():
+                continue
+
+            success = timeline.AddMarker(
+                frame_offset,
+                color,
+                desc[:50],   # name (shown on timeline, short)
+                desc,        # note (full text, supports Unicode)
+                1,           # duration in frames
+            )
+            if success:
+                total_added += 1
+            else:
+                print(f"[arkiv]   ! Marker failed at frame {frame_offset}")
+
+    return total_added
+
+
 def format_duration(seconds):
     """Format seconds to MM:SS."""
     if not seconds:
@@ -152,7 +228,7 @@ def create_ui(resolve):
                             "Weight": 5,
                         }
                     ),
-                    # Status + Import
+                    # Status + Actions
                     ui.HGroup(
                         {"Spacing": 5},
                         [
@@ -160,8 +236,15 @@ def create_ui(resolve):
                             ui.Button(
                                 {
                                     "ID": "ImportBtn",
-                                    "Text": "Import Selected to Media Pool",
+                                    "Text": "Import to Media Pool",
                                     "Weight": 1,
+                                }
+                            ),
+                            ui.Button(
+                                {
+                                    "ID": "MarkerBtn",
+                                    "Text": "Add Markers",
+                                    "Weight": 0.7,
                                 }
                             ),
                         ],
@@ -247,12 +330,32 @@ def create_ui(resolve):
         else:
             win.Find("StatusLabel").Text = "No valid file paths found"
 
+    def on_markers(ev):
+        selected = tree.SelectedItems()
+        if not selected:
+            win.Find("StatusLabel").Text = "No items selected"
+            return
+        items = []
+        for sel_id in selected:
+            row = selected[sel_id]
+            fname = row.Text[0]
+            item_data = results_map.get(fname)
+            if item_data:
+                items.append(item_data)
+        if not items:
+            win.Find("StatusLabel").Text = "No valid items found"
+            return
+        win.Find("StatusLabel").Text = "Adding markers..."
+        count = add_markers_to_timeline(resolve, items)
+        win.Find("StatusLabel").Text = f"Added {count} markers to timeline"
+
     def on_close(ev):
         disp.ExitLoop()
 
     win.On.SearchBtn.Clicked = on_search
     win.On.GoodBtn.Clicked = on_good
     win.On.ImportBtn.Clicked = on_import
+    win.On.MarkerBtn.Clicked = on_markers
     win.On.ArkivWin.Close = on_close
     win.On.SearchField.ReturnPressed = on_search
 
