@@ -129,7 +129,7 @@ def get_media_detail(media_id):
 
 
 def add_markers_to_timeline(resolve, media_items):
-    """Add frame analysis markers to the current timeline via AddMarker() API."""
+    """Add frame analysis markers as clip markers on matching timeline items."""
     if not resolve:
         print("[arkiv] Resolve not connected")
         return 0
@@ -149,12 +149,36 @@ def add_markers_to_timeline(resolve, media_items):
         fps = 30.0
     print(f"[arkiv] Timeline FPS: {fps}")
 
+    # Build a map of filename -> timeline_item for all video tracks
+    clip_map = {}
+    track_count = timeline.GetTrackCount("video")
+    for t in range(1, track_count + 1):
+        for ti in timeline.GetItemListInTrack("video", t):
+            name = ti.GetName()
+            if name:
+                clip_map[name] = ti
+    print(f"[arkiv] Found {len(clip_map)} clips on timeline")
+
     colors = ["Blue", "Cyan", "Green", "Yellow", "Red", "Pink", "Purple"]
     total_added = 0
 
     for item in media_items:
         media_id = item.get("id")
+        filename = item.get("filename", "")
         if not media_id:
+            continue
+
+        # Find matching clip on timeline
+        ti = clip_map.get(filename)
+        if not ti:
+            # Try without extension
+            stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+            for k, v in clip_map.items():
+                if k.startswith(stem):
+                    ti = v
+                    break
+        if not ti:
+            print(f"[arkiv] Clip '{filename}' not found on timeline — import and place it first")
             continue
 
         detail = get_media_detail(media_id)
@@ -163,26 +187,26 @@ def add_markers_to_timeline(resolve, media_items):
 
         frames = detail.get("frames") or []
         if not frames:
-            print(f"[arkiv] No frame data for {item.get('filename', '?')}")
+            print(f"[arkiv] No frame data for {filename}")
             continue
 
-        print(f"[arkiv] Adding {len(frames)} markers for {item.get('filename', '?')}")
+        print(f"[arkiv] Adding {len(frames)} clip markers for {filename}")
         for i, fr in enumerate(frames):
             ts = fr.get("timestamp_s", 0)
             frame_offset = round(ts * fps)
             desc = fr.get("description") or f"Frame {fr.get('frame_index', i) + 1}"
             color = colors[i % len(colors)]
 
-            # Skip garbage descriptions
             if desc.startswith("```") or not desc.strip():
                 continue
 
-            success = timeline.AddMarker(
+            # AddMarker on timeline_item = clip marker (frame offset from clip start)
+            success = ti.AddMarker(
                 frame_offset,
                 color,
-                desc[:50],   # name (shown on timeline, short)
-                desc,        # note (full text, supports Unicode)
-                1,           # duration in frames
+                desc[:50],
+                desc,
+                1,
             )
             if success:
                 total_added += 1
