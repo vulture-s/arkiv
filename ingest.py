@@ -23,6 +23,22 @@ SUPPORTED = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mp3", ".
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts"}
 
 
+def _unload_ollama_model(model: str):
+    """Ask Ollama to unload a model from VRAM, freeing memory for the next phase."""
+    import urllib.request
+    try:
+        payload = json.dumps({"model": model, "keep_alive": 0}).encode()
+        req = urllib.request.Request(
+            f"{config.OLLAMA_URL}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=30)
+        print(f"  Unloaded {model} from VRAM")
+    except Exception as e:
+        print(f"  Warning: could not unload {model}: {e}")
+
+
 def probe(path: str) -> dict | None:
     cmd = [
         "ffprobe", "-v", "quiet",
@@ -274,6 +290,13 @@ def main():
     bench_log = []  # per-file benchmark records
     batch_start = _time.time()
 
+    # ── Phase 1: Probe + Whisper + LLM polish (skip vision) ────────────────
+    # On VRAM-limited GPUs (e.g. RTX 4070 12GB), qwen2.5:14b (LLM polish)
+    # and qwen3-vl:8b (vision) cannot coexist. Run transcription first,
+    # then unload LLM and run vision in a separate pass.
+    need_vision = not args.skip_vision
+    phase1_results = {}  # path -> (record, frames)
+
     for i, f in enumerate(files, 1):
         already = db.is_processed(str(f))
         if already and not args.refresh:
@@ -290,14 +313,14 @@ def main():
         print(f"[{i}/{len(files)}] {f.name}", end="", flush=True)
         file_start = _time.time()
         try:
-            record = process_file(f, args.skip_vision, existing=existing)
+            # Phase 1: always skip vision — will run in Phase 2
+            record = process_file(f, skip_vision=True, existing=existing)
             file_elapsed = _time.time() - file_start
             if record:
                 frames = record.pop("_frames", [])
                 db.upsert(record)
-                # Store frame analysis data
+                # Store frame records (without vision descriptions yet)
                 if frames:
-                    # Get media_id for frame storage
                     with db.get_conn() as conn:
                         row = conn.execute("SELECT id FROM media WHERE path=?", (str(f),)).fetchone()
                         if row:
@@ -312,11 +335,10 @@ def main():
                                     description=fd.get("description", ""),
                                     tags=fd.get("tags", ""),
                                 )
-                                # Write frame tags as auto tags
-                                for tag_name in fd.get("tags", "").split(","):
-                                    tag_name = tag_name.strip()
-                                    if tag_name and tag_name != "```":
-                                        db.add_tag(mid, tag_name, source="auto")
+                    # Queue for Phase 2 vision
+                    if need_vision:
+                        phase1_results[str(f)] = (record, frames)
+
                 dur = record.get("duration_s", 0)
                 bench_log.append({
                     "file": f.name,
@@ -332,6 +354,62 @@ def main():
         except Exception as e:
             print(f" [ERROR: {e}]")
             failed += 1
+
+    # ── Phase 2: Vision (unload LLM first to free VRAM) ───────────────────
+    if phase1_results:
+        print(f"\n{'─'*60}")
+        print(f"Phase 2: Vision — {len(phase1_results)} files, unloading LLM to free VRAM...")
+        _unload_ollama_model("qwen2.5:14b")
+
+        vision_ok, vision_fail = 0, 0
+        for vi, (fpath, (record, frames)) in enumerate(phase1_results.items(), 1):
+            fname = Path(fpath).name
+            video_frames = [fd for fd in frames if fd.get("thumbnail_path")]
+            if not video_frames:
+                continue
+
+            print(f"[{vi}/{len(phase1_results)}] {fname} >vision", end="", flush=True)
+            v_start = _time.time()
+            try:
+                frame_paths = [fd["thumbnail_path"] for fd in video_frames]
+                frame_results = vis.describe_frames(frame_paths)
+                for fd, vr in zip(video_frames, frame_results):
+                    fd["description"] = vr.get("description", "")
+                    fd["tags"] = ",".join(vr.get("tags", []))
+
+                # Update DB: frames + media.frame_tags
+                with db.get_conn() as conn:
+                    row = conn.execute("SELECT id FROM media WHERE path=?", (fpath,)).fetchone()
+                    if row:
+                        mid = row[0]
+                        for fd in video_frames:
+                            conn.execute(
+                                "UPDATE frames SET description=?, tags=? WHERE media_id=? AND frame_index=?",
+                                (fd.get("description", ""), fd.get("tags", ""), mid, fd["index"])
+                            )
+                        frame_tags_json = vis.frames_to_json(frame_results)
+                        conn.execute("UPDATE media SET frame_tags=? WHERE id=?", (frame_tags_json, mid))
+
+                v_elapsed = _time.time() - v_start
+                print(f" [{v_elapsed:.1f}s] [OK]")
+                vision_ok += 1
+                # Write auto tags from vision
+                with db.get_conn() as conn:
+                    row = conn.execute("SELECT id FROM media WHERE path=?", (fpath,)).fetchone()
+                    if row:
+                        mid = row[0]
+                        for fd in video_frames:
+                            for tag_name in fd.get("tags", "").split(","):
+                                tag_name = tag_name.strip()
+                                if tag_name and tag_name != "```":
+                                    db.add_tag(mid, tag_name, source="auto")
+            except Exception as e:
+                print(f" [ERROR: {e}]")
+                vision_fail += 1
+
+        print(f"Vision done. OK={vision_ok}  fail={vision_fail}")
+    elif need_vision:
+        print("\nNo new files to run vision on.")
 
     batch_elapsed = _time.time() - batch_start
     total_dur = sum(b["duration_s"] for b in bench_log)
