@@ -72,8 +72,17 @@ def list_media(limit=50, rating=None):
         return []
 
 
-def import_to_resolve(resolve, file_paths):
-    """Import files into the current Resolve project's Media Pool."""
+RATING_COLORS = {
+    "good": "Green",
+    "ng": "Red",
+    "review": "Yellow",
+}
+
+
+def import_to_resolve(resolve, file_paths, ratings=None):
+    """Import files into the current Resolve project's Media Pool.
+    ratings: dict mapping file_path -> rating string (good/ng/review)
+    """
     if not resolve:
         print("[arkiv] Resolve not connected")
         return False
@@ -89,6 +98,17 @@ def import_to_resolve(resolve, file_paths):
 
     result = media_pool.ImportMedia(file_paths)
     if result:
+        # Apply clip colors based on rating
+        if ratings:
+            for mpi in result:
+                clip_name = mpi.GetName()
+                for path, rating in ratings.items():
+                    if clip_name and clip_name in path or path.endswith(clip_name):
+                        color = RATING_COLORS.get(rating)
+                        if color:
+                            mpi.SetClipColor(color)
+                            print(f"[arkiv]   {clip_name} → {color} ({rating})")
+                        break
         print(f"[arkiv] Imported {len(result)} clips into Media Pool")
         return True
     else:
@@ -315,14 +335,18 @@ def create_ui(resolve):
             win.Find("StatusLabel").Text = "No items selected"
             return
         paths = []
+        ratings = {}
         for sel_id in selected:
             row = selected[sel_id]
             fname = row.Text[0]
             item_data = results_map.get(fname)
             if item_data and item_data.get("path"):
-                paths.append(item_data["path"])
+                p = item_data["path"]
+                paths.append(p)
+                if item_data.get("rating"):
+                    ratings[p] = item_data["rating"]
         if paths:
-            success = import_to_resolve(resolve, paths)
+            success = import_to_resolve(resolve, paths, ratings)
             if success:
                 win.Find("StatusLabel").Text = f"Imported {len(paths)} clips"
             else:
