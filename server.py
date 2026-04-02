@@ -518,20 +518,17 @@ def export_media(media_id: int, fmt: str):
         edl += "\n"
 
         if fmt == "edl-markers":
+            # LOC comments — DaVinci reads these via "Import > Timeline Markers from EDL"
+            colors = ["RED", "BLUE", "GREEN", "CYAN", "MAGENTA", "YELLOW", "WHITE"]
             frames = db.get_frames(media_id)
-            for i, fr in enumerate(frames, 2):
-                # Marker source TC = camera start + marker offset
+            for i, fr in enumerate(frames):
                 marker_offset = fr["timestamp_s"]
-                tc = _edl_tc(start_tc_offset + marker_offset, clip_fps, is_df)
-                tc_end_s = min(marker_offset + 1.0, duration)
-                tc_end = _edl_tc(start_tc_offset + tc_end_s, clip_fps, is_df)
-                # Record TC for marker
                 rtc = _edl_tc(rec_base + marker_offset, clip_fps, is_df)
-                rtc_end = _edl_tc(rec_base + tc_end_s, clip_fps, is_df)
-                desc = (fr.get("description") or f"Frame {fr['frame_index']+1}")[:60]
-                edl += f"{i:03d}  AX       V     C        {tc} {tc_end} {rtc} {rtc_end}\n"
-                edl += f"* FROM CLIP NAME: {filename}\n"
-                edl += f"* COMMENT: MARKER — {desc}\n\n"
+                # Strip non-ASCII for DaVinci compatibility (no UTF-8 in EDL markers)
+                desc = (fr.get("description") or f"Frame {fr['frame_index']+1}")
+                desc = desc.encode("ascii", "replace").decode("ascii")[:60]
+                color = colors[i % len(colors)]
+                edl += f"* LOC: {rtc} {color} {desc}\n"
 
         return HTMLResponse(
             content=edl,
