@@ -1,0 +1,92 @@
+{
+  "timestamp": "2026-04-02T16:19:45.689960",
+  "pipeline": "faster-whisper large-v3-turbo (CUDA) + Silero VAD + qwen3-vl:8b + qwen2.5:14b polish",
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "platform": "Windows 11 PC",
+  "note": "First ingest with new pipeline. Timing from partial log (files 1-8 captured, 9-10 missing timing). Bottleneck is qwen3-vl vision (~300s per frame), not Whisper.",
+  "total_files": 10,
+  "total_ok": 10,
+  "total_fail": 0,
+  "files": [
+    {
+      "file": "FX30.5410.MP4",
+      "duration_s": 406.9,
+      "vad_kept": "63%",
+      "vad_segments": 69,
+      "process_s": 1448.6,
+      "speed_x": 0.3
+    },
+    {
+      "file": "FX30.5411.MP4",
+      "duration_s": 1687.7,
+      "vad_kept": "16%",
+      "vad_segments": 157,
+      "process_s": 3237.1,
+      "speed_x": 0.5
+    },
+    {
+      "file": "FX30.5412.MP4",
+      "duration_s": 360.9,
+      "vad_kept": "4%",
+      "vad_segments": 10,
+      "process_s": 1324.6,
+      "speed_x": 0.3
+    },
+    {
+      "file": "FX30.5413.MP4",
+      "duration_s": 1210.7,
+      "vad_kept": "19%",
+      "vad_segments": 136,
+      "process_s": 2823.5,
+      "speed_x": 0.4
+    },
+    {
+      "file": "FX30.5414.MP4",
+      "duration_s": 340.3,
+      "vad_kept": "13%",
+      "vad_segments": 22,
+      "process_s": 1139.1,
+      "speed_x": 0.3
+    },
+    {
+      "file": "FX30.5415.MP4",
+      "duration_s": 103.1,
+      "vad_kept": "24%",
+      "vad_segments": 21,
+      "process_s": 922.6,
+      "speed_x": 0.1
+    },
+    {
+      "file": "FX30.5416.MP4",
+      "duration_s": 1373.9,
+      "vad_kept": "29%",
+      "vad_segments": 195,
+      "process_s": 2944.9,
+      "speed_x": 0.5
+    },
+    {
+      "file": "FX30.5417.MP4",
+      "duration_s": 449.4,
+      "vad_kept": "33%",
+      "vad_segments": 68,
+      "process_s": 1492.8,
+      "speed_x": 0.3
+    },
+    {
+      "file": "FX30.5418.MP4",
+      "duration_s": 540.5,
+      "vad_kept": "11%",
+      "vad_segments": 40,
+      "process_s": null,
+      "speed_x": null
+    },
+    {
+      "file": "FX30.5419.MP4",
+      "duration_s": 54.6,
+      "vad_kept": "25%",
+      "vad_segments": 8,
+      "process_s": null,
+      "speed_x": null
+    }
+  ]
+}
