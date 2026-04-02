@@ -268,7 +268,12 @@ def main():
     else:
         print(f"Found {total} media files. Processing {len(files)}...\n")
 
+    import time as _time
+
     ok, skipped, failed = 0, 0, 0
+    bench_log = []  # per-file benchmark records
+    batch_start = _time.time()
+
     for i, f in enumerate(files, 1):
         already = db.is_processed(str(f))
         if already and not args.refresh:
@@ -283,8 +288,10 @@ def main():
                 existing = dict(row) if row else None
 
         print(f"[{i}/{len(files)}] {f.name}", end="", flush=True)
+        file_start = _time.time()
         try:
             record = process_file(f, args.skip_vision, existing=existing)
+            file_elapsed = _time.time() - file_start
             if record:
                 frames = record.pop("_frames", [])
                 db.upsert(record)
@@ -310,6 +317,15 @@ def main():
                                     tag_name = tag_name.strip()
                                     if tag_name and tag_name != "```":
                                         db.add_tag(mid, tag_name, source="auto")
+                dur = record.get("duration_s", 0)
+                bench_log.append({
+                    "file": f.name,
+                    "duration_s": dur,
+                    "process_s": round(file_elapsed, 1),
+                    "rtf": round(file_elapsed / max(dur, 1), 3),
+                    "speed_x": round(dur / max(file_elapsed, 1), 1),
+                })
+                print(f"  [{file_elapsed:.1f}s | {dur/max(file_elapsed,1):.1f}x RT]")
                 ok += 1
             else:
                 failed += 1
@@ -317,8 +333,41 @@ def main():
             print(f" [ERROR: {e}]")
             failed += 1
 
+    batch_elapsed = _time.time() - batch_start
+    total_dur = sum(b["duration_s"] for b in bench_log)
+
     print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}")
     print(f"DB: {db.DB_PATH}")
+
+    if bench_log:
+        print(f"\n{'='*60}")
+        print(f"BENCHMARK SUMMARY — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        print(f"{'='*60}")
+        print(f"Pipeline: faster-whisper {config.WHISPER_MODEL} + Silero VAD + {config.VISION_MODEL}")
+        print(f"{'─'*60}")
+        print(f"{'File':<20} {'Duration':>8} {'Process':>8} {'Speed':>8}")
+        print(f"{'─'*60}")
+        for b in bench_log:
+            m, s = divmod(int(b["duration_s"]), 60)
+            print(f"{b['file']:<20} {m:02d}:{s:02d}    {b['process_s']:>6.1f}s  {b['speed_x']:>5.1f}x")
+        print(f"{'─'*60}")
+        m, s = divmod(int(total_dur), 60)
+        print(f"{'TOTAL':<20} {m:02d}:{s:02d}    {batch_elapsed:>6.1f}s  {total_dur/max(batch_elapsed,1):>5.1f}x")
+        print(f"{'='*60}")
+
+        # Save bench log to JSON
+        bench_path = config.BASE_DIR / "bench_ingest.json"
+        bench_data = {
+            "timestamp": datetime.now().isoformat(),
+            "pipeline": f"faster-whisper {config.WHISPER_MODEL} + Silero VAD + {config.VISION_MODEL}",
+            "gpu": "NVIDIA GeForce RTX 4070",
+            "total_duration_s": round(total_dur, 1),
+            "total_process_s": round(batch_elapsed, 1),
+            "overall_speed_x": round(total_dur / max(batch_elapsed, 1), 1),
+            "files": bench_log,
+        }
+        bench_path.write_text(json.dumps(bench_data, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"Bench log saved: {bench_path}")
 
 
 if __name__ == "__main__":
