@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import subprocess
 import tempfile
@@ -32,7 +34,7 @@ def _get_vad_model():
     return _vad_model
 
 
-def _vad_filter(wav_path: str, sample_rate: int = 16000) -> str | None:
+def _vad_filter(wav_path: str, sample_rate: int = 16000):
     """Run Silero VAD on WAV, return new WAV with only speech segments.
     Returns None if no speech detected. Returns original path if VAD disabled."""
     if not VAD_ENABLED:
