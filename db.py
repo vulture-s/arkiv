@@ -85,6 +85,8 @@ def init_db():
             ("creation_date", "TEXT"),
             ("content_type", "TEXT"),
             ("start_tc", "TEXT"),
+            # Phase 9.4: Whisper segment timestamps for precise SRT/VTT
+            ("segments_json", "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE media ADD COLUMN {col} {typ}")
@@ -105,6 +107,7 @@ _ALLOWED_COLS = {
     "lens_model", "gps_lat", "gps_lon", "color_space", "iso", "shutter_speed",
     "aperture", "focal_length", "creation_date", "content_type",
     "start_tc",
+    "segments_json",
 }
 
 

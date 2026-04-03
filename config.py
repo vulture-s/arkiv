@@ -27,6 +27,14 @@ _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
 _DEFAULT_WHISPER = "mlx-community/whisper-large-v3-turbo" if _IS_MLX else "large-v3-turbo"
 WHISPER_MODEL = os.getenv("ARKIV_WHISPER_MODEL", _DEFAULT_WHISPER)
 
+# ── Transcription ────────────────────────────────────────────────────────────
+# Custom vocabulary: comma-separated terms for Whisper initial_prompt
+# e.g. "Furutech,Alpha Design Labs,byebyenoise!"
+CUSTOM_VOCABULARY = os.getenv("ARKIV_CUSTOM_VOCABULARY", "")
+# Filter dictionary: comma-separated words to remove from transcript
+# e.g. "嗯,啊,呃,那個"
+FILTER_WORDS = os.getenv("ARKIV_FILTER_WORDS", "")
+
 # ── Server ───────────────────────────────────────────────────────────────────
 HOST = os.getenv("ARKIV_HOST", "0.0.0.0")
 PORT = int(os.getenv("ARKIV_PORT", "8501"))
