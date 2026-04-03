@@ -11,7 +11,7 @@ import soundfile as sf
 from silero_vad import load_silero_vad, get_speech_timestamps
 import torch
 
-from config import WHISPER_MODEL, OLLAMA_URL
+from config import WHISPER_MODEL, OLLAMA_URL, CUSTOM_VOCABULARY, FILTER_WORDS
 NO_SPEECH_THRESHOLD = 0.6
 DEFAULT_LANGUAGE = "zh"  # 強制繁體中文，避免簡體/日文亂跳
 LLM_POLISH = True  # 用 Ollama LLM 後處理校正逐字稿
@@ -98,7 +98,9 @@ def warm_up():
 def transcribe(media_path: str, language: str = DEFAULT_LANGUAGE) -> tuple:
     """
     Transcribe audio from a media file.
-    Returns (transcript_text, language). Returns ("", "") if no speech detected.
+    Returns (transcript_text, language, segments_list).
+    segments_list: [{"start": float, "end": float, "text": str}, ...]
+    Returns ("", "", []) if no speech detected.
     """
     global _whisper_loaded, _fw_model
     _whisper_loaded = True
@@ -111,7 +113,7 @@ def transcribe(media_path: str, language: str = DEFAULT_LANGUAGE) -> tuple:
     vad_wav = _vad_filter(wav)
     if vad_wav is None:
         Path(wav).unlink(missing_ok=True)
-        return "", ""  # no speech detected by VAD
+        return "", "", []  # no speech detected by VAD
 
     try:
         if _USE_MLX:
@@ -124,23 +126,34 @@ def transcribe(media_path: str, language: str = DEFAULT_LANGUAGE) -> tuple:
             Path(vad_wav).unlink(missing_ok=True)
 
 
+def _build_initial_prompt() -> str:
+    """Build initial_prompt from custom vocabulary config."""
+    if not CUSTOM_VOCABULARY:
+        return ""
+    terms = [t.strip() for t in CUSTOM_VOCABULARY.split(",") if t.strip()]
+    return "、".join(terms) if terms else ""
+
+
 def _transcribe_mlx(wav: str, language: str) -> tuple:
     """Transcribe using mlx-whisper (Apple Silicon)."""
     import mlx_whisper
-    result = mlx_whisper.transcribe(
-        wav,
+    initial_prompt = _build_initial_prompt()
+    opts = dict(
         path_or_hf_repo=WHISPER_MODEL,
         language=language,
         word_timestamps=True,
-        condition_on_previous_text=True,
+        condition_on_previous_text=False,
         no_speech_threshold=NO_SPEECH_THRESHOLD,
         compression_ratio_threshold=2.4,
         logprob_threshold=-1.0,
     )
+    if initial_prompt:
+        opts["initial_prompt"] = initial_prompt
+    result = mlx_whisper.transcribe(wav, **opts)
     text = result.get("text", "").strip()
     lang = result.get("language", language)
-    segments = result.get("segments", [])
-    return _postprocess(text, lang, segments, language)
+    raw_segments = result.get("segments", [])
+    return _postprocess(text, lang, raw_segments, language)
 
 
 def _transcribe_faster(wav: str, language: str) -> tuple:
@@ -149,19 +162,26 @@ def _transcribe_faster(wav: str, language: str) -> tuple:
     if _fw_model is None:
         warm_up()
 
-    segs, info = _fw_model.transcribe(
-        wav,
+    initial_prompt = _build_initial_prompt()
+    fw_opts = dict(
         language=language,
         word_timestamps=True,
-        condition_on_previous_text=True,
+        condition_on_previous_text=False,
         no_speech_threshold=NO_SPEECH_THRESHOLD,
         compression_ratio_threshold=2.4,
         log_prob_threshold=-1.0,
+        repetition_penalty=1.8,
+        no_repeat_ngram_size=2,
     )
+    if initial_prompt:
+        fw_opts["initial_prompt"] = initial_prompt
+    segs, info = _fw_model.transcribe(wav, **fw_opts)
     segments = []
     for s in segs:
         segments.append({
             "text": s.text,
+            "start": s.start,
+            "end": s.end,
             "no_speech_prob": s.no_speech_prob,
             "avg_logprob": s.avg_logprob,
             "compression_ratio": s.compression_ratio,
@@ -172,47 +192,74 @@ def _transcribe_faster(wav: str, language: str) -> tuple:
 
 
 def _postprocess(text: str, lang: str, segments: list, language: str) -> tuple:
-    """Shared post-processing: anti-hallucination + LLM polish."""
+    """Shared post-processing: anti-hallucination + LLM polish.
+    Returns (text, lang, clean_segments) where clean_segments has start/end/text."""
     if not segments:
-        return text, lang
+        return text, lang, []
 
     # Guard 1: ALL segments are silence → no speech
     avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
     if avg_no_speech > NO_SPEECH_THRESHOLD:
-        return "", lang
+        return "", lang, []
 
     # Guard 2: Per-segment filtering
     good_segments = []
+    timed_segments = []
     for s in segments:
         seg_text = s.get("text", "").strip()
         if not seg_text:
             continue
         if s.get("no_speech_prob", 0) > 0.8:
             continue
-        if s.get("avg_logprob", 0) < -1.5:
+        # Dynamic logprob threshold: short segments (<1.6s) are more likely hallucinations
+        duration = s.get("end", 0) - s.get("start", 0) if "start" in s and "end" in s else None
+        logprob_thresh = -1.7 if duration is not None and duration < 1.6 else -1.5
+        if s.get("avg_logprob", 0) < logprob_thresh:
             continue
         if s.get("compression_ratio", 1) > 3.0:
             continue
         good_segments.append(seg_text)
+        # Preserve timing for SRT/VTT export
+        if "start" in s and "end" in s:
+            timed_segments.append({
+                "start": round(float(s["start"]), 3),
+                "end": round(float(s["end"]), 3),
+                "text": seg_text,
+            })
 
     if not good_segments:
-        return "", lang
+        return "", lang, []
 
     filtered_text = " ".join(good_segments).strip()
 
     # Guard 3: Text-level repetition
     if _is_repetitive(filtered_text):
-        return "", lang
+        return "", lang, []
 
     # Guard 4: Character-level repetition
     if _has_char_loops(filtered_text):
         filtered_text = _remove_char_loops(filtered_text)
 
+    # Step 4.5: Filter dictionary — remove configured filler words
+    if FILTER_WORDS:
+        filter_list = [w.strip() for w in FILTER_WORDS.split(",") if w.strip()]
+        for word in filter_list:
+            filtered_text = filtered_text.replace(word, "")
+        # Also clean timed segments
+        for ts in timed_segments:
+            for word in filter_list:
+                ts["text"] = ts["text"].replace(word, "")
+            ts["text"] = ts["text"].strip()
+        timed_segments = [ts for ts in timed_segments if ts["text"]]
+        # Clean up double spaces
+        import re
+        filtered_text = re.sub(r'\s{2,}', ' ', filtered_text).strip()
+
     # Step 5: LLM polish
     if LLM_POLISH and len(filtered_text) > 10:
         filtered_text = _llm_polish(filtered_text, language)
 
-    return filtered_text, lang
+    return filtered_text, lang, timed_segments
 
 
 def _is_repetitive(text: str, window: int = 6, threshold: float = 0.35) -> bool:

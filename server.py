@@ -456,13 +456,29 @@ def export_media(media_id: int, fmt: str):
             headers={"Content-Disposition": f'attachment; filename="{stem}.txt"'},
         )
 
+    # Try to use segment-aligned timestamps if available
+    import json as _json
+    _seg_json = rec.get("segments_json")
+    _segments = []
+    if _seg_json:
+        try:
+            _segments = _json.loads(_seg_json)
+        except Exception:
+            pass
+
     if fmt == "srt":
-        lines = [l.strip() for l in transcript.split("\n") if l.strip()]
         srt = ""
-        for i, line in enumerate(lines, 1):
-            t_start = (i - 1) * (duration / max(len(lines), 1))
-            t_end = i * (duration / max(len(lines), 1))
-            srt += f"{i}\n{_ts(t_start)} --> {_ts(t_end)}\n{line}\n\n"
+        if _segments:
+            # Segment-aligned timestamps (precise)
+            for i, seg in enumerate(_segments, 1):
+                srt += f"{i}\n{_ts(seg['start'])} --> {_ts(seg['end'])}\n{seg['text']}\n\n"
+        else:
+            # Fallback: evenly distributed
+            lines = [l.strip() for l in transcript.split("\n") if l.strip()]
+            for i, line in enumerate(lines, 1):
+                t_start = (i - 1) * (duration / max(len(lines), 1))
+                t_end = i * (duration / max(len(lines), 1))
+                srt += f"{i}\n{_ts(t_start)} --> {_ts(t_end)}\n{line}\n\n"
         return HTMLResponse(
             content=srt,
             media_type="text/plain; charset=utf-8",
@@ -470,12 +486,16 @@ def export_media(media_id: int, fmt: str):
         )
 
     if fmt == "vtt":
-        lines = [l.strip() for l in transcript.split("\n") if l.strip()]
         vtt = "WEBVTT\n\n"
-        for i, line in enumerate(lines, 1):
-            t_start = (i - 1) * (duration / max(len(lines), 1))
-            t_end = i * (duration / max(len(lines), 1))
-            vtt += f"{_ts(t_start, '.')} --> {_ts(t_end, '.')}\n{line}\n\n"
+        if _segments:
+            for i, seg in enumerate(_segments, 1):
+                vtt += f"{_ts(seg['start'], '.')} --> {_ts(seg['end'], '.')}\n{seg['text']}\n\n"
+        else:
+            lines = [l.strip() for l in transcript.split("\n") if l.strip()]
+            for i, line in enumerate(lines, 1):
+                t_start = (i - 1) * (duration / max(len(lines), 1))
+                t_end = i * (duration / max(len(lines), 1))
+                vtt += f"{_ts(t_start, '.')} --> {_ts(t_end, '.')}\n{line}\n\n"
         return HTMLResponse(
             content=vtt,
             media_type="text/plain; charset=utf-8",
