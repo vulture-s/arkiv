@@ -22,11 +22,23 @@ Search, browse, rate, and tag your video/audio assets using AI-powered transcrip
                    │  embed.py    │◄──► ChromaDB
                    │  (Ollama)    │     (nomic-embed-text)
                    └──────────────┘
-                          
-      ┌───────────┐ ┌─────────┐ ┌─────────────┐ ┌──────────┐
-      │ ingest.py │ │frames.py│ │transcribe.py│ │ vision.py│
-      │ (FFmpeg)  │ │(scenes) │ │  (Whisper)  │ │ (llava)  │
-      └───────────┘ └─────────┘ └─────────────┘ └──────────┘
+
+  ═══════════════ Ingest Pipeline (2-Phase) ═══════════════
+
+  Phase 1: Probe + Transcribe + LLM Polish
+  ┌───────────┐ ┌─────────────┐ ┌──────────────┐
+  │ ingest.py │→│transcribe.py│→│ qwen2.5:14b  │
+  │ (FFmpeg)  │ │(Whisper+VAD)│ │ (LLM polish) │
+  └───────────┘ └─────────────┘ └──────────────┘
+       │              ↑
+       │         Silero VAD
+       │        (silence filter)
+       ▼
+  Phase 2: Vision (after unloading LLM from VRAM)
+  ┌─────────┐  ┌──────────────┐
+  │frames.py│→ │  vision.py   │
+  │(extract)│  │(qwen3-vl:8b) │
+  └─────────┘  └──────────────┘
 ```
 
 ## Screenshots
@@ -36,14 +48,16 @@ Search, browse, rate, and tag your video/audio assets using AI-powered transcrip
 ## Features
 
 - **Semantic search** — query in natural language (Chinese/English/Japanese)
-- **AI transcription** — Whisper large-v3 (Apple Silicon MLX / NVIDIA CUDA / CPU)
-- **Frame analysis** — llava:7b scene descriptions
-- **Rating system** — GOOD / NG / Review with notes
+- **AI transcription** — Whisper large-v3-turbo + Silero VAD + LLM polish (Apple Silicon MLX / NVIDIA CUDA)
+- **4-layer anti-hallucination guard** — VAD silence filter → no_speech threshold → blank/repeat filter → LLM correction
+- **Frame analysis** — qwen3-vl:8b vision descriptions with brand/object recognition
+- **2-phase pipeline** — transcribe first, unload LLM, then vision (avoids VRAM conflict on 12GB GPUs)
+- **Rating system** — GOOD / NG / Review with notes + clip color in Resolve
 - **Tag system** — auto (AI) + manual tags with autocomplete
 - **DaVinci Resolve UI** — dark theme, 3-panel layout, filmstrip, waveform
-- **Export** — SRT, VTT, TXT, EDL subtitle/edit formats
+- **Export** — SRT, VTT, TXT, EDL (drop-frame TC), FCPXML 1.8 (FCPX + DaVinci compatible)
 - **Tauri native app** — desktop app with native file/folder dialogs
-- **DaVinci Resolve plugin** — search and import directly from Resolve
+- **DaVinci Resolve plugin** — search, import with clip color, add frame markers
 
 ## Quick Start
 
@@ -69,7 +83,8 @@ pip install faster-whisper        # CPU fallback
 
 # Pull Ollama models
 ollama pull nomic-embed-text
-ollama pull llava:7b  # optional, for frame descriptions
+ollama pull qwen3-vl:8b    # vision frame descriptions
+ollama pull qwen2.5:14b    # LLM transcript polish
 
 # Check environment
 python health.py
@@ -147,8 +162,8 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | Thumbnail output dir |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `ARKIV_EMBED_MODEL` | `nomic-embed-text` | Embedding model |
-| `ARKIV_VISION_MODEL` | `llava:7b` | Vision model for frames |
-| `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-mlx` (macOS) / `large-v3` (other) | Whisper model |
+| `ARKIV_VISION_MODEL` | `qwen3-vl:8b` | Vision model for frame descriptions |
+| `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (other) | Whisper model |
 | `ARKIV_EXIFTOOL_PATH` | *(empty — auto-detect)* | Path to exiftool binary (optional) |
 | `ARKIV_HOST` | `0.0.0.0` | Server bind address |
 | `ARKIV_PORT` | `8501` | Server port |
@@ -162,10 +177,14 @@ Copy `.env.example` to `.env` and customize:
 | Backend | FastAPI + Uvicorn |
 | Database | SQLite (metadata) + ChromaDB (vectors) |
 | Embedding | Ollama nomic-embed-text (768d, cosine) |
-| Transcription | mlx-whisper (Mac) / faster-whisper (CUDA/CPU) |
-| Vision | Ollama llava:7b |
-| Media | FFmpeg (probe, thumbnails, scene detection) |
+| Transcription | mlx-whisper / faster-whisper (large-v3-turbo) |
+| VAD | Silero VAD (silence filter before Whisper) |
+| LLM Polish | Ollama qwen2.5:14b (punctuation + typo correction) |
+| Vision | Ollama qwen3-vl:8b (brand/object recognition) |
+| Media | FFmpeg (probe, thumbnails, frame extraction) |
+| Export | SRT, VTT, TXT, EDL (DF/NDF), FCPXML 1.8 |
 | Desktop | Tauri (native app wrapper) |
+| NLE Plugin | DaVinci Resolve (import + clip color + markers) |
 
 ## FAQ
 
@@ -211,7 +230,8 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 | FFmpeg / ffprobe | Required | Required | Required | |
 | Ollama server | Required | Required | Required | |
 | nomic-embed-text | Required | Required | Required | |
-| llava:7b | Optional | Optional | Optional | For frame descriptions |
+| qwen3-vl:8b | Optional | Optional | Optional | For frame descriptions |
+| qwen2.5:14b | Optional | Optional | Optional | For transcript polish |
 | ExifTool | Optional | Optional | Optional | For rich metadata |
 | faster-whisper | Required | Optional | Required | CUDA/CPU whisper |
 | mlx-whisper | — | Required | — | Apple Silicon only |
@@ -221,10 +241,11 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 ### Latest Results (v0.1.0)
 
-| Platform | Health Check | Smoke Test |
-|----------|-------------|------------|
-| Windows 11 (RTX 4070) | 16/18 PASS, 0 FAIL, 2 SKIP | 9/9 PASS |
-| Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS |
+| Platform | Health Check | Smoke Test | Date |
+|----------|-------------|------------|------|
+| macOS M2 Max | 18/19 PASS, 0 FAIL, 1 SKIP | 9/9 PASS | 2026-04-03 |
+| Windows 11 (RTX 4070) | 17/18 PASS, 0 FAIL, 1 SKIP | 9/9 PASS | 2026-04-02 |
+| Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS | 2026-04-01 |
 
 ## License
 
