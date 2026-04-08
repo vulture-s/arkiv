@@ -38,7 +38,7 @@ platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- <home>/.arkiv/.
 rootdir: <home>/.arkiv
 configfile: pytest.ini
 plugins: asyncio-1.3.0, anyio-4.13.0
-collecting ... collected 22 items
+collecting ... collected 23 items
 
 tests/test_db.py::test_init_db_is_idempotent PASSED
 tests/test_db.py::test_upsert_updates_existing_path_and_is_processed PASSED
@@ -57,16 +57,16 @@ tests/test_transcribe_guards.py::test_postprocess_returns_empty_when_average_no_
 tests/test_transcribe_guards.py::test_postprocess_filters_bad_segments_but_keeps_threshold_boundary PASSED
 tests/test_transcribe_guards.py::test_postprocess_rejects_repetitive_text PASSED
 tests/test_transcribe_guards.py::test_postprocess_removes_char_loops_and_polishes PASSED
+tests/test_transcribe_guards.py::test_postprocess_filters_configured_words_from_text_and_segments PASSED
 tests/test_vectordb.py::test_split_sentences_and_cjk_detection PASSED
 tests/test_vectordb.py::test_chunk_text_handles_short_empty_chinese_and_english PASSED
 tests/test_vectordb.py::test_build_doc_text_supports_transcript_filename_only_and_bad_json PASSED
 tests/test_vectordb.py::test_embed_truncates_before_request PASSED
 tests/test_vectordb.py::test_search_deduplicates_media_results_and_rounds_scores PASSED
 
-============================== 22 passed in 0.39s ==============================
+============================== 23 passed in 0.27s ==============================
 ```
 
 ## REVIEW
 
 - ⚠️ REVIEW: `server.py` currently does not implement `/api/media/{id}/export/json`; the test suite documents the current behavior as `400 Unsupported format: json`.
-- ⚠️ REVIEW: `transcribe.py` currently has no `FILTER_WORDS` hook in production code, so that handover item could not be covered without changing runtime behavior.
