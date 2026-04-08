@@ -15,7 +15,7 @@ services:
       - ARKIV_THUMBNAILS_DIR=/app/thumbnails
       - ARKIV_OLLAMA_URL=http://ollama:11434
       - ARKIV_EMBED_MODEL=nomic-embed-text
-      - ARKIV_VISION_MODEL=llava:7b
+      - ARKIV_VISION_MODEL=qwen3-vl:8b
       - ARKIV_WHISPER_MODEL=large-v3-turbo
       - ARKIV_HOST=0.0.0.0
       - ARKIV_PORT=8501
