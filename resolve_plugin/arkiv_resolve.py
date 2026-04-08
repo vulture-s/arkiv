@@ -79,9 +79,10 @@ RATING_COLORS = {
 }
 
 
-def import_to_resolve(resolve, file_paths, ratings=None):
+def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
     """Import files into the current Resolve project's Media Pool.
     ratings: dict mapping file_path -> rating string (good/ng/review)
+    tags: dict mapping file_path -> list of tag name strings
     """
     if not resolve:
         print("[arkiv] Resolve not connected")
@@ -108,6 +109,16 @@ def import_to_resolve(resolve, file_paths, ratings=None):
                         if color:
                             mpi.SetClipColor(color)
                             print(f"[arkiv]   {clip_name} → {color} ({rating})")
+                        break
+        # Set keywords from arkiv tags
+        if tags:
+            for mpi in result:
+                clip_name = mpi.GetName()
+                for path, tag_list in tags.items():
+                    if clip_name and (clip_name in path or path.endswith(clip_name)):
+                        if tag_list:
+                            mpi.SetMetadata("Keywords", ", ".join(tag_list))
+                            print(f"[arkiv]   {clip_name} → Keywords: {', '.join(tag_list)}")
                         break
         print(f"[arkiv] Imported {len(result)} clips into Media Pool")
         return True
@@ -360,6 +371,7 @@ def create_ui(resolve):
             return
         paths = []
         ratings = {}
+        tags = {}
         for sel_id in selected:
             row = selected[sel_id]
             fname = row.Text[0]
@@ -369,8 +381,11 @@ def create_ui(resolve):
                 paths.append(p)
                 if item_data.get("rating"):
                     ratings[p] = item_data["rating"]
+                item_tags = item_data.get("tags", [])
+                if item_tags:
+                    tags[p] = [t["name"] for t in item_tags]
         if paths:
-            success = import_to_resolve(resolve, paths, ratings)
+            success = import_to_resolve(resolve, paths, ratings, tags)
             if success:
                 win.Find("StatusLabel").Text = f"Imported {len(paths)} clips"
             else:
