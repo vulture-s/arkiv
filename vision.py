@@ -79,6 +79,7 @@ def _describe_one(img_path: str, max_retries: int = 2) -> dict:
         except Exception as e:
             if attempt < max_retries - 1:
                 continue
+            print(f" [VISION FAIL: {e}]", end="", flush=True)
             return {"description": "", "tags": [], "error": str(e)}
 
     return {"description": "", "tags": []}

@@ -322,6 +322,70 @@ def retranscribe_media(media_id: int, body: RetranscribeRequest):
         raise HTTPException(500, str(e))
 
 
+@app.post("/api/media/{media_id}/retry-vision")
+def retry_vision(media_id: int):
+    """Retry vision analysis on frames with empty descriptions.
+    Two-phase fallback: primary model → lighter fallback model."""
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "Not found")
+    frames = db.get_frames(media_id)
+    empty_frames = [f for f in frames if not f.get("description")]
+    if not empty_frames:
+        return {"ok": True, "message": "All frames already have descriptions", "patched": 0}
+
+    import vision as vis
+    frame_paths = [f["thumbnail_path"] for f in empty_frames]
+
+    # Phase 1: try primary vision model
+    results = vis.describe_frames(frame_paths)
+    failed = [i for i, r in enumerate(results) if r.get("error") or not r.get("description")]
+
+    # Phase 2: fallback to lighter model for failed frames
+    if failed:
+        fallback_model = "moondream2:latest"
+        original_model = vis.VISION_MODEL
+        try:
+            vis.VISION_MODEL = fallback_model
+            retry_paths = [frame_paths[i] for i in failed]
+            retry_results = vis.describe_frames(retry_paths)
+            for idx, retry_r in zip(failed, retry_results):
+                if retry_r.get("description") and not retry_r.get("error"):
+                    results[idx] = retry_r
+        finally:
+            vis.VISION_MODEL = original_model
+
+    # Write results to DB
+    patched = 0
+    with db.get_conn() as conn:
+        for f, vr in zip(empty_frames, results):
+            desc = vr.get("description", "")
+            tags = ",".join(vr.get("tags", []))
+            if desc:
+                conn.execute(
+                    "UPDATE frames SET description=?, tags=? WHERE media_id=? AND frame_index=?",
+                    (desc, tags, media_id, f["frame_index"])
+                )
+                for tag_name in vr.get("tags", []):
+                    tag_name = tag_name.strip()
+                    if tag_name and tag_name != "```":
+                        db.add_tag(media_id, tag_name, source="auto")
+                patched += 1
+        # Update legacy frame_tags
+        all_frames = db.get_frames(media_id)
+        frame_tags = [{"description": f.get("description", ""), "tags": f.get("tags", "").split(",") if f.get("tags") else []} for f in all_frames]
+        frame_tags_json = json.dumps(frame_tags, ensure_ascii=False)
+        conn.execute("UPDATE media SET frame_tags=? WHERE id=?", (frame_tags_json, media_id))
+
+    still_empty = sum(1 for vr in results if not vr.get("description") or vr.get("error"))
+    return {
+        "ok": still_empty == 0,
+        "patched": patched,
+        "still_empty": still_empty,
+        "total_frames": len(empty_frames),
+    }
+
+
 @app.post("/api/media/{media_id}/reingest")
 def reingest_media(media_id: int):
     """Re-run full ingest pipeline: probe + whisper + thumbnail + llava + embed."""

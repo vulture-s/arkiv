@@ -605,7 +605,11 @@ async function renderInspector() {
     </div>
 
     ${framesHtml ? `<div class="px-3 mt-3">
-      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Frame Analysis</div>
+      <div class="flex items-center justify-between mb-1.5">
+        <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">Frame Analysis</div>
+        ${(rec.frames||[]).some(f => !f.description) ? `<button class="text-2xs px-2 py-0.5 bg-warning/15 text-warning border border-warning/30 rounded hover:bg-warning/25 transition" onclick="doRetryVision(${rec.id})">&#9888; Retry Vision</button>` : ''}
+      </div>
+      ${(rec.frames||[]).some(f => !f.description) ? `<div class="mb-2 px-2 py-1.5 rounded text-2xs bg-warning/10 text-warning border border-warning/20">&#9888; ${(rec.frames||[]).filter(f => !f.description).length}/${(rec.frames||[]).length} frames missing vision analysis</div>` : ''}
       ${framesHtml}
     </div>` : ''}
 
@@ -1024,6 +1028,30 @@ async function doChangeLang(id, lang) {
     if (r.ok) { await tauriMessage('轉錄完成'); await fetchDetail(id); renderInspector(); }
     else { const d = await r.json().catch(()=>({})); await tauriMessage('轉錄失敗: ' + (d.error || r.status)); }
   } catch(e) { hideIngestModal(); await tauriMessage('錯誤: ' + e.message); }
+}
+
+async function doRetryVision(id) {
+  showIngestModal('Vision 分析中...', 'Phase 1: 主模型分析 → Phase 2: 備援模型補救');
+  try {
+    const r = await fetch(`/api/media/${id}/retry-vision`, { method: 'POST' });
+    hideIngestModal();
+    if (r.ok) {
+      const data = await r.json();
+      if (data.ok) {
+        await tauriMessage(`Vision 完成！${data.patched} frames 已補齊`);
+      } else {
+        await tauriMessage(`Vision 部分完成：${data.patched}/${data.total_frames} 成功，${data.still_empty} 仍然失敗\n\n請檢查 Ollama 是否正常運行`);
+      }
+      await fetchDetail(id);
+      renderInspector();
+      await refresh();
+    } else {
+      await tauriMessage('Vision retry 失敗：' + r.statusText);
+    }
+  } catch(e) {
+    hideIngestModal();
+    await tauriMessage('Vision retry 錯誤：' + e.message);
+  }
 }
 
 async function doReIngest(id) {
