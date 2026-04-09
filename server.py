@@ -281,6 +281,19 @@ def ingest_media(body: IngestRequest):
 class RetranscribeRequest(BaseModel):
     language: str = "zh"
 
+@app.get("/api/media/{media_id}/remotion-props")
+def get_remotion_props(media_id: int):
+    """Export word-level timestamps as Remotion CellPhoneReel props."""
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "Not found")
+    words = json.loads(rec.get("words_json") or "[]")
+    return {
+        "captions": [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in words],
+        "duration": rec.get("duration_s", 0),
+        "filename": rec.get("filename", ""),
+    }
+
 @app.post("/api/media/{media_id}/retranscribe")
 def retranscribe_media(media_id: int, body: RetranscribeRequest):
     """Re-run Whisper with specified language."""
@@ -292,11 +305,17 @@ def retranscribe_media(media_id: int, body: RetranscribeRequest):
         raise HTTPException(400, f"Media file not found: {media_path}")
     try:
         import transcribe as tr
-        text, lang = tr.transcribe(media_path, language=body.language)
+        text, lang, segments, words = tr.transcribe(media_path, language=body.language)
         with db.get_conn() as conn:
             conn.execute(
-                "UPDATE media SET transcript=?, lang=? WHERE id=?",
-                (text, body.language, media_id)
+                "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
+                (
+                    text,
+                    body.language,
+                    json.dumps(segments, ensure_ascii=False) if segments else None,
+                    json.dumps(words, ensure_ascii=False) if words else None,
+                    media_id,
+                )
             )
         return {"ok": True, "transcript_length": len(text), "language": body.language}
     except Exception as e:
@@ -808,7 +827,7 @@ def stream_media(media_id: int):
     if not rec:
         raise HTTPException(404, "Media not found")
     # Check for proxy first (browser-friendly H.264)
-    proxy_path = config.PROXIES_DIR / f"{media_id}.mp4"
+    proxy_path = ROOT / "proxies" / f"{media_id}.mp4"
     if proxy_path.exists():
         return FileResponse(
             path=str(proxy_path),
