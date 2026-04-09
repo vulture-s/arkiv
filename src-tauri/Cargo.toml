@@ -1,6 +1,6 @@
 [package]
 name = "arkiv"
-version = "0.1.0"
+version = "0.2.0"
 description = "arkiv — Local Media Asset Manager"
 authors = ["Hevin Yeh"]
 edition = "2021"

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui/main/tauri/src-tauri/tauri.conf.json",
   "productName": "arkiv",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.hevin.arkiv",
   "build": {
     "devUrl": "http://localhost:8501",
