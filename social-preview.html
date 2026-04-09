@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1280px;
+    height: 640px;
+    background: #1a1a2e;
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Subtle grid pattern */
+  body::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    z-index: 0;
+  }
+
+  /* Left side - branding */
+  .left {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 60px 70px;
+    z-index: 1;
+  }
+
+  .logo-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 16px;
+  }
+
+  .logo-icon {
+    width: 72px;
+    height: 72px;
+    flex-shrink: 0;
+  }
+
+  .logo {
+    font-size: 72px;
+    font-weight: 800;
+    color: #e2e8f0;
+    letter-spacing: -2px;
+  }
+
+  .logo span {
+    color: #60a5fa;
+  }
+
+  .tagline {
+    font-size: 22px;
+    color: #94a3b8;
+    line-height: 1.5;
+    margin-bottom: 36px;
+    max-width: 440px;
+  }
+
+  .badges {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .badge {
+    background: rgba(96, 165, 250, 0.12);
+    border: 1px solid rgba(96, 165, 250, 0.25);
+    color: #93bbf5;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .badge.highlight {
+    background: rgba(52, 211, 153, 0.12);
+    border-color: rgba(52, 211, 153, 0.3);
+    color: #6ee7b7;
+  }
+
+  /* Right side - feature showcase */
+  .right {
+    width: 520px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 40px 50px 40px 0;
+    z-index: 1;
+  }
+
+  .feature-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .feature-icon {
+    font-size: 28px;
+    width: 44px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .feature-text h3 {
+    color: #e2e8f0;
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 3px;
+  }
+
+  .feature-text p {
+    color: #64748b;
+    font-size: 12.5px;
+  }
+
+  /* Bottom bar */
+  .bottom {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 48px;
+    background: rgba(15, 23, 42, 0.9);
+    border-top: 1px solid rgba(148, 163, 184, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 70px;
+    z-index: 1;
+  }
+
+  .bottom-left {
+    color: #475569;
+    font-size: 13px;
+  }
+
+  .bottom-right {
+    display: flex;
+    gap: 24px;
+    color: #64748b;
+    font-size: 12px;
+  }
+
+  .bottom-right span {
+    color: #94a3b8;
+    font-weight: 500;
+  }
+
+  /* Glow accent */
+  .glow {
+    position: absolute;
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, rgba(96,165,250,0.08) 0%, transparent 70%);
+    top: -100px;
+    left: -100px;
+    z-index: 0;
+  }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+
+  <div class="left">
+    <div class="logo-row">
+      <svg class="logo-icon" viewBox="0 0 20 20" fill="#e2e8f0" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"/>
+      </svg>
+      <div class="logo">ark<span>i</span>v</div>
+    </div>
+    <div class="tagline">
+      Open-source AI media asset manager<br>for filmmakers who own their data.
+    </div>
+    <div class="badges">
+      <div class="badge highlight">Local-first</div>
+      <div class="badge highlight">$0 Cloud Cost</div>
+      <div class="badge">Whisper</div>
+      <div class="badge">Ollama</div>
+      <div class="badge">Semantic Search</div>
+      <div class="badge">DaVinci Resolve</div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="feature-card">
+      <div class="feature-icon">🎬</div>
+      <div class="feature-text">
+        <h3>5-Layer Ingest Pipeline</h3>
+        <p>FFprobe → Whisper → Frame Extract → Vision AI → Vector Embed</p>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔍</div>
+      <div class="feature-text">
+        <h3>Semantic Search</h3>
+        <p>Natural language queries in Chinese & English</p>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🛡️</div>
+      <div class="feature-text">
+        <h3>4-Layer Hallucination Guard</h3>
+        <p>Silence → Low-confidence → Compression → N-gram dedup</p>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🐳</div>
+      <div class="feature-text">
+        <h3>Docker + macOS + Windows</h3>
+        <p>Cross-platform with GPU acceleration support</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom">
+    <div class="bottom-left">github.com/vulture-s/arkiv</div>
+    <div class="bottom-right">
+      <div><span>MIT</span> License</div>
+      <div><span>Python</span> + FastAPI</div>
+      <div><span>21</span> API Endpoints</div>
+    </div>
+  </div>
+</body>
+</html>
