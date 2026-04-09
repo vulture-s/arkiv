@@ -87,6 +87,8 @@ def init_db():
             ("start_tc", "TEXT"),
             # Phase 9.4: Whisper segment timestamps for precise SRT/VTT
             ("segments_json", "TEXT"),
+            # Phase 10: WhisperX word-level timestamps for Remotion
+            ("words_json", "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE media ADD COLUMN {col} {typ}")
@@ -108,6 +110,7 @@ _ALLOWED_COLS = {
     "aperture", "focal_length", "creation_date", "content_type",
     "start_tc",
     "segments_json",
+    "words_json",
 }
 
 

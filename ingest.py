@@ -252,7 +252,7 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
     # Audio transcription (skip on refresh — reuse existing)
     if meta["has_audio"] and not existing:
         print(" >whisper", end="", flush=True)
-        text, lang, segments = tr.transcribe(str(path))
+        text, lang, segments, words = tr.transcribe(str(path))
         record["transcript"] = text or None
         record["lang"] = lang or None
         if segments:
@@ -260,6 +260,10 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
             record["segments_json"] = json.dumps(segments, ensure_ascii=False)
         else:
             record["segments_json"] = None
+        if words:
+            record["words_json"] = json.dumps(words, ensure_ascii=False)
+        else:
+            record["words_json"] = None
 
     # Thumbnail (video only, always extracted)
     is_video = path.suffix.lower() in VIDEO_EXT
