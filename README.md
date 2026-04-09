@@ -6,6 +6,8 @@
 
 **Local-first media asset manager with semantic search.**
 
+> 🌐 **English** | [繁體中文](README.zh-TW.md)
+
 Search, browse, rate, and tag your video/audio assets using AI-powered transcription and vector search. DaVinci Resolve-inspired dark UI.
 
 ---
