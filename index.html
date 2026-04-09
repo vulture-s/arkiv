@@ -846,7 +846,7 @@ async function doPlayMedia(id) {
   // Error handling — show error in preview
   vid.onerror = function() {
     vid.remove();
-    if (ctrl) ctrl.remove();
+    var wp = document.getElementById('inspectorWaveform'); if (wp) wp.parentElement.remove();
     var errDiv = document.createElement('div');
     errDiv.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:4;background:rgba(0,0,0,0.7)';
     errDiv.innerHTML = '<div style="text-align:center;color:#f87171;font-size:12px"><div style="font-size:20px;margin-bottom:4px">&#9888;</div>Stream failed — file may not exist</div>';

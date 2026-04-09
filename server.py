@@ -801,10 +801,20 @@ import mimetypes
 
 @app.get("/api/stream/{media_id}")
 def stream_media(media_id: int):
-    """Stream a media file with range request support for seeking."""
+    """Stream a media file with range request support for seeking.
+    Serves H.264 proxy if available (for browser-incompatible codecs like ProRes/HEVC).
+    """
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "Media not found")
+    # Check for proxy first (browser-friendly H.264)
+    proxy_path = config.PROXIES_DIR / f"{media_id}.mp4"
+    if proxy_path.exists():
+        return FileResponse(
+            path=str(proxy_path),
+            media_type="video/mp4",
+            filename=Path(rec["path"]).stem + "_proxy.mp4",
+        )
     file_path = Path(rec["path"])
     if not file_path.exists():
         raise HTTPException(404, "File not found")
