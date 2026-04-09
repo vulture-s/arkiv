@@ -21,6 +21,8 @@ import vision as vis
 
 SUPPORTED = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts"}
+# Codecs that browsers can't play — need proxy
+PROXY_CODECS = {"prores", "hevc", "hev1", "ap4h", "ap4x", "apch", "apcn", "apcs", "apco"}
 
 
 def _unload_ollama_model(model: str):
@@ -181,6 +183,46 @@ def exiftool_extract(path: str) -> dict:
         "focal_length": fl,
         "creation_date": cdate_str,
     }
+
+
+def needs_proxy(path: str) -> bool:
+    """Check if a video file uses a codec that browsers can't play."""
+    cmd = [
+        "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+        "-show_entries", "stream=codec_name", "-of", "csv=p=0", path
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        codec = r.stdout.strip().strip(",").lower()
+        return codec in PROXY_CODECS
+    except Exception:
+        return False
+
+
+def generate_proxy(media_id: int, path: str) -> str | None:
+    """Generate a 720p H.264 proxy for browser playback. Returns proxy path or None."""
+    proxy_dir = config.PROXIES_DIR
+    proxy_dir.mkdir(parents=True, exist_ok=True)
+    proxy_path = proxy_dir / f"{media_id}.mp4"
+    if proxy_path.exists():
+        return str(proxy_path)
+    cmd = [
+        "ffmpeg", "-y", "-i", path,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "28",
+        "-vf", "scale=-2:720",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        str(proxy_path),
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if r.returncode == 0 and proxy_path.exists():
+            return str(proxy_path)
+        proxy_path.unlink(missing_ok=True)
+        return None
+    except Exception:
+        proxy_path.unlink(missing_ok=True)
+        return None
 
 
 def process_file(path: Path, skip_vision: bool, existing: dict | None = None) -> dict:
@@ -415,6 +457,33 @@ def main():
         print(f"Vision done. OK={vision_ok}  fail={vision_fail}")
     elif need_vision:
         print("\nNo new files to run vision on.")
+
+    # ── Phase 3: Proxy generation (browser-incompatible codecs) ────────────
+    print(f"\n{'─'*60}")
+    print("Phase 3: Proxy generation for browser-incompatible codecs...")
+    proxy_ok, proxy_skip = 0, 0
+    with db.get_conn() as conn:
+        all_media = conn.execute("SELECT id, path FROM media").fetchall()
+    for mid, mpath in all_media:
+        proxy_path = config.PROXIES_DIR / f"{mid}.mp4"
+        if proxy_path.exists():
+            proxy_skip += 1
+            continue
+        if not Path(mpath).suffix.lower() in VIDEO_EXT:
+            continue
+        if needs_proxy(mpath):
+            print(f"  [{mid}] {Path(mpath).name} >proxy", end="", flush=True)
+            result = generate_proxy(mid, mpath)
+            if result:
+                sz = Path(result).stat().st_size / (1024 * 1024)
+                print(f" [OK {sz:.0f}MB]")
+                proxy_ok += 1
+            else:
+                print(" [FAIL]")
+    if proxy_ok or proxy_skip:
+        print(f"Proxies: {proxy_ok} generated, {proxy_skip} already exist")
+    else:
+        print("No files need proxy (all browser-compatible)")
 
     batch_elapsed = _time.time() - batch_start
     total_dur = sum(b["duration_s"] for b in bench_log)

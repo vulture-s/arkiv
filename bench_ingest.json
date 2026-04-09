@@ -1,17 +1,31 @@
 {
-  "timestamp": "2026-04-03T00:40:05.958288",
-  "pipeline": "faster-whisper mlx-community/whisper-large-v3-turbo + Silero VAD + qwen3-vl:8b",
+  "timestamp": "2026-04-02T18:06:16.519901",
+  "pipeline": "faster-whisper large-v3-turbo + Silero VAD + qwen3-vl:8b",
   "gpu": "NVIDIA GeForce RTX 4070",
-  "total_duration_s": 118.1,
-  "total_process_s": 264.8,
+  "total_duration_s": 2455.5,
+  "total_process_s": 5834.3,
   "overall_speed_x": 0.4,
   "files": [
     {
-      "file": "A74_20251003_8365.MP4",
-      "duration_s": 118.12,
-      "process_s": 60.4,
-      "rtf": 0.511,
-      "speed_x": 2.0
+      "file": "FX30.5410.MP4",
+      "duration_s": 406.91,
+      "process_s": 1350.2,
+      "rtf": 3.318,
+      "speed_x": 0.3
+    },
+    {
+      "file": "FX30.5411.MP4",
+      "duration_s": 1687.69,
+      "process_s": 3203.8,
+      "rtf": 1.898,
+      "speed_x": 0.5
+    },
+    {
+      "file": "FX30.5412.MP4",
+      "duration_s": 360.86,
+      "process_s": 1279.6,
+      "rtf": 3.546,
+      "speed_x": 0.3
     }
   ]
 }

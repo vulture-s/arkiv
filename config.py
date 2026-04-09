@@ -12,6 +12,7 @@ BASE_DIR = Path(__file__).parent
 DB_PATH = Path(os.getenv("ARKIV_DB_PATH", str(BASE_DIR / "media.db")))
 CHROMA_PATH = Path(os.getenv("ARKIV_CHROMA_PATH", str(BASE_DIR / "chroma_db")))
 THUMBNAILS_DIR = Path(os.getenv("ARKIV_THUMBNAILS_DIR", str(BASE_DIR / "thumbnails")))
+PROXIES_DIR = Path(os.getenv("ARKIV_PROXIES_DIR", str(BASE_DIR / "proxies")))
 
 # ── Ollama ───────────────────────────────────────────────────────────────────
 OLLAMA_URL = os.getenv("ARKIV_OLLAMA_URL", "http://localhost:11434")
