@@ -292,12 +292,110 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
     return record
 
 
+def _run_vision_only(args):
+    """Resume vision: only process frames with empty descriptions."""
+    import time as _time
+    print(f"\n{'═'*60}")
+    print("Vision-Only Mode: patching frames with empty descriptions")
+    print(f"{'═'*60}\n")
+
+    # Find all frames missing vision
+    with db.get_conn() as conn:
+        rows = conn.execute("""
+            SELECT m.id, m.path, m.filename, f.frame_index, f.thumbnail_path
+            FROM media m
+            JOIN frames f ON f.media_id = m.id
+            WHERE (f.description IS NULL OR f.description = '')
+              AND f.thumbnail_path IS NOT NULL
+            ORDER BY m.id, f.frame_index
+        """).fetchall()
+
+    if not rows:
+        print("All frames already have vision descriptions. Nothing to do.")
+        return
+
+    # Group by media
+    from collections import defaultdict
+    media_frames = defaultdict(list)
+    for r in rows:
+        media_frames[r["id"]].append(r)
+
+    print(f"Found {len(rows)} frames across {len(media_frames)} files\n")
+
+    _unload_ollama_model("qwen2.5:14b")
+
+    ok, halted = 0, False
+    for vi, (mid, frames_list) in enumerate(media_frames.items(), 1):
+        fname = frames_list[0]["filename"]
+        frame_paths = [f["thumbnail_path"] for f in frames_list]
+
+        print(f"[{vi}/{len(media_frames)}] {fname} ({len(frame_paths)} frames) >vision", end="", flush=True)
+        v_start = _time.time()
+
+        # Phase 1: primary vision model
+        frame_results = vis.describe_frames(frame_paths)
+        failed_indices = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
+
+        # Phase 2: fallback model for failed frames
+        if failed_indices:
+            print(f" [Phase 1: {len(failed_indices)} failed, trying fallback]", end="", flush=True)
+            fallback_model = "moondream2:latest"
+            original_model = vis.VISION_MODEL
+            try:
+                vis.VISION_MODEL = fallback_model
+                retry_paths = [frame_paths[i] for i in failed_indices]
+                retry_results = vis.describe_frames(retry_paths)
+                for idx, retry_r in zip(failed_indices, retry_results):
+                    if retry_r.get("description") and not retry_r.get("error"):
+                        frame_results[idx] = retry_r
+            finally:
+                vis.VISION_MODEL = original_model
+
+        # Check if still failing after both phases
+        still_failed = sum(1 for vr in frame_results if vr.get("error") or not vr.get("description"))
+        if still_failed:
+            remaining = len(media_frames) - vi
+            print(f"\n\n{'!'*60}")
+            print(f"VISION HALTED: {still_failed}/{len(frame_paths)} frames failed on {fname} (both models)")
+            print(f"  Completed: {ok}  |  Remaining: {remaining}")
+            print(f"  Fix Ollama, then re-run: py -3.12 ingest.py --dir {args.dir} --vision-only")
+            print(f"{'!'*60}\n")
+            halted = True
+            break
+
+        # Write to DB
+        with db.get_conn() as conn:
+            for f_info, vr in zip(frames_list, frame_results):
+                desc = vr.get("description", "")
+                tags = ",".join(vr.get("tags", []))
+                conn.execute(
+                    "UPDATE frames SET description=?, tags=? WHERE media_id=? AND frame_index=?",
+                    (desc, tags, f_info["id"], f_info["frame_index"])
+                )
+                # Auto tags
+                for tag_name in vr.get("tags", []):
+                    tag_name = tag_name.strip()
+                    if tag_name and tag_name != "```":
+                        db.add_tag(mid, tag_name, source="auto")
+            # Update legacy frame_tags
+            frame_tags_json = vis.frames_to_json(frame_results)
+            conn.execute("UPDATE media SET frame_tags=? WHERE id=?", (frame_tags_json, mid))
+
+        v_elapsed = _time.time() - v_start
+        print(f" [{v_elapsed:.1f}s] [OK]")
+        ok += 1
+
+    if not halted:
+        print(f"\nVision-only done. {ok} files patched.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ingest media files into SQLite DB")
     parser.add_argument("--dir", required=True, help="Media directory to scan")
     parser.add_argument("--limit", type=int, default=0, help="Max files to process (0=all)")
     parser.add_argument("--skip-vision", action="store_true", help="Skip llava frame description")
     parser.add_argument("--refresh", action="store_true", help="Re-process already-indexed files (thumbnail + vision)")
+    parser.add_argument("--vision-only", action="store_true", help="Only run vision on frames with empty descriptions (resume after halt)")
     parser.add_argument("--db", default="", help="Path to SQLite DB (default: media.db next to ingest.py)")
     args = parser.parse_args()
 
@@ -305,6 +403,11 @@ def main():
         db.DB_PATH = Path(args.db)
 
     db.init_db()
+
+    # ── Vision-only mode: patch missing vision descriptions ──────────────
+    if args.vision_only:
+        _run_vision_only(args)
+        return
 
     # Warm up models before batch processing
     print("Warming up models...", flush=True)
@@ -423,10 +526,40 @@ def main():
             v_start = _time.time()
             try:
                 frame_paths = [fd["thumbnail_path"] for fd in video_frames]
+                # Phase 2a: primary vision model
                 frame_results = vis.describe_frames(frame_paths)
+                failed_indices = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
+
+                # Phase 2b: fallback model for failed frames
+                if failed_indices:
+                    print(f" [Phase 2a: {len(failed_indices)} failed, trying fallback]", end="", flush=True)
+                    fallback_model = "moondream2:latest"
+                    original_model = vis.VISION_MODEL
+                    try:
+                        vis.VISION_MODEL = fallback_model
+                        retry_paths = [frame_paths[i] for i in failed_indices]
+                        retry_results = vis.describe_frames(retry_paths)
+                        for idx, retry_r in zip(failed_indices, retry_results):
+                            if retry_r.get("description") and not retry_r.get("error"):
+                                frame_results[idx] = retry_r
+                    finally:
+                        vis.VISION_MODEL = original_model
+
                 for fd, vr in zip(video_frames, frame_results):
                     fd["description"] = vr.get("description", "")
                     fd["tags"] = ",".join(vr.get("tags", []))
+
+                # Vision fail after both phases → halt
+                still_failed = sum(1 for vr in frame_results if vr.get("error") or not vr.get("description"))
+                if still_failed:
+                    remaining = len(phase1_results) - vi
+                    print(f"\n\n{'!'*60}")
+                    print(f"VISION HALTED: {still_failed}/{len(video_frames)} frames failed on {fname} (both models)")
+                    print(f"  Completed: {vision_ok}  |  Remaining: {remaining}")
+                    print(f"  Fix Ollama, then resume with:")
+                    print(f"    py -3.12 ingest.py --dir <path> --vision-only")
+                    print(f"{'!'*60}\n")
+                    break
 
                 # Update DB: frames + media.frame_tags
                 with db.get_conn() as conn:
