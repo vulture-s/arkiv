@@ -118,6 +118,7 @@ def main():
     print("\n-- Whisper --")
     has_mlx = False
     has_faster = False
+    has_whisperx = False
     try:
         import mlx_whisper  # noqa: F401
         has_mlx = True
@@ -126,6 +127,11 @@ def main():
     try:
         from faster_whisper import WhisperModel  # noqa: F401
         has_faster = True
+    except ImportError:
+        pass
+    try:
+        import whisperx  # noqa: F401
+        has_whisperx = True
     except ImportError:
         pass
 
@@ -138,9 +144,10 @@ def main():
         check("faster-whisper (fallback)", has_faster, required=False)
         check("any whisper backend", has_mlx or has_faster, "(need at least one)")
     else:
-        # Windows/Linux PC: faster-whisper required
-        check("faster-whisper (CUDA/CPU)", has_faster, "" if has_faster else "(pip install faster-whisper torch)")
-        check("any whisper backend", has_faster, "(need at least one)")
+        # Windows/Linux PC: whisperx preferred (wraps faster-whisper + alignment)
+        check("whisperx (CUDA alignment)", has_whisperx, "" if has_whisperx else "(pip install whisperx)")
+        check("faster-whisper (dependency)", has_faster, "" if has_faster else "(installed via whisperx)")
+        check("any whisper backend", has_whisperx or has_faster, "(need at least one)")
 
     # ── GPU ─────────────────────────────────────────────────────────────
     print("\n-- GPU --")

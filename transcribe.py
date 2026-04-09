@@ -23,6 +23,7 @@ _USE_MLX = platform.system() == "Darwin" and platform.machine() == "arm64"
 # ── Model Singletons ────────────────────────────────────────────────────────
 _whisper_loaded = False
 _fw_model = None  # faster-whisper model instance
+_whisperx_model = None  # WhisperX model instance
 _vad_model = None  # Silero VAD model instance
 
 
@@ -65,7 +66,7 @@ def _vad_filter(wav_path: str, sample_rate: int = 16000):
 
 def warm_up():
     """Pre-load Whisper model into memory. Call once before batch processing."""
-    global _whisper_loaded, _fw_model
+    global _whisper_loaded, _fw_model, _whisperx_model
     if _whisper_loaded:
         return
 
@@ -84,12 +85,13 @@ def warm_up():
         finally:
             Path(silence).unlink(missing_ok=True)
     else:
-        from faster_whisper import WhisperModel
-        import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        compute = "float16" if device == "cuda" else "int8"
-        _fw_model = WhisperModel(WHISPER_MODEL, device=device, compute_type=compute)
-        print(f"  [faster-whisper on {device}]", flush=True)
+        import whisperx
+        _whisperx_model = whisperx.load_model(
+            WHISPER_MODEL,
+            "cuda",
+            compute_type="float16",
+        )
+        print("  [whisperx on cuda]", flush=True)
 
     _whisper_loaded = True
     print("  [whisper model loaded]", flush=True)
@@ -98,32 +100,32 @@ def warm_up():
 def transcribe(media_path: str, language: str = DEFAULT_LANGUAGE) -> tuple:
     """
     Transcribe audio from a media file.
-    Returns (transcript_text, language, segments_list).
+    Returns (transcript_text, language, segments_list, words_list).
     segments_list: [{"start": float, "end": float, "text": str}, ...]
-    Returns ("", "", []) if no speech detected.
+    words_list: [{"word": str, "start": float, "end": float, "score": float}, ...]
+    Returns ("", "", [], []) if no speech detected.
     """
     global _whisper_loaded, _fw_model
     _whisper_loaded = True
 
     wav = _to_wav(media_path)
     if not wav:
-        return "", ""
-
-    # Silero VAD: strip silence before Whisper
-    vad_wav = _vad_filter(wav)
-    if vad_wav is None:
-        Path(wav).unlink(missing_ok=True)
-        return "", "", []  # no speech detected by VAD
+        return "", "", [], []
 
     try:
         if _USE_MLX:
-            return _transcribe_mlx(vad_wav, language)
+            vad_wav = _vad_filter(wav)
+            if vad_wav is None:
+                Path(wav).unlink(missing_ok=True)
+                return "", "", [], []
+            result = _transcribe_mlx(vad_wav, language)
+            if vad_wav != wav:
+                Path(vad_wav).unlink(missing_ok=True)
+            return result
         else:
-            return _transcribe_faster(vad_wav, language)
+            return _transcribe_whisperx(wav, language)
     finally:
         Path(wav).unlink(missing_ok=True)
-        if vad_wav != wav:
-            Path(vad_wav).unlink(missing_ok=True)
 
 
 def _build_initial_prompt() -> str:
@@ -153,54 +155,76 @@ def _transcribe_mlx(wav: str, language: str) -> tuple:
     text = result.get("text", "").strip()
     lang = result.get("language", language)
     raw_segments = result.get("segments", [])
-    return _postprocess(text, lang, raw_segments, language)
+    return _postprocess(text, lang, raw_segments, language, words=[])
 
 
-def _transcribe_faster(wav: str, language: str) -> tuple:
-    """Transcribe using faster-whisper (CUDA/CPU)."""
-    global _fw_model
-    if _fw_model is None:
+def _transcribe_whisperx(wav: str, language: str) -> tuple:
+    """Transcribe using WhisperX (CUDA) with forced alignment."""
+    global _whisperx_model
+    if _whisperx_model is None:
         warm_up()
 
+    import whisperx
+
     initial_prompt = _build_initial_prompt()
-    fw_opts = dict(
-        language=language,
-        word_timestamps=True,
-        condition_on_previous_text=False,
-        no_speech_threshold=NO_SPEECH_THRESHOLD,
-        compression_ratio_threshold=2.4,
-        log_prob_threshold=-1.0,
-        repetition_penalty=1.8,
-        no_repeat_ngram_size=2,
-    )
+    transcribe_opts = {
+        "batch_size": 16,
+        "language": language,
+    }
     if initial_prompt:
-        fw_opts["initial_prompt"] = initial_prompt
-    segs, info = _fw_model.transcribe(wav, **fw_opts)
+        transcribe_opts["initial_prompt"] = initial_prompt
+
+    audio = whisperx.load_audio(wav)
+    result = _whisperx_model.transcribe(audio, **transcribe_opts)
+    lang = result.get("language", language) or language
+
+    align_model, align_meta = whisperx.load_align_model(
+        language_code=lang,
+        device="cuda",
+    )
+    result = whisperx.align(
+        result["segments"],
+        align_model,
+        align_meta,
+        audio,
+        "cuda",
+        return_char_alignments=False,
+    )
+
     segments = []
-    for s in segs:
+    all_words = []
+    for seg in result.get("segments", []):
         segments.append({
-            "text": s.text,
-            "start": s.start,
-            "end": s.end,
-            "no_speech_prob": s.no_speech_prob,
-            "avg_logprob": s.avg_logprob,
-            "compression_ratio": s.compression_ratio,
+            "text": seg.get("text", "").strip(),
+            "start": seg.get("start", 0),
+            "end": seg.get("end", 0),
+            "no_speech_prob": seg.get("no_speech_prob", 0),
+            "avg_logprob": seg.get("avg_logprob", 0),
+            "compression_ratio": seg.get("compression_ratio", 1),
         })
-    text = " ".join(s["text"] for s in segments).strip()
-    lang = info.language or language
-    return _postprocess(text, lang, segments, language)
+        for word in seg.get("words", []):
+            if "start" in word and "end" in word:
+                all_words.append({
+                    "word": word.get("word", "").strip(),
+                    "start": round(float(word["start"]), 3),
+                    "end": round(float(word["end"]), 3),
+                    "score": round(float(word.get("score", 0)), 3),
+                })
+
+    text = " ".join(seg["text"] for seg in segments).strip()
+    return _postprocess(text, lang, segments, language, words=all_words)
 
 
-def _postprocess(text: str, lang: str, segments: list, language: str) -> tuple:
+def _postprocess(text: str, lang: str, segments: list, language: str, words: list = None) -> tuple:
     """Shared post-processing: anti-hallucination + LLM polish.
-    Returns (text, lang, clean_segments) where clean_segments has start/end/text."""
+    Returns (text, lang, clean_segments, words) where clean_segments has start/end/text."""
     if not segments:
-        return text, lang, []
+        return text, lang, [], words or []
 
     # Guard 1: ALL segments are silence → no speech
     avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
     if avg_no_speech > NO_SPEECH_THRESHOLD:
-        return "", lang, []
+        return "", lang, [], []
 
     # Guard 2: Per-segment filtering
     good_segments = []
@@ -228,13 +252,13 @@ def _postprocess(text: str, lang: str, segments: list, language: str) -> tuple:
             })
 
     if not good_segments:
-        return "", lang, []
+        return "", lang, [], []
 
     filtered_text = " ".join(good_segments).strip()
 
     # Guard 3: Text-level repetition
     if _is_repetitive(filtered_text):
-        return "", lang, []
+        return "", lang, [], []
 
     # Guard 4: Character-level repetition
     if _has_char_loops(filtered_text):
@@ -259,7 +283,7 @@ def _postprocess(text: str, lang: str, segments: list, language: str) -> tuple:
     if LLM_POLISH and len(filtered_text) > 10:
         filtered_text = _llm_polish(filtered_text, language)
 
-    return filtered_text, lang, timed_segments
+    return filtered_text, lang, timed_segments, words or []
 
 
 def _is_repetitive(text: str, window: int = 6, threshold: float = 0.35) -> bool:
