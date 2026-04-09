@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Media Asset Manager</title>
+<title>arkiv — 媒體素材管理器</title>
 <script>
 // Early error handler — catches any JS error and reports to server + screen
 window.onerror = function(msg, src, line, col, err) {
@@ -153,17 +153,17 @@ window.onunhandledrejection = function(e) {
 
   <div class="flex-1 max-w-xl mx-auto relative">
     <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-txt-tertiary" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-    <input id="searchInput" type="text" placeholder="Search media... (Ctrl+K)" class="w-full h-7 pl-8 pr-3 bg-surface-50 border border-panel-border rounded-md text-xs text-txt-primary placeholder-txt-tertiary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30" />
+    <input id="searchInput" type="text" placeholder="搜尋媒體... (Ctrl+K)" class="w-full h-7 pl-8 pr-3 bg-surface-50 border border-panel-border rounded-md text-xs text-txt-primary placeholder-txt-tertiary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30" />
   </div>
 
   <div id="filterChips" class="flex items-center gap-1.5 shrink-0">
-    <button class="filter-chip active" data-filter="type" data-value="all">All</button>
-    <button class="filter-chip" data-filter="type" data-value="video">Video</button>
-    <button class="filter-chip" data-filter="type" data-value="audio">Audio</button>
+    <button class="filter-chip active" data-filter="type" data-value="all">全部</button>
+    <button class="filter-chip" data-filter="type" data-value="video">影片</button>
+    <button class="filter-chip" data-filter="type" data-value="audio">音訊</button>
     <span class="text-panel-border mx-0.5">|</span>
     <button class="filter-chip" data-filter="rating" data-value="good" style="border-color:#22c55e40;color:#4ade80">GOOD</button>
     <button class="filter-chip" data-filter="rating" data-value="ng" style="border-color:#ef444440;color:#f87171">NG</button>
-    <button class="filter-chip" data-filter="rating" data-value="review" style="border-color:#f59e0b40;color:#fbbf24">Review</button>
+    <button class="filter-chip" data-filter="rating" data-value="review" style="border-color:#f59e0b40;color:#fbbf24">待審</button>
     <span class="text-panel-border mx-0.5">|</span>
     <button class="filter-chip" data-filter="lang" data-value="zh">zh</button>
     <button class="filter-chip" data-filter="lang" data-value="en">en</button>
@@ -171,29 +171,29 @@ window.onunhandledrejection = function(e) {
   </div>
 
   <div class="flex items-center gap-0.5 ml-2 bg-surface-50 rounded-md p-0.5 shrink-0">
-    <button class="view-btn active" title="Grid" onclick="setView('grid')">
+    <button class="view-btn active" title="網格" onclick="setView('grid')">
       <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16" style="width:14px;height:14px"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
     </button>
-    <button class="view-btn" title="List" onclick="setView('list')">
+    <button class="view-btn" title="列表" onclick="setView('list')">
       <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16" style="width:14px;height:14px"><rect x="1" y="2" width="14" height="2.5" rx="0.5"/><rect x="1" y="6.75" width="14" height="2.5" rx="0.5"/><rect x="1" y="11.5" width="14" height="2.5" rx="0.5"/></svg>
     </button>
     <span class="text-panel-border mx-0.5">|</span>
-    <button class="view-btn" title="Fewer columns" onclick="setGridCols(Math.max(2,gridCols-1))" style="font-size:14px;line-height:1;padding:2px 6px">−</button>
+    <button class="view-btn" title="減少欄數" onclick="setGridCols(Math.max(2,gridCols-1))" style="font-size:14px;line-height:1;padding:2px 6px">−</button>
     <span class="text-2xs text-txt-tertiary" id="colsLabel" style="min-width:16px;text-align:center">4</span>
-    <button class="view-btn" title="More columns" onclick="setGridCols(Math.min(8,gridCols+1))" style="font-size:14px;line-height:1;padding:2px 6px">+</button>
+    <button class="view-btn" title="增加欄數" onclick="setGridCols(Math.min(8,gridCols+1))" style="font-size:14px;line-height:1;padding:2px 6px">+</button>
   </div>
 
-  <button class="export-btn ml-1.5 shrink-0" title="Export GOOD takes as EDL" onclick="doExportGoodEdl()">
+  <button class="export-btn ml-1.5 shrink-0" title="匯出 GOOD 素材為 EDL" onclick="doExportGoodEdl()">
     <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-    EDL Export
+    EDL 匯出
   </button>
 
-  <button class="theme-toggle ml-1.5 shrink-0" onclick="toggleTheme()" title="Toggle theme" id="theme-btn">
+  <button class="theme-toggle ml-1.5 shrink-0" onclick="toggleTheme()" title="切換主題" id="theme-btn">
     <svg class="w-3.5 h-3.5 dark-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
     <svg class="w-3.5 h-3.5 light-icon" style="display:none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
   </button>
 
-  <div class="flex items-center gap-1.5 ml-2 shrink-0" title="UI Scale">
+  <div class="flex items-center gap-1.5 ml-2 shrink-0" title="UI 縮放">
     <span class="text-2xs" style="color:var(--txt-tertiary)">A</span>
     <div class="flex items-center gap-1" id="scaleDots"></div>
     <span class="text-xs" style="color:var(--txt-tertiary)">A</span>
@@ -225,8 +225,8 @@ setTheme((() => { try { return localStorage.getItem('arkiv-theme') !== 'light'; 
   <!-- ─── Media Pool ─── -->
   <aside id="poolPanel" class="shrink-0 bg-panel border-r border-panel-border flex flex-col overflow-hidden" style="width:200px;min-width:140px;max-width:400px">
     <div class="h-7 flex items-center justify-between px-3 border-b border-panel-border shrink-0">
-      <span class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">Media Pool</span>
-      <button class="text-txt-tertiary hover:text-txt-primary" onclick="doAddMediaFolder()" title="Ingest folder"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg></button>
+      <span class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">媒體庫</span>
+      <button class="text-txt-tertiary hover:text-txt-primary" onclick="doAddMediaFolder()" title="匯入資料夾"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg></button>
     </div>
     <div class="flex-1 overflow-y-auto py-1" id="mediaPool"></div>
     <div class="border-t border-panel-border px-3 py-1.5 text-txt-tertiary shrink-0" id="poolStats" style="font-size:0.7rem;line-height:1.4"></div>
@@ -237,11 +237,11 @@ setTheme((() => { try { return localStorage.getItem('arkiv-theme') !== 'light'; 
   <!-- ─── Content ─── -->
   <main class="flex-1 flex flex-col overflow-hidden bg-surface">
     <div class="h-7 flex items-center justify-between px-3 border-b border-panel-border shrink-0">
-      <span class="text-xs text-txt-secondary" id="contentTitle">All Assets</span>
+      <span class="text-xs text-txt-secondary" id="contentTitle">全部素材</span>
       <div class="flex items-center gap-2 text-2xs text-txt-tertiary">
-        <span>Sort:</span>
+        <span>排序：</span>
         <select id="sortSelect" class="bg-surface-50 border border-panel-border rounded px-1.5 py-0.5 text-2xs text-txt-secondary focus:outline-none">
-          <option value="date">Date Added</option><option value="rating">Rating</option><option value="duration">Duration</option><option value="size">Size</option><option value="name">Name</option>
+          <option value="date">新增日期</option><option value="rating">評級</option><option value="duration">長度</option><option value="size">檔案大小</option><option value="name">名稱</option>
         </select>
       </div>
     </div>
@@ -256,10 +256,10 @@ setTheme((() => { try { return localStorage.getItem('arkiv-theme') !== 'light'; 
   <!-- ─── Inspector ─── -->
   <aside id="inspectorPanel" class="shrink-0 bg-panel border-l border-panel-border flex flex-col overflow-hidden" style="width:300px;min-width:240px;max-width:500px">
     <div class="h-7 flex items-center px-3 border-b border-panel-border shrink-0">
-      <span class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">Inspector</span>
+      <span class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">檢視器</span>
     </div>
     <div class="flex-1 overflow-y-auto" id="inspectorContent">
-      <div class="flex items-center justify-center h-full text-txt-tertiary text-xs">Select a media asset</div>
+      <div class="flex items-center justify-center h-full text-txt-tertiary text-xs">選擇媒體素材</div>
     </div>
     <div class="border-t border-panel-border p-2 flex gap-1.5 shrink-0" id="inspectorActions"></div>
   </aside>
@@ -268,7 +268,7 @@ setTheme((() => { try { return localStorage.getItem('arkiv-theme') !== 'light'; 
 <!-- ═══ Analytics Bar ═══ -->
 <footer class="border-t border-panel-border bg-panel shrink-0">
   <div class="collapse-toggle h-5 flex items-center justify-center gap-2 text-2xs text-txt-tertiary hover:text-txt-secondary" onclick="document.getElementById('analyticsContent').classList.toggle('hidden')">
-    <svg class="w-2.5 h-2.5 rotate-180" fill="currentColor" viewBox="0 0 10 10"><path d="M2 3l3 4 3-4z"/></svg>Analytics
+    <svg class="w-2.5 h-2.5 rotate-180" fill="currentColor" viewBox="0 0 10 10"><path d="M2 3l3 4 3-4z"/></svg>分析
   </div>
   <div class="flex items-center gap-6 px-4 pb-2" id="analyticsContent"></div>
 </footer>
@@ -308,14 +308,14 @@ async function nativePickFolder() {
   if (isTauri) {
     try {
       if (window.__TAURI__.dialog && window.__TAURI__.dialog.open)
-        return await window.__TAURI__.dialog.open({ directory: true, title: 'Select folder' });
+        return await window.__TAURI__.dialog.open({ directory: true, title: '選擇資料夾' });
     } catch(e) {}
     try {
       if (window.__TAURI__.core)
-        return await window.__TAURI__.core.invoke('plugin:dialog|open', { options: { directory: true, title: 'Select folder' } });
+        return await window.__TAURI__.core.invoke('plugin:dialog|open', { options: { directory: true, title: '選擇資料夾' } });
     } catch(e) {}
   }
-  return prompt('Enter media folder path:');
+  return prompt('輸入媒體資料夾路徑：');
 }
 function showLimitModal(total, newCount) {
   return new Promise((resolve) => {
@@ -422,7 +422,7 @@ function renderPool(items) {
   var h = '';
   if(videos.length) {
     h += `<div class="collapse-toggle flex items-center gap-1.5 px-3 py-1 text-2xs text-txt-tertiary uppercase tracking-wider">
-      <svg fill="currentColor" viewBox="0 0 10 10" style="width:10px;height:10px"><path d="M3 2l5 3-5 3z"/></svg>Video <span class="ml-auto text-txt-tertiary">(${videos.length})</span></div>`;
+      <svg fill="currentColor" viewBox="0 0 10 10" style="width:10px;height:10px"><path d="M3 2l5 3-5 3z"/></svg>影片 <span class="ml-auto text-txt-tertiary">(${videos.length})</span></div>`;
     videos.forEach(v => {
       var active = v.id===state.selectedId;
       var icon = active ? videoSmallActive : videoSmall;
@@ -439,7 +439,7 @@ function renderPool(items) {
   }
   if(audios.length) {
     h += `<div class="collapse-toggle flex items-center gap-1.5 px-3 py-1 mt-1 text-2xs text-txt-tertiary uppercase tracking-wider">
-      <svg fill="currentColor" viewBox="0 0 10 10" style="width:10px;height:10px"><path d="M3 2l5 3-5 3z"/></svg>Audio <span class="ml-auto text-txt-tertiary">(${audios.length})</span></div>`;
+      <svg fill="currentColor" viewBox="0 0 10 10" style="width:10px;height:10px"><path d="M3 2l5 3-5 3z"/></svg>音訊 <span class="ml-auto text-txt-tertiary">(${audios.length})</span></div>`;
     audios.forEach(a => {
       var active = a.id===state.selectedId;
       var badge = rBadge(a.rating);
@@ -458,7 +458,7 @@ function renderPool(items) {
 
 function renderGrid() {
   const grid = document.getElementById('mediaGrid');
-  if(!state.items.length) { grid.innerHTML = '<div class="col-span-4 text-center text-txt-tertiary py-8">No assets match filters.</div>'; return; }
+  if(!state.items.length) { grid.innerHTML = '<div class="col-span-4 text-center text-txt-tertiary py-8">沒有符合篩選條件的素材</div>'; return; }
   grid.innerHTML = state.items.map(rec => {
     var isNg = rec.rating==='ng', isAudio = mediaType(rec.ext)==='audio';
     var thumb = thumbUrl(rec), dur = fmtDur(rec.duration_s);
@@ -492,15 +492,15 @@ function renderPagination() {
   const el = document.getElementById('pagination');
   const tp = Math.max(1, Math.ceil(state.total/PAGE_SIZE));
   if(tp<=1){el.innerHTML='';return;}
-  el.innerHTML = `<button class="hover:text-txt-primary ${state.page===0?'opacity-30':''}" onclick="changePage(-1)" ${state.page===0?'disabled':''}>&laquo; Prev</button>
-    <span>Page <span class="text-txt-secondary">${state.page+1}</span> / ${tp}</span>
-    <button class="hover:text-txt-primary ${state.page>=tp-1?'opacity-30':''}" onclick="changePage(1)" ${state.page>=tp-1?'disabled':''}>Next &raquo;</button>`;
+  el.innerHTML = `<button class="hover:text-txt-primary ${state.page===0?'opacity-30':''}" onclick="changePage(-1)" ${state.page===0?'disabled':''}>&laquo; 上一頁</button>
+    <span>第 <span class="text-txt-secondary">${state.page+1}</span> / ${tp} 頁</span>
+    <button class="hover:text-txt-primary ${state.page>=tp-1?'opacity-30':''}" onclick="changePage(1)" ${state.page>=tp-1?'disabled':''}>下一頁 &raquo;</button>`;
 }
 
 function renderContentTitle() {
   document.getElementById('contentTitle').innerHTML = state.query
-    ? `Search: "${state.query}" <span class="text-txt-tertiary">&mdash; ${state.total} results</span>`
-    : `All Assets <span class="text-txt-tertiary">&mdash; ${state.total} items</span>`;
+    ? `搜尋：「${state.query}」<span class="text-txt-tertiary">&mdash; ${state.total} 個結果</span>`
+    : `全部素材 <span class="text-txt-tertiary">&mdash; ${state.total} 個項目</span>`;
 }
 
 async function renderInspector() {
@@ -510,7 +510,7 @@ async function renderInspector() {
   var content = document.getElementById('inspectorContent');
   var actions = document.getElementById('inspectorActions');
   if(!state.selectedRec) {
-    content.innerHTML = '<div class="flex items-center justify-center h-full text-txt-tertiary text-xs">Select a media asset</div>';
+    content.innerHTML = '<div class="flex items-center justify-center h-full text-txt-tertiary text-xs">選擇媒體素材</div>';
     actions.innerHTML = '';
     return;
   }
@@ -554,27 +554,27 @@ async function renderInspector() {
     </div>
 
     <div class="px-3 mt-3">
-      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Rating</div>
+      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">評級</div>
       <div class="flex gap-1.5">
         <button class="rating-btn rating-good ${rec.rating==='good'?'selected':''}" onclick="doSetRating(${rec.id},'good')">&#9733; GOOD</button>
         <button class="rating-btn rating-ng ${rec.rating==='ng'?'selected':''}" onclick="doSetRating(${rec.id},'ng')">&#10005; NG</button>
-        <button class="rating-btn rating-review ${rec.rating==='review'?'selected':''}" onclick="doSetRating(${rec.id},'review')">? Review</button>
-        <button class="rating-btn rating-none" onclick="doSetRating(${rec.id},null)">&mdash; Clear</button>
+        <button class="rating-btn rating-review ${rec.rating==='review'?'selected':''}" onclick="doSetRating(${rec.id},'review')">? 待審</button>
+        <button class="rating-btn rating-none" onclick="doSetRating(${rec.id},null)">&mdash; 清除</button>
       </div>
       <textarea id="ratingNote" class="w-full mt-1.5 h-12 bg-surface text-xs text-txt-secondary border border-panel-border rounded p-2 resize-none focus:outline-none focus:border-accent"
-        placeholder="Rating note... (e.g. 前 30 秒可用)" onblur="doSaveNote(${rec.id})">${esc(rec.rating_note||'')}</textarea>
+        placeholder="評級備註... (例：前 30 秒可用)" onblur="doSaveNote(${rec.id})">${esc(rec.rating_note||'')}</textarea>
     </div>
 
     <div class="px-3 mt-3"><div class="text-sm font-semibold">${esc(rec.filename)}</div><div class="text-2xs text-txt-tertiary mt-0.5 font-mono truncate" title="${esc(rec.path)}">${esc(shortenPath(rec.path))}</div></div>
 
     <div class="px-3 mt-2">
-      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Metadata</div>
+      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">詮釋資料</div>
       <table class="w-full text-xs"><tbody>
-        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary w-24">Duration</td><td class="py-1 font-mono">${dur}</td></tr>
-        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">Resolution</td><td class="py-1 font-mono">${res}</td></tr>
-        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">FPS</td><td class="py-1 font-mono">${rec.fps||'-'}</td></tr>
-        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">Size</td><td class="py-1 font-mono">${size}</td></tr>
-        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">Language</td><td class="py-1 flex items-center gap-1">
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary w-24">長度</td><td class="py-1 font-mono">${dur}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">解析度</td><td class="py-1 font-mono">${res}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">幀率</td><td class="py-1 font-mono">${rec.fps||'-'}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">檔案大小</td><td class="py-1 font-mono">${size}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">語言</td><td class="py-1 flex items-center gap-1">
           <select class="bg-surface border border-panel-border text-xs text-txt-primary rounded px-1 py-0.5" onchange="doChangeLang(${rec.id}, this.value)">
             <option value="zh" ${rec.lang==='zh'?'selected':''}>中文</option>
             <option value="en" ${rec.lang==='en'?'selected':''}>English</option>
@@ -585,43 +585,43 @@ async function renderInspector() {
             <option value="es" ${rec.lang==='es'?'selected':''}>Español</option>
           </select>
         </td></tr>
-        <tr><td class="py-1 text-txt-tertiary">Processed</td><td class="py-1 font-mono text-2xs">${(rec.processed_at||'-').slice(0,19)}</td></tr>
+        <tr><td class="py-1 text-txt-tertiary">處理時間</td><td class="py-1 font-mono text-2xs">${(rec.processed_at||'-').slice(0,19)}</td></tr>
       </tbody></table>
     </div>
 
     <div class="px-3 mt-3">
       <div class="flex items-center justify-between mb-1.5">
-        <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">Tags</div>
+        <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">標籤</div>
         <div class="flex items-center gap-2 text-2xs text-txt-tertiary">
-          <span class="flex items-center gap-1"><span style="width:6px;height:6px;border-radius:50%;background:#60a5fa"></span>auto</span>
-          <span class="flex items-center gap-1"><span style="width:6px;height:6px;border-radius:50%;background:#4ade80"></span>manual</span>
+          <span class="flex items-center gap-1"><span style="width:6px;height:6px;border-radius:50%;background:#60a5fa"></span>自動</span>
+          <span class="flex items-center gap-1"><span style="width:6px;height:6px;border-radius:50%;background:#4ade80"></span>手動</span>
         </div>
       </div>
       <div class="flex flex-wrap gap-1">${tagsHtml}</div>
       <div class="tag-input-wrapper mt-1.5">
-        <input class="tag-input" id="tagInput" placeholder="Add tag... (type to search)" oninput="onTagInput(${rec.id})" onkeydown="if(event.key==='Enter'){doAddTag(${rec.id},this.value);this.value='';hideAutocomplete();}" />
+        <input class="tag-input" id="tagInput" placeholder="新增標籤... (輸入搜尋)" oninput="onTagInput(${rec.id})" onkeydown="if(event.key==='Enter'){doAddTag(${rec.id},this.value);this.value='';hideAutocomplete();}" />
         <div class="tag-autocomplete" id="tagAutocomplete"></div>
       </div>
     </div>
 
     ${framesHtml ? `<div class="px-3 mt-3">
       <div class="flex items-center justify-between mb-1.5">
-        <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">Frame Analysis</div>
-        ${(rec.frames||[]).some(f => !f.description) ? `<button class="text-2xs px-2 py-0.5 bg-warning/15 text-warning border border-warning/30 rounded hover:bg-warning/25 transition" onclick="doRetryVision(${rec.id})">&#9888; Retry Vision</button>` : ''}
+        <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider">幀分析</div>
+        ${(rec.frames||[]).some(f => !f.description) ? `<button class="text-2xs px-2 py-0.5 bg-warning/15 text-warning border border-warning/30 rounded hover:bg-warning/25 transition" onclick="doRetryVision(${rec.id})">&#9888; 重試視覺分析</button>` : ''}
       </div>
-      ${(rec.frames||[]).some(f => !f.description) ? `<div class="mb-2 px-2 py-1.5 rounded text-2xs bg-warning/10 text-warning border border-warning/20">&#9888; ${(rec.frames||[]).filter(f => !f.description).length}/${(rec.frames||[]).length} frames missing vision analysis</div>` : ''}
+      ${(rec.frames||[]).some(f => !f.description) ? `<div class="mb-2 px-2 py-1.5 rounded text-2xs bg-warning/10 text-warning border border-warning/20">&#9888; ${(rec.frames||[]).filter(f => !f.description).length}/${(rec.frames||[]).length} 幀缺少視覺分析</div>` : ''}
       ${framesHtml}
     </div>` : ''}
 
     <div class="px-3 mt-3 pb-3">
-      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">Transcript</div>
-      ${rec.transcript ? `<div class="bg-surface-50 rounded p-2 text-xs text-txt-secondary leading-relaxed max-h-32 overflow-y-auto">${esc(rec.transcript)}</div>` : '<div class="text-2xs text-txt-tertiary italic">No transcript</div>'}
+      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">逐字稿</div>
+      ${rec.transcript ? `<div class="bg-surface-50 rounded p-2 text-xs text-txt-secondary leading-relaxed max-h-32 overflow-y-auto">${esc(rec.transcript)}</div>` : '<div class="text-2xs text-txt-tertiary italic">無逐字稿</div>'}
     </div>`;
 
   actions.innerHTML = `
-    <button class="flex-1 h-7 bg-accent hover:bg-accent-hover text-white text-xs rounded-md transition" onclick="doOpenFile(${rec.id})">Open File</button>
+    <button class="flex-1 h-7 bg-accent hover:bg-accent-hover text-white text-xs rounded-md transition" onclick="doOpenFile(${rec.id})">開啟檔案</button>
     <div class="relative"><button class="h-7 px-3 bg-surface-50 border border-panel-border text-txt-secondary text-xs rounded-md hover:text-txt-primary transition flex items-center gap-1" onclick="this.nextElementSibling.classList.toggle('hidden')">
-      <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>Export &#9662;
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>匯出 &#9662;
     </button>
     <div class="hidden absolute bottom-full left-0 mb-1 w-52 rounded-md border border-panel-border dropdown-panel shadow-lg" style="z-index:20">
       <div class="px-3 py-1 text-2xs text-txt-tertiary uppercase tracking-wider">字幕</div>
@@ -629,11 +629,11 @@ async function renderInspector() {
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'vtt')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">VTT</span>Web 字幕檔</button>
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'txt')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">TXT</span>純文字逐字稿</button>
       <div class="border-t border-panel-border" style="margin:2px 0"></div>
-      <div class="px-3 py-1 text-2xs text-txt-tertiary uppercase tracking-wider">Timeline</div>
-      <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'edl')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">EDL</span>DaVinci Timeline</button>
+      <div class="px-3 py-1 text-2xs text-txt-tertiary uppercase tracking-wider">時間線</div>
+      <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'edl')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">EDL</span>DaVinci 時間線</button>
       <button class="w-full px-3 py-1.5 text-left text-xs text-txt-secondary hover:bg-accent/10 flex items-center gap-2" onclick="doExport(${rec.id},'fcpxml')"><span class="font-mono text-2xs px-1 rounded bg-surface-50">XML</span>Final Cut Pro / DaVinci</button>
     </div></div>
-    <button class="h-7 px-3 bg-surface-50 border border-panel-border text-txt-secondary text-xs rounded-md hover:text-warning transition" title="Re-run Whisper" onclick="doReIngest(${rec.id})">Re-ingest</button>`;
+    <button class="h-7 px-3 bg-surface-50 border border-panel-border text-txt-secondary text-xs rounded-md hover:text-warning transition" title="重新執行 Whisper" onclick="doReIngest(${rec.id})">重新處理</button>`;
 }
 
 async function renderAnalytics() {
@@ -663,25 +663,25 @@ async function renderAnalytics() {
     } catch(e) {}
 
     document.getElementById('analyticsContent').innerHTML = `
-      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">Total</div><div class="text-sm font-semibold">${stats.total}</div></div><div class="sparkline w-16"></div></div>
+      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">總計</div><div class="text-sm font-semibold">${stats.total}</div></div><div class="sparkline w-16"></div></div>
       <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">GOOD</div><div class="text-sm font-semibold text-success">${r.good||0}</div></div>
         <div class="w-16 h-1.5 bg-surface-200 rounded-full overflow-hidden"><div class="h-full bg-success rounded-full" style="width:${goodPct}%"></div></div></div>
       <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">NG</div><div class="text-sm font-semibold text-danger">${r.ng||0}</div></div>
         <div class="w-16 h-1.5 bg-surface-200 rounded-full overflow-hidden"><div class="h-full bg-danger rounded-full" style="width:${ngPct}%"></div></div></div>
-      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">Unrated</div><div class="text-sm font-semibold text-txt-tertiary">${r.unrated||0}</div></div>
+      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">未評級</div><div class="text-sm font-semibold text-txt-tertiary">${r.unrated||0}</div></div>
         <div class="w-16 h-1.5 bg-surface-200 rounded-full overflow-hidden"><div class="h-full bg-txt-tertiary rounded-full" style="width:${unrPct}%"></div></div></div>
-      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">Duration</div><div class="text-sm font-semibold">${fmtDur(stats.total_duration_s)}</div></div><div class="sparkline w-16"></div></div>
-      ${langBars ? `<div class="flex flex-col gap-0.5"><div class="text-2xs text-txt-tertiary font-semibold">Duration by Lang</div>${langBars}</div>` : ''}
-      ${sizeBars ? `<div class="flex flex-col gap-0.5"><div class="text-2xs text-txt-tertiary font-semibold">Size by Type</div>${sizeBars}</div>` : ''}
-      <div class="flex items-center gap-3 ml-auto text-2xs text-txt-tertiary"><span>Top tags:</span>${topTags}</div>`;
+      <div class="flex items-center gap-2"><div><div class="text-2xs text-txt-tertiary">總長度</div><div class="text-sm font-semibold">${fmtDur(stats.total_duration_s)}</div></div><div class="sparkline w-16"></div></div>
+      ${langBars ? `<div class="flex flex-col gap-0.5"><div class="text-2xs text-txt-tertiary font-semibold">按語言</div>${langBars}</div>` : ''}
+      ${sizeBars ? `<div class="flex flex-col gap-0.5"><div class="text-2xs text-txt-tertiary font-semibold">按類型</div>${sizeBars}</div>` : ''}
+      <div class="flex items-center gap-3 ml-auto text-2xs text-txt-tertiary"><span>常用標籤：</span>${topTags}</div>`;
 
-    document.getElementById('headerStats').innerHTML = `<span>${stats.total} files</span><span>·</span><span class="text-success">${r.good||0} GOOD</span><span>·</span><span class="text-danger">${r.ng||0} NG</span>`;
+    document.getElementById('headerStats').innerHTML = `<span>${stats.total} 個檔案</span><span>·</span><span class="text-success">${r.good||0} GOOD</span><span>·</span><span class="text-danger">${r.ng||0} NG</span>`;
 
     document.getElementById('poolStats').innerHTML = `
-      <div class="flex justify-between" style="margin-bottom:2px"><span>Total</span><span>${stats.total} files</span></div>
+      <div class="flex justify-between" style="margin-bottom:2px"><span>總計</span><span>${stats.total} 個檔案</span></div>
       <div class="flex justify-between" style="margin-bottom:2px"><span>GOOD</span><span class="text-success">${r.good||0} (${goodPct}%)</span></div>
       <div class="flex justify-between" style="margin-bottom:2px"><span>NG</span><span class="text-danger">${r.ng||0} (${ngPct}%)</span></div>
-      <div class="flex justify-between"><span>Unrated</span><span>${r.unrated||0}</span></div>`;
+      <div class="flex justify-between"><span>未評級</span><span>${r.unrated||0}</span></div>`;
   } catch(e) { console.error(e); }
 }
 
@@ -716,11 +716,11 @@ function onTagInput(mediaId) {
   const matches = state.allTags.filter(t=>t.name.includes(val)).slice(0,5);
   let h = matches.map(t=>
     `<div class="tag-autocomplete-item" onclick="doAddTag(${mediaId},'${t.name}');document.getElementById('tagInput').value='';hideAutocomplete();">
-      <span>${esc(t.name)}</span><span class="text-txt-tertiary" style="font-size:9px">${t.count} uses</span></div>`
+      <span>${esc(t.name)}</span><span class="text-txt-tertiary" style="font-size:9px">${t.count} 次</span></div>`
   ).join('');
   if(!matches.find(t=>t.name===val)) {
     h += `<div class="tag-autocomplete-item border-t border-panel-border" onclick="doAddTag(${mediaId},'${val}');document.getElementById('tagInput').value='';hideAutocomplete();">
-      <span style="color:#4ade80">+ Create "${val}"</span><span class="text-txt-tertiary" style="font-size:9px">new</span></div>`;
+      <span style="color:#4ade80">+ 建立「${val}」</span><span class="text-txt-tertiary" style="font-size:9px">新增</span></div>`;
   }
   dropdown.innerHTML = h;
   dropdown.classList.add('show');
@@ -737,7 +737,7 @@ async function doExport(id, fmt) {
     if (isTauri && window.__TAURI__ && window.__TAURI__.dialog) {
       // Tauri: pick save path, then server writes file directly
       try {
-        var savePath = await window.__TAURI__.dialog.save({ defaultPath: filename, title: 'Export ' + fmt.toUpperCase() });
+        var savePath = await window.__TAURI__.dialog.save({ defaultPath: filename, title: '匯出 ' + fmt.toUpperCase() });
         if (!savePath) return;
         var resp = await fetch('/api/media/' + id + '/export-to', {
           method: 'POST', headers: {'Content-Type':'application/json'},
@@ -853,7 +853,7 @@ async function doPlayMedia(id) {
     var wp = document.getElementById('inspectorWaveform'); if (wp) wp.parentElement.remove();
     var errDiv = document.createElement('div');
     errDiv.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:4;background:rgba(0,0,0,0.7)';
-    errDiv.innerHTML = '<div style="text-align:center;color:#f87171;font-size:12px"><div style="font-size:20px;margin-bottom:4px">&#9888;</div>Stream failed — file may not exist</div>';
+    errDiv.innerHTML = '<div style="text-align:center;color:#f87171;font-size:12px"><div style="font-size:20px;margin-bottom:4px">&#9888;</div>串流失敗 — 檔案可能不存在</div>';
     container.appendChild(errDiv);
     setTimeout(function(){ errDiv.remove(); }, 3000);
   };
@@ -1078,8 +1078,8 @@ async function doReIngest(id) {
 
 function setView(v) {
   state.view = v;
-  document.querySelectorAll('.view-btn[title="Grid"],.view-btn[title="List"]').forEach(function(b){b.classList.remove('active')});
-  var sel = document.querySelector('.view-btn[title="' + (v==='grid'?'Grid':'List') + '"]');
+  document.querySelectorAll('.view-btn[title="網格"],.view-btn[title="列表"]').forEach(function(b){b.classList.remove('active')});
+  var sel = document.querySelector('.view-btn[title="' + (v==='grid'?'網格':'列表') + '"]');
   if (sel) sel.classList.add('active');
   var grid = document.getElementById('mediaGrid');
   grid.className = v==='grid' ? 'grid gap-2' : 'flex flex-col gap-1';
