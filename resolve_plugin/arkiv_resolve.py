@@ -110,15 +110,17 @@ def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
                             mpi.SetClipColor(color)
                             print(f"[arkiv]   {clip_name} → {color} ({rating})")
                         break
-        # Set keywords from arkiv tags
+        # Set tags as metadata (Keywords + Comments for Smart Bin filtering)
         if tags:
             for mpi in result:
                 clip_name = mpi.GetName()
                 for path, tag_list in tags.items():
                     if clip_name and (clip_name in path or path.endswith(clip_name)):
                         if tag_list:
-                            mpi.SetMetadata("Keywords", ", ".join(tag_list))
-                            print(f"[arkiv]   {clip_name} → Keywords: {', '.join(tag_list)}")
+                            tag_str = ", ".join(tag_list)
+                            mpi.SetMetadata("Keywords", tag_str)
+                            mpi.SetMetadata("Comments", f"[arkiv] {tag_str}")
+                            print(f"[arkiv]   {clip_name} → Tags: {tag_str}")
                         break
         print(f"[arkiv] Imported {len(result)} clips into Media Pool")
         return True
