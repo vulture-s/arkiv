@@ -105,9 +105,6 @@ def transcribe(media_path: str, language: str = DEFAULT_LANGUAGE) -> tuple:
     words_list: [{"word": str, "start": float, "end": float, "score": float}, ...]
     Returns ("", "", [], []) if no speech detected.
     """
-    global _whisper_loaded, _fw_model
-    _whisper_loaded = True
-
     wav = _to_wav(media_path)
     if not wav:
         return "", "", [], []
