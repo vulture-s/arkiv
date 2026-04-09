@@ -272,6 +272,7 @@ def create_ui(resolve):
                                 }
                             ),
                             ui.Button({"ID": "SearchBtn", "Text": "搜尋", "Weight": 0.5}),
+                            ui.Button({"ID": "ResetBtn", "Text": "全部", "Weight": 0.3}),
                             ui.Button({"ID": "GoodBtn", "Text": "僅 GOOD", "Weight": 0.5}),
                         ],
                     ),
@@ -349,75 +350,100 @@ def create_ui(resolve):
     def on_search(ev):
         query = win.Find("SearchField").Text.strip()
         if not query:
+            on_reset(ev)
             return
         win.Find("StatusLabel").Text = "搜尋中..."
-        items = search_media(query)
-        populate_tree(items)
+        try:
+            items = search_media(query)
+            populate_tree(items)
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"搜尋失敗：{e}"
+
+    def on_reset(ev):
+        win.Find("SearchField").Text = ""
+        win.Find("StatusLabel").Text = "載入所有媒體..."
+        good_filter_on[0] = False
+        win.Find("GoodBtn").Text = "僅 GOOD"
+        try:
+            items = list_media(limit=50)
+            populate_tree(items)
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"載入失敗：{e}"
 
     def on_good(ev):
         good_filter_on[0] = not good_filter_on[0]
-        if good_filter_on[0]:
-            win.Find("GoodBtn").Text = "顯示全部"
-            win.Find("StatusLabel").Text = "載入 GOOD 素材..."
-            items = list_media(rating="good")
-        else:
-            win.Find("GoodBtn").Text = "僅 GOOD"
-            win.Find("StatusLabel").Text = "載入所有媒體..."
-            items = list_media(limit=30)
-        populate_tree(items)
+        try:
+            if good_filter_on[0]:
+                win.Find("GoodBtn").Text = "顯示全部"
+                win.Find("StatusLabel").Text = "載入 GOOD 素材..."
+                items = list_media(rating="good")
+            else:
+                win.Find("GoodBtn").Text = "僅 GOOD"
+                win.Find("StatusLabel").Text = "載入所有媒體..."
+                items = list_media(limit=30)
+            populate_tree(items)
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"載入失敗：{e}"
 
     def on_import(ev):
         selected = tree.SelectedItems()
         if not selected:
             win.Find("StatusLabel").Text = "未選擇任何項目"
             return
-        paths = []
-        ratings = {}
-        tags = {}
-        for sel_id in selected:
-            row = selected[sel_id]
-            fname = row.Text[0]
-            item_data = results_map.get(fname)
-            if item_data and item_data.get("path"):
-                p = item_data["path"]
-                paths.append(p)
-                if item_data.get("rating"):
-                    ratings[p] = item_data["rating"]
-                item_tags = item_data.get("tags", [])
-                if item_tags:
-                    tags[p] = [t["name"] for t in item_tags]
-        if paths:
-            success = import_to_resolve(resolve, paths, ratings, tags)
-            if success:
-                win.Find("StatusLabel").Text = f"已匯入 {len(paths)} 個片段"
+        try:
+            paths = []
+            ratings = {}
+            tags = {}
+            for sel_id in selected:
+                row = selected[sel_id]
+                fname = row.Text[0]
+                item_data = results_map.get(fname)
+                if item_data and item_data.get("path"):
+                    p = item_data["path"]
+                    paths.append(p)
+                    if item_data.get("rating"):
+                        ratings[p] = item_data["rating"]
+                    item_tags = item_data.get("tags", [])
+                    if item_tags:
+                        tags[p] = [t["name"] for t in item_tags]
+            if paths:
+                success = import_to_resolve(resolve, paths, ratings, tags)
+                if success:
+                    win.Find("StatusLabel").Text = f"已匯入 {len(paths)} 個片段"
+                else:
+                    win.Find("StatusLabel").Text = "匯入失敗 — 請檢查媒體庫"
             else:
-                win.Find("StatusLabel").Text = "匯入失敗 — 請檢查媒體庫"
-        else:
-            win.Find("StatusLabel").Text = "找不到有效的檔案路徑"
+                win.Find("StatusLabel").Text = "找不到有效的檔案路徑"
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"匯入錯誤：{e}"
 
     def on_markers(ev):
         selected = tree.SelectedItems()
         if not selected:
             win.Find("StatusLabel").Text = "未選擇任何項目"
             return
-        items = []
-        for sel_id in selected:
-            row = selected[sel_id]
-            fname = row.Text[0]
-            item_data = results_map.get(fname)
-            if item_data:
-                items.append(item_data)
-        if not items:
-            win.Find("StatusLabel").Text = "找不到有效的項目"
-            return
-        win.Find("StatusLabel").Text = "新增標記中..."
-        count = add_markers_to_timeline(resolve, items)
-        win.Find("StatusLabel").Text = f"已在時間線上新增 {count} 個標記"
+        try:
+            items = []
+            for sel_id in selected:
+                row = selected[sel_id]
+                fname = row.Text[0]
+                item_data = results_map.get(fname)
+                if item_data:
+                    items.append(item_data)
+            if not items:
+                win.Find("StatusLabel").Text = "找不到有效的項目"
+                return
+            win.Find("StatusLabel").Text = "新增標記中..."
+            count = add_markers_to_timeline(resolve, items)
+            win.Find("StatusLabel").Text = f"已在時間線上新增 {count} 個標記"
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"標記錯誤：{e}"
 
     def on_close(ev):
         disp.ExitLoop()
 
     win.On.SearchBtn.Clicked = on_search
+    win.On.ResetBtn.Clicked = on_reset
     win.On.GoodBtn.Clicked = on_good
     win.On.ImportBtn.Clicked = on_import
     win.On.MarkerBtn.Clicked = on_markers
