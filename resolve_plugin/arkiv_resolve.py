@@ -35,10 +35,10 @@ def get_resolve():
         import DaVinciResolveScript as dvr
         resolve = dvr.scriptapp("Resolve")
         if resolve is None:
-            print("[arkiv] DaVinciResolveScript loaded but Resolve not responding")
+            print("[arkiv] DaVinciResolveScript 已載入但 Resolve 未回應")
         return resolve
     except ImportError as e:
-        print(f"[arkiv] Cannot import DaVinciResolveScript: {e}")
+        print(f"[arkiv] 無法匯入 DaVinciResolveScript：{e}")
         return None
 
 
@@ -52,7 +52,7 @@ def search_media(query, limit=50):
             data = json.loads(resp.read().decode())
             return data.get("items", [])
     except Exception as e:
-        print(f"[arkiv] Search error: {e}")
+        print(f"[arkiv] 搜尋錯誤：{e}")
         return []
 
 
@@ -68,7 +68,7 @@ def list_media(limit=50, rating=None):
             data = json.loads(resp.read().decode())
             return data.get("items", [])
     except Exception as e:
-        print(f"[arkiv] List error: {e}")
+        print(f"[arkiv] 列表錯誤：{e}")
         return []
 
 
@@ -85,7 +85,7 @@ def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
     tags: dict mapping file_path -> list of tag name strings
     """
     if not resolve:
-        print("[arkiv] Resolve not connected")
+        print("[arkiv] Resolve 未連線")
         return False
     pm = resolve.GetProjectManager()
     if not pm:
@@ -122,10 +122,10 @@ def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
                             mpi.SetMetadata("Comments", f"[arkiv] {tag_str}")
                             print(f"[arkiv]   {clip_name} → Tags: {tag_str}")
                         break
-        print(f"[arkiv] Imported {len(result)} clips into Media Pool")
+        print(f"[arkiv] 已匯入 {len(result)} 個片段到媒體庫")
         return True
     else:
-        print("[arkiv] Import failed")
+        print("[arkiv] 匯入失敗")
         return False
 
 
@@ -137,21 +137,21 @@ def get_media_detail(media_id):
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
-        print(f"[arkiv] Detail fetch error: {e}")
+        print(f"[arkiv] 詳情取得錯誤：{e}")
         return None
 
 
 def add_markers_to_timeline(resolve, media_items):
     """Add frame analysis markers as clip markers on matching timeline items."""
     if not resolve:
-        print("[arkiv] Resolve not connected")
+        print("[arkiv] Resolve 未連線")
         return 0
 
     pm = resolve.GetProjectManager()
     project = pm.GetCurrentProject() if pm else None
     timeline = project.GetCurrentTimeline() if project else None
     if not timeline:
-        print("[arkiv] No timeline open — open a timeline first")
+        print("[arkiv] 未開啟時間線 — 請先開啟時間線")
         return 0
 
     # Get timeline FPS
@@ -160,7 +160,7 @@ def add_markers_to_timeline(resolve, media_items):
         fps = float(fps_str)
     except (TypeError, ValueError):
         fps = 30.0
-    print(f"[arkiv] Timeline FPS: {fps}")
+    print(f"[arkiv] 時間線 FPS：{fps}")
 
     # Build a map of filename -> timeline_item for all video tracks
     clip_map = {}
@@ -170,7 +170,7 @@ def add_markers_to_timeline(resolve, media_items):
             name = ti.GetName()
             if name:
                 clip_map[name] = ti
-    print(f"[arkiv] Found {len(clip_map)} clips on timeline")
+    print(f"[arkiv] 在時間線上找到 {len(clip_map)} 個片段")
 
     colors = ["Blue", "Cyan", "Green", "Yellow", "Red", "Pink", "Purple"]
     total_added = 0
@@ -191,7 +191,7 @@ def add_markers_to_timeline(resolve, media_items):
                     ti = v
                     break
         if not ti:
-            print(f"[arkiv] Clip '{filename}' not found on timeline — import and place it first")
+            print(f"[arkiv] 片段「{filename}」未在時間線上找到 — 請先匯入並放置")
             continue
 
         detail = get_media_detail(media_id)
@@ -200,10 +200,10 @@ def add_markers_to_timeline(resolve, media_items):
 
         frames = detail.get("frames") or []
         if not frames:
-            print(f"[arkiv] No frame data for {filename}")
+            print(f"[arkiv] 無 {filename} 的幀資料")
             continue
 
-        print(f"[arkiv] Adding {len(frames)} clip markers for {filename}")
+        print(f"[arkiv] 正在為 {filename} 新增 {len(frames)} 個片段標記")
         for i, fr in enumerate(frames):
             ts = fr.get("timestamp_s", 0)
             frame_offset = round(ts * fps)
@@ -224,7 +224,7 @@ def add_markers_to_timeline(resolve, media_items):
             if success:
                 total_added += 1
             else:
-                print(f"[arkiv]   ! Marker failed at frame {frame_offset}")
+                print(f"[arkiv]   ！在幀 {frame_offset} 處標記失敗")
 
     return total_added
 
@@ -242,8 +242,8 @@ def create_ui(resolve):
     """Create the arkiv search UI using Fusion's UIManager."""
     fusion = resolve.Fusion() if resolve else None
     if not fusion:
-        print("[arkiv] Cannot access Fusion UIManager")
-        print("[arkiv] Tip: Make sure DaVinci Resolve is running and script is launched from Workspace → Scripts")
+        print("[arkiv] 無法存取 Fusion UIManager")
+        print("[arkiv] 提示：確保 DaVinci Resolve 正在執行且從工作區 → 指令碼啟動")
         return None
 
     ui = fusion.UIManager
@@ -253,7 +253,7 @@ def create_ui(resolve):
     win = disp.AddWindow(
         {
             "ID": "ArkivWin",
-            "WindowTitle": "arkiv — Media Search",
+            "WindowTitle": "arkiv — 媒體搜尋",
             "Geometry": [200, 200, 700, 500],
         },
         [
@@ -267,12 +267,12 @@ def create_ui(resolve):
                             ui.LineEdit(
                                 {
                                     "ID": "SearchField",
-                                    "PlaceholderText": "Search media... (semantic search)",
+                                    "PlaceholderText": "搜尋媒體...（語義搜尋）",
                                     "Weight": 3,
                                 }
                             ),
-                            ui.Button({"ID": "SearchBtn", "Text": "Search", "Weight": 0.5}),
-                            ui.Button({"ID": "GoodBtn", "Text": "GOOD Only", "Weight": 0.5}),
+                            ui.Button({"ID": "SearchBtn", "Text": "搜尋", "Weight": 0.5}),
+                            ui.Button({"ID": "GoodBtn", "Text": "僅 GOOD", "Weight": 0.5}),
                         ],
                     ),
                     # Results tree
@@ -289,18 +289,18 @@ def create_ui(resolve):
                     ui.HGroup(
                         {"Spacing": 5},
                         [
-                            ui.Label({"ID": "StatusLabel", "Text": "Ready", "Weight": 3}),
+                            ui.Label({"ID": "StatusLabel", "Text": "準備就緒", "Weight": 3}),
                             ui.Button(
                                 {
                                     "ID": "ImportBtn",
-                                    "Text": "Import to Media Pool",
+                                    "Text": "匯入到媒體庫",
                                     "Weight": 1,
                                 }
                             ),
                             ui.Button(
                                 {
                                     "ID": "MarkerBtn",
-                                    "Text": "Add Markers",
+                                    "Text": "新增標記",
                                     "Weight": 0.7,
                                 }
                             ),
@@ -314,11 +314,11 @@ def create_ui(resolve):
     # Setup tree columns
     tree = win.Find("ResultTree")
     hdr = tree.NewItem()
-    hdr.Text[0] = "Filename"
-    hdr.Text[1] = "Duration"
-    hdr.Text[2] = "Rating"
-    hdr.Text[3] = "Language"
-    hdr.Text[4] = "Score"
+    hdr.Text[0] = "檔名"
+    hdr.Text[1] = "長度"
+    hdr.Text[2] = "評級"
+    hdr.Text[3] = "語言"
+    hdr.Text[4] = "得分"
     tree.SetHeaderItem(hdr)
     tree.ColumnCount = 5
     tree.ColumnWidth[0] = 280
@@ -344,32 +344,32 @@ def create_ui(resolve):
             row.Text[4] = f"{round(item.get('score', 0) * 100)}%" if item.get("score") else ""
             tree.AddTopLevelItem(row)
             results_map[fname] = item
-        win.Find("StatusLabel").Text = f"Found {len(items)} results"
+        win.Find("StatusLabel").Text = f"找到 {len(items)} 個結果"
 
     def on_search(ev):
         query = win.Find("SearchField").Text.strip()
         if not query:
             return
-        win.Find("StatusLabel").Text = "Searching..."
+        win.Find("StatusLabel").Text = "搜尋中..."
         items = search_media(query)
         populate_tree(items)
 
     def on_good(ev):
         good_filter_on[0] = not good_filter_on[0]
         if good_filter_on[0]:
-            win.Find("GoodBtn").Text = "Show All"
-            win.Find("StatusLabel").Text = "Loading GOOD takes..."
+            win.Find("GoodBtn").Text = "顯示全部"
+            win.Find("StatusLabel").Text = "載入 GOOD 素材..."
             items = list_media(rating="good")
         else:
-            win.Find("GoodBtn").Text = "GOOD Only"
-            win.Find("StatusLabel").Text = "Loading all media..."
+            win.Find("GoodBtn").Text = "僅 GOOD"
+            win.Find("StatusLabel").Text = "載入所有媒體..."
             items = list_media(limit=30)
         populate_tree(items)
 
     def on_import(ev):
         selected = tree.SelectedItems()
         if not selected:
-            win.Find("StatusLabel").Text = "No items selected"
+            win.Find("StatusLabel").Text = "未選擇任何項目"
             return
         paths = []
         ratings = {}
@@ -389,16 +389,16 @@ def create_ui(resolve):
         if paths:
             success = import_to_resolve(resolve, paths, ratings, tags)
             if success:
-                win.Find("StatusLabel").Text = f"Imported {len(paths)} clips"
+                win.Find("StatusLabel").Text = f"已匯入 {len(paths)} 個片段"
             else:
-                win.Find("StatusLabel").Text = "Import failed — check Media Pool"
+                win.Find("StatusLabel").Text = "匯入失敗 — 請檢查媒體庫"
         else:
-            win.Find("StatusLabel").Text = "No valid file paths found"
+            win.Find("StatusLabel").Text = "找不到有效的檔案路徑"
 
     def on_markers(ev):
         selected = tree.SelectedItems()
         if not selected:
-            win.Find("StatusLabel").Text = "No items selected"
+            win.Find("StatusLabel").Text = "未選擇任何項目"
             return
         items = []
         for sel_id in selected:
@@ -408,11 +408,11 @@ def create_ui(resolve):
             if item_data:
                 items.append(item_data)
         if not items:
-            win.Find("StatusLabel").Text = "No valid items found"
+            win.Find("StatusLabel").Text = "找不到有效的項目"
             return
-        win.Find("StatusLabel").Text = "Adding markers..."
+        win.Find("StatusLabel").Text = "新增標記中..."
         count = add_markers_to_timeline(resolve, items)
-        win.Find("StatusLabel").Text = f"Added {count} markers to timeline"
+        win.Find("StatusLabel").Text = f"已在時間線上新增 {count} 個標記"
 
     def on_close(ev):
         disp.ExitLoop()
@@ -435,9 +435,9 @@ def create_ui(resolve):
 
 def run_cli_mode(resolve):
     """Fallback CLI mode when UIManager is not available."""
-    print("\n=== arkiv Media Search (CLI Mode) ===\n")
+    print("\n=== arkiv 媒體搜尋（CLI 模式）===\n")
     while True:
-        query = input("Search query (or 'q' to quit, 'good' for GOOD takes): ").strip()
+        query = input("搜尋（輸入 'q' 離開，'good' 顯示 GOOD 素材）：").strip()
         if query.lower() == "q":
             break
         if query.lower() == "good":
@@ -446,7 +446,7 @@ def run_cli_mode(resolve):
             items = search_media(query)
 
         if not items:
-            print("No results found.\n")
+            print("找不到結果。\n")
             continue
 
         for i, item in enumerate(items):
@@ -454,7 +454,7 @@ def run_cli_mode(resolve):
             dur = format_duration(item.get("duration_s"))
             print(f"  [{i}] {item['filename']}  ({dur})  [{rating}]  {item.get('lang', '?')}")
 
-        sel = input("\nEnter numbers to import (comma-separated, or 'skip'): ").strip()
+        sel = input("\n輸入編號匯入（逗號分隔，或 'skip' 跳過）：").strip()
         if sel.lower() == "skip":
             continue
         try:
@@ -463,14 +463,14 @@ def run_cli_mode(resolve):
             if paths and resolve:
                 import_to_resolve(resolve, paths)
         except (ValueError, IndexError) as e:
-            print(f"Invalid selection: {e}")
+            print(f"無效選擇：{e}")
         print()
 
 
 if __name__ == "__main__":
     resolve = get_resolve()
     if resolve:
-        print("[arkiv] Connected to DaVinci Resolve")
+        print("[arkiv] 已連線到 DaVinci Resolve")
     else:
-        print("[arkiv] DaVinci Resolve not running — CLI mode only")
+        print("[arkiv] DaVinci Resolve 未執行 — 僅限 CLI 模式")
     create_ui(resolve)

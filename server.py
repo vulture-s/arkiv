@@ -128,7 +128,7 @@ def list_media(
                     enriched.append(rec)
             return {"items": enriched, "total": len(enriched), "search": True}
         except Exception:
-            raise HTTPException(500, "Search error")
+            raise HTTPException(500, "搜尋錯誤")
 
     filters = {}
     if lang:
@@ -153,7 +153,7 @@ def get_media_detail(media_id: int):
     """Get full media record with tags and frames."""
     rec = db.get_record_by_id(media_id)
     if not rec:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "找不到")
     rec["tags"] = db.get_tags(media_id)
     # Structured frame analysis data
     rec["frames"] = db.get_frames(media_id)
@@ -171,7 +171,7 @@ def update_rating(media_id: int, body: RatingUpdate):
     """Set or clear rating for a media asset."""
     rec = db.get_record_by_id(media_id)
     if not rec:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "找不到")
     db.set_rating(media_id, body.rating, body.note)
     return {"ok": True, "rating": body.rating, "note": body.note}
 
@@ -185,7 +185,7 @@ def get_tags(media_id: int):
 def add_tag(media_id: int, body: TagCreate):
     rec = db.get_record_by_id(media_id)
     if not rec:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "找不到")
     db.add_tag(media_id, body.name, body.source)
     return {"ok": True, "tags": db.get_tags(media_id)}
 
@@ -247,7 +247,7 @@ def scan_media(body: ScanRequest):
     """Quick scan — return file list without processing."""
     target = Path(body.path).expanduser().resolve()
     if not target.is_dir():
-        raise HTTPException(400, "Path is not a valid directory")
+        raise HTTPException(400, "路徑不是有效的目錄")
     files = []
     for f in sorted(target.rglob("*")):
         if f.suffix.lower() in MEDIA_EXTS:
@@ -261,7 +261,7 @@ def ingest_media(body: IngestRequest):
     import subprocess, sys
     target = Path(body.path).expanduser().resolve()
     if not target.is_dir():
-        raise HTTPException(400, "Path is not a valid directory")
+        raise HTTPException(400, "路徑不是有效的目錄")
     cmd = [sys.executable, str(ROOT / "ingest.py"), "--dir", str(target)]
     if body.limit > 0:
         cmd += ["--limit", str(body.limit)]
@@ -273,7 +273,7 @@ def ingest_media(body: IngestRequest):
             "stderr": result.stderr[-1000:] if result.stderr else "",
         }
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "Ingest timeout (>30min)"}
+        return {"ok": False, "error": "匯入逾時（>30 分鐘）"}
 
 
 # ── Re-transcribe ─────────────────────────────────────────────────────────────
@@ -286,7 +286,7 @@ def get_remotion_props(media_id: int):
     """Export word-level timestamps as Remotion CellPhoneReel props."""
     rec = db.get_record_by_id(media_id)
     if not rec:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "找不到")
     words = json.loads(rec.get("words_json") or "[]")
     return {
         "captions": [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in words],
@@ -299,10 +299,10 @@ def retranscribe_media(media_id: int, body: RetranscribeRequest):
     """Re-run Whisper with specified language."""
     rec = db.get_record_by_id(media_id)
     if not rec:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "找不到")
     media_path = rec.get("path", "")
     if not Path(media_path).exists():
-        raise HTTPException(400, f"Media file not found: {media_path}")
+        raise HTTPException(400, f"找不到媒體檔案：{media_path}")
     try:
         import transcribe as tr
         text, lang, segments, words = tr.transcribe(media_path, language=body.language)
@@ -328,11 +328,11 @@ def retry_vision(media_id: int):
     Two-phase fallback: primary model → lighter fallback model."""
     rec = db.get_record_by_id(media_id)
     if not rec:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "找不到")
     frames = db.get_frames(media_id)
     empty_frames = [f for f in frames if not f.get("description")]
     if not empty_frames:
-        return {"ok": True, "message": "All frames already have descriptions", "patched": 0}
+        return {"ok": True, "message": "所有幀都已有描述", "patched": 0}
 
     import vision as vis
     frame_paths = [f["thumbnail_path"] for f in empty_frames]
@@ -391,10 +391,10 @@ def reingest_media(media_id: int):
     """Re-run full ingest pipeline: probe + whisper + thumbnail + llava + embed."""
     rec = db.get_record_by_id(media_id)
     if not rec:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "找不到")
     media_path = rec.get("path", "")
     if not Path(media_path).exists():
-        raise HTTPException(400, f"Media file not found: {media_path}")
+        raise HTTPException(400, f"找不到媒體檔案：{media_path}")
     import subprocess, sys
     try:
         result = subprocess.run(
@@ -408,7 +408,7 @@ def reingest_media(media_id: int):
             "stderr": result.stderr[-500:] if result.stderr else "",
         }
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "Reingest timeout (>10min)"}
+        return {"ok": False, "error": "重新處理逾時（>10 分鐘）"}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -481,7 +481,7 @@ def clear_cache(target: str = Query("app", description="app|thumbnails|chromadb|
 def export_media(media_id: int, fmt: str):
     rec = db.get_record_by_id(media_id)
     if not rec:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "找不到")
     transcript = rec.get("transcript", "") or ""
     filename = rec.get("filename", f"media_{media_id}")
     stem = filename.rsplit(".", 1)[0]
@@ -724,7 +724,7 @@ def export_media(media_id: int, fmt: str):
             headers={"Content-Disposition": f'attachment; filename="{stem}.fcpxml"'},
         )
 
-    raise HTTPException(400, f"Unsupported format: {fmt}. Use srt/vtt/txt/edl/edl-markers/fcpxml")
+    raise HTTPException(400, f"不支援的格式：{fmt}。請使用 srt/vtt/txt/edl/edl-markers/fcpxml")
 
 
 class ExportToRequest(BaseModel):
@@ -743,7 +743,7 @@ def export_to_file(media_id: int, body: ExportToRequest):
     for b in _blocked:
         try:
             dest.relative_to(b.resolve())
-            raise HTTPException(403, "Export to system directories is not allowed")
+            raise HTTPException(403, "不允許匯出到系統目錄")
         except ValueError:
             pass  # not under blocked path — OK
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -834,9 +834,9 @@ async def ingest_media_ws(body: IngestRequest):
     """Trigger ingest with WebSocket progress broadcasting."""
     target = Path(body.path).expanduser()
     if not target.exists():
-        raise HTTPException(400, f"Path not found: {body.path}")
+        raise HTTPException(400, f"找不到路徑：{body.path}")
     asyncio.create_task(_run_ingest_with_ws(target, body.limit))
-    return {"ok": True, "message": "Ingest started — connect to /ws/ingest for progress"}
+    return {"ok": True, "message": "已開始匯入 — 連線 /ws/ingest 取得進度"}
 
 
 # ── Tailwind CDN proxy (cached locally so Tauri WKWebView never blocks) ────────
@@ -889,7 +889,7 @@ def stream_media(media_id: int):
     """
     rec = db.get_record_by_id(media_id)
     if not rec:
-        raise HTTPException(404, "Media not found")
+        raise HTTPException(404, "找不到媒體")
     # Check for proxy first (browser-friendly H.264)
     proxy_path = ROOT / "proxies" / f"{media_id}.mp4"
     if proxy_path.exists():
@@ -900,10 +900,10 @@ def stream_media(media_id: int):
         )
     file_path = Path(rec["path"])
     if not file_path.exists():
-        raise HTTPException(404, "File not found")
+        raise HTTPException(404, "找不到檔案")
     # Only serve known media extensions
     if file_path.suffix.lower() not in MEDIA_EXTS:
-        raise HTTPException(403, "Not a media file")
+        raise HTTPException(403, "不是媒體檔案")
     mime, _ = mimetypes.guess_type(str(file_path))
     if not mime:
         mime = "video/mp4"
@@ -932,9 +932,9 @@ async def open_file(request: __import__('starlette.requests', fromlist=['Request
     reveal = body.get("reveal", False)
     # Validate: only allow paths that exist in our database
     if not db.is_processed(file_path):
-        raise HTTPException(403, "Only indexed media files can be opened")
+        raise HTTPException(403, "只能開啟已索引的媒體檔案")
     if not Path(file_path).exists():
-        raise HTTPException(404, "File not found")
+        raise HTTPException(404, "找不到檔案")
     system = platform.system()
     if reveal:
         if system == "Darwin":
