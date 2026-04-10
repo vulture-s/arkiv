@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import List, Set
 
 MEDIA_EXTS = {
     ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts",  # video
@@ -21,7 +22,7 @@ MEDIA_EXTS = {
 }
 
 
-def find_new_files(watch_dir: Path, known: set[str]) -> list[Path]:
+def find_new_files(watch_dir: Path, known: Set[str]) -> List[Path]:
     """Find media files not yet processed."""
     new = []
     for f in watch_dir.rglob("*"):
@@ -73,14 +74,14 @@ def main():
     print(f"  Interval: {args.interval}s | Extensions: {', '.join(sorted(MEDIA_EXTS))}")
     print("")
 
-    known: set[str] = set()
+    known = set()
 
     # Load already-ingested files from DB
     try:
         import db
         with db.get_conn() as conn:
             rows = conn.execute("SELECT path FROM media").fetchall()
-            known = {r["path"] for r in rows}
+            known = {db.resolve_path(r["path"]) for r in rows}
         print(f"  {len(known)} files already in DB")
     except Exception:
         pass

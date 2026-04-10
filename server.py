@@ -70,6 +70,20 @@ thumbs_dir.mkdir(exist_ok=True)
 app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnails")
 
 
+def _resolve_record(rec: dict) -> dict:
+    if rec.get("path"):
+        rec["path"] = db.resolve_path(rec["path"])
+    if rec.get("thumbnail_path"):
+        rec["thumbnail_path"] = db.resolve_path(rec["thumbnail_path"])
+    return rec
+
+
+def _resolve_frame(frame: dict) -> dict:
+    if frame.get("thumbnail_path"):
+        frame["thumbnail_path"] = db.resolve_path(frame["thumbnail_path"])
+    return frame
+
+
 # ── Models ───────────────────────────────────────────────────────────────────
 
 class RatingUpdate(BaseModel):
@@ -121,6 +135,7 @@ def list_media(
                 seen.add(mid)
                 rec = db.get_record_by_id(mid)
                 if rec:
+                    _resolve_record(rec)
                     rec["score"] = r.get("score", 0)
                     rec["excerpt"] = r.get("excerpt", "")
                     # Add tags
@@ -143,6 +158,7 @@ def list_media(
     )
     # Attach tags to each record
     for rec in records:
+        _resolve_record(rec)
         rec["tags"] = db.get_tags(rec["id"])
 
     return {"items": records, "total": total, "search": False}
@@ -154,9 +170,15 @@ def get_media_detail(media_id: int):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
+    _resolve_record(rec)
     rec["tags"] = db.get_tags(media_id)
     # Structured frame analysis data
-    rec["frames"] = db.get_frames(media_id)
+    rec["frames"] = [_resolve_frame(frame) for frame in db.get_frames(media_id)]
+    if rec.get("editability_score") is None:
+        for frame in rec["frames"]:
+            if frame.get("focus_score") is not None:
+                rec["editability_score"] = db.compute_editability(frame)
+                break
     # Legacy frame_tags_parsed for backwards compat
     if rec.get("frame_tags"):
         try:
@@ -164,6 +186,33 @@ def get_media_detail(media_id: int):
         except Exception:
             rec["frame_tags_parsed"] = []
     return rec
+
+
+@app.get("/api/media/{media_id}/scenes")
+def get_media_scenes(media_id: int):
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到")
+    frames = db.get_frames(media_id)
+    scenes = []
+    for frame in frames:
+        scene = {
+            "frame_index": frame["frame_index"],
+            "timestamp_s": frame["timestamp_s"],
+            "description": frame.get("description", ""),
+            "content_type": frame.get("content_type"),
+            "focus_score": frame.get("focus_score"),
+            "atmosphere": frame.get("atmosphere"),
+            "energy": frame.get("energy"),
+            "edit_position": frame.get("edit_position"),
+            "edit_reason": frame.get("edit_reason"),
+        }
+        if frame.get("thumbnail_path"):
+            scene["thumbnail_url"] = "/thumbnails/{0}".format(
+                Path(db.resolve_path(frame["thumbnail_path"])).name
+            )
+        scenes.append(scene)
+    return {"media_id": media_id, "scenes": scenes, "total": len(scenes)}
 
 
 @app.patch("/api/media/{media_id}/rating")
@@ -300,7 +349,7 @@ def retranscribe_media(media_id: int, body: RetranscribeRequest):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
-    media_path = rec.get("path", "")
+    media_path = db.resolve_path(rec.get("path", ""))
     if not Path(media_path).exists():
         raise HTTPException(400, f"找不到媒體檔案：{media_path}")
     try:
@@ -335,7 +384,7 @@ def retry_vision(media_id: int):
         return {"ok": True, "message": "所有幀都已有描述", "patched": 0}
 
     import vision as vis
-    frame_paths = [f["thumbnail_path"] for f in empty_frames]
+    frame_paths = [db.resolve_path(f["thumbnail_path"]) for f in empty_frames]
 
     # Phase 1: try primary vision model
     results = vis.describe_frames(frame_paths)
@@ -363,8 +412,28 @@ def retry_vision(media_id: int):
             tags = ",".join(vr.get("tags", []))
             if desc:
                 conn.execute(
-                    "UPDATE frames SET description=?, tags=? WHERE media_id=? AND frame_index=?",
-                    (desc, tags, media_id, f["frame_index"])
+                    """
+                    UPDATE frames
+                    SET description=?, tags=?, content_type=?, focus_score=?, exposure=?,
+                        stability=?, audio_quality=?, atmosphere=?, energy=?,
+                        edit_position=?, edit_reason=?
+                    WHERE media_id=? AND frame_index=?
+                    """,
+                    (
+                        desc,
+                        tags,
+                        vr.get("content_type"),
+                        vr.get("focus_score"),
+                        vr.get("exposure"),
+                        vr.get("stability"),
+                        vr.get("audio_quality"),
+                        vr.get("atmosphere"),
+                        vr.get("energy"),
+                        vr.get("edit_position"),
+                        vr.get("edit_reason"),
+                        media_id,
+                        f["frame_index"],
+                    )
                 )
                 for tag_name in vr.get("tags", []):
                     tag_name = tag_name.strip()
@@ -375,7 +444,15 @@ def retry_vision(media_id: int):
         all_frames = db.get_frames(media_id)
         frame_tags = [{"description": f.get("description", ""), "tags": f.get("tags", "").split(",") if f.get("tags") else []} for f in all_frames]
         frame_tags_json = json.dumps(frame_tags, ensure_ascii=False)
-        conn.execute("UPDATE media SET frame_tags=? WHERE id=?", (frame_tags_json, media_id))
+        editability_score = None
+        for frame in all_frames:
+            if frame.get("focus_score") is not None:
+                editability_score = db.compute_editability(frame)
+                break
+        conn.execute(
+            "UPDATE media SET frame_tags=?, editability_score=? WHERE id=?",
+            (frame_tags_json, editability_score, media_id),
+        )
 
     still_empty = sum(1 for vr in results if not vr.get("description") or vr.get("error"))
     return {
@@ -392,7 +469,7 @@ def reingest_media(media_id: int):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
-    media_path = rec.get("path", "")
+    media_path = db.resolve_path(rec.get("path", ""))
     if not Path(media_path).exists():
         raise HTTPException(400, f"找不到媒體檔案：{media_path}")
     import subprocess, sys
@@ -678,7 +755,7 @@ def export_media(media_id: int, fmt: str):
         import pathlib
 
         # Build file URI with proper file:/// prefix
-        raw_path = rec.get("path", "")
+        raw_path = db.resolve_path(rec.get("path", ""))
         file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
         if not str(file_uri).startswith("/"):
             file_uri = pathlib.PurePosixPath("/" + str(file_uri))
@@ -896,9 +973,9 @@ def stream_media(media_id: int):
         return FileResponse(
             path=str(proxy_path),
             media_type="video/mp4",
-            filename=Path(rec["path"]).stem + "_proxy.mp4",
+            filename=Path(db.resolve_path(rec["path"])).stem + "_proxy.mp4",
         )
-    file_path = Path(rec["path"])
+    file_path = Path(db.resolve_path(rec["path"]))
     if not file_path.exists():
         raise HTTPException(404, "找不到檔案")
     # Only serve known media extensions
@@ -933,23 +1010,24 @@ async def open_file(request: __import__('starlette.requests', fromlist=['Request
     # Validate: only allow paths that exist in our database
     if not db.is_processed(file_path):
         raise HTTPException(403, "只能開啟已索引的媒體檔案")
-    if not Path(file_path).exists():
+    resolved_path = db.resolve_path(file_path)
+    if not Path(resolved_path).exists():
         raise HTTPException(404, "找不到檔案")
     system = platform.system()
     if reveal:
         if system == "Darwin":
-            subprocess.Popen(["open", "-R", file_path])
+            subprocess.Popen(["open", "-R", resolved_path])
         elif system == "Windows":
-            subprocess.Popen(["explorer", "/select,", file_path])
+            subprocess.Popen(["explorer", "/select,", resolved_path])
         else:
-            subprocess.Popen(["xdg-open", str(Path(file_path).parent)])
+            subprocess.Popen(["xdg-open", str(Path(resolved_path).parent)])
     else:
         if system == "Darwin":
-            subprocess.Popen(["open", file_path])
+            subprocess.Popen(["open", resolved_path])
         elif system == "Windows":
-            os.startfile(file_path)
+            os.startfile(resolved_path)
         else:
-            subprocess.Popen(["xdg-open", file_path])
+            subprocess.Popen(["xdg-open", resolved_path])
     return {"ok": True}
 
 

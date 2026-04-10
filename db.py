@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
+import config as _config
 from config import DB_PATH
-
 
 from contextlib import contextmanager
 
@@ -20,6 +22,26 @@ def get_conn():
         raise
     finally:
         conn.close()
+
+
+def to_relative(abs_path: str) -> str:
+    """Absolute path -> relative to PROJECT_ROOT. Idempotent."""
+    if not abs_path:
+        return abs_path
+    try:
+        return str(Path(abs_path).relative_to(_config.PROJECT_ROOT))
+    except ValueError:
+        return abs_path
+
+
+def resolve_path(rel_path: str) -> str:
+    """Relative path -> absolute under PROJECT_ROOT. Idempotent."""
+    if not rel_path:
+        return rel_path
+    path_obj = Path(rel_path)
+    if path_obj.is_absolute():
+        return str(path_obj)
+    return str(_config.PROJECT_ROOT / path_obj)
 
 
 def init_db():
@@ -89,16 +111,81 @@ def init_db():
             ("segments_json", "TEXT"),
             # Phase 10: WhisperX word-level timestamps for Remotion
             ("words_json", "TEXT"),
+            # Phase 8.2: Smart Frame Analysis + Quality Assessment
+            ("focus_score", "INTEGER"),
+            ("exposure", "TEXT"),
+            ("stability", "TEXT"),
+            ("audio_quality", "TEXT"),
+            ("atmosphere", "TEXT"),
+            ("energy", "TEXT"),
+            ("edit_position", "TEXT"),
+            ("edit_reason", "TEXT"),
+            ("editability_score", "REAL"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE media ADD COLUMN {col} {typ}")
             except Exception:
                 pass
+        for col, typ in [
+            ("content_type", "TEXT"),
+            ("focus_score", "INTEGER"),
+            ("exposure", "TEXT"),
+            ("stability", "TEXT"),
+            ("audio_quality", "TEXT"),
+            ("atmosphere", "TEXT"),
+            ("energy", "TEXT"),
+            ("edit_position", "TEXT"),
+            ("edit_reason", "TEXT"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE frames ADD COLUMN {col} {typ}")
+            except Exception:
+                pass
+
+
+def migrate_to_relative():
+    """Convert DB path fields from absolute to relative paths."""
+    media_count = 0
+    frame_count = 0
+    with get_conn() as conn:
+        rows = conn.execute("SELECT id, path, thumbnail_path FROM media").fetchall()
+        for row in rows:
+            new_path = to_relative(row["path"]) if row["path"] else row["path"]
+            new_thumb = to_relative(row["thumbnail_path"]) if row["thumbnail_path"] else row["thumbnail_path"]
+            if new_path != row["path"] or new_thumb != row["thumbnail_path"]:
+                try:
+                    conn.execute(
+                        "UPDATE media SET path=?, thumbnail_path=? WHERE id=?",
+                        (new_path, new_thumb, row["id"]),
+                    )
+                    media_count += 1
+                except sqlite3.IntegrityError as exc:
+                    print(f"[migrate] warning: media id={row['id']} skipped due to UNIQUE conflict: {exc}")
+        frame_rows = conn.execute(
+            "SELECT id, thumbnail_path FROM frames WHERE thumbnail_path IS NOT NULL"
+        ).fetchall()
+        for row in frame_rows:
+            new_thumb = to_relative(row["thumbnail_path"])
+            if new_thumb != row["thumbnail_path"]:
+                conn.execute(
+                    "UPDATE frames SET thumbnail_path=? WHERE id=?",
+                    (new_thumb, row["id"]),
+                )
+                frame_count += 1
+    print(
+        "[migrate] 完成。{0}/{1} media + {2}/{3} frames 路徑已轉為相對。".format(
+            media_count, len(rows), frame_count, len(frame_rows)
+        )
+    )
 
 
 def is_processed(path: str) -> bool:
+    rel = to_relative(str(path))
     with get_conn() as conn:
-        row = conn.execute("SELECT id FROM media WHERE path=?", (path,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM media WHERE path=? OR path=?",
+            (str(path), rel),
+        ).fetchone()
         return row is not None
 
 
@@ -111,6 +198,9 @@ _ALLOWED_COLS = {
     "start_tc",
     "segments_json",
     "words_json",
+    "focus_score", "exposure", "stability", "audio_quality",
+    "atmosphere", "energy", "edit_position", "edit_reason",
+    "editability_score",
 }
 
 
@@ -134,7 +224,8 @@ def upsert(record: dict):
 
 LIGHT_COLS = (
     "id, path, filename, ext, duration_s, size_mb, "
-    "width, height, fps, has_audio, lang, thumbnail_path, processed_at, rating"
+    "width, height, fps, has_audio, lang, thumbnail_path, processed_at, rating, "
+    "editability_score"
 )
 
 
@@ -143,11 +234,11 @@ def get_media_list(
     limit: int = 50,
     min_duration: float = 0,
     max_duration: float = 99999,
-    lang: str | None = None,
-) -> list[dict]:
+    lang: Optional[str] = None,
+) -> List[Dict]:
     """Lightweight media records (no transcript/frame_tags) with pagination."""
     sql = f"SELECT {LIGHT_COLS} FROM media WHERE duration_s >= ? AND duration_s <= ?"
-    params: list = [min_duration, max_duration]
+    params: List = [min_duration, max_duration]
     if lang:
         sql += " AND lang = ?"
         params.append(lang)
@@ -161,11 +252,11 @@ def get_media_list(
 def get_media_count(
     min_duration: float = 0,
     max_duration: float = 99999,
-    lang: str | None = None,
+    lang: Optional[str] = None,
 ) -> int:
     """Total count matching filters (for pagination)."""
     sql = "SELECT COUNT(*) FROM media WHERE duration_s >= ? AND duration_s <= ?"
-    params: list = [min_duration, max_duration]
+    params: List = [min_duration, max_duration]
     if lang:
         sql += " AND lang = ?"
         params.append(lang)
@@ -173,14 +264,14 @@ def get_media_count(
         return conn.execute(sql, params).fetchone()[0]
 
 
-def get_record_by_id(media_id: int) -> dict | None:
+def get_record_by_id(media_id: int) -> Optional[Dict]:
     """Full record including transcript and frame_tags."""
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM media WHERE id=?", (media_id,)).fetchone()
         return dict(row) if row else None
 
 
-def get_stats() -> dict:
+def get_stats() -> Dict:
     """Aggregate stats for sidebar and dashboard."""
     with get_conn() as conn:
         total = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
@@ -210,7 +301,7 @@ def get_stats() -> dict:
         }
 
 
-def get_all_records() -> list[dict]:
+def get_all_records() -> List[Dict]:
     """Full records (for embed rebuild)."""
     with get_conn() as conn:
         rows = conn.execute("SELECT * FROM media ORDER BY id").fetchall()
@@ -219,7 +310,7 @@ def get_all_records() -> list[dict]:
 
 # ── Rating Operations ────────────────────────────────────────────────────────
 
-def set_rating(media_id: int, rating: str | None, note: str | None = None):
+def set_rating(media_id: int, rating: Optional[str], note: Optional[str] = None):
     """Set rating for a media asset. rating: 'good'/'ng'/'review'/None."""
     with get_conn() as conn:
         conn.execute(
@@ -230,7 +321,7 @@ def set_rating(media_id: int, rating: str | None, note: str | None = None):
 
 # ── Tag Operations ────────────────────────────────────────────────────────────
 
-def get_tags(media_id: int) -> list[dict]:
+def get_tags(media_id: int) -> List[Dict]:
     """Get all tags for a media asset."""
     with get_conn() as conn:
         rows = conn.execute(
@@ -257,7 +348,7 @@ def remove_tag(media_id: int, name: str):
         )
 
 
-def get_all_tag_names() -> list[dict]:
+def get_all_tag_names() -> List[Dict]:
     """All unique tag names with usage count, for autocomplete."""
     with get_conn() as conn:
         rows = conn.execute(
@@ -267,7 +358,7 @@ def get_all_tag_names() -> list[dict]:
         return [dict(r) for r in rows]
 
 
-def get_top_tags(limit: int = 10) -> list[dict]:
+def get_top_tags(limit: int = 10) -> List[Dict]:
     """Top N most used tags."""
     with get_conn() as conn:
         rows = conn.execute(
@@ -280,20 +371,76 @@ def get_top_tags(limit: int = 10) -> list[dict]:
 
 # ── Frame Operations ─────────────────────────────────────────────────────────
 
-def upsert_frame(media_id: int, frame_index: int, timestamp_s: float,
-                 thumbnail_path: str | None = None, description: str = "",
-                 tags: str = ""):
+def compute_editability(rec: Dict) -> float:
+    """0-100 quality score based on focus, exposure, stability, audio, and rating."""
+    score = 50.0
+    focus_score = rec.get("focus_score")
+    if focus_score is not None:
+        try:
+            score += (int(focus_score) - 3) * 10
+        except (ValueError, TypeError):
+            pass
+    if rec.get("exposure") == "normal":
+        score += 10
+    elif rec.get("exposure") in ("dark", "over"):
+        score -= 10
+    if rec.get("stability") == "穩定":
+        score += 10
+    elif rec.get("stability") == "嚴重晃動":
+        score -= 15
+    if rec.get("audio_quality") == "清晰":
+        score += 10
+    elif rec.get("audio_quality") == "嘈雜":
+        score -= 5
+    rating = rec.get("rating")
+    if rating == "good":
+        score += 10
+    elif rating == "ng":
+        score -= 15
+    return max(0.0, min(100.0, round(score, 1)))
+
+
+def upsert_frame(
+    media_id: int,
+    frame_index: int,
+    timestamp_s: float,
+    thumbnail_path: Optional[str] = None,
+    description: str = "",
+    tags: str = "",
+    content_type: Optional[str] = None,
+    focus_score: Optional[int] = None,
+    exposure: Optional[str] = None,
+    stability: Optional[str] = None,
+    audio_quality: Optional[str] = None,
+    atmosphere: Optional[str] = None,
+    energy: Optional[str] = None,
+    edit_position: Optional[str] = None,
+    edit_reason: Optional[str] = None,
+):
     with get_conn() as conn:
         conn.execute("""
-            INSERT INTO frames (media_id, frame_index, timestamp_s, thumbnail_path, description, tags)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO frames (
+                media_id, frame_index, timestamp_s, thumbnail_path, description, tags,
+                content_type, focus_score, exposure, stability, audio_quality,
+                atmosphere, energy, edit_position, edit_reason
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(media_id, frame_index) DO UPDATE SET
                 timestamp_s=excluded.timestamp_s, thumbnail_path=excluded.thumbnail_path,
-                description=excluded.description, tags=excluded.tags
-        """, (media_id, frame_index, timestamp_s, thumbnail_path, description, tags))
+                description=excluded.description, tags=excluded.tags,
+                content_type=excluded.content_type, focus_score=excluded.focus_score,
+                exposure=excluded.exposure, stability=excluded.stability,
+                audio_quality=excluded.audio_quality, atmosphere=excluded.atmosphere,
+                energy=excluded.energy, edit_position=excluded.edit_position,
+                edit_reason=excluded.edit_reason
+        """, (
+            media_id, frame_index, timestamp_s, thumbnail_path, description, tags,
+            content_type, focus_score, exposure, stability, audio_quality,
+            atmosphere, energy, edit_position, edit_reason,
+        ))
 
 
-def get_frames(media_id: int) -> list[dict]:
+def get_frames(media_id: int) -> List[Dict]:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM frames WHERE media_id = ? ORDER BY frame_index",
@@ -312,10 +459,10 @@ def delete_frames(media_id: int):
 def _build_filter_clause(
     min_duration: float = 0,
     max_duration: float = 99999,
-    lang: str | None = None,
-    rating: str | None = None,
-    media_type: str | None = None,
-) -> tuple[str, list]:
+    lang: Optional[str] = None,
+    rating: Optional[str] = None,
+    media_type: Optional[str] = None,
+) -> Tuple[str, List]:
     """Build WHERE clause and params for common filters."""
     clauses = ["duration_s >= ?", "duration_s <= ?"]
     params: list = [min_duration, max_duration]
@@ -348,7 +495,7 @@ def get_media_filtered(
     limit: int = 50,
     sort: str = "date",
     **filters,
-) -> tuple[list[dict], int]:
+) -> Tuple[List[Dict], int]:
     """Filtered + sorted media list with total count."""
     where, params = _build_filter_clause(**filters)
     order = SORT_MAP.get(sort, "id")

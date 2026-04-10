@@ -12,6 +12,8 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional, Tuple
+from typing import Dict, List
 
 import config
 import db
@@ -41,7 +43,7 @@ def _unload_ollama_model(model: str):
         print(f"  Warning: could not unload {model}: {e}")
 
 
-def probe(path: str) -> dict | None:
+def probe(path: str) -> Optional[Dict]:
     cmd = [
         "ffprobe", "-v", "quiet",
         "-print_format", "json",
@@ -199,7 +201,7 @@ def needs_proxy(path: str) -> bool:
         return False
 
 
-def generate_proxy(media_id: int, path: str) -> str | None:
+def generate_proxy(media_id: int, path: str) -> Optional[str]:
     """Generate a 720p H.264 proxy for browser playback. Returns proxy path or None."""
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
@@ -225,7 +227,52 @@ def generate_proxy(media_id: int, path: str) -> str | None:
         return None
 
 
-def process_file(path: Path, skip_vision: bool, existing: dict | None = None) -> dict:
+def _db_path_params(path: Path) -> Tuple[str, str]:
+    abs_path = str(path)
+    rel_path = db.to_relative(abs_path)
+    return abs_path, rel_path
+
+
+def _get_media_row_for_path(path: Path) -> Optional[Dict]:
+    abs_path, rel_path = _db_path_params(path)
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM media WHERE path=? OR path=?",
+            (abs_path, rel_path),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def _get_media_id_for_path(path: Path) -> Optional[int]:
+    abs_path, rel_path = _db_path_params(path)
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM media WHERE path=? OR path=?",
+            (abs_path, rel_path),
+        ).fetchone()
+        return row[0] if row else None
+
+
+def _apply_vision_to_frame_data(frame_data: List[Dict], frame_results: List[Dict]) -> List[float]:
+    scores = []
+    for fd, vr in zip(frame_data, frame_results):
+        fd["description"] = vr.get("description", "")
+        fd["tags"] = ",".join(vr.get("tags", []))
+        fd["content_type"] = vr.get("content_type")
+        fd["focus_score"] = vr.get("focus_score")
+        fd["exposure"] = vr.get("exposure")
+        fd["stability"] = vr.get("stability")
+        fd["audio_quality"] = vr.get("audio_quality")
+        fd["atmosphere"] = vr.get("atmosphere")
+        fd["energy"] = vr.get("energy")
+        fd["edit_position"] = vr.get("edit_position")
+        fd["edit_reason"] = vr.get("edit_reason")
+        if fd.get("focus_score") is not None:
+            scores.append(db.compute_editability(fd))
+    return scores
+
+
+def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None) -> Dict:
     """
     Process one media file.
     If `existing` is provided (refresh mode), skip transcription and reuse existing
@@ -238,7 +285,7 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
         return {}
 
     record = {
-        "path": str(path),
+        "path": db.to_relative(str(path)),
         "filename": path.name,
         "ext": path.suffix.lower(),
         **meta,
@@ -269,22 +316,29 @@ def process_file(path: Path, skip_vision: bool, existing: dict | None = None) ->
     is_video = path.suffix.lower() in VIDEO_EXT
     if is_video and meta["duration_s"] > 0:
         print(" >thumb", end="", flush=True)
-        record["thumbnail_path"] = frm.extract_thumbnail(str(path), meta["duration_s"])
+        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"])
+        record["thumbnail_path"] = db.to_relative(thumb_path) if thumb_path else None
 
     # Frame extraction (video only) — persistent thumbnails + DB records
     if is_video and meta["duration_s"] > 0:
         print(" >frames", end="", flush=True)
         frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30)
+        for frame in frame_data:
+            if frame.get("thumbnail_path"):
+                frame["thumbnail_path"] = db.to_relative(frame["thumbnail_path"])
         record["_frames"] = frame_data  # pass to caller for DB insert
 
         # Vision description (optional)
         if not skip_vision and frame_data:
             print(" >llava", end="", flush=True)
-            frame_paths_for_vision = [f["thumbnail_path"] for f in frame_data]
+            frame_paths_for_vision = [
+                db.resolve_path(f["thumbnail_path"]) if f.get("thumbnail_path") else ""
+                for f in frame_data
+            ]
             frame_results = vis.describe_frames(frame_paths_for_vision)
-            for fd, vr in zip(frame_data, frame_results):
-                fd["description"] = vr.get("description", "")
-                fd["tags"] = ",".join(vr.get("tags", []))
+            scores = _apply_vision_to_frame_data(frame_data, frame_results)
+            if scores:
+                record["editability_score"] = max(scores)
             # Also store legacy frame_tags for backwards compat
             record["frame_tags"] = vis.frames_to_json(frame_results)
 
@@ -327,7 +381,7 @@ def _run_vision_only(args):
     ok, halted = 0, False
     for vi, (mid, frames_list) in enumerate(media_frames.items(), 1):
         fname = frames_list[0]["filename"]
-        frame_paths = [f["thumbnail_path"] for f in frames_list]
+        frame_paths = [db.resolve_path(f["thumbnail_path"]) for f in frames_list]
 
         print(f"[{vi}/{len(media_frames)}] {fname} ({len(frame_paths)} frames) >vision", end="", flush=True)
         v_start = _time.time()
@@ -369,8 +423,28 @@ def _run_vision_only(args):
                 desc = vr.get("description", "")
                 tags = ",".join(vr.get("tags", []))
                 conn.execute(
-                    "UPDATE frames SET description=?, tags=? WHERE media_id=? AND frame_index=?",
-                    (desc, tags, f_info["id"], f_info["frame_index"])
+                    """
+                    UPDATE frames
+                    SET description=?, tags=?, content_type=?, focus_score=?, exposure=?,
+                        stability=?, audio_quality=?, atmosphere=?, energy=?,
+                        edit_position=?, edit_reason=?
+                    WHERE media_id=? AND frame_index=?
+                    """,
+                    (
+                        desc,
+                        tags,
+                        vr.get("content_type"),
+                        vr.get("focus_score"),
+                        vr.get("exposure"),
+                        vr.get("stability"),
+                        vr.get("audio_quality"),
+                        vr.get("atmosphere"),
+                        vr.get("energy"),
+                        vr.get("edit_position"),
+                        vr.get("edit_reason"),
+                        f_info["id"],
+                        f_info["frame_index"],
+                    )
                 )
                 # Auto tags
                 for tag_name in vr.get("tags", []):
@@ -380,6 +454,12 @@ def _run_vision_only(args):
             # Update legacy frame_tags
             frame_tags_json = vis.frames_to_json(frame_results)
             conn.execute("UPDATE media SET frame_tags=? WHERE id=?", (frame_tags_json, mid))
+            scores = _apply_vision_to_frame_data(frames_list, frame_results)
+            if scores:
+                conn.execute(
+                    "UPDATE media SET editability_score=? WHERE id=?",
+                    (max(scores), mid),
+                )
 
         v_elapsed = _time.time() - v_start
         print(f" [{v_elapsed:.1f}s] [OK]")
@@ -396,6 +476,11 @@ def main():
     parser.add_argument("--skip-vision", action="store_true", help="Skip llava frame description")
     parser.add_argument("--refresh", action="store_true", help="Re-process already-indexed files (thumbnail + vision)")
     parser.add_argument("--vision-only", action="store_true", help="Only run vision on frames with empty descriptions (resume after halt)")
+    parser.add_argument(
+        "--migrate-relative",
+        action="store_true",
+        help="將 DB 中所有絕對路徑轉為相對路徑（對 ARKIV_PROJECT_ROOT）",
+    )
     parser.add_argument("--db", default="", help="Path to SQLite DB (default: media.db next to ingest.py)")
     args = parser.parse_args()
 
@@ -403,6 +488,10 @@ def main():
         db.DB_PATH = Path(args.db)
 
     db.init_db()
+
+    if args.migrate_relative:
+        db.migrate_to_relative()
+        return
 
     # ── Vision-only mode: patch missing vision descriptions ──────────────
     if args.vision_only:
@@ -460,9 +549,7 @@ def main():
 
         existing = None
         if already and args.refresh:
-            with db.get_conn() as conn:
-                row = conn.execute("SELECT * FROM media WHERE path=?", (str(f),)).fetchone()
-                existing = dict(row) if row else None
+            existing = _get_media_row_for_path(f)
 
         print(f"[{i}/{len(files)}] {f.name}", end="", flush=True)
         file_start = _time.time()
@@ -476,9 +563,8 @@ def main():
                 # Store frame records (without vision descriptions yet)
                 if frames:
                     with db.get_conn() as conn:
-                        row = conn.execute("SELECT id FROM media WHERE path=?", (str(f),)).fetchone()
-                        if row:
-                            mid = row[0]
+                        mid = _get_media_id_for_path(f)
+                        if mid:
                             db.delete_frames(mid)
                             for fd in frames:
                                 db.upsert_frame(
@@ -488,6 +574,15 @@ def main():
                                     thumbnail_path=fd.get("thumbnail_path"),
                                     description=fd.get("description", ""),
                                     tags=fd.get("tags", ""),
+                                    content_type=fd.get("content_type"),
+                                    focus_score=fd.get("focus_score"),
+                                    exposure=fd.get("exposure"),
+                                    stability=fd.get("stability"),
+                                    audio_quality=fd.get("audio_quality"),
+                                    atmosphere=fd.get("atmosphere"),
+                                    energy=fd.get("energy"),
+                                    edit_position=fd.get("edit_position"),
+                                    edit_reason=fd.get("edit_reason"),
                                 )
                     # Queue for Phase 2 vision
                     if need_vision:
@@ -525,7 +620,7 @@ def main():
             print(f"[{vi}/{len(phase1_results)}] {fname} >vision", end="", flush=True)
             v_start = _time.time()
             try:
-                frame_paths = [fd["thumbnail_path"] for fd in video_frames]
+                frame_paths = [db.resolve_path(fd["thumbnail_path"]) for fd in video_frames]
                 # Phase 2a: primary vision model
                 frame_results = vis.describe_frames(frame_paths)
                 failed_indices = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
@@ -545,9 +640,7 @@ def main():
                     finally:
                         vis.VISION_MODEL = original_model
 
-                for fd, vr in zip(video_frames, frame_results):
-                    fd["description"] = vr.get("description", "")
-                    fd["tags"] = ",".join(vr.get("tags", []))
+                scores = _apply_vision_to_frame_data(video_frames, frame_results)
 
                 # Vision fail after both phases → halt
                 still_failed = sum(1 for vr in frame_results if vr.get("error") or not vr.get("description"))
@@ -563,30 +656,50 @@ def main():
 
                 # Update DB: frames + media.frame_tags
                 with db.get_conn() as conn:
-                    row = conn.execute("SELECT id FROM media WHERE path=?", (fpath,)).fetchone()
-                    if row:
-                        mid = row[0]
+                    mid = _get_media_id_for_path(Path(fpath))
+                    if mid:
                         for fd in video_frames:
                             conn.execute(
-                                "UPDATE frames SET description=?, tags=? WHERE media_id=? AND frame_index=?",
-                                (fd.get("description", ""), fd.get("tags", ""), mid, fd["index"])
+                                """
+                                UPDATE frames
+                                SET description=?, tags=?, content_type=?, focus_score=?, exposure=?,
+                                    stability=?, audio_quality=?, atmosphere=?, energy=?,
+                                    edit_position=?, edit_reason=?
+                                WHERE media_id=? AND frame_index=?
+                                """,
+                                (
+                                    fd.get("description", ""),
+                                    fd.get("tags", ""),
+                                    fd.get("content_type"),
+                                    fd.get("focus_score"),
+                                    fd.get("exposure"),
+                                    fd.get("stability"),
+                                    fd.get("audio_quality"),
+                                    fd.get("atmosphere"),
+                                    fd.get("energy"),
+                                    fd.get("edit_position"),
+                                    fd.get("edit_reason"),
+                                    mid,
+                                    fd["index"],
+                                )
                             )
                         frame_tags_json = vis.frames_to_json(frame_results)
-                        conn.execute("UPDATE media SET frame_tags=? WHERE id=?", (frame_tags_json, mid))
+                        conn.execute(
+                            "UPDATE media SET frame_tags=?, editability_score=? WHERE id=?",
+                            (frame_tags_json, max(scores) if scores else None, mid),
+                        )
 
                 v_elapsed = _time.time() - v_start
                 print(f" [{v_elapsed:.1f}s] [OK]")
                 vision_ok += 1
                 # Write auto tags from vision
-                with db.get_conn() as conn:
-                    row = conn.execute("SELECT id FROM media WHERE path=?", (fpath,)).fetchone()
-                    if row:
-                        mid = row[0]
-                        for fd in video_frames:
-                            for tag_name in fd.get("tags", "").split(","):
-                                tag_name = tag_name.strip()
-                                if tag_name and tag_name != "```":
-                                    db.add_tag(mid, tag_name, source="auto")
+                mid = _get_media_id_for_path(Path(fpath))
+                if mid:
+                    for fd in video_frames:
+                        for tag_name in fd.get("tags", "").split(","):
+                            tag_name = tag_name.strip()
+                            if tag_name and tag_name != "```":
+                                db.add_tag(mid, tag_name, source="auto")
             except Exception as e:
                 print(f" [ERROR: {e}]")
                 vision_fail += 1
@@ -602,15 +715,16 @@ def main():
     with db.get_conn() as conn:
         all_media = conn.execute("SELECT id, path FROM media").fetchall()
     for mid, mpath in all_media:
+        resolved_path = db.resolve_path(mpath)
         proxy_path = config.PROXIES_DIR / f"{mid}.mp4"
         if proxy_path.exists():
             proxy_skip += 1
             continue
-        if not Path(mpath).suffix.lower() in VIDEO_EXT:
+        if not Path(resolved_path).suffix.lower() in VIDEO_EXT:
             continue
-        if needs_proxy(mpath):
-            print(f"  [{mid}] {Path(mpath).name} >proxy", end="", flush=True)
-            result = generate_proxy(mid, mpath)
+        if needs_proxy(resolved_path):
+            print(f"  [{mid}] {Path(resolved_path).name} >proxy", end="", flush=True)
+            result = generate_proxy(mid, resolved_path)
             if result:
                 sz = Path(result).stat().st_size / (1024 * 1024)
                 print(f" [OK {sz:.0f}MB]")
