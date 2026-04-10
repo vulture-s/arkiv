@@ -481,6 +481,7 @@ def main():
         action="store_true",
         help="將 DB 中所有絕對路徑轉為相對路徑（對 ARKIV_PROJECT_ROOT）",
     )
+    parser.add_argument("--recursive", "-r", action="store_true", help="Recursively scan subdirectories")
     parser.add_argument("--db", default="", help="Path to SQLite DB (default: media.db next to ingest.py)")
     args = parser.parse_args()
 
@@ -509,10 +510,16 @@ def main():
         print(f"Error: {media_dir} does not exist")
         sys.exit(1)
 
-    files = sorted(
-        f for f in media_dir.iterdir()
-        if f.is_file() and f.suffix.lower() in SUPPORTED
-    )
+    if args.recursive:
+        files = sorted(
+            f for f in media_dir.rglob("*")
+            if f.is_file() and f.suffix.lower() in SUPPORTED
+        )
+    else:
+        files = sorted(
+            f for f in media_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in SUPPORTED
+        )
 
     total = len(files)
     if args.limit and not args.refresh:
