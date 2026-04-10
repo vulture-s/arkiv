@@ -28,8 +28,8 @@ def test_postprocess_returns_empty_when_average_no_speech_too_high(monkeypatch):
         {"text": "幾乎沒有語音", "no_speech_prob": 0.9, "start": 0.0, "end": 0.8},
         {"text": "還是沒有語音", "no_speech_prob": 0.7, "start": 0.8, "end": 1.7},
     ]
-    cleaned, lang, timed_segments = transcribe._postprocess("原始文字", "zh", segments, "zh")
-    assert (cleaned, lang, timed_segments) == ("", "zh", [])
+    cleaned, lang, timed_segments, words = transcribe._postprocess("原始文字", "zh", segments, "zh")
+    assert (cleaned, lang, timed_segments, words) == ("", "zh", [], [])
 
 
 def test_postprocess_filters_bad_segments_but_keeps_threshold_boundary(monkeypatch):
@@ -69,13 +69,14 @@ def test_postprocess_filters_bad_segments_but_keeps_threshold_boundary(monkeypat
             "end": 6.0,
         },
     ]
-    cleaned, _, timed_segments = transcribe._postprocess("原始文字", "zh", segments, "zh")
+    cleaned, _, timed_segments, words = transcribe._postprocess("原始文字", "zh", segments, "zh")
     assert cleaned == "這段應該保留，因為它剛好在邊界值。"
     assert timed_segments == [{
         "start": 0.0,
         "end": 2.0,
         "text": "這段應該保留，因為它剛好在邊界值。",
     }]
+    assert words == []
 
 
 def test_postprocess_rejects_repetitive_text(monkeypatch):
@@ -90,9 +91,10 @@ def test_postprocess_rejects_repetitive_text(monkeypatch):
         "start": 0.0,
         "end": 3.2,
     }]
-    cleaned, _, timed_segments = transcribe._postprocess(repetitive, "zh", segments, "zh")
+    cleaned, _, timed_segments, words = transcribe._postprocess(repetitive, "zh", segments, "zh")
     assert cleaned == ""
     assert timed_segments == []
+    assert words == []
 
 
 def test_postprocess_removes_char_loops_and_polishes(monkeypatch):
@@ -111,7 +113,7 @@ def test_postprocess_removes_char_loops_and_polishes(monkeypatch):
         "start": 0.0,
         "end": 4.0,
     }]
-    cleaned, _, timed_segments = transcribe._postprocess(
+    cleaned, _, timed_segments, words = transcribe._postprocess(
         "字幕由字幕由字幕由字幕由，這是一段正常補充。",
         "zh",
         segments,
@@ -123,6 +125,7 @@ def test_postprocess_removes_char_loops_and_polishes(monkeypatch):
         "end": 4.0,
         "text": "字幕由字幕由字幕由字幕由，這是一段正常補充。",
     }]
+    assert words == []
 
 
 def test_postprocess_filters_configured_words_from_text_and_segments(monkeypatch):
@@ -137,7 +140,7 @@ def test_postprocess_filters_configured_words_from_text_and_segments(monkeypatch
         "start": 0.0,
         "end": 1.5,
     }]
-    cleaned, _, timed_segments = transcribe._postprocess(
+    cleaned, _, timed_segments, words = transcribe._postprocess(
         "呃這是測試詞保留內容",
         "zh",
         segments,
@@ -149,3 +152,4 @@ def test_postprocess_filters_configured_words_from_text_and_segments(monkeypatch
         "end": 1.5,
         "text": "這是保留內容",
     }]
+    assert words == []

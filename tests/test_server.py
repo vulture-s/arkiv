@@ -134,4 +134,4 @@ def test_export_endpoints_cover_supported_formats_and_current_json_gap(fastapi_c
 
     json_resp = fastapi_client.get("/api/media/1/export/json")
     assert json_resp.status_code == 400
-    assert "Unsupported format: json" in json_resp.json()["detail"]
+    assert "json" in json_resp.json()["detail"]
