@@ -3,13 +3,14 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import config
 
 THUMBNAILS_DIR = config.THUMBNAILS_DIR
 
 
-def extract_thumbnail(video_path: str, duration_s: float) -> str | None:
+def extract_thumbnail(video_path: str, duration_s: float) -> Optional[str]:
     """
     Extract one representative frame (50% position) and save permanently
     to thumbnails/{stem}.jpg. Returns saved path or None on failure.
@@ -30,28 +31,45 @@ def extract_thumbnail(video_path: str, duration_s: float) -> str | None:
     return str(out) if out.exists() else None
 
 
-def extract_frames(video_path: str, duration_s: float, fps: float) -> list[dict]:
+def _adaptive_frame_count(duration_s: float) -> int:
+    if duration_s < 2:
+        return 1
+    if duration_s <= 10:
+        return 3
+    if duration_s <= 60:
+        return 5
+    return 5 + max(1, int((duration_s - 60) / 30))
+
+
+def extract_frames(video_path: str, duration_s: float, fps: float) -> List[Dict]:
     """
     Extract representative frames from a video and persist thumbnails.
     Returns list of {index, timestamp_s, thumbnail_path}.
-    - Short clip (< 60s): 3 fixed frames at 25%, 50%, 75%
-    - Long clip (>= 60s): ffmpeg scene detect threshold=0.3
+    - Short clip: fixed evenly-spaced frames
+    - Long clip: scene detect with adaptive cap, fallback to fixed frames
     """
     THUMBNAILS_DIR.mkdir(exist_ok=True)
     stem = Path(video_path).stem
+    n_frames = _adaptive_frame_count(duration_s)
 
     if duration_s < 60:
-        results = _extract_fixed_persistent(video_path, duration_s, fps, stem)
+        results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames)
     else:
-        results = _extract_scene_persistent(video_path, duration_s, stem)
+        results = _extract_scene_persistent(video_path, duration_s, stem, max_frames=n_frames)
         if not results:
-            results = _extract_fixed_persistent(video_path, duration_s, fps, stem)
+            results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames)
 
     return results
 
 
-def _extract_fixed_persistent(video_path: str, duration_s: float, fps: float, stem: str) -> list[dict]:
-    positions = [0.25, 0.5, 0.75]
+def _extract_fixed_persistent(
+    video_path: str,
+    duration_s: float,
+    fps: float,
+    stem: str,
+    n_frames: int = 3,
+) -> List[Dict]:
+    positions = [float(i) / float(n_frames + 1) for i in range(1, n_frames + 1)]
     results = []
     for i, pct in enumerate(positions):
         t = duration_s * pct
@@ -72,8 +90,13 @@ def _extract_fixed_persistent(video_path: str, duration_s: float, fps: float, st
     return results
 
 
-def _extract_scene_persistent(video_path: str, duration_s: float, stem: str) -> list[dict]:
-    """Use scene detection, then persist top 3 frames."""
+def _extract_scene_persistent(
+    video_path: str,
+    duration_s: float,
+    stem: str,
+    max_frames: int = 5,
+) -> List[Dict]:
+    """Use scene detection, then persist top scene-change frames."""
     tmp_dir = tempfile.mkdtemp(prefix="media_frames_")
     # First pass: detect scene timestamps
     cmd = [
@@ -96,13 +119,12 @@ def _extract_scene_persistent(video_path: str, duration_s: float, stem: str) -> 
     if not timestamps:
         return []
 
-    # Pick up to 3 evenly spaced scene changes
-    if len(timestamps) > 3:
-        step = len(timestamps) // 3
-        timestamps = [timestamps[step * i] for i in range(3)]
+    if len(timestamps) > max_frames:
+        step = float(len(timestamps)) / float(max_frames)
+        timestamps = [timestamps[int(step * i)] for i in range(max_frames)]
 
     results = []
-    for i, t in enumerate(timestamps[:3]):
+    for i, t in enumerate(timestamps[:max_frames]):
         out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
         if not out.exists():
             cmd = [

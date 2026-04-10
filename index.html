@@ -372,6 +372,16 @@ function rBadge(r) {
 }
 function tagHtml(tags) { return (tags||[]).map(t=>`<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${esc(t.name)}</span>`).join(' '); }
 function thumbUrl(rec) { if(rec.thumbnail_path){ return `/thumbnails/${rec.thumbnail_path.replace(/\\/g,'/').split('/').pop()}`; } return null; }
+function scoreBadge(score) {
+  if (score == null) return '';
+  var color = score >= 80 ? 'background:#14532d;color:#bbf7d0' : score >= 60 ? 'background:#78350f;color:#fde68a' : 'background:#7f1d1d;color:#fecaca';
+  return `<span class="rounded px-1.5 py-0.5 text-2xs font-semibold" style="${color}">${Math.round(score)}</span>`;
+}
+function focusStars(score) {
+  if (score == null) return '-';
+  var filled = Math.max(0, Math.min(5, parseInt(score, 10) || 0));
+  return '★'.repeat(filled) + '☆'.repeat(5 - filled);
+}
 
 var videoSvg = '<svg class="w-8 h-8 text-txt-tertiary/30" fill="currentColor" viewBox="0 0 20 20" style="width:32px;height:32px"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"/></svg>';
 var audioSvg = '<svg class="w-8 h-8 text-warning/40" fill="currentColor" viewBox="0 0 20 20" style="width:32px;height:32px"><path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"/></svg>';
@@ -467,6 +477,7 @@ function renderGrid() {
     var badge = rBadge(rec.rating);
     var cardPortrait = rec.height && rec.width && rec.height > rec.width;
     var score = rec.score!=null ? '<div class="absolute top-1 right-1 bg-accent/80 text-white text-2xs px-1.5 rounded font-medium">'+Math.round(rec.score*100)+'%</div>' : '';
+    var editability = rec.editability_score != null ? '<div class="absolute top-1 right-12" style="z-index:3">' + scoreBadge(rec.editability_score) + '</div>' : '';
     var orientBadge = '<div class="absolute top-1 right-1 bg-black/70 text-white text-2xs px-1 rounded" style="z-index:3">' + (cardPortrait ? '9:16' : '16:9') + '</div>';
     var sel = rec.id===state.selectedId ? ' border-accent/40 ring-1 ring-accent/20' : ' border-panel-border';
     return `<div class="media-card rounded-lg bg-surface-50 border${sel} cursor-pointer overflow-hidden ${isNg?'ng-card':''}" onclick="selectMedia(${rec.id})">
@@ -475,7 +486,7 @@ function renderGrid() {
         ${thumb ? `<img src="${thumb}" class="absolute inset-0 w-full h-full object-cover" style="z-index:1" onerror="this.style.display='none'"/>` : ''}
         <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" style="z-index:2"></div>
         <div class="absolute bottom-1 right-1 bg-black/70 text-white text-2xs px-1 rounded font-mono">${dur}</div>
-        ${badge ? `<div class="absolute top-1 left-1" style="z-index:3">${badge}</div>` : ''}${orientBadge}${score}
+        ${badge ? `<div class="absolute top-1 left-1" style="z-index:3">${badge}</div>` : ''}${orientBadge}${score}${editability}
       </div>
       <div class="p-2">
         <div class="text-xs font-medium truncate card-title">${esc(rec.filename)}</div>
@@ -531,6 +542,33 @@ async function renderInspector() {
       <div style="padding:6px 8px;flex:1;min-width:0"><div class="text-2xs font-semibold" style="color:var(--txt-secondary)">Frame ${f.frame_index+1} <span style="color:var(--txt-tertiary);font-weight:400">${fTime}</span></div><div class="text-2xs mt-0.5 truncate" style="color:var(--txt-primary)">${fDesc}</div></div>
     </div>`;
   }).join('');
+  var analysisFrame = (rec.frames || []).find(function(f) { return f.focus_score != null || f.content_type || f.edit_reason; }) || (rec.frames || [])[0] || null;
+  var aiAnalysisHtml = analysisFrame ? `
+    <div class="px-3 mt-3">
+      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">AI 分析</div>
+      <table class="w-full text-xs"><tbody>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary w-24">內容類型</td><td class="py-1">${esc(analysisFrame.content_type || '-')}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">焦點分數</td><td class="py-1">${focusStars(analysisFrame.focus_score)}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">曝光</td><td class="py-1">${esc(analysisFrame.exposure || '-')}</td></tr>
+        <tr class="border-b border-panel-border"><td class="py-1 text-txt-tertiary">穩定度</td><td class="py-1">${esc(analysisFrame.stability || '-')}</td></tr>
+        <tr><td class="py-1 text-txt-tertiary">音訊品質</td><td class="py-1">${esc(analysisFrame.audio_quality || '-')}</td></tr>
+      </tbody></table>
+    </div>` : '';
+  var editAdviceHtml = analysisFrame ? `
+    <div class="px-3 mt-3">
+      <div class="text-2xs font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">編輯建議</div>
+      <div class="bg-surface-50 rounded p-2 text-xs" style="border:1px solid var(--panel-border)">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-txt-secondary">${esc(analysisFrame.edit_position || '-')}</span>
+          ${scoreBadge(rec.editability_score)}
+        </div>
+        <div class="text-txt-primary">${esc(analysisFrame.edit_reason || '無')}</div>
+        <div class="mt-2 flex gap-2 text-2xs text-txt-tertiary">
+          <span>氛圍：${esc(analysisFrame.atmosphere || '-')}</span>
+          <span>節奏：${esc(analysisFrame.energy || '-')}</span>
+        </div>
+      </div>
+    </div>` : '';
   var isPortrait = rec.height && rec.width && rec.height > rec.width;
   var previewRatio = isPortrait ? (rec.width + '/' + rec.height) : '16/9';
 
@@ -603,6 +641,9 @@ async function renderInspector() {
         <div class="tag-autocomplete" id="tagAutocomplete"></div>
       </div>
     </div>
+
+    ${aiAnalysisHtml}
+    ${editAdviceHtml}
 
     ${framesHtml ? `<div class="px-3 mt-3">
       <div class="flex items-center justify-between mb-1.5">
