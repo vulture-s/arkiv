@@ -300,7 +300,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None)
     if meta["has_audio"] and not existing:
         print(" >whisper", end="", flush=True)
         text, lang, segments, words = tr.transcribe(str(path))
-        record["transcript"] = text or None
+        record["transcript"] = text if text is not None else ""
         record["lang"] = lang or None
         if segments:
             import json
