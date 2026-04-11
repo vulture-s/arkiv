@@ -393,7 +393,7 @@ def _run_vision_only(args):
         # Phase 2: fallback model for failed frames
         if failed_indices:
             print(f" [Phase 1: {len(failed_indices)} failed, trying fallback]", end="", flush=True)
-            fallback_model = "moondream2:latest"
+            fallback_model = "minicpm-v:latest"
             original_model = vis.VISION_MODEL
             try:
                 vis.VISION_MODEL = fallback_model
@@ -635,7 +635,7 @@ def main():
                 # Phase 2b: fallback model for failed frames
                 if failed_indices:
                     print(f" [Phase 2a: {len(failed_indices)} failed, trying fallback]", end="", flush=True)
-                    fallback_model = "moondream2:latest"
+                    fallback_model = "minicpm-v:latest"
                     original_model = vis.VISION_MODEL
                     try:
                         vis.VISION_MODEL = fallback_model
