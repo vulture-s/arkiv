@@ -1,6 +1,7 @@
 from __future__ import annotations
 import base64
 import json
+import re
 import urllib.request
 from typing import Dict, List
 
@@ -26,6 +27,15 @@ PROMPT = (
     "規則：只描述清楚可見的內容，不要推測。所有欄位必填。"
 )
 
+LIGHT_PROMPT = (
+    "請用繁體中文分析這個影片畫面，回傳嚴格的 JSON 格式（不要加 markdown 標記）：\n"
+    '{"description": "一句話描述可見內容", "tags": ["標籤1","標籤2","標籤3"],'
+    ' "focus_score": 1到5的整數, "exposure": "dark|normal|over 擇一",'
+    ' "stability": "穩定|輕微晃動|嚴重晃動 擇一", "audio_quality": "清晰|嘈雜|靜音 擇一"}\n'
+    "規則：只描述可見內容，不推測。所有欄位必填。"
+)
+
+_LIGHT_FIELDS = ("focus_score", "exposure", "stability", "audio_quality")
 
 _VISION_FIELDS = (
     "content_type",
@@ -49,13 +59,41 @@ def _empty_result() -> Dict:
 
 def describe_frames(frame_paths: List[str]) -> List[Dict]:
     """
-    Run llava:7b on each frame. Returns list of {file, description, tags}.
+    Representative frame strategy:
+    - Middle frame: full 12-field analysis
+    - Other frames: light 6-field + inherit media-level attributes
+    - Skip unusable frames (black/white/blurry)
     """
+    if not frame_paths:
+        return []
+
+    rep_idx = len(frame_paths) // 2
+    rep_result = _describe_one(frame_paths[rep_idx])
+    rep_result["file"] = frame_paths[rep_idx]
+
+    inheritable = ("content_type", "atmosphere", "energy", "edit_position", "edit_reason")
+
     results = []
-    for path in frame_paths:
-        result = _describe_one(path)
-        result["file"] = path
-        results.append(result)
+    for i, path in enumerate(frame_paths):
+        if i == rep_idx:
+            results.append(rep_result)
+            continue
+
+        if not _is_usable_frame(path):
+            skip_result = _empty_result()
+            skip_result["file"] = path
+            skip_result["description"] = "[skipped: unusable frame]"
+            for k in inheritable:
+                skip_result[k] = rep_result.get(k)
+            results.append(skip_result)
+            continue
+
+        light = _describe_one_light(path)
+        light["file"] = path
+        for k in inheritable:
+            light[k] = rep_result.get(k)
+        results.append(light)
+
     return results
 
 
@@ -68,71 +106,101 @@ def _normalize_result(parsed: Dict) -> Dict:
     return result
 
 
-def _describe_one(img_path: str, max_retries: int = 2) -> Dict:
+def _call_vision(img_path, prompt, max_retries=2):
+    """Send image to Ollama vision, return raw response text."""
     with open(img_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
-
     payload = json.dumps({
         "model": VISION_MODEL,
-        "prompt": PROMPT,
+        "prompt": prompt,
         "images": [b64],
         "stream": False,
     }).encode()
-
     for attempt in range(max_retries):
         try:
             req = urllib.request.Request(
-                OLLAMA_URL,
-                data=payload,
+                OLLAMA_URL, data=payload,
                 headers={"Content-Type": "application/json"},
             )
             resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
             raw = resp.get("response", "").strip()
-
-            # Strip markdown code fences
-            import re
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw)
-            raw = raw.strip()
-
-            # Try JSON parse
-            try:
-                parsed = json.loads(raw)
-                result = _normalize_result(parsed)
-                desc = result.get("description", "")
-                # Retry if description is empty or garbage
-                if not desc or desc.startswith("```"):
-                    if attempt < max_retries - 1:
-                        continue
-                return result
-            except json.JSONDecodeError:
-                pass
-
-            # Fallback: free-text parse
-            lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("```")]
-            description = lines[0] if lines else ""
-            tags = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
-            if description:
-                result = _empty_result()
-                result["description"] = description
-                result["tags"] = tags
-                return result
-            # Empty result — retry
+            return raw.strip()
+        except Exception:
             if attempt < max_retries - 1:
                 continue
-            result = _empty_result()
-            result["description"] = description
-            result["tags"] = tags
-            return result
-        except Exception as e:
-            if attempt < max_retries - 1:
-                continue
-            print(f" [VISION FAIL: {e}]", end="", flush=True)
-            result = _empty_result()
-            result["error"] = str(e)
-            return result
+            raise
+    return ""
 
-    return _empty_result()
+
+def _describe_one(img_path, max_retries=2):
+    try:
+        raw = _call_vision(img_path, PROMPT, max_retries)
+    except Exception as e:
+        print(f" [VISION FAIL: {e}]", end="", flush=True)
+        result = _empty_result()
+        result["error"] = str(e)
+        return result
+
+    # Try JSON parse
+    try:
+        parsed = json.loads(raw)
+        result = _normalize_result(parsed)
+        desc = result.get("description", "")
+        if not desc or desc.startswith("```"):
+            return result
+        return result
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: free-text parse
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("```")]
+    description = lines[0] if lines else ""
+    tags = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
+    result = _empty_result()
+    result["description"] = description
+    result["tags"] = tags
+    return result
+
+
+def _describe_one_light(img_path, max_retries=2):
+    """Lightweight vision: description + tags + 4 quality fields only."""
+    try:
+        raw = _call_vision(img_path, LIGHT_PROMPT, max_retries)
+    except Exception as e:
+        print(f" [VISION-LIGHT FAIL: {e}]", end="", flush=True)
+        return _empty_result()
+    try:
+        parsed = json.loads(raw)
+        result = _empty_result()
+        result["description"] = parsed.get("description", "")
+        result["tags"] = parsed.get("tags", []) or []
+        for field in _LIGHT_FIELDS:
+            result[field] = parsed.get(field)
+        return result
+    except json.JSONDecodeError:
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("```")]
+        result = _empty_result()
+        result["description"] = lines[0] if lines else ""
+        result["tags"] = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
+        return result
+
+
+def _is_usable_frame(img_path):
+    """Skip black/white/blurry frames before sending to LLM."""
+    try:
+        from PIL import Image
+        import numpy as np
+        img = np.array(Image.open(img_path).convert("L").resize((160, 90)))
+        mean_brightness = float(img.mean())
+        if mean_brightness < 10 or mean_brightness > 245:
+            return False
+        var_x = float(np.var(np.diff(img.astype(float), axis=0)))
+        var_y = float(np.var(np.diff(img.astype(float), axis=1)))
+        return (var_x + var_y) > 30
+    except Exception:
+        return True
 
 
 def frames_to_json(results: List[Dict]) -> str:

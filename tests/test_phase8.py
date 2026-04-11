@@ -184,3 +184,60 @@ def test_scenes_endpoint(fastapi_client, sample_record):
     assert data["total"] == 1
     assert data["scenes"][0]["content_type"] == "Establishing"
     assert data["scenes"][0]["thumbnail_url"].endswith("/scene_frame0.jpg")
+
+
+def test_is_usable_frame_rejects_black(tmp_path):
+    vis = importlib.import_module("vision")
+    from PIL import Image
+    black = Image.new("L", (320, 180), 0)
+    p = tmp_path / "black.jpg"
+    black.save(str(p))
+    assert vis._is_usable_frame(str(p)) is False
+
+
+def test_is_usable_frame_accepts_normal(tmp_path):
+    vis = importlib.import_module("vision")
+    from PIL import Image
+    import numpy as np
+    arr = np.random.randint(50, 200, (180, 320), dtype=np.uint8)
+    img = Image.fromarray(arr, "L")
+    p = tmp_path / "normal.jpg"
+    img.save(str(p))
+    assert vis._is_usable_frame(str(p)) is True
+
+
+def test_describe_frames_representative_strategy(monkeypatch):
+    vis = importlib.import_module("vision")
+    calls = []
+
+    def mock_full(path, max_retries=2):
+        calls.append(("full", path))
+        r = vis._empty_result()
+        r["description"] = "full desc"
+        r["content_type"] = "Talking-Head"
+        r["atmosphere"] = "溫馨"
+        r["energy"] = "中"
+        r["edit_position"] = "開場"
+        r["edit_reason"] = "建立場景"
+        return r
+
+    def mock_light(path, max_retries=2):
+        calls.append(("light", path))
+        r = vis._empty_result()
+        r["description"] = "light desc"
+        r["focus_score"] = 3
+        return r
+
+    monkeypatch.setattr(vis, "_describe_one", mock_full)
+    monkeypatch.setattr(vis, "_describe_one_light", mock_light)
+    monkeypatch.setattr(vis, "_is_usable_frame", lambda p: True)
+    results = vis.describe_frames(["/a.jpg", "/b.jpg", "/c.jpg"])
+    assert len(results) == 3
+    # Middle (idx 1) = full, others = light
+    assert calls[0] == ("full", "/b.jpg")
+    assert calls[1] == ("light", "/a.jpg")
+    assert calls[2] == ("light", "/c.jpg")
+    # Light frames inherit from representative
+    assert results[0]["content_type"] == "Talking-Head"
+    assert results[0]["atmosphere"] == "溫馨"
+    assert results[2]["edit_position"] == "開場"
