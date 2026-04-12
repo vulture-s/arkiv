@@ -164,11 +164,11 @@ def list_media(
 ):
     """List media with filters, sorting, and pagination."""
     if q:
-        # Semantic search (requires vectordb)
+        enriched = []
+        # Try semantic search first (requires vectordb with embeddings)
         try:
             import vectordb as vdb
             raw = vdb.search(q, n_results=limit * 3)
-            # Post-filter
             results = []
             for r in raw:
                 if lang and r.get("lang") != lang:
@@ -179,8 +179,6 @@ def list_media(
                     continue
                 results.append(r)
             results = results[:limit]
-            # Enrich with full record data
-            enriched = []
             seen = set()
             for r in results:
                 mid = int(r["media_id"])
@@ -192,12 +190,46 @@ def list_media(
                     _resolve_record(rec)
                     rec["score"] = r.get("score", 0)
                     rec["excerpt"] = r.get("excerpt", "")
-                    # Add tags
                     rec["tags"] = db.get_tags(mid)
                     enriched.append(rec)
-            return {"items": enriched, "total": len(enriched), "search": True}
         except Exception:
-            raise HTTPException(500, "搜尋錯誤")
+            pass
+
+        # Fallback: SQL text search (filename, transcript, tags)
+        if not enriched:
+            seen_ids = set()
+            like = f"%{q}%"
+            with db.get_conn() as conn:
+                rows = conn.execute(
+                    f"SELECT {db.LIGHT_COLS} FROM media "
+                    "WHERE filename LIKE ? OR transcript LIKE ? "
+                    "ORDER BY id LIMIT ?",
+                    (like, like, limit),
+                ).fetchall()
+                for r in rows:
+                    rec = dict(r)
+                    _resolve_record(rec)
+                    rec["tags"] = db.get_tags(rec["id"])
+                    enriched.append(rec)
+                    seen_ids.add(rec["id"])
+
+                # Also search by tag name
+                tag_rows = conn.execute(
+                    "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
+                    (like, limit),
+                ).fetchall()
+                for tr in tag_rows:
+                    mid = tr["media_id"]
+                    if mid in seen_ids:
+                        continue
+                    rec = db.get_record_by_id(mid)
+                    if rec:
+                        _resolve_record(rec)
+                        rec["tags"] = db.get_tags(mid)
+                        enriched.append(rec)
+                        seen_ids.add(mid)
+
+        return {"items": enriched[:limit], "total": len(enriched), "search": True}
 
     filters = {}
     if lang:
