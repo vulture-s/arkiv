@@ -343,7 +343,8 @@ var AUDIO_EXT = ['.wav','.mp3','.m4a','.aac'];
 
 var gridCols = 4;
 var state = { items: [], total: 0, page: 0, selectedId: null, selectedRec: null, allTags: [],
-  filters: { type: 'all', rating: null, lang: null }, sort: 'date', query: '', view: 'grid' };
+  filters: { type: 'all', rating: null, lang: null }, sort: 'date', query: '', view: 'grid',
+  poolItems: [], poolFilter: '' };
 
 // ── Utils ───────────────────────────────────────────────────────────────────
 
@@ -402,6 +403,15 @@ function filmstripFrames() {
 
 // ── API ─────────────────────────────────────────────────────────────────────
 
+async function fetchPool() {
+  try {
+    const r = await fetch(`${API}/api/media/pool`);
+    const d = await r.json();
+    state.poolItems = d.items || [];
+    renderPool();
+  } catch(e) { console.warn('fetchPool failed:', e); }
+}
+
 async function fetchMedia() {
   const p = new URLSearchParams({ offset: state.page*PAGE_SIZE, limit: PAGE_SIZE, sort: state.sort });
   if(state.query) p.set('q', state.query);
@@ -425,44 +435,55 @@ async function fetchAllTags() { state.allTags = await (await fetch(`${API}/api/t
 
 // ── Renderers ───────────────────────────────────────────────────────────────
 
-function renderPool(items) {
+function renderPool() {
   const el = document.getElementById('mediaPool');
-  const videos = items.filter(i=>mediaType(i.ext)==='video');
-  const audios = items.filter(i=>mediaType(i.ext)==='audio');
+  const items = state.poolItems;
+  if (!items.length) { el.innerHTML = '<div class="px-3 py-4 text-xs text-txt-tertiary text-center">載入中...</div>'; return; }
+
+  // Group by folder
+  var folders = {};
+  items.forEach(function(v) {
+    var f = v.folder || '其他';
+    if (!folders[f]) folders[f] = [];
+    folders[f].push(v);
+  });
+
   var h = '';
-  if(videos.length) {
-    h += `<div class="collapse-toggle flex items-center gap-1.5 px-3 py-1 text-2xs text-txt-tertiary uppercase tracking-wider">
-      <svg fill="currentColor" viewBox="0 0 10 10" style="width:10px;height:10px"><path d="M3 2l5 3-5 3z"/></svg>影片 <span class="ml-auto text-txt-tertiary">(${videos.length})</span></div>`;
-    videos.forEach(v => {
-      var active = v.id===state.selectedId;
+  var folderNames = Object.keys(folders).sort();
+  folderNames.forEach(function(fname) {
+    var list = folders[fname];
+    var videos = list.filter(function(i) { return mediaType(i.ext) === 'video'; });
+    var audios = list.filter(function(i) { return mediaType(i.ext) === 'audio'; });
+    var count = list.length;
+
+    h += '<div class="pool-folder">';
+    h += '<div class="collapse-toggle flex items-center gap-1.5 px-3 py-1 text-2xs text-txt-tertiary uppercase tracking-wider cursor-pointer" onclick="this.classList.toggle(\'collapsed\');var n=this.nextElementSibling;n.style.display=n.style.display===\'none\'?\'block\':\'none\'">';
+    h += '<svg class="folder-arrow" fill="currentColor" viewBox="0 0 10 10" style="width:8px;height:8px;transition:transform 0.15s"><path d="M3 2l5 3-5 3z"/></svg>';
+    h += '<svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M2 6a2 2 0 012-2h5l2 2h9a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/></svg>';
+    h += ' ' + esc(fname) + ' <span class="ml-auto">(' + count + ')</span></div>';
+    h += '<div class="pool-folder-items">';
+
+    videos.forEach(function(v) {
+      var active = v.id === state.selectedId;
       var icon = active ? videoSmallActive : videoSmall;
       var badge = rBadge(v.rating);
-      var t = thumbUrl(v);
-      var thumbEl = t
-        ? '<div style="position:relative;width:24px;height:16px;flex-shrink:0;border-radius:2px;overflow:hidden;background:var(--card-bg)">' + icon + '<img src="' + t + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"/></div>'
-        : icon;
-      h += `<div class="source-item${active?' active':''} flex items-center gap-2 px-3 py-1 text-xs cursor-pointer" onclick="selectMedia(${v.id})">
-        ${thumbEl}<span class="truncate">${v.filename}</span>
-        ${badge ? `<span class="ml-auto shrink-0">${badge}</span>` : `<span class="ml-auto text-2xs text-txt-tertiary">${fmtDur(v.duration_s)}</span>`}
-      </div>`;
+      h += '<div class="source-item' + (active ? ' active' : '') + ' flex items-center gap-2 px-3 py-1 text-xs cursor-pointer" style="padding-left:24px" onclick="selectMedia(' + v.id + ')">';
+      h += icon + '<span class="truncate">' + esc(v.filename) + '</span>';
+      h += badge ? '<span class="ml-auto shrink-0">' + badge + '</span>' : '<span class="ml-auto text-2xs text-txt-tertiary">' + fmtDur(v.duration_s) + '</span>';
+      h += '</div>';
     });
-  }
-  if(audios.length) {
-    h += `<div class="collapse-toggle flex items-center gap-1.5 px-3 py-1 mt-1 text-2xs text-txt-tertiary uppercase tracking-wider">
-      <svg fill="currentColor" viewBox="0 0 10 10" style="width:10px;height:10px"><path d="M3 2l5 3-5 3z"/></svg>音訊 <span class="ml-auto text-txt-tertiary">(${audios.length})</span></div>`;
-    audios.forEach(a => {
-      var active = a.id===state.selectedId;
+    audios.forEach(function(a) {
+      var active = a.id === state.selectedId;
       var badge = rBadge(a.rating);
-      var t = thumbUrl(a);
-      var thumbEl = t
-        ? '<div style="position:relative;width:24px;height:16px;flex-shrink:0;border-radius:2px;overflow:hidden;background:var(--card-bg)">' + audioSmall + '<img src="' + t + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"/></div>'
-        : audioSmall;
-      h += `<div class="source-item${active?' active':''} flex items-center gap-2 px-3 py-1 text-xs cursor-pointer" onclick="selectMedia(${a.id})">
-        ${thumbEl}<span class="truncate">${a.filename}</span>
-        ${badge ? `<span class="ml-auto shrink-0">${badge}</span>` : `<span class="ml-auto text-2xs text-txt-tertiary">${fmtDur(a.duration_s)}</span>`}
-      </div>`;
+      h += '<div class="source-item' + (active ? ' active' : '') + ' flex items-center gap-2 px-3 py-1 text-xs cursor-pointer" style="padding-left:24px" onclick="selectMedia(' + a.id + ')">';
+      h += audioSmall + '<span class="truncate">' + esc(a.filename) + '</span>';
+      h += badge ? '<span class="ml-auto shrink-0">' + badge + '</span>' : '<span class="ml-auto text-2xs text-txt-tertiary">' + fmtDur(a.duration_s) + '</span>';
+      h += '</div>';
     });
-  }
+
+    h += '</div></div>';
+  });
+
   el.innerHTML = h;
 }
 
@@ -732,7 +753,7 @@ async function selectMedia(id) {
   try {
     await fetchDetail(id);
     renderGrid();
-    renderPool(state.items);
+    renderPool();
     await renderInspector();
   } catch(e) {
     fetch('/api/client-log', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({level:'error', msg:'selectMedia(' + id + ') failed: ' + e.message}) });
@@ -1141,7 +1162,7 @@ function setGridCols(n) {
 async function refresh() {
   try {
     await fetchMedia(); await fetchAllTags();
-    renderGrid(); renderPool(state.items); renderPagination(); renderContentTitle(); renderAnalytics();
+    renderGrid(); renderPool(); renderPagination(); renderContentTitle(); renderAnalytics();
   } catch(e) {
     console.error('[arkiv] refresh() failed:', e);
     const grid = document.getElementById('mediaGrid');
@@ -1244,8 +1265,9 @@ setUiScale(1);
     fetch('/api/client-log', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({level:'info', msg:'init start — isTauri=' + isTauri + ' UA=' + navigator.userAgent.slice(0,80)}) });
     await fetchMedia();
     await fetchAllTags();
+    fetchPool();
     renderGrid();
-    renderPool(state.items);
+    renderPool();
     renderPagination();
     renderContentTitle();
     renderAnalytics();

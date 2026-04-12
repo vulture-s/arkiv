@@ -98,6 +98,30 @@ class TagCreate(BaseModel):
 
 # ── API Routes ───────────────────────────────────────────────────────────────
 
+@app.get("/api/media/pool")
+def media_pool():
+    """Lightweight full list for left sidebar media pool — grouped by folder."""
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, filename, ext, duration_s, rating, path FROM media ORDER BY path, filename"
+        ).fetchall()
+    items = []
+    for r in rows:
+        p = r["path"] or ""
+        # Use parent directory name as folder
+        parts = p.replace("\\", "/").rstrip("/").split("/")
+        folder = parts[-2] if len(parts) >= 2 else ""
+        items.append({
+            "id": r["id"],
+            "filename": r["filename"],
+            "ext": r["ext"],
+            "duration_s": r["duration_s"],
+            "rating": r["rating"],
+            "folder": folder,
+        })
+    return {"items": items, "total": len(items)}
+
+
 @app.get("/api/media")
 def list_media(
     offset: int = 0,
