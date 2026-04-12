@@ -83,8 +83,32 @@ RATING_COLORS = {
 }
 
 
+def _get_camera_folder(path):
+    """Extract camera/source folder name from file path."""
+    parts = path.replace("\\", "/").rstrip("/").split("/")
+    folder = parts[-2] if len(parts) >= 2 else ""
+    if folder.lower() in ("reels", "clips", "raw", "media", "footage"):
+        folder = parts[-3] if len(parts) >= 3 else folder
+    return folder
+
+
+def _get_or_create_bin(media_pool, root_folder, bin_name):
+    """Get existing Bin or create new one under root_folder."""
+    # Check existing sub-folders
+    for sub in root_folder.GetSubFolderList():
+        if sub.GetName() == bin_name:
+            return sub
+    # Create new bin
+    media_pool.SetCurrentFolder(root_folder)
+    new_bin = media_pool.AddSubFolder(root_folder, bin_name)
+    if new_bin:
+        print(f"[arkiv] 建立 Bin：{bin_name}")
+    return new_bin
+
+
 def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
     """Import files into the current Resolve project's Media Pool.
+    Auto-creates Bin folders by camera/source under Master.
     ratings: dict mapping file_path -> rating string (good/ng/review)
     tags: dict mapping file_path -> list of tag name strings
     """
@@ -101,14 +125,46 @@ def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
     if not media_pool:
         return False
 
-    result = media_pool.ImportMedia(file_paths)
-    if result:
+    root_folder = media_pool.GetRootFolder()
+
+    # Group files by camera folder
+    groups = {}
+    for p in file_paths:
+        folder = _get_camera_folder(p)
+        if folder not in groups:
+            groups[folder] = []
+        groups[folder].append(p)
+
+    total_imported = 0
+    all_imported_clips = []
+
+    for folder_name, paths in groups.items():
+        # Create or get Bin for this camera
+        if folder_name:
+            target_bin = _get_or_create_bin(media_pool, root_folder, folder_name)
+            if target_bin:
+                media_pool.SetCurrentFolder(target_bin)
+            else:
+                media_pool.SetCurrentFolder(root_folder)
+        else:
+            media_pool.SetCurrentFolder(root_folder)
+
+        result = media_pool.ImportMedia(paths)
+        if result:
+            all_imported_clips.extend(result)
+            total_imported += len(result)
+            print(f"[arkiv] {folder_name or 'Master'}: 匯入 {len(result)} 個片段")
+
+    # Reset to root
+    media_pool.SetCurrentFolder(root_folder)
+
+    if all_imported_clips:
         # Apply clip colors based on rating
         if ratings:
-            for mpi in result:
+            for mpi in all_imported_clips:
                 clip_name = mpi.GetName()
                 for path, rating in ratings.items():
-                    if clip_name and clip_name in path or path.endswith(clip_name):
+                    if clip_name and (clip_name in path or path.endswith(clip_name)):
                         color = RATING_COLORS.get(rating)
                         if color:
                             mpi.SetClipColor(color)
@@ -116,7 +172,7 @@ def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
                         break
         # Set tags as metadata (Keywords + Comments for Smart Bin filtering)
         if tags:
-            for mpi in result:
+            for mpi in all_imported_clips:
                 clip_name = mpi.GetName()
                 for path, tag_list in tags.items():
                     if clip_name and (clip_name in path or path.endswith(clip_name)):
@@ -126,7 +182,7 @@ def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
                             mpi.SetMetadata("Comments", f"[arkiv] {tag_str}")
                             print(f"[arkiv]   {clip_name} → Tags: {tag_str}")
                         break
-        print(f"[arkiv] 已匯入 {len(result)} 個片段到媒體庫")
+        print(f"[arkiv] 完成：共匯入 {total_imported} 個片段到 {len(groups)} 個 Bin")
         return True
     else:
         print("[arkiv] 匯入失敗")
