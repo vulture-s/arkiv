@@ -457,7 +457,7 @@ def _run_vision_only(args):
             # Update legacy frame_tags
             frame_tags_json = vis.frames_to_json(frame_results)
             conn.execute("UPDATE media SET frame_tags=? WHERE id=?", (frame_tags_json, mid))
-            scores = _apply_vision_to_frame_data(frames_list, frame_results)
+            scores = _apply_vision_to_frame_data([dict(f) for f in frames_list], frame_results)
             if scores:
                 conn.execute(
                     "UPDATE media SET editability_score=? WHERE id=?",
