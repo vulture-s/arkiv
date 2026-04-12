@@ -30,12 +30,14 @@ PROMPT = (
 LIGHT_PROMPT = (
     "請用繁體中文分析這個影片畫面，回傳嚴格的 JSON 格式（不要加 markdown 標記）：\n"
     '{"description": "一句話描述可見內容", "tags": ["標籤1","標籤2","標籤3"],'
+    ' "content_type": "A-Roll|B-Roll|Talking-Head|Product-Shot|Transition|Establishing|Undefined 擇一",'
     ' "focus_score": 1到5的整數, "exposure": "dark|normal|over 擇一",'
-    ' "stability": "穩定|輕微晃動|嚴重晃動 擇一", "audio_quality": "清晰|嘈雜|靜音 擇一"}\n'
+    ' "stability": "穩定|輕微晃動|嚴重晃動 擇一", "audio_quality": "清晰|嘈雜|靜音 擇一",'
+    ' "atmosphere": "一個詞描述氛圍", "energy": "高|中|低 擇一"}\n'
     "規則：只描述可見內容，不推測。所有欄位必填。"
 )
 
-_LIGHT_FIELDS = ("focus_score", "exposure", "stability", "audio_quality")
+_LIGHT_FIELDS = ("content_type", "focus_score", "exposure", "stability", "audio_quality", "atmosphere", "energy")
 
 _VISION_FIELDS = (
     "content_type",
@@ -61,7 +63,7 @@ def describe_frames(frame_paths: List[str]) -> List[Dict]:
     """
     Representative frame strategy:
     - Middle frame: full 12-field analysis
-    - Other frames: light 6-field + inherit media-level attributes
+    - Other frames: light 10-field + inherit edit_position/edit_reason
     - Skip unusable frames (black/white/blurry)
     """
     if not frame_paths:
@@ -71,7 +73,7 @@ def describe_frames(frame_paths: List[str]) -> List[Dict]:
     rep_result = _describe_one(frame_paths[rep_idx])
     rep_result["file"] = frame_paths[rep_idx]
 
-    inheritable = ("content_type", "atmosphere", "energy", "edit_position", "edit_reason")
+    inheritable = ("edit_position", "edit_reason")
 
     results = []
     for i, path in enumerate(frame_paths):
@@ -165,7 +167,7 @@ def _describe_one(img_path, max_retries=2):
 
 
 def _describe_one_light(img_path, max_retries=2):
-    """Lightweight vision: description + tags + 4 quality fields only."""
+    """Lightweight vision: description + tags + 7 quality/content fields."""
     try:
         raw = _call_vision(img_path, LIGHT_PROMPT, max_retries)
     except Exception as e:
