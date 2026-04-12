@@ -294,6 +294,7 @@ def test_describe_frames_representative_strategy(monkeypatch):
         r["content_type"] = "B-Roll"
         r["atmosphere"] = "活潑"
         r["energy"] = "高"
+        r["edit_position"] = "收尾"
         r["focus_score"] = 3
         return r
 
@@ -306,10 +307,11 @@ def test_describe_frames_representative_strategy(monkeypatch):
     assert calls[0] == ("full", "/b.jpg")
     assert calls[1] == ("light", "/a.jpg")
     assert calls[2] == ("light", "/c.jpg")
-    # Light frames have their own content_type/atmosphere/energy (NOT inherited)
+    # Light frames have their own content_type/atmosphere/energy/edit_position
     assert results[0]["content_type"] == "B-Roll"
     assert results[0]["atmosphere"] == "活潑"
     assert results[0]["energy"] == "高"
-    # Only edit_position/edit_reason inherited from representative
-    assert results[0]["edit_position"] == "開場"
+    assert results[0]["edit_position"] == "收尾"
+    # Only edit_reason inherited from representative
+    assert results[0]["edit_reason"] == "建立場景"
     assert results[2]["edit_reason"] == "建立場景"
