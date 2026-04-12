@@ -98,6 +98,16 @@ class TagCreate(BaseModel):
 
 # ── API Routes ───────────────────────────────────────────────────────────────
 
+@app.get("/api/media/position/{media_id}")
+def media_position(media_id: int):
+    """Find the row offset of a media item (for page navigation)."""
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM media WHERE id < ?", (media_id,)
+        ).fetchone()
+        return {"id": media_id, "offset": row[0] if row else 0}
+
+
 @app.get("/api/media/pool")
 def media_pool():
     """Lightweight full list for left sidebar media pool — grouped by folder."""
