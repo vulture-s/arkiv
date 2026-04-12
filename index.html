@@ -753,9 +753,17 @@ async function selectMedia(id) {
   try {
     await fetchDetail(id);
     // Navigate grid to the page containing this item
+    if (state.query) {
+      state.query = '';
+      document.getElementById('searchInput').value = '';
+    }
     var inCurrentPage = state.items.some(function(i) { return i.id === id; });
     if (!inCurrentPage) {
-      var posR = await fetch(API + '/api/media/position/' + id);
+      var posParams = new URLSearchParams({ sort: state.sort });
+      if (state.filters.lang) posParams.set('lang', state.filters.lang);
+      if (state.filters.rating) posParams.set('rating', state.filters.rating);
+      if (state.filters.type && state.filters.type !== 'all') posParams.set('media_type', state.filters.type);
+      var posR = await fetch(API + '/api/media/position/' + id + '?' + posParams);
       var pos = await posR.json();
       var targetPage = Math.floor(pos.offset / PAGE_SIZE);
       state.page = targetPage;
