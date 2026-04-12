@@ -108,9 +108,11 @@ def media_pool():
     items = []
     for r in rows:
         p = r["path"] or ""
-        # Use parent directory name as folder
+        # Use parent directory name as folder; skip generic names like "reels"
         parts = p.replace("\\", "/").rstrip("/").split("/")
         folder = parts[-2] if len(parts) >= 2 else ""
+        if folder.lower() in ("reels", "clips", "raw", "media", "footage"):
+            folder = parts[-3] if len(parts) >= 3 else folder
         items.append({
             "id": r["id"],
             "filename": r["filename"],
