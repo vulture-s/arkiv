@@ -1184,7 +1184,7 @@ function setGridCols(n) {
 
 async function refresh() {
   try {
-    await fetchMedia(); await fetchAllTags();
+    await fetchMedia(); await fetchAllTags(); await fetchPool();
     renderGrid(); renderPool(); renderPagination(); renderContentTitle(); renderAnalytics();
   } catch(e) {
     console.error('[arkiv] refresh() failed:', e);
