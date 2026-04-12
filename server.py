@@ -203,8 +203,8 @@ def list_media(
                 rows = conn.execute(
                     f"SELECT {db.LIGHT_COLS} FROM media "
                     "WHERE filename LIKE ? OR transcript LIKE ? "
-                    "ORDER BY id LIMIT ?",
-                    (like, like, limit),
+                    "ORDER BY id",
+                    (like, like),
                 ).fetchall()
                 for r in rows:
                     rec = dict(r)
@@ -215,8 +215,8 @@ def list_media(
 
                 # Also search by tag name
                 tag_rows = conn.execute(
-                    "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
-                    (like, limit),
+                    "SELECT DISTINCT media_id FROM tags WHERE name LIKE ?",
+                    (like,),
                 ).fetchall()
                 for tr in tag_rows:
                     mid = tr["media_id"]
