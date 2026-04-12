@@ -278,6 +278,7 @@ def create_ui(resolve):
                             ui.Button({"ID": "SearchBtn", "Text": "搜尋", "Weight": 0.5}),
                             ui.Button({"ID": "ResetBtn", "Text": "全部", "Weight": 0.3}),
                             ui.Button({"ID": "GoodBtn", "Text": "僅 GOOD", "Weight": 0.5}),
+                            ui.Button({"ID": "ExcludeNGBtn", "Text": "排除 NG", "Weight": 0.5}),
                         ],
                     ),
                     # Results tree
@@ -335,6 +336,7 @@ def create_ui(resolve):
     # Store results for import
     results_map = {}
     good_filter_on = [False]
+    exclude_ng_on = [False]
 
     def populate_tree(items):
         tree.Clear()
@@ -367,15 +369,19 @@ def create_ui(resolve):
         win.Find("SearchField").Text = ""
         win.Find("StatusLabel").Text = "載入所有媒體..."
         good_filter_on[0] = False
+        exclude_ng_on[0] = False
         win.Find("GoodBtn").Text = "僅 GOOD"
+        win.Find("ExcludeNGBtn").Text = "排除 NG"
         try:
-            items = list_media(limit=50)
+            items = list_media(limit=500)
             populate_tree(items)
         except Exception as e:
             win.Find("StatusLabel").Text = f"載入失敗：{e}"
 
     def on_good(ev):
         good_filter_on[0] = not good_filter_on[0]
+        exclude_ng_on[0] = False
+        win.Find("ExcludeNGBtn").Text = "排除 NG"
         try:
             if good_filter_on[0]:
                 win.Find("GoodBtn").Text = "顯示全部"
@@ -384,7 +390,25 @@ def create_ui(resolve):
             else:
                 win.Find("GoodBtn").Text = "僅 GOOD"
                 win.Find("StatusLabel").Text = "載入所有媒體..."
-                items = list_media(limit=30)
+                items = list_media(limit=500)
+            populate_tree(items)
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"載入失敗：{e}"
+
+    def on_exclude_ng(ev):
+        exclude_ng_on[0] = not exclude_ng_on[0]
+        good_filter_on[0] = False
+        win.Find("GoodBtn").Text = "僅 GOOD"
+        try:
+            if exclude_ng_on[0]:
+                win.Find("ExcludeNGBtn").Text = "顯示全部"
+                win.Find("StatusLabel").Text = "排除 NG 素材..."
+                all_items = list_media(limit=500)
+                items = [i for i in all_items if i.get("rating") != "ng"]
+            else:
+                win.Find("ExcludeNGBtn").Text = "排除 NG"
+                win.Find("StatusLabel").Text = "載入所有媒體..."
+                items = list_media(limit=500)
             populate_tree(items)
         except Exception as e:
             win.Find("StatusLabel").Text = f"載入失敗：{e}"
@@ -449,13 +473,14 @@ def create_ui(resolve):
     win.On.SearchBtn.Clicked = on_search
     win.On.ResetBtn.Clicked = on_reset
     win.On.GoodBtn.Clicked = on_good
+    win.On.ExcludeNGBtn.Clicked = on_exclude_ng
     win.On.ImportBtn.Clicked = on_import
     win.On.MarkerBtn.Clicked = on_markers
     win.On.ArkivWin.Close = on_close
     win.On.SearchField.ReturnPressed = on_search
 
     # Load initial list
-    items = list_media(limit=30)
+    items = list_media(limit=500)
     populate_tree(items)
 
     win.Show()
