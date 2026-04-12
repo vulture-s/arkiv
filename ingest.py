@@ -446,11 +446,14 @@ def _run_vision_only(args):
                         f_info["frame_index"],
                     )
                 )
-                # Auto tags
+                # Auto tags (use same conn to avoid self-deadlock)
                 for tag_name in vr.get("tags", []):
                     tag_name = tag_name.strip()
                     if tag_name and tag_name != "```":
-                        db.add_tag(mid, tag_name, source="auto")
+                        conn.execute(
+                            "INSERT OR IGNORE INTO tags (media_id, name, source) VALUES (?, ?, ?)",
+                            (mid, tag_name.strip().lower(), "auto"),
+                        )
             # Update legacy frame_tags
             frame_tags_json = vis.frames_to_json(frame_results)
             conn.execute("UPDATE media SET frame_tags=? WHERE id=?", (frame_tags_json, mid))
