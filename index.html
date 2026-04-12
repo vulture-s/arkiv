@@ -80,6 +80,12 @@ window.onunhandledrejection = function(e) {
   .tag.tag-manual { background: #22c55e18; color: #4ade80; }
 
   .collapse-toggle { cursor: pointer; user-select: none; }
+  .toggle-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--surface-200, #555); border-radius: 20px; transition: 0.2s; }
+  .toggle-slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+  .toggle-switch input:checked + .toggle-slider { background: #3b82f6; }
+  .toggle-switch input:checked + .toggle-slider:before { transform: translateX(16px); }
   .filter-chip { background: var(--surface-50); border: 1px solid var(--panel-border); border-radius: 6px; padding: 3px 10px; font-size: 11px; color: var(--txt-secondary); cursor: pointer; transition: all 0.1s; }
   .filter-chip:hover { border-color: #3b82f6; color: var(--txt-primary); }
   .filter-chip.active { background: #3b82f618; border-color: #3b82f6; color: #3b82f6; }
@@ -199,6 +205,10 @@ window.onunhandledrejection = function(e) {
     <span class="text-xs" style="color:var(--txt-tertiary)">A</span>
     <span class="text-2xs text-txt-tertiary" id="scaleLabel" style="min-width:24px;text-align:center">120%</span>
   </div>
+
+  <button class="ml-1.5 shrink-0 text-txt-tertiary hover:text-txt-primary transition" onclick="openSettings()" title="進階設定">
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+  </button>
 
   <div class="flex items-center gap-3 ml-2 text-2xs text-txt-tertiary shrink-0" id="headerStats"></div>
 </header>
@@ -1194,6 +1204,130 @@ async function refresh() {
       <div class="text-xs text-txt-secondary">${e.message}</div>
       <button class="mt-3 px-4 py-1.5 bg-accent text-white text-xs rounded-md" onclick="refresh()">重試</button>
     </div>`;
+  }
+}
+
+// ── Settings Modal ──────────────────────────────────────────────────────────
+
+function openSettings() {
+  var m = document.getElementById('settingsModal');
+  if (m) { m.style.display = 'flex'; return; }
+  m = document.createElement('div');
+  m.id = 'settingsModal';
+  m.style.cssText = 'position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6)';
+  m.onclick = function(e) { if (e.target === m) m.style.display = 'none'; };
+
+  var proxyEnabled = false;
+  try { proxyEnabled = localStorage.getItem('arkiv-proxy') === 'on'; } catch(e) {}
+
+  m.innerHTML = '<div class="modal-panel" style="min-width:420px;text-align:left">' +
+    '<div class="flex items-center justify-between mb-4">' +
+      '<span class="text-txt-primary" style="font-size:16px;font-weight:600">進階設定</span>' +
+      '<button onclick="document.getElementById(\'settingsModal\').style.display=\'none\'" class="text-txt-tertiary hover:text-txt-primary" style="font-size:18px;cursor:pointer">&times;</button>' +
+    '</div>' +
+
+    '<div style="border:1px solid var(--panel-border);border-radius:8px;padding:16px;margin-bottom:12px">' +
+      '<div class="flex items-center justify-between">' +
+        '<div>' +
+          '<div class="text-xs font-semibold text-txt-primary">瀏覽器 Proxy</div>' +
+          '<div class="text-2xs text-txt-tertiary" style="margin-top:2px">為 HEVC/ProRes 影片生成 H.264 代理檔，加速瀏覽器播放</div>' +
+        '</div>' +
+        '<label class="toggle-switch" style="margin-left:12px">' +
+          '<input type="checkbox" id="proxyToggle" ' + (proxyEnabled ? 'checked' : '') + ' onchange="toggleProxy(this.checked)">' +
+          '<span class="toggle-slider"></span>' +
+        '</label>' +
+      '</div>' +
+      '<div id="proxyStatus" class="text-2xs text-txt-tertiary" style="margin-top:8px"></div>' +
+      '<div id="proxyActions" style="margin-top:8px;display:' + (proxyEnabled ? 'block' : 'none') + '">' +
+        '<button class="text-2xs px-3 py-1 bg-accent text-white rounded hover:bg-accent/80 transition" onclick="startProxyBuild()">開始生成 Proxy</button>' +
+        '<span id="proxyProgress" class="text-2xs text-txt-tertiary ml-2"></span>' +
+      '</div>' +
+    '</div>' +
+
+    '<div style="border:1px solid var(--panel-border);border-radius:8px;padding:16px;margin-bottom:12px">' +
+      '<div class="text-xs font-semibold text-txt-primary">搜尋引擎</div>' +
+      '<div class="text-2xs text-txt-tertiary" style="margin-top:2px">目前使用文字比對搜尋（檔名 + 標籤 + 轉錄）</div>' +
+      '<div class="text-2xs text-txt-tertiary" style="margin-top:4px">' +
+        '<span id="chromaStatus">語意搜尋：檢查中...</span>' +
+      '</div>' +
+      '<button class="text-2xs px-3 py-1 mt-2 bg-surface-50 border border-panel-border text-txt-secondary rounded hover:text-txt-primary transition" onclick="rebuildEmbeddings()">重建向量索引</button>' +
+      '<span id="embedProgress" class="text-2xs text-txt-tertiary ml-2"></span>' +
+    '</div>' +
+
+    '<div style="border:1px solid var(--panel-border);border-radius:8px;padding:16px">' +
+      '<div class="text-xs font-semibold text-txt-primary">關於</div>' +
+      '<div class="text-2xs text-txt-tertiary" style="margin-top:2px">arkiv v0.2.1 | ' + state.total + ' 素材 | <a href="https://github.com/vulture-s/arkiv" target="_blank" class="text-accent">GitHub</a></div>' +
+    '</div>' +
+  '</div>';
+
+  document.body.appendChild(m);
+  checkChromaStatus();
+  checkProxyStatus();
+}
+
+function toggleProxy(on) {
+  try { localStorage.setItem('arkiv-proxy', on ? 'on' : 'off'); } catch(e) {}
+  var actions = document.getElementById('proxyActions');
+  if (actions) actions.style.display = on ? 'block' : 'none';
+}
+
+async function checkProxyStatus() {
+  try {
+    var r = await fetch(API + '/api/proxy/status');
+    var d = await r.json();
+    var el = document.getElementById('proxyStatus');
+    if (el) el.textContent = 'Proxy: ' + d.proxied + '/' + d.total + ' 已生成（' + d.size_mb + ' MB）';
+  } catch(e) {}
+}
+
+async function startProxyBuild() {
+  var btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  var prog = document.getElementById('proxyProgress');
+  try {
+    var r = await fetch(API + '/api/proxy/build', { method: 'POST' });
+    var d = await r.json();
+    if (prog) prog.textContent = d.message || '完成';
+    btn.textContent = '開始生成 Proxy';
+    btn.disabled = false;
+    checkProxyStatus();
+  } catch(e) {
+    if (prog) prog.textContent = '錯誤: ' + e.message;
+    btn.textContent = '開始生成 Proxy';
+    btn.disabled = false;
+  }
+}
+
+async function checkChromaStatus() {
+  try {
+    var r = await fetch(API + '/api/stats');
+    var d = await r.json();
+    var el = document.getElementById('chromaStatus');
+    if (el) {
+      // Try a test search to see if embeddings exist
+      var sr = await fetch(API + '/api/media?q=test&limit=1');
+      var sd = await sr.json();
+      el.textContent = '語意搜尋：' + (sd.total > 0 ? '可用' : '未建立（使用文字比對）');
+    }
+  } catch(e) {}
+}
+
+async function rebuildEmbeddings() {
+  var btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '建立中...';
+  var prog = document.getElementById('embedProgress');
+  try {
+    var r = await fetch(API + '/api/embed/rebuild', { method: 'POST' });
+    var d = await r.json();
+    if (prog) prog.textContent = d.message || '完成';
+    btn.textContent = '重建向量索引';
+    btn.disabled = false;
+  } catch(e) {
+    if (prog) prog.textContent = '錯誤: ' + e.message;
+    btn.textContent = '重建向量索引';
+    btn.disabled = false;
   }
 }
 
