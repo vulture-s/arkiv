@@ -99,13 +99,31 @@ class TagCreate(BaseModel):
 # ── API Routes ───────────────────────────────────────────────────────────────
 
 @app.get("/api/media/position/{media_id}")
-def media_position(media_id: int):
-    """Find the row offset of a media item (for page navigation)."""
+def media_position(
+    media_id: int,
+    sort: str = "date",
+    lang: Optional[str] = None,
+    rating: Optional[str] = None,
+    media_type: Optional[str] = None,
+):
+    """Find the row offset of a media item in the current sort/filter view."""
+    filters = {}
+    if lang:
+        filters["lang"] = lang
+    if rating:
+        filters["rating"] = rating
+    if media_type:
+        filters["media_type"] = media_type
+    where, params = db._build_filter_clause(**filters)
+    order = db.SORT_MAP.get(sort, "id")
     with db.get_conn() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM media WHERE id < ?", (media_id,)
-        ).fetchone()
-        return {"id": media_id, "offset": row[0] if row else 0}
+        rows = conn.execute(
+            f"SELECT id FROM media WHERE {where} ORDER BY {order}", params
+        ).fetchall()
+        for idx, row in enumerate(rows):
+            if row["id"] == media_id:
+                return {"id": media_id, "offset": idx}
+    return {"id": media_id, "offset": 0}
 
 
 @app.get("/api/media/pool")
