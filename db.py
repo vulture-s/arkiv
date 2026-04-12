@@ -46,6 +46,7 @@ def resolve_path(rel_path: str) -> str:
 
 def init_db():
     with get_conn() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS media (
                 id             INTEGER PRIMARY KEY,
@@ -331,13 +332,18 @@ def get_tags(media_id: int) -> List[Dict]:
         return [dict(r) for r in rows]
 
 
-def add_tag(media_id: int, name: str, source: str = "manual"):
+def add_tag(media_id: int, name: str, source: str = "manual", _conn=None):
     """Add a tag (idempotent via UNIQUE constraint)."""
-    with get_conn() as conn:
-        conn.execute(
+    def _do(c):
+        c.execute(
             "INSERT OR IGNORE INTO tags (media_id, name, source) VALUES (?, ?, ?)",
             (media_id, name.strip().lower(), source),
         )
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
 
 
 def remove_tag(media_id: int, name: str):
@@ -416,9 +422,10 @@ def upsert_frame(
     energy: Optional[str] = None,
     edit_position: Optional[str] = None,
     edit_reason: Optional[str] = None,
+    _conn=None,
 ):
-    with get_conn() as conn:
-        conn.execute("""
+    def _do(c):
+        c.execute("""
             INSERT INTO frames (
                 media_id, frame_index, timestamp_s, thumbnail_path, description, tags,
                 content_type, focus_score, exposure, stability, audio_quality,
@@ -438,6 +445,11 @@ def upsert_frame(
             content_type, focus_score, exposure, stability, audio_quality,
             atmosphere, energy, edit_position, edit_reason,
         ))
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
 
 
 def get_frames(media_id: int) -> List[Dict]:
@@ -449,9 +461,14 @@ def get_frames(media_id: int) -> List[Dict]:
         return [dict(r) for r in rows]
 
 
-def delete_frames(media_id: int):
-    with get_conn() as conn:
-        conn.execute("DELETE FROM frames WHERE media_id = ?", (media_id,))
+def delete_frames(media_id: int, _conn=None):
+    def _do(c):
+        c.execute("DELETE FROM frames WHERE media_id = ?", (media_id,))
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
 
 
 # ── Enhanced Queries (Phase 4 UI) ─────────────────────────────────────────────
