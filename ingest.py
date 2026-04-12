@@ -27,6 +27,29 @@ VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts"}
 PROXY_CODECS = {"prores", "hevc", "hev1", "ap4h", "ap4x", "apch", "apcn", "apcs", "apco"}
 
 
+def _warm_up_vision_model():
+    """Send a dummy request to ensure qwen3-vl:8b is loaded in VRAM."""
+    import urllib.request
+    model = config.VISION_MODEL
+    print(f"  Warming up vision model ({model})...", end="", flush=True)
+    try:
+        payload = json.dumps({
+            "model": model,
+            "prompt": "hi",
+            "stream": False,
+            "options": {"num_predict": 1},
+        }).encode()
+        req = urllib.request.Request(
+            f"{config.OLLAMA_URL}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=180)
+        print(" ready")
+    except Exception as e:
+        print(f" warning: {e}")
+
+
 def _unload_ollama_model(model: str):
     """Ask Ollama to unload a model from VRAM, freeing memory for the next phase."""
     import urllib.request
@@ -377,6 +400,7 @@ def _run_vision_only(args):
     print(f"Found {len(rows)} frames across {len(media_frames)} files\n")
 
     _unload_ollama_model("qwen2.5:14b")
+    _warm_up_vision_model()
 
     ok, halted = 0, False
     for vi, (mid, frames_list) in enumerate(media_frames.items(), 1):
@@ -446,14 +470,11 @@ def _run_vision_only(args):
                         f_info["frame_index"],
                     )
                 )
-                # Auto tags (use same conn to avoid self-deadlock)
+                # Auto tags (pass conn to avoid self-deadlock)
                 for tag_name in vr.get("tags", []):
                     tag_name = tag_name.strip()
                     if tag_name and tag_name != "```":
-                        conn.execute(
-                            "INSERT OR IGNORE INTO tags (media_id, name, source) VALUES (?, ?, ?)",
-                            (mid, tag_name.strip().lower(), "auto"),
-                        )
+                        db.add_tag(mid, tag_name, source="auto", _conn=conn)
             # Update legacy frame_tags
             frame_tags_json = vis.frames_to_json(frame_results)
             conn.execute("UPDATE media SET frame_tags=? WHERE id=?", (frame_tags_json, mid))
@@ -575,7 +596,7 @@ def main():
                     with db.get_conn() as conn:
                         mid = _get_media_id_for_path(f)
                         if mid:
-                            db.delete_frames(mid)
+                            db.delete_frames(mid, _conn=conn)
                             for fd in frames:
                                 db.upsert_frame(
                                     media_id=mid,
@@ -593,6 +614,7 @@ def main():
                                     energy=fd.get("energy"),
                                     edit_position=fd.get("edit_position"),
                                     edit_reason=fd.get("edit_reason"),
+                                    _conn=conn,
                                 )
                     # Queue for Phase 2 vision
                     if need_vision:
@@ -619,6 +641,7 @@ def main():
         print(f"\n{'─'*60}")
         print(f"Phase 2: Vision — {len(phase1_results)} files, unloading LLM to free VRAM...")
         _unload_ollama_model("qwen2.5:14b")
+        _warm_up_vision_model()
 
         vision_ok, vision_fail = 0, 0
         for vi, (fpath, (record, frames)) in enumerate(phase1_results.items(), 1):
@@ -703,13 +726,14 @@ def main():
                 print(f" [{v_elapsed:.1f}s] [OK]")
                 vision_ok += 1
                 # Write auto tags from vision
-                mid = _get_media_id_for_path(Path(fpath))
-                if mid:
-                    for fd in video_frames:
-                        for tag_name in fd.get("tags", "").split(","):
-                            tag_name = tag_name.strip()
-                            if tag_name and tag_name != "```":
-                                db.add_tag(mid, tag_name, source="auto")
+                with db.get_conn() as conn:
+                    mid = _get_media_id_for_path(Path(fpath))
+                    if mid:
+                        for fd in video_frames:
+                            for tag_name in fd.get("tags", "").split(","):
+                                tag_name = tag_name.strip()
+                                if tag_name and tag_name != "```":
+                                    db.add_tag(mid, tag_name, source="auto", _conn=conn)
             except Exception as e:
                 print(f" [ERROR: {e}]")
                 vision_fail += 1

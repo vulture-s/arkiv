@@ -206,6 +206,72 @@ def test_is_usable_frame_accepts_normal(tmp_path):
     assert vis._is_usable_frame(str(p)) is True
 
 
+def test_db_add_tag_with_conn(tmp_db):
+    """add_tag with _conn parameter uses the provided connection (no deadlock)."""
+    db = importlib.import_module("db")
+    db.upsert({"path": "/test.mp4", "filename": "test.mp4", "ext": ".mp4"})
+    with db.get_conn() as conn:
+        mid = conn.execute("SELECT id FROM media WHERE path='/test.mp4'").fetchone()[0]
+        db.add_tag(mid, "hello", source="auto", _conn=conn)
+    tags = db.get_tags(mid)
+    assert any(t["name"] == "hello" for t in tags)
+
+
+def test_db_delete_frames_with_conn(tmp_db):
+    """delete_frames with _conn parameter uses the provided connection."""
+    db = importlib.import_module("db")
+    db.upsert({"path": "/test2.mp4", "filename": "test2.mp4", "ext": ".mp4"})
+    with db.get_conn() as conn:
+        mid = conn.execute("SELECT id FROM media WHERE path='/test2.mp4'").fetchone()[0]
+    db.upsert_frame(media_id=mid, frame_index=0, timestamp_s=1.0)
+    assert len(db.get_frames(mid)) == 1
+    with db.get_conn() as conn:
+        db.delete_frames(mid, _conn=conn)
+    assert len(db.get_frames(mid)) == 0
+
+
+def test_db_upsert_frame_with_conn(tmp_db):
+    """upsert_frame with _conn parameter uses the provided connection."""
+    db = importlib.import_module("db")
+    db.upsert({"path": "/test3.mp4", "filename": "test3.mp4", "ext": ".mp4"})
+    with db.get_conn() as conn:
+        mid = conn.execute("SELECT id FROM media WHERE path='/test3.mp4'").fetchone()[0]
+        db.upsert_frame(media_id=mid, frame_index=0, timestamp_s=1.0,
+                        description="test", _conn=conn)
+    frames = db.get_frames(mid)
+    assert len(frames) == 1
+    assert frames[0]["description"] == "test"
+
+
+def test_vision_only_no_deadlock(tmp_db, monkeypatch, tmp_path):
+    """Simulate --vision-only flow: vision results written in same conn as tags."""
+    db = importlib.import_module("db")
+    vis = importlib.import_module("vision")
+    # Insert media + frame with empty description
+    db.upsert({"path": "/vo_test.mp4", "filename": "vo_test.mp4", "ext": ".mp4"})
+    with db.get_conn() as conn:
+        mid = conn.execute("SELECT id FROM media WHERE path='/vo_test.mp4'").fetchone()[0]
+    # Create a dummy thumbnail
+    from PIL import Image
+    thumb = tmp_path / "thumb.jpg"
+    Image.new("RGB", (160, 90), (128, 128, 128)).save(str(thumb))
+    db.upsert_frame(media_id=mid, frame_index=0, timestamp_s=1.0,
+                    thumbnail_path=str(thumb), description="")
+    # Simulate writing vision result + tags in same conn (the fixed pattern)
+    with db.get_conn() as conn:
+        conn.execute(
+            "UPDATE frames SET description=?, content_type=? WHERE media_id=? AND frame_index=?",
+            ("test desc", "A-Roll", mid, 0),
+        )
+        db.add_tag(mid, "兒童", source="auto", _conn=conn)
+        db.add_tag(mid, "教室", source="auto", _conn=conn)
+    # Verify
+    frames = db.get_frames(mid)
+    assert frames[0]["description"] == "test desc"
+    tags = db.get_tags(mid)
+    assert len(tags) == 2
+
+
 def test_describe_frames_representative_strategy(monkeypatch):
     vis = importlib.import_module("vision")
     calls = []
