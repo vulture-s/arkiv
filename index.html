@@ -501,7 +501,7 @@ function renderGrid() {
     var editability = rec.editability_score != null ? '<div class="absolute top-1 right-12" style="z-index:3">' + scoreBadge(rec.editability_score) + '</div>' : '';
     var orientBadge = '<div class="absolute top-1 right-1 bg-black/70 text-white text-2xs px-1 rounded" style="z-index:3">' + (cardPortrait ? '9:16' : '16:9') + '</div>';
     var sel = rec.id===state.selectedId ? ' border-accent/40 ring-1 ring-accent/20' : ' border-panel-border';
-    return `<div class="media-card rounded-lg bg-surface-50 border${sel} cursor-pointer overflow-hidden ${isNg?'ng-card':''}" onclick="selectMedia(${rec.id})">
+    return `<div class="media-card rounded-lg bg-surface-50 border${sel} cursor-pointer overflow-hidden ${isNg?'ng-card':''}" data-mid="${rec.id}" onclick="selectMedia(${rec.id})">
       <div class="thumb-placeholder aspect-video relative overflow-hidden ${isAudio?'bg-gradient-to-br from-warning/10 to-surface-50':''}">
         <div class="absolute inset-0 flex items-center justify-center">${isAudio?audioSvg:videoSvg}</div>
         ${thumb ? `<img src="${thumb}" class="absolute inset-0 w-full h-full object-cover" style="z-index:1" onerror="this.style.display='none'"/>` : ''}
@@ -752,9 +752,24 @@ async function renderAnalytics() {
 async function selectMedia(id) {
   try {
     await fetchDetail(id);
+    // Navigate grid to the page containing this item
+    var inCurrentPage = state.items.some(function(i) { return i.id === id; });
+    if (!inCurrentPage) {
+      var posR = await fetch(API + '/api/media/position/' + id);
+      var pos = await posR.json();
+      var targetPage = Math.floor(pos.offset / PAGE_SIZE);
+      state.page = targetPage;
+      await fetchMedia();
+    }
     renderGrid();
     renderPool();
+    renderPagination();
     await renderInspector();
+    // Scroll grid to selected card
+    setTimeout(function() {
+      var card = document.querySelector('[data-mid="' + id + '"]');
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 50);
   } catch(e) {
     fetch('/api/client-log', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({level:'error', msg:'selectMedia(' + id + ') failed: ' + e.message}) });
   }
