@@ -67,6 +67,7 @@ Search, browse, rate, and tag your video/audio assets using AI-powered transcrip
 - Python 3.9+
 - FFmpeg 6.0+
 - Ollama with `nomic-embed-text` model
+- **DaVinci Resolve Plugin 額外需求**：Python 3.10 Framework 版本（[python.org 下載](https://www.python.org/downloads/release/python-31011/)）。Homebrew 或系統內建的 Python 不被 DaVinci 識別，必須安裝 macOS 64-bit universal2 installer（.pkg），安裝後路徑為 `/Library/Frameworks/Python.framework/Versions/3.10/`。安裝完重啟 DaVinci，Console 左下角會出現 Py3 選項，Workspace > Scripts 才會載入外部 script。
 
 ### Install
 

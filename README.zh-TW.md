@@ -67,6 +67,7 @@
 - Python 3.9+
 - FFmpeg 6.0+
 - Ollama 搭配 `nomic-embed-text` 模型
+- **DaVinci Resolve Plugin 額外需求**：需安裝 [Python 3.10 Framework 版本](https://www.python.org/downloads/release/python-31011/)（macOS 64-bit universal2 installer .pkg）。Homebrew / 系統內建 Python 不被 DaVinci 識別。安裝後重啟 DaVinci，Console 左下角出現 Py3 選項即代表成功。
 
 ### 安裝
 
