@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional, Set
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -1075,6 +1075,59 @@ def stream_media(media_id: int):
         media_type=mime,
         filename=file_path.name,
     )
+
+
+# ── Proxy Management ─────────────────────────────────────────────────────────
+
+PROXY_CODECS = {"hevc", "hev1", "prores", "ap4h", "ap4x", "apch", "apcn", "apcs", "apco"}
+
+@app.get("/api/proxy/status")
+def proxy_status():
+    """Check proxy status for all media files."""
+    proxy_dir = ROOT / "proxies"
+    proxy_dir.mkdir(exist_ok=True)
+    existing = {p.stem for p in proxy_dir.glob("*.mp4")}
+    with db.get_conn() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+    proxied = len(existing)
+    size_mb = round(sum(p.stat().st_size for p in proxy_dir.glob("*.mp4")) / 1048576, 1)
+    return {"total": total, "proxied": proxied, "size_mb": size_mb}
+
+
+@app.post("/api/proxy/build")
+def proxy_build(background_tasks: BackgroundTasks):
+    """Queue proxy generation for all HEVC/ProRes files without proxy."""
+    proxy_dir = ROOT / "proxies"
+    proxy_dir.mkdir(exist_ok=True)
+    existing = {p.stem for p in proxy_dir.glob("*.mp4")}
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT id, path FROM media").fetchall()
+    to_build = [dict(r) for r in rows if str(r["id"]) not in existing]
+    if not to_build:
+        return {"message": "全部 proxy 已存在", "queued": 0}
+    background_tasks.add_task(_build_proxies, to_build, proxy_dir)
+    return {"message": f"開始生成 {len(to_build)} 個 proxy（背景執行）", "queued": len(to_build)}
+
+
+def _build_proxies(items: list, proxy_dir: Path):
+    """Background task: generate H.264 proxy for each file."""
+    import subprocess
+    for item in items:
+        src = db.resolve_path(item["path"])
+        dst = proxy_dir / f"{item['id']}.mp4"
+        if dst.exists():
+            continue
+        try:
+            subprocess.run([
+                "ffmpeg", "-y", "-i", src,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "28",
+                "-vf", "scale=-2:720",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                str(dst),
+            ], capture_output=True, timeout=300)
+        except Exception as e:
+            print(f"[proxy] Failed {item['id']}: {e}")
 
 
 # ── Serve Frontend ───────────────────────────────────────────────────────────
