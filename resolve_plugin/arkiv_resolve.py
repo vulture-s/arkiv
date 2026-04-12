@@ -22,8 +22,12 @@ def get_resolve():
     """Get the DaVinci Resolve scripting object."""
     import sys
     import os
-    # Windows: set up Resolve scripting paths
-    if sys.platform == "win32":
+    # Set up Resolve scripting module paths
+    if sys.platform == "darwin":
+        modules_path = "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting/Modules"
+        if modules_path not in sys.path:
+            sys.path.append(modules_path)
+    elif sys.platform == "win32":
         script_api = os.environ.get(
             "RESOLVE_SCRIPT_API",
             r"C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting"
