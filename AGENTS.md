@@ -65,6 +65,18 @@ arkiv 是影片素材管理工具（Tauri + Python backend），功能包含：
 - 有疑慮的實作用 `⚠️ REVIEW:` 標記，不要藏
 - 審計發現重大缺失 → 此 AGENTS.md 會被更新補強規則
 
+## Pre-Commit Checklist（每次 commit 前逐項確認）
+| # | 檢查項 | 說明 |
+|---|--------|------|
+| 1 | `settings.local.json` 未被 staged | `git diff --cached --name-only \| grep settings.local` 必須為空 |
+| 2 | `.env` / credentials 未被 staged | 同上，grep `.env` / `credentials` / `api_key` |
+| 3 | 狀態欄位未被擅自修改 | 不得修改任何文件中的「狀態: Draft/Final」「Status:」等欄位，除非 handover 明確指示 |
+| 4 | 依賴版本未被降級 | `pip list` 核心 package（torch/transformers/whisperx）版本 ≥ handover 指定版本 |
+| 5 | Python 3.9 語法相容 | 無 match/case、`str \| None`、`list[dict]` |
+| 6 | health.py 全綠 | 0 FAIL |
+
+**源自**：W15 三次同類問題（settings.local.json 被 commit、狀態欄被改、torch 被降版）
+
 ## Don't
 - 不要硬編碼 IP、API key、密碼
 - 不要加不必要的功能、註解、docstring、type annotation
