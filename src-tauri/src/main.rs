@@ -2,6 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("[arkiv-tauri panic] {}", info);
+    }));
+
     // Dev mode: assumes arkiv server is already running on localhost:8501
     // Production: will add sidecar launch when PyInstaller binary is ready
     tauri::Builder::default()
