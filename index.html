@@ -318,7 +318,7 @@ async function nativePickFolder() {
   if (isTauri) {
     try {
       if (window.__TAURI__.dialog && window.__TAURI__.dialog.open)
-        return await window.__TAURI__.dialog.open({ directory: true, title: '選擇資料夾' });
+        return await window.__TAURI__.dialog.open({ directory: true });
     } catch(e) {}
     try {
       if (window.__TAURI__.core)
