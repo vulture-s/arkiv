@@ -911,16 +911,28 @@ async function doExport(id, fmt) {
     var rec = state.selectedRec || state.items.find(r => r.id === id);
     var basename = rec ? rec.filename.replace(/\.[^.]+$/, '') : 'media_' + id;
     var ext = fmt.startsWith('edl') ? 'edl' : fmt === 'fcpxml' ? 'fcpxml' : fmt;
-    var filename = basename + '.' + ext;
+
+    // Pick up In/Out trim if the user moved markers on this clip
+    var trim = null;
+    var dur = rec && rec.duration_s ? rec.duration_s : 0;
+    if (dur && inOutState.id === id) {
+      var inS = inOutState.in || 0;
+      var outS = (inOutState.out > 0 && inOutState.out <= dur) ? inOutState.out : dur;
+      if (inS > 0.05 || outS < dur - 0.05) trim = { in_s: inS, out_s: outS };
+    }
+    var filename = basename + (trim ? '_trim' : '') + '.' + ext;
+    var query = trim ? ('?in_s=' + trim.in_s + '&out_s=' + trim.out_s) : '';
 
     if (isTauri && window.__TAURI__ && window.__TAURI__.dialog) {
       // Tauri: pick save path, then server writes file directly
       try {
         var savePath = await window.__TAURI__.dialog.save({ defaultPath: filename });
         if (!savePath) return;
+        var body = { fmt: fmt, dest: savePath };
+        if (trim) { body.in_s = trim.in_s; body.out_s = trim.out_s; }
         var resp = await fetch('/api/media/' + id + '/export-to', {
           method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({fmt: fmt, dest: savePath})
+          body: JSON.stringify(body)
         });
         if (resp.ok) { await tauriMessage('已匯出：' + savePath); }
         else { await tauriMessage('Export 失敗：HTTP ' + resp.status); }
@@ -928,7 +940,7 @@ async function doExport(id, fmt) {
       } catch(te) { console.log('Tauri export fallback:', te); }
     }
     // Browser fallback: blob download
-    var resp = await fetch('/api/media/' + id + '/export/' + fmt);
+    var resp = await fetch('/api/media/' + id + '/export/' + fmt + query);
     if (!resp.ok) { await tauriMessage('Export 失敗：HTTP ' + resp.status); return; }
     var blob = new Blob([await resp.text()], {type:'text/plain;charset=utf-8'});
     var url = URL.createObjectURL(blob);

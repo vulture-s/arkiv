@@ -695,14 +695,27 @@ def clear_cache(target: str = Query("app", description="app|thumbnails|chromadb|
 # ── Export ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/media/{media_id}/export/{fmt}")
-def export_media(media_id: int, fmt: str):
+def export_media(
+    media_id: int,
+    fmt: str,
+    in_s: Optional[float] = None,
+    out_s: Optional[float] = None,
+):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
     transcript = rec.get("transcript", "") or ""
     filename = rec.get("filename", f"media_{media_id}")
     stem = filename.rsplit(".", 1)[0]
-    duration = rec.get("duration_s", 0) or 0
+    full_duration = rec.get("duration_s", 0) or 0
+
+    # Normalize trim window: [trim_in, trim_out] in seconds, duration = trim_out - trim_in
+    trim_in = max(0.0, float(in_s)) if in_s is not None else 0.0
+    trim_out = min(full_duration, float(out_s)) if out_s is not None else full_duration
+    if trim_out <= trim_in:
+        trim_in, trim_out = 0.0, full_duration
+    has_trim = trim_in > 0.05 or trim_out < full_duration - 0.05
+    duration = trim_out - trim_in
 
     def _ts(seconds: float, sep: str = ",") -> str:
         """Subtitle timecode (SRT/VTT): HH:MM:SS,mmm"""
@@ -749,13 +762,6 @@ def export_media(media_id: int, fmt: str):
         sep = ";" if drop_frame else ":"
         return f"{hh:02d}:{mm:02d}:{ss:02d}{sep}{ff:02d}"
 
-    if fmt == "txt":
-        return HTMLResponse(
-            content=transcript,
-            media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.txt"'},
-        )
-
     # Try to use segment-aligned timestamps if available
     import json as _json
     _seg_json = rec.get("segments_json")
@@ -765,6 +771,34 @@ def export_media(media_id: int, fmt: str):
             _segments = _json.loads(_seg_json)
         except Exception:
             pass
+
+    # When trimmed, keep only segments that overlap [trim_in, trim_out] and
+    # rebase their timestamps so the output starts at 0.
+    if has_trim and _segments:
+        trimmed = []
+        for seg in _segments:
+            s, e = seg.get("start", 0), seg.get("end", 0)
+            if e <= trim_in or s >= trim_out:
+                continue
+            trimmed.append({
+                **seg,
+                "start": max(0.0, s - trim_in),
+                "end": min(duration, e - trim_in),
+            })
+        _segments = trimmed
+
+    if fmt == "txt":
+        if has_trim:
+            # Only text from segments within the trim window. With no segment data
+            # we can't trim plain text by time, so the export is empty by design.
+            content = "\n".join(seg.get("text", "").strip() for seg in _segments if seg.get("text"))
+        else:
+            content = transcript
+        return HTMLResponse(
+            content=content,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.txt"'},
+        )
 
     if fmt == "srt":
         srt = ""
@@ -822,9 +856,9 @@ def export_media(media_id: int, fmt: str):
                 except (ValueError, ZeroDivisionError):
                     start_tc_offset = 0.0
 
-        # Source TC = camera start TC + offset into clip
-        src_start = _edl_tc(start_tc_offset, clip_fps, is_df)
-        src_end = _edl_tc(start_tc_offset + duration, clip_fps, is_df)
+        # Source TC = camera start TC + offset into clip (shifted by trim_in when trimmed)
+        src_start = _edl_tc(start_tc_offset + trim_in, clip_fps, is_df)
+        src_end = _edl_tc(start_tc_offset + trim_in + duration, clip_fps, is_df)
         # Record TC = timeline position (starts at 01:00:00:00 by convention)
         rec_base = 3600.0  # 01:00:00:00
         rec_start = _edl_tc(rec_base, clip_fps, is_df)
@@ -843,14 +877,18 @@ def export_media(media_id: int, fmt: str):
             # LOC comments — DaVinci reads these via "Import > Timeline Markers from EDL"
             colors = ["RED", "BLUE", "GREEN", "CYAN", "MAGENTA", "YELLOW", "WHITE"]
             frames = db.get_frames(media_id)
-            for i, fr in enumerate(frames):
+            kept = 0
+            for fr in frames:
                 marker_offset = fr["timestamp_s"]
-                rtc = _edl_tc(rec_base + marker_offset, clip_fps, is_df)
+                if marker_offset < trim_in or marker_offset > trim_out:
+                    continue
+                rtc = _edl_tc(rec_base + (marker_offset - trim_in), clip_fps, is_df)
                 # Strip non-ASCII for DaVinci compatibility (no UTF-8 in EDL markers)
                 desc = (fr.get("description") or f"Frame {fr['frame_index']+1}")
                 desc = desc.encode("ascii", "replace").decode("ascii")[:60]
-                color = colors[i % len(colors)]
+                color = colors[kept % len(colors)]
                 edl += f"* LOC: {rtc} {color} {desc}\n"
+                kept += 1
 
         return HTMLResponse(
             content=edl,
@@ -877,8 +915,9 @@ def export_media(media_id: int, fmt: str):
         is_df = rounded_fps in (29.97, 59.94)
         tc_fmt = "DF" if is_df else "NDF"
 
-        # Duration in rational time
-        dur_frames = round(duration * clip_fps)
+        # Asset references the full file on disk; the timeline clip uses the trim window.
+        asset_dur_frames = round(full_duration * clip_fps)
+        clip_dur_frames = round(duration * clip_fps)
 
         # Camera body start timecode
         start_tc_str = rec.get("start_tc") or "00:00:00:00"
@@ -901,32 +940,38 @@ def export_media(media_id: int, fmt: str):
             file_uri = pathlib.PurePosixPath("/" + str(file_uri))
         file_uri_str = xml_esc(f"file://{file_uri}")
 
-        # Build marker elements from frame analysis
+        # Build marker elements from frame analysis (filter to trim window, rebase to clip start)
         markers_xml = ""
         frames = db.get_frames(media_id)
         colors = ["Blue", "Red", "Green", "Cyan", "Magenta", "Yellow", "White"]
-        for i, fr in enumerate(frames):
-            offset_frames = round(fr["timestamp_s"] * clip_fps)
+        kept = 0
+        for fr in frames:
+            ts = fr["timestamp_s"]
+            if ts < trim_in or ts > trim_out:
+                continue
+            offset_frames = round((ts - trim_in) * clip_fps)
             desc = xml_esc((fr.get("description") or f"Frame {fr['frame_index']+1}")[:60],
                            {'"': '&quot;'})
-            color = colors[i % len(colors)]
+            color = colors[kept % len(colors)]
             markers_xml += f'                <marker start="{offset_frames * int(_num)}/{_den}s" duration="{_num}/{_den}s" value="{desc}" />\n'
+            kept += 1
 
-        start_frames = round(start_tc_offset * clip_fps)
+        # asset-clip start = where in the asset to begin reading (camera TC + trim_in)
+        clip_start_frames = round((start_tc_offset + trim_in) * clip_fps)
 
         fcpxml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE fcpxml>
 <fcpxml version="1.8">
     <resources>
         <format id="r1" frameDuration="{_num}/{_den}s" width="{rec.get('width') or 1920}" height="{rec.get('height') or 1080}" />
-        <asset id="r2" name="{xml_esc(stem)}" src="{file_uri_str}" start="0s" duration="{dur_frames * int(_num)}/{_den}s" format="r1" hasAudio="1" hasVideo="1" />
+        <asset id="r2" name="{xml_esc(stem)}" src="{file_uri_str}" start="0s" duration="{asset_dur_frames * int(_num)}/{_den}s" format="r1" hasAudio="1" hasVideo="1" />
     </resources>
     <library>
         <event name="arkiv Export">
             <project name="{xml_esc(stem)}">
-                <sequence format="r1" tcStart="0s" tcFormat="{tc_fmt}" duration="{dur_frames * int(_num)}/{_den}s">
+                <sequence format="r1" tcStart="0s" tcFormat="{tc_fmt}" duration="{clip_dur_frames * int(_num)}/{_den}s">
                     <spine>
-                        <asset-clip ref="r2" name="{xml_esc(filename)}" offset="0s" duration="{dur_frames * int(_num)}/{_den}s" start="{start_frames * int(_num)}/{_den}s" tcFormat="{tc_fmt}">
+                        <asset-clip ref="r2" name="{xml_esc(filename)}" offset="0s" duration="{clip_dur_frames * int(_num)}/{_den}s" start="{clip_start_frames * int(_num)}/{_den}s" tcFormat="{tc_fmt}">
 {markers_xml}                        </asset-clip>
                     </spine>
                 </sequence>
@@ -947,11 +992,13 @@ def export_media(media_id: int, fmt: str):
 class ExportToRequest(BaseModel):
     fmt: str
     dest: str
+    in_s: Optional[float] = None
+    out_s: Optional[float] = None
 
 @app.post("/api/media/{media_id}/export-to")
 def export_to_file(media_id: int, body: ExportToRequest):
     """Export and write directly to a local path (for Tauri native save dialog)."""
-    resp = export_media(media_id, body.fmt)
+    resp = export_media(media_id, body.fmt, in_s=body.in_s, out_s=body.out_s)
     content = resp.body.decode("utf-8")
     dest = Path(body.dest).expanduser().resolve()
     # Block writes to sensitive system directories
