@@ -234,6 +234,9 @@ def generate_proxy(media_id: int, path: str) -> Optional[str]:
     cmd = [
         "ffmpeg", "-y", "-i", path,
         "-c:v", "libx264", "-preset", "fast", "-crf", "28",
+        "-profile:v", "high", "-level:v", "4.0",
+        "-pix_fmt", "yuv420p",
+        "-g", "30",
         "-vf", "scale=-2:720",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
