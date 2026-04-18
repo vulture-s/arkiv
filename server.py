@@ -1105,27 +1105,19 @@ def proxy_build(background_tasks: BackgroundTasks):
     to_build = [dict(r) for r in rows if str(r["id"]) not in existing]
     if not to_build:
         return {"message": "全部 proxy 已存在", "queued": 0}
-    background_tasks.add_task(_build_proxies, to_build, proxy_dir)
+    background_tasks.add_task(_build_proxies, to_build)
     return {"message": f"開始生成 {len(to_build)} 個 proxy（背景執行）", "queued": len(to_build)}
 
 
-def _build_proxies(items: list, proxy_dir: Path):
+def _build_proxies(items: list):
     """Background task: generate H.264 proxy for each file."""
-    import subprocess
+    import ingest
     for item in items:
         src = db.resolve_path(item["path"])
-        dst = proxy_dir / f"{item['id']}.mp4"
-        if dst.exists():
-            continue
         try:
-            subprocess.run([
-                "ffmpeg", "-y", "-i", src,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "28",
-                "-vf", "scale=-2:720",
-                "-c:a", "aac", "-b:a", "128k",
-                "-movflags", "+faststart",
-                str(dst),
-            ], capture_output=True, timeout=300)
+            result = ingest.generate_proxy(item["id"], src)
+            if not result:
+                print(f"[proxy] Failed {item['id']}")
         except Exception as e:
             print(f"[proxy] Failed {item['id']}: {e}")
 

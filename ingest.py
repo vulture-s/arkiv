@@ -224,13 +224,15 @@ def needs_proxy(path: str) -> bool:
         return False
 
 
-def generate_proxy(media_id: int, path: str) -> Optional[str]:
+def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[str]:
     """Generate a 720p H.264 proxy for browser playback. Returns proxy path or None."""
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
     proxy_path = proxy_dir / f"{media_id}.mp4"
-    if proxy_path.exists():
+    if proxy_path.exists() and not force:
         return str(proxy_path)
+    if force:
+        proxy_path.unlink(missing_ok=True)
     cmd = [
         "ffmpeg", "-y", "-i", path,
         "-c:v", "libx264", "-preset", "fast", "-crf", "28",
@@ -499,6 +501,43 @@ def _run_vision_only(args):
         print(f"\nVision-only done. {ok} files patched.")
 
 
+def _regenerate_proxies():
+    """Rebuild all existing proxies with latest encoding settings."""
+    proxy_dir = config.PROXIES_DIR
+    existing = sorted(proxy_dir.glob("*.mp4")) if proxy_dir.exists() else []
+    if not existing:
+        print("No existing proxies to regenerate.")
+        return
+
+    print(f"Regenerating {len(existing)} proxies...")
+    ok, failed = 0, 0
+    for idx, proxy_path in enumerate(existing, 1):
+        try:
+            mid = int(proxy_path.stem)
+        except ValueError:
+            print(f"  [SKIP] {proxy_path.name} (non-numeric stem)")
+            continue
+        rec = db.get_record_by_id(mid)
+        if not rec:
+            print(f"  [{idx}/{len(existing)}] id={mid}: record missing, deleting orphan proxy")
+            proxy_path.unlink(missing_ok=True)
+            continue
+        src = db.resolve_path(rec["path"])
+        if not Path(src).exists():
+            print(f"  [{idx}/{len(existing)}] id={mid}: source missing ({src}), skipping")
+            failed += 1
+            continue
+        print(f"  [{idx}/{len(existing)}] id={mid} {rec['filename']}", end="", flush=True)
+        result = generate_proxy(mid, src, force=True)
+        if result:
+            print(" [OK]")
+            ok += 1
+        else:
+            print(" [FAIL]")
+            failed += 1
+    print(f"\nRegenerated: {ok}  Failed: {failed}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ingest media files into SQLite DB")
     parser.add_argument("--dir", required=True, help="Media directory to scan")
@@ -511,6 +550,11 @@ def main():
         action="store_true",
         help="將 DB 中所有絕對路徑轉為相對路徑（對 ARKIV_PROJECT_ROOT）",
     )
+    parser.add_argument(
+        "--regenerate-proxies",
+        action="store_true",
+        help="刪除並重建所有 HEVC/ProRes proxy（套用最新編碼設定）",
+    )
     parser.add_argument("--recursive", "-r", action="store_true", help="Recursively scan subdirectories")
     parser.add_argument("--db", default="", help="Path to SQLite DB (default: media.db next to ingest.py)")
     args = parser.parse_args()
@@ -522,6 +566,10 @@ def main():
 
     if args.migrate_relative:
         db.migrate_to_relative()
+        return
+
+    if args.regenerate_proxies:
+        _regenerate_proxies()
         return
 
     # ── Vision-only mode: patch missing vision descriptions ──────────────
