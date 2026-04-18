@@ -492,9 +492,9 @@ def _build_filter_clause(
         clauses.append("rating = ?")
         params.append(rating)
     if media_type == "video":
-        clauses.append("ext IN ('.mp4', '.mov', '.m4v', '.mts')")
+        clauses.append("ext IN ('.mp4', '.mov', '.mkv', '.avi', '.webm', '.m4v', '.mts')")
     elif media_type == "audio":
-        clauses.append("ext IN ('.wav', '.mp3', '.m4a', '.aac')")
+        clauses.append("ext IN ('.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg')")
     return " AND ".join(clauses), params
 
 
