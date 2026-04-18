@@ -50,7 +50,7 @@ echo -e "  ${GREEN}✓${NC} Ollama"
 echo ""
 
 # ── 2. Get arkiv source ──
-REPO="https://github.com/ourladypeace2011-commits/arkiv.git"
+REPO="https://github.com/vulture-s/arkiv.git"
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
@@ -95,7 +95,7 @@ echo "Pulling Ollama models (this may take a while)..."
 ollama serve &>/dev/null &
 sleep 2
 ollama pull nomic-embed-text 2>/dev/null && echo -e "  ${GREEN}✓${NC} nomic-embed-text" || echo -e "  ${YELLOW}⏭${NC} nomic-embed-text (pull later)"
-ollama pull llava:7b 2>/dev/null && echo -e "  ${GREEN}✓${NC} llava:7b" || echo -e "  ${YELLOW}⏭${NC} llava:7b (pull later)"
+ollama pull qwen3-vl:8b 2>/dev/null && echo -e "  ${GREEN}✓${NC} qwen3-vl:8b" || echo -e "  ${YELLOW}⏭${NC} qwen3-vl:8b (pull later)"
 
 echo ""
 
@@ -126,6 +126,6 @@ echo ""
 echo "  Location:  $INSTALL_DIR"
 echo "  Launch:    double-click ~/Desktop/arkiv.command"
 echo "  Or:        cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT"
-echo "  Ingest:    python ingest.py /path/to/your/footage"
+echo "  Ingest:    python ingest.py --dir /path/to/your/footage"
 echo "  Health:    python health.py"
 echo "  Uninstall: bash $INSTALL_DIR/uninstall.sh"

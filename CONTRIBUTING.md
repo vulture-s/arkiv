@@ -26,7 +26,7 @@ pip install faster-whisper torch  # NVIDIA GPU
 
 # Ollama models
 ollama pull nomic-embed-text
-ollama pull llava:7b
+ollama pull qwen3-vl:8b
 
 # Verify environment
 python health.py
