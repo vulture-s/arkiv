@@ -135,3 +135,108 @@ def test_export_endpoints_cover_supported_formats_and_current_json_gap(fastapi_c
     json_resp = fastapi_client.get("/api/media/1/export/json")
     assert json_resp.status_code == 400
     assert "json" in json_resp.json()["detail"]
+
+
+def _insert_media_with_segments(sample_record):
+    import json as _json
+    db = importlib.import_module("db")
+    segments = [
+        {"start": 0.0, "end": 10.0, "text": "前段台詞"},
+        {"start": 10.0, "end": 20.0, "text": "中段台詞"},
+        {"start": 20.0, "end": 30.0, "text": "後段台詞"},
+    ]
+    db.upsert(
+        sample_record(
+            path="/tmp/trim-zh.mp4",
+            filename="trim-zh.mp4",
+            duration_s=30.0,
+            fps=30.0,
+            start_tc="01:00:00:00",
+            segments_json=_json.dumps(segments, ensure_ascii=False),
+        )
+    )
+    return db
+
+
+def test_srt_export_ignores_trim_when_range_covers_full_clip(fastapi_client, sample_record):
+    _insert_media_with_segments(sample_record)
+
+    baseline = fastapi_client.get("/api/media/1/export/srt").text
+    widened = fastapi_client.get(
+        "/api/media/1/export/srt", params={"in_s": 0, "out_s": 30}
+    ).text
+    assert baseline == widened, "full-range trim must be a no-op"
+    assert "前段台詞" in baseline and "後段台詞" in baseline
+
+
+def test_srt_export_filters_and_rebases_to_trim_window(fastapi_client, sample_record):
+    _insert_media_with_segments(sample_record)
+
+    resp = fastapi_client.get(
+        "/api/media/1/export/srt", params={"in_s": 10, "out_s": 20}
+    )
+    assert resp.status_code == 200
+    body = resp.text
+    # Only the middle segment survives
+    assert "中段台詞" in body
+    assert "前段台詞" not in body
+    assert "後段台詞" not in body
+    # And it's rebased to start at 00:00:00,000
+    assert "00:00:00,000 --> 00:00:10,000" in body
+
+
+def test_txt_export_with_trim_but_no_segments_returns_empty(fastapi_client, sample_record):
+    # record inserted without segments_json
+    _insert_media(sample_record)
+    resp = fastapi_client.get(
+        "/api/media/1/export/txt", params={"in_s": 10, "out_s": 20}
+    )
+    assert resp.status_code == 200
+    assert resp.text == ""
+
+
+def test_edl_export_shifts_source_tc_by_trim_in(fastapi_client, sample_record):
+    _insert_media_with_segments(sample_record)
+
+    resp = fastapi_client.get(
+        "/api/media/1/export/edl", params={"in_s": 10, "out_s": 20}
+    )
+    assert resp.status_code == 200
+    body = resp.text
+    # Record TC still begins at 01:00:00:00
+    assert "01:00:00:00" in body
+    # Source TC begins at 01:00:10:00 (camera TC 01:00:00:00 + trim_in 10s at 30fps)
+    assert "01:00:10:00" in body
+    # And ends 10s later (trim duration, not full 30s clip)
+    assert "01:00:20:00" in body
+    # Full-clip source end (01:00:30:00) must not appear
+    assert "01:00:30:00" not in body
+
+
+def test_fcpxml_export_keeps_asset_full_but_clip_uses_trim(fastapi_client, sample_record):
+    _insert_media_with_segments(sample_record)
+
+    resp = fastapi_client.get(
+        "/api/media/1/export/fcpxml", params={"in_s": 10, "out_s": 20}
+    )
+    assert resp.status_code == 200
+    body = resp.text
+    # asset duration = full 30s * 30fps = 900 frames; num=1, den=30
+    assert 'duration="900/30s"' in body  # asset
+    # sequence + asset-clip duration = 10s * 30fps = 300 frames
+    assert 'duration="300/30s"' in body
+    # asset-clip start = (camera TC 3600s + trim_in 10s) * 30fps = 108300 frames
+    assert 'start="108300/30s"' in body
+
+
+def test_export_to_file_accepts_trim_params(tmp_path, fastapi_client, sample_record):
+    _insert_media_with_segments(sample_record)
+    dest = tmp_path / "trim.srt"
+    resp = fastapi_client.post(
+        "/api/media/1/export-to",
+        json={"fmt": "srt", "dest": str(dest), "in_s": 10, "out_s": 20},
+    )
+    assert resp.status_code == 200
+    content = dest.read_text(encoding="utf-8")
+    assert "中段台詞" in content
+    assert "前段台詞" not in content
