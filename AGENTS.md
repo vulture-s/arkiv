@@ -90,11 +90,8 @@ arkiv 是影片素材管理工具（Tauri + Python backend），功能包含：
 
 Phase 1-10 全部完成（看 `CHANGELOG.md` + `docs/phase8-handover.md`）。
 
-**未完成事項統一寫在 `docs/roadmap.md`**，分 5 區：
-- A. 需要實機才能驗證
-- B. 小型可在 Linux 完整實作 + 驗證
-- C. 中等 scope（需研究 + 設計）
-- D. 大型 scope / 跨平台 / 需 packaging
-- E. 技術債
+**Product roadmap / 未完成事項 SSoT** 在 hevin-ai-os（本機私有）：
+- `~/Desktop/hevin-ai-os/references/plans/arkiv/arkiv-roadmap.md` — 完整 phase-level roadmap + 技術債 + 微型任務清單 + 需實機驗證錨點
+- `~/Desktop/hevin-ai-os/references/project-logs/arkiv/dev-log.md` — 時序開發紀錄
 
-挑工作前先讀 roadmap，完成後從 roadmap 移除並更新 CHANGELOG。新發現的問題加到對應 section。
+挑工作前先讀 hevin-ai-os 的 roadmap，完成後更新該檔 + 本 repo 的 `CHANGELOG.md`。新發現的問題加到主 roadmap 對應 section。
