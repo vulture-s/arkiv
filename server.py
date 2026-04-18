@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import config
 import db
 
 
@@ -1107,7 +1108,7 @@ def stream_media(media_id: int):
     if not rec:
         raise HTTPException(404, "找不到媒體")
     # Check for proxy first (browser-friendly H.264)
-    proxy_path = ROOT / "proxies" / f"{media_id}.mp4"
+    proxy_path = config.PROXIES_DIR / f"{media_id}.mp4"
     if proxy_path.exists():
         return FileResponse(
             path=str(proxy_path),
@@ -1137,8 +1138,8 @@ PROXY_CODECS = {"hevc", "hev1", "prores", "ap4h", "ap4x", "apch", "apcn", "apcs"
 @app.get("/api/proxy/status")
 def proxy_status():
     """Check proxy status for all media files."""
-    proxy_dir = ROOT / "proxies"
-    proxy_dir.mkdir(exist_ok=True)
+    proxy_dir = config.PROXIES_DIR
+    proxy_dir.mkdir(parents=True, exist_ok=True)
     existing = {p.stem for p in proxy_dir.glob("*.mp4")}
     with db.get_conn() as conn:
         total = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
@@ -1150,8 +1151,8 @@ def proxy_status():
 @app.post("/api/proxy/build")
 def proxy_build(background_tasks: BackgroundTasks):
     """Queue proxy generation for all HEVC/ProRes files without proxy."""
-    proxy_dir = ROOT / "proxies"
-    proxy_dir.mkdir(exist_ok=True)
+    proxy_dir = config.PROXIES_DIR
+    proxy_dir.mkdir(parents=True, exist_ok=True)
     existing = {p.stem for p in proxy_dir.glob("*.mp4")}
     with db.get_conn() as conn:
         rows = conn.execute("SELECT id, path FROM media").fetchall()
