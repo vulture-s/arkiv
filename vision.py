@@ -149,11 +149,7 @@ def _describe_one(img_path, max_retries=2):
     # Try JSON parse
     try:
         parsed = json.loads(raw)
-        result = _normalize_result(parsed)
-        desc = result.get("description", "")
-        if not desc or desc.startswith("```"):
-            return result
-        return result
+        return _normalize_result(parsed)
     except json.JSONDecodeError:
         pass
 

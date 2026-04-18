@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -97,8 +96,7 @@ def _extract_scene_persistent(
     max_frames: int = 5,
 ) -> List[Dict]:
     """Use scene detection, then persist top scene-change frames."""
-    tmp_dir = tempfile.mkdtemp(prefix="media_frames_")
-    # First pass: detect scene timestamps
+    # First pass: detect scene timestamps via showinfo (stderr), discard frames
     cmd = [
         "ffmpeg", "-i", video_path,
         "-vf", "select='gt(scene,0.3)',showinfo",
