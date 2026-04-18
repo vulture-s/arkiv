@@ -9,6 +9,22 @@ def _get_row_by_path(db, path):
         ).fetchone()
 
 
+def test_media_type_filter_covers_all_supported_extensions(tmp_db, sample_record):
+    db = importlib.import_module("db")
+    # Ingest accepts 7 video + 6 audio exts (see ingest.SUPPORTED).
+    video_exts = [".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts"]
+    audio_exts = [".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"]
+    for i, ext in enumerate(video_exts + audio_exts):
+        db.upsert(sample_record(path="/tmp/f{0}{1}".format(i, ext), ext=ext))
+
+    video_rows, video_total = db.get_media_filtered(media_type="video", limit=100)
+    audio_rows, audio_total = db.get_media_filtered(media_type="audio", limit=100)
+    assert video_total == len(video_exts)
+    assert audio_total == len(audio_exts)
+    assert {r["ext"] for r in video_rows} == set(video_exts)
+    assert {r["ext"] for r in audio_rows} == set(audio_exts)
+
+
 def test_init_db_is_idempotent(tmp_db):
     db = importlib.import_module("db")
     db.init_db()
