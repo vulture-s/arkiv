@@ -274,6 +274,59 @@ def get_media_detail(media_id: int):
     return rec
 
 
+@app.get("/api/media/{media_id}/waveform")
+def get_media_waveform(media_id: int, bins: int = 60):
+    """Return pre-computed audio peaks (0..1) for the inspector waveform.
+    Cached per (id, bins) under waveforms/<id>_<bins>.json."""
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到")
+    if not rec.get("has_audio"):
+        return {"media_id": media_id, "bins": bins, "peaks": [0.0] * max(8, bins)}
+    bins = max(8, min(500, bins))
+    cache_dir = ROOT / "waveforms"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"{media_id}_{bins}.json"
+    if cache_path.exists():
+        try:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            cache_path.unlink(missing_ok=True)
+    file_path = Path(db.resolve_path(rec["path"]))
+    if not file_path.exists():
+        raise HTTPException(404, "找不到檔案")
+    peaks = _compute_waveform(str(file_path), bins)
+    if peaks is None:
+        raise HTTPException(500, "波形計算失敗")
+    payload = {"media_id": media_id, "bins": bins, "peaks": peaks}
+    try:
+        cache_path.write_text(json.dumps(payload), encoding="utf-8")
+    except Exception:
+        pass
+    return payload
+
+
+def _compute_waveform(path: str, bins: int):
+    """Decode mono 8kHz PCM via ffmpeg and return `bins` peak-amplitude values 0..1."""
+    import subprocess
+    import numpy as np
+    cmd = [
+        "ffmpeg", "-v", "quiet", "-i", path,
+        "-ac", "1", "-ar", "8000", "-f", "s16le", "-",
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        if r.returncode != 0 or not r.stdout:
+            return None
+        samples = np.frombuffer(r.stdout, dtype=np.int16).astype(np.float32)
+        if samples.size == 0:
+            return [0.0] * bins
+        splits = np.array_split(samples, bins)
+        return [float(np.abs(s).max()) / 32768.0 if s.size else 0.0 for s in splits]
+    except Exception:
+        return None
+
+
 @app.get("/api/media/{media_id}/scenes")
 def get_media_scenes(media_id: int):
     rec = db.get_record_by_id(media_id)
