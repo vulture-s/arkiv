@@ -307,11 +307,14 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None)
         print(" [ffprobe failed]")
         return {}
 
+    exif = exiftool_extract(str(path))
+
     record = {
         "path": db.to_relative(str(path)),
         "filename": path.name,
         "ext": path.suffix.lower(),
         **meta,
+        **exif,
         "transcript": existing.get("transcript") if existing else None,
         "lang": existing.get("lang") if existing else None,
         "frame_tags": None,
