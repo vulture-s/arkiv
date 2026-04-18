@@ -588,7 +588,10 @@ def main():
         print(f"Error: {media_dir} does not exist")
         sys.exit(1)
 
-    if args.recursive:
+    if media_dir.is_file():
+        # Single-file mode (used by watch.py for new-arrival ingest)
+        files = [media_dir] if media_dir.suffix.lower() in SUPPORTED else []
+    elif args.recursive:
         files = sorted(
             f for f in media_dir.rglob("*")
             if f.is_file() and f.suffix.lower() in SUPPORTED
