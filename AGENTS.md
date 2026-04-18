@@ -86,41 +86,15 @@ arkiv 是影片素材管理工具（Tauri + Python backend），功能包含：
 
 ---
 
-## 當前任務：Phase 8
+## 當前狀態
 
-**完整執行計畫**: `docs/phase8-handover.md`
+Phase 1-10 全部完成（看 `CHANGELOG.md` + `docs/phase8-handover.md`）。
 
-### 執行順序
-```
-8.0（DIT 架構）→ 8.2（智慧取幀 + 品質分析）→ 8.3（Re-ingest）→ tests
-```
+**未完成事項統一寫在 `docs/roadmap.md`**，分 5 區：
+- A. 需要實機才能驗證
+- B. 小型可在 Linux 完整實作 + 驗證
+- C. 中等 scope（需研究 + 設計）
+- D. 大型 scope / 跨平台 / 需 packaging
+- E. 技術債
 
-### 改動範圍
-
-| 檔案 | 改動 |
-|------|------|
-| `config.py` | +PROJECT_ROOT |
-| `db.py` | +to_relative / resolve_path / migrate / schema 9 欄 / compute_editability / upsert_frame 擴充 |
-| `ingest.py` | 存相對路徑 + 傳遞新 vision 欄位 + --migrate-relative CLI |
-| `server.py` | +_resolve_record helper + GET /api/media/{id}/scenes + editability_score |
-| `vision.py` | prompt 擴充 8 新欄位 + _describe_one 回傳擴充 |
-| `frames.py` | 自適應取幀（<2s→1, 2-10s→3, 10-60s→5, >60s→5+n） |
-| `index.html` | +AI 分析區塊 + 編輯建議區塊 |
-| `watch.py` | known set 用 resolve_path |
-| `tests/test_phase8.py` | 13 新測試 |
-
-### 不改的檔案
-- `vectordb.py` — 路徑解析在 server.py 處理
-- `resolve_plugin/arkiv_resolve.py` — API 已回傳絕對路徑
-- `frames.py` 回傳值 — 仍回傳絕對（ingest 端轉相對）
-
-### Commit Strategy
-```
-commit 1: Phase 8.0 — DIT 架構（相對路徑 + PROJECT_ROOT + migration）
-commit 2: Phase 8.2 — 智慧取幀 + 品質分析 + scenes API + editability
-commit 3: Phase 8.3 — Re-ingest --refresh 整合
-commit 4: tests — test_phase8.py (13 tests)
-```
-
-### 自審 Checklist（完成後必填）
-見 `docs/phase8-handover.md` 底部的完整 checklist。
+挑工作前先讀 roadmap，完成後從 roadmap 移除並更新 CHANGELOG。新發現的問題加到對應 section。
