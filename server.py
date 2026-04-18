@@ -930,7 +930,7 @@ def export_media(
             except (ValueError, ZeroDivisionError):
                 pass
 
-        from xml.sax.saxutils import escape as xml_esc, quoteattr as xml_qa
+        from xml.sax.saxutils import escape as xml_esc
         import pathlib
 
         # Build file URI with proper file:/// prefix
