@@ -113,12 +113,12 @@ def transcribe(media_path: str, language: str = DEFAULT_LANGUAGE) -> tuple:
         if _USE_MLX:
             vad_wav = _vad_filter(wav)
             if vad_wav is None:
-                Path(wav).unlink(missing_ok=True)
                 return "", "", [], []
-            result = _transcribe_mlx(vad_wav, language)
-            if vad_wav != wav:
-                Path(vad_wav).unlink(missing_ok=True)
-            return result
+            try:
+                return _transcribe_mlx(vad_wav, language)
+            finally:
+                if vad_wav != wav:
+                    Path(vad_wav).unlink(missing_ok=True)
         else:
             return _transcribe_whisperx(wav, language)
     finally:
