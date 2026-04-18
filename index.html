@@ -322,7 +322,7 @@ async function nativePickFolder() {
     } catch(e) {}
     try {
       if (window.__TAURI__.core)
-        return await window.__TAURI__.core.invoke('plugin:dialog|open', { options: { directory: true, title: '選擇資料夾' } });
+        return await window.__TAURI__.core.invoke('plugin:dialog|open', { options: { directory: true } });
     } catch(e) {}
   }
   return prompt('輸入媒體資料夾路徑：');
@@ -832,7 +832,7 @@ async function doExport(id, fmt) {
     if (isTauri && window.__TAURI__ && window.__TAURI__.dialog) {
       // Tauri: pick save path, then server writes file directly
       try {
-        var savePath = await window.__TAURI__.dialog.save({ defaultPath: filename, title: '匯出 ' + fmt.toUpperCase() });
+        var savePath = await window.__TAURI__.dialog.save({ defaultPath: filename });
         if (!savePath) return;
         var resp = await fetch('/api/media/' + id + '/export-to', {
           method: 'POST', headers: {'Content-Type':'application/json'},
