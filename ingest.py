@@ -228,7 +228,7 @@ def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[st
     """Generate a 720p H.264 proxy for browser playback. Returns proxy path or None."""
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
-    proxy_path = proxy_dir / f"{media_id}.mp4"
+    proxy_path = config.proxy_path_for(media_id, path)
     if proxy_path.exists() and not force:
         return str(proxy_path)
     if force:
@@ -512,8 +512,13 @@ def _regenerate_proxies():
     print(f"Regenerating {len(existing)} proxies...")
     ok, failed = 0, 0
     for idx, proxy_path in enumerate(existing, 1):
+        # Proxy filename is "{media_id}_{hash}.mp4" since the path-hash fix;
+        # legacy files named just "{media_id}.mp4" are pre-fix orphans and
+        # should be deleted (they may be cross-contaminated from another
+        # install).
+        stem_head = proxy_path.stem.split("_", 1)[0]
         try:
-            mid = int(proxy_path.stem)
+            mid = int(stem_head)
         except ValueError:
             print(f"  [SKIP] {proxy_path.name} (non-numeric stem)")
             continue
@@ -523,6 +528,10 @@ def _regenerate_proxies():
             proxy_path.unlink(missing_ok=True)
             continue
         src = db.resolve_path(rec["path"])
+        expected_name = config.proxy_path_for(mid, src).name
+        if proxy_path.name != expected_name:
+            print(f"  [{idx}/{len(existing)}] {proxy_path.name}: stale naming, deleting")
+            proxy_path.unlink(missing_ok=True)
         if not Path(src).exists():
             print(f"  [{idx}/{len(existing)}] id={mid}: source missing ({src}), skipping")
             failed += 1
@@ -807,7 +816,7 @@ def main():
         all_media = conn.execute("SELECT id, path FROM media").fetchall()
     for mid, mpath in all_media:
         resolved_path = db.resolve_path(mpath)
-        proxy_path = config.PROXIES_DIR / f"{mid}.mp4"
+        proxy_path = config.proxy_path_for(mid, resolved_path)
         if proxy_path.exists():
             proxy_skip += 1
             continue

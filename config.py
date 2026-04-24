@@ -4,6 +4,7 @@ All hardcoded values centralized here. Override via environment variables.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -14,6 +15,15 @@ CHROMA_PATH = Path(os.getenv("ARKIV_CHROMA_PATH", str(BASE_DIR / "chroma_db")))
 THUMBNAILS_DIR = Path(os.getenv("ARKIV_THUMBNAILS_DIR", str(BASE_DIR / "thumbnails")))
 PROXIES_DIR = Path(os.getenv("ARKIV_PROXIES_DIR", str(BASE_DIR / "proxies")))
 PROJECT_ROOT = Path(os.getenv("ARKIV_PROJECT_ROOT", str(BASE_DIR)))
+
+
+def proxy_path_for(media_id: int, abs_source_path: str) -> Path:
+    # media_id alone is not enough — a proxies/ dir copied between
+    # installations would serve another user's content for the same id.
+    # Scoping by a hash of the absolute source path makes collisions
+    # across machines impossible.
+    digest = hashlib.sha1(str(abs_source_path).encode("utf-8")).hexdigest()[:10]
+    return PROXIES_DIR / f"{media_id}_{digest}.mp4"
 
 # ── Ollama ───────────────────────────────────────────────────────────────────
 OLLAMA_URL = os.getenv("ARKIV_OLLAMA_URL", "http://localhost:11434")

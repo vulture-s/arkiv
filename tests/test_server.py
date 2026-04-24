@@ -240,3 +240,43 @@ def test_export_to_file_accepts_trim_params(tmp_path, fastapi_client, sample_rec
     content = dest.read_text(encoding="utf-8")
     assert "中段台詞" in content
     assert "前段台詞" not in content
+
+
+def test_proxy_filename_is_scoped_by_source_path():
+    # Regression: a proxies/ directory copied from another installation
+    # must not be served as the local user's content. Filenames carry a
+    # hash of the absolute source path so cross-installation collisions
+    # are impossible.
+    config = importlib.import_module("config")
+    same_id_hevin = config.proxy_path_for(1, "/Users/hevin/clip.mov")
+    same_id_pen = config.proxy_path_for(1, "/Users/pen/clip.mov")
+    assert same_id_hevin != same_id_pen
+    assert same_id_hevin.name.startswith("1_")
+    assert same_id_pen.name.startswith("1_")
+    assert same_id_hevin == config.proxy_path_for(1, "/Users/hevin/clip.mov")
+
+
+def test_stream_ignores_legacy_proxy_from_another_install(
+    fastapi_client, sample_record, tmp_path, monkeypatch
+):
+    # Simulates the Pen bug: the repo shipped with a proxies/ directory
+    # from another machine. A file named "{media_id}.mp4" exists but was
+    # never generated from the local user's source. The stream endpoint
+    # must NOT return it.
+    config = importlib.import_module("config")
+    db = importlib.import_module("db")
+
+    proxies_dir = tmp_path / "proxies"
+    proxies_dir.mkdir()
+    legacy_contamination = proxies_dir / "1.mp4"
+    legacy_contamination.write_bytes(b"another-users-content-DO-NOT-SERVE")
+    monkeypatch.setattr(config, "PROXIES_DIR", proxies_dir)
+
+    db.upsert(sample_record(path="/tmp/local_user_own_file.mp4"))
+
+    # Source file doesn't exist on disk; fall-through yields 404. Key
+    # assertion: we did NOT serve the contamination file.
+    resp = fastapi_client.get("/api/stream/1")
+    assert resp.status_code == 404
+    assert b"DO-NOT-SERVE" not in resp.content
+    assert legacy_contamination.read_bytes() == b"another-users-content-DO-NOT-SERVE"

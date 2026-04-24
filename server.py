@@ -1166,15 +1166,18 @@ def stream_media(media_id: int):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到媒體")
-    # Check for proxy first (browser-friendly H.264)
-    proxy_path = config.PROXIES_DIR / f"{media_id}.mp4"
+    # Proxy filename is hash-scoped by absolute source path so that a
+    # proxies/ directory copied between installations cannot serve another
+    # user's content under the same media_id.
+    resolved_src = db.resolve_path(rec["path"])
+    proxy_path = config.proxy_path_for(media_id, resolved_src)
     if proxy_path.exists():
         return FileResponse(
             path=str(proxy_path),
             media_type="video/mp4",
-            filename=Path(db.resolve_path(rec["path"])).stem + "_proxy.mp4",
+            filename=Path(resolved_src).stem + "_proxy.mp4",
         )
-    file_path = Path(db.resolve_path(rec["path"]))
+    file_path = Path(resolved_src)
     if not file_path.exists():
         raise HTTPException(404, "找不到檔案")
     # Only serve known media extensions
@@ -1199,12 +1202,14 @@ def proxy_status():
     """Check proxy status for all media files."""
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
-    existing = {p.stem for p in proxy_dir.glob("*.mp4")}
     with db.get_conn() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
-    proxied = len(existing)
+        rows = conn.execute("SELECT id, path FROM media").fetchall()
+    proxied = sum(
+        1 for r in rows
+        if config.proxy_path_for(r["id"], db.resolve_path(r["path"])).exists()
+    )
     size_mb = round(sum(p.stat().st_size for p in proxy_dir.glob("*.mp4")) / 1048576, 1)
-    return {"total": total, "proxied": proxied, "size_mb": size_mb}
+    return {"total": len(rows), "proxied": proxied, "size_mb": size_mb}
 
 
 @app.post("/api/proxy/build")
@@ -1212,10 +1217,12 @@ def proxy_build(background_tasks: BackgroundTasks):
     """Queue proxy generation for all HEVC/ProRes files without proxy."""
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
-    existing = {p.stem for p in proxy_dir.glob("*.mp4")}
     with db.get_conn() as conn:
         rows = conn.execute("SELECT id, path FROM media").fetchall()
-    to_build = [dict(r) for r in rows if str(r["id"]) not in existing]
+    to_build = [
+        dict(r) for r in rows
+        if not config.proxy_path_for(r["id"], db.resolve_path(r["path"])).exists()
+    ]
     if not to_build:
         return {"message": "全部 proxy 已存在", "queued": 0}
     background_tasks.add_task(_build_proxies, to_build)
