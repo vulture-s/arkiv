@@ -20,6 +20,9 @@ bench_qwen3_asr_aligned.py
 # Personal test fixtures
 test_long_414s.wav
 test_short_10s.wav
+
+# Claude Code handover notes — contain personal paths + snapshots
+.claude/
 *.egg-info/
 dist/
 build/
