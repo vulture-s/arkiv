@@ -9,6 +9,17 @@ arkiv.db
 chroma_db/
 thumbnails/
 proxies/
+
+# Benchmark artefacts — results contain private transcripts / filenames,
+# and the scripts below have hardcoded personal paths. Keep local only.
+bench_*.json
+bench_guard_ab.py
+bench_qwen3_asr.py
+bench_qwen3_asr_aligned.py
+
+# Personal test fixtures
+test_long_414s.wav
+test_short_10s.wav
 *.egg-info/
 dist/
 build/
