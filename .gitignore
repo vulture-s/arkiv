@@ -3,9 +3,12 @@ __pycache__/
 *.pyc
 .env
 .env.local
+*.db
 media.db
+arkiv.db
 chroma_db/
 thumbnails/
+proxies/
 *.egg-info/
 dist/
 build/
