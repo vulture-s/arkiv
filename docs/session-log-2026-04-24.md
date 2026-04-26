@@ -163,3 +163,69 @@ Defensive fix candidates (not implemented this session):
 Pen's report was resolved by the data-side fix (clean `proxies/` for
 new clones + history purge). The code-side defensive fix is tracked
 for a follow-up session.
+
+---
+
+## Continuation — same day, post-purge
+
+### Defensive fix landed (`fd2ed4b`)
+
+Picked the first candidate from the list above: hash the absolute
+source path into the proxy filename. Two different machines now
+cannot produce the same proxy filename for the same `media_id`.
+
+- `config.py`: new `proxy_path_for(media_id, abs_source_path)` helper
+  → `PROXIES_DIR / f"{media_id}_{sha1(abs_source_path)[:10]}.mp4"`
+- `ingest.py`: `generate_proxy()`, Phase 3 of `run_ingest`,
+  `_regenerate_proxies()` all use the helper. The regeneration loop
+  also deletes any legacy `{id}.mp4`-style file it finds (those may
+  be cross-contaminated and cannot be trusted).
+- `server.py`: `stream_media`, `proxy_status`, `proxy_build` now
+  resolve via the helper; existence checks compare against the
+  expected hashed filename rather than scanning the dir.
+
+Regression tests added in `tests/test_server.py`:
+
+- `test_proxy_filename_is_scoped_by_source_path` — same id with
+  different source paths produces different filenames; deterministic
+  for identical inputs.
+- `test_stream_ignores_legacy_proxy_from_another_install` — pre-
+  populates `proxies/1.mp4` with sentinel bytes "DO-NOT-SERVE", calls
+  `GET /api/stream/1`, asserts response is **not** 200 and the bytes
+  are not returned.
+
+`pytest tests/test_server.py` → 13 passed (was 11). Two pre-existing
+failures in `tests/test_phase8.py` (`_is_usable_frame` colour checks)
+are unrelated to this change.
+
+### Follow-up scripts checked in (`f0300d4`)
+
+- `scripts/scrub-commit-messages.sh` — `git filter-repo
+  --replace-message` driver to remove the residual `hevinyeh` strings
+  that remain in commit messages of the privacy commits. The first
+  purge was blob-only.
+- `scripts/github-support-ticket-draft.md` — pre-filled ticket body
+  for requesting GitHub to garbage-collect unreachable objects so the
+  pre-rewrite SHAs can no longer be fetched within the reflog window.
+
+### Hardening on `purge-history.sh`
+
+`scripts/purge-history.sh` was sanitised so the script itself does
+not contain the personal strings it was originally written to scrub.
+The replacement table is now self-referential placeholders rather
+than literal `/Users/<name>/...` paths. The script's destructive
+behaviour and verification gates (dry-run, leak check before push)
+are unchanged.
+
+### State at end of session
+
+| Item | Status |
+|------|--------|
+| Working-tree leaks on `main` | resolved (5 commits) |
+| History purge (blobs) | done |
+| Branch cleanup | done (3 deleted, 1 archived) |
+| Server defensive fix | **done** (`fd2ed4b`) |
+| Commit-message scrub | **script ready, awaiting owner run** |
+| GitHub Support ticket | **draft ready, awaiting submission** |
+| Collaborator re-clone | not yet — owner to coordinate |
+| Fork owner notification | open (check forks list) |
