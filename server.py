@@ -8,6 +8,8 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import os
 import urllib.request
@@ -16,7 +18,7 @@ from typing import Optional, Set
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -703,6 +705,102 @@ def clear_cache(target: str = Query("app", description="app|thumbnails|chromadb|
             cleared.append("chromadb")
     return {"ok": True, "cleared": cleared}
 
+
+def _parse_clip_ids(clip_ids: Optional[str]):
+    if not clip_ids:
+        return None
+    parsed = []
+    seen = set()
+    for part in clip_ids.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            clip_id = int(part)
+        except ValueError:
+            raise HTTPException(400, f'??? clip_id?{part}')
+        if clip_id in seen:
+            continue
+        seen.add(clip_id)
+        parsed.append(clip_id)
+    return parsed
+
+
+def _pick_vision_frame(frames):
+    if not frames:
+        return {}
+    center = len(frames) // 2
+    ordered = [frames[center]] + [frame for idx, frame in enumerate(frames) if idx != center]
+    for frame in ordered:
+        if frame.get('description') or frame.get('content_type') or frame.get('atmosphere'):
+            return frame
+    return frames[0]
+
+
+def _metadata_csv_rows(clip_ids: Optional[str]):
+    selected_ids = _parse_clip_ids(clip_ids)
+    if selected_ids is None:
+        with db.get_conn() as conn:
+            rows = conn.execute('SELECT id FROM media ORDER BY filename, id').fetchall()
+        media_ids = [row['id'] for row in rows]
+    else:
+        placeholders = ','.join('?' for _ in selected_ids)
+        with db.get_conn() as conn:
+            rows = conn.execute(
+                f'SELECT id FROM media WHERE id IN ({placeholders}) ORDER BY filename, id',
+                selected_ids,
+            ).fetchall()
+        existing = [row['id'] for row in rows]
+        order_map = {mid: idx for idx, mid in enumerate(selected_ids)}
+        media_ids = sorted(existing, key=lambda mid: order_map.get(mid, len(selected_ids)))
+
+    for media_id in media_ids:
+        rec = db.get_record_by_id(media_id)
+        if not rec:
+            continue
+        tags = db.get_tags(media_id)
+        frames = db.get_frames(media_id)
+        vision_frame = _pick_vision_frame(frames)
+        description = vision_frame.get('description') or ''
+        content_type = vision_frame.get('content_type') or rec.get('content_type') or ''
+        atmosphere = vision_frame.get('atmosphere') or rec.get('atmosphere') or ''
+        yield {
+            'Filename': rec.get('filename', ''),
+            'Keywords': ';'.join(tag.get('name', '') for tag in tags if tag.get('name')),
+            'Comments': content_type,
+            'Description': description,
+            'Scene': description,
+            'ContentType': content_type,
+            'Atmosphere': atmosphere,
+        }
+
+
+@app.get('/api/export/metadata-csv')
+def export_metadata_csv(clip_ids: Optional[str] = Query(None)):
+    """Export clip metadata in a DaVinci-friendly CSV."""
+    def _stream():
+        buffer = io.StringIO()
+        writer = csv.DictWriter(
+            buffer,
+            fieldnames=['Filename', 'Keywords', 'Comments', 'Description', 'Scene', 'ContentType', 'Atmosphere'],
+            lineterminator='\n',
+        )
+        writer.writeheader()
+        yield buffer.getvalue().encode('utf-8')
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        for row in _metadata_csv_rows(clip_ids):
+            writer.writerow(row)
+            yield buffer.getvalue().encode('utf-8')
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    return StreamingResponse(
+        _stream(),
+        media_type='text/csv; charset=utf-8',
+        headers={'Content-Disposition': 'attachment; filename=arkiv_metadata.csv'},
+    )
 
 # ── Export ────────────────────────────────────────────────────────────────────
 
