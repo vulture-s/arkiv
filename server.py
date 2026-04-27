@@ -718,7 +718,7 @@ def _parse_clip_ids(clip_ids: Optional[str]):
         try:
             clip_id = int(part)
         except ValueError:
-            raise HTTPException(400, f'??? clip_id?{part}')
+            raise HTTPException(400, f'invalid clip_id: {part}')
         if clip_id in seen:
             continue
         seen.add(clip_id)
