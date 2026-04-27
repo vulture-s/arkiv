@@ -776,7 +776,7 @@ def _metadata_csv_rows(clip_ids: Optional[str]):
 
 
 @app.get('/api/export/metadata-csv')
-def export_metadata_csv(clip_ids: Optional[str] = Query(None)):
+def export_metadata_csv(clip_ids: Optional[str] = None):
     """Export clip metadata in a DaVinci-friendly CSV."""
     def _stream():
         buffer = io.StringIO()
