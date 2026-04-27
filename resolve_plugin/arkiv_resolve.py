@@ -469,6 +469,17 @@ def create_ui(resolve):
         except Exception as e:
             win.Find("StatusLabel").Text = f"載入失敗：{e}"
 
+    def _announce_import_complete():
+        message = "Clips imported. Next step: File \u2192 Import Metadata from CSV \u2192 select arkiv_metadata.csv"
+        print(f"[arkiv] {message}")
+        win.Find("StatusLabel").Text = message
+        show_message = getattr(resolve, "ShowMessage", None)
+        if callable(show_message):
+            try:
+                show_message(message)
+            except Exception:
+                pass
+
     def on_import(ev):
         selected = tree.SelectedItems()
         if not selected:
@@ -493,7 +504,7 @@ def create_ui(resolve):
             if paths:
                 success = import_to_resolve(resolve, paths, ratings, tags)
                 if success:
-                    win.Find("StatusLabel").Text = f"已匯入 {len(paths)} 個片段"
+                    _announce_import_complete()
                 else:
                     win.Find("StatusLabel").Text = "匯入失敗 — 請檢查媒體庫"
             else:
