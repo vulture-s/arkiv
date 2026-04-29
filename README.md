@@ -66,34 +66,67 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 ## Quick Start
 
 ### Prerequisites
-- Python 3.9+
-- FFmpeg 6.0+
-- Ollama with `nomic-embed-text` model
-- **DaVinci Resolve Plugin 額外需求**：Python 3.10 Framework 版本（[python.org 下載](https://www.python.org/downloads/release/python-31011/)）。Homebrew 或系統內建的 Python 不被 DaVinci 識別，必須安裝 macOS 64-bit universal2 installer（.pkg），安裝後路徑為 `/Library/Frameworks/Python.framework/Versions/3.10/`。安裝完重啟 DaVinci，Console 左下角會出現 Py3 選項，Workspace > Scripts 才會載入外部 script。
 
-### Install
+| Dependency | macOS (brew) | Linux (apt) | Windows |
+|---|---|---|---|
+| Python 3.9+ | `brew install python` | `sudo apt install python3 python3-venv` | [python.org](https://python.org) |
+| FFmpeg 6.0+ | `brew install ffmpeg` | `sudo apt install ffmpeg` | [ffmpeg.org](https://ffmpeg.org/download.html) |
+| Ollama | `brew install ollama` | [ollama.com/download](https://ollama.com/download) | [ollama.com/download](https://ollama.com/download) |
+
+> **DaVinci Resolve Plugin extra (macOS):** Resolve requires the official Python 3.10 Framework installer (.pkg) from [python.org](https://www.python.org/downloads/release/python-31011/) — Homebrew Python is not recognized. Install path: `/Library/Frameworks/Python.framework/Versions/3.10/`. Restart Resolve after install; Py3 should appear in Console and scripts load via Workspace > Scripts.
+
+### Install — macOS (brew + pip)
+
+```bash
+brew install python ffmpeg ollama
+git clone https://github.com/vulture-s/arkiv.git
+cd arkiv
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pip install mlx-whisper          # Apple Silicon (Metal GPU)
+ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+python health.py
+```
+
+### Install — Linux (pip)
+
+```bash
+sudo apt install python3 python3-venv ffmpeg
+git clone https://github.com/vulture-s/arkiv.git
+cd arkiv
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pip install faster-whisper torch  # NVIDIA CUDA GPU
+# pip install faster-whisper      # CPU fallback
+ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+python health.py
+```
+
+### Install — Windows (pip, PowerShell)
+
+```powershell
+# Install Python 3.9+, FFmpeg, and Ollama manually first, then:
+git clone https://github.com/vulture-s/arkiv.git
+cd arkiv
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+pip install faster-whisper torch  # NVIDIA CUDA GPU
+# pip install faster-whisper      # CPU fallback
+ollama pull nomic-embed-text; ollama pull qwen3-vl:8b; ollama pull qwen2.5:14b
+$env:PYTHONUTF8=1; python health.py
+```
+
+### Install — Docker (all platforms)
 
 ```bash
 git clone https://github.com/vulture-s/arkiv.git
 cd arkiv
-python -m venv .venv
-source .venv/bin/activate        # macOS / Linux
-# .venv\Scripts\activate         # Windows (PowerShell)
-pip install -r requirements.txt
-
-# Install Whisper backend (pick one):
-pip install mlx-whisper          # macOS Apple Silicon
-pip install faster-whisper torch  # NVIDIA GPU
-pip install faster-whisper        # CPU fallback
-
-# Pull Ollama models
-ollama pull nomic-embed-text
-ollama pull qwen3-vl:8b    # vision frame descriptions
-ollama pull qwen2.5:14b    # LLM transcript polish
-
-# Check environment
-python health.py
+docker compose up -d
+# Open http://localhost:8501
 ```
+
+> Models are pulled automatically inside the Ollama container on first run (may take a few minutes).
 
 ### Option A: Web UI — browse, search, rate, and tag in the browser
 
@@ -149,12 +182,6 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=keyword&limit=5"
 
 </details>
 
-### Docker
-
-```bash
-docker compose up -d
-# Open http://localhost:8501
-```
 
 ## Configuration
 
