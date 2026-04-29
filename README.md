@@ -4,11 +4,13 @@
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://python.org)
 [![Tauri](https://img.shields.io/badge/Tauri-Desktop_App-FFC131.svg)](https://tauri.app)
 
-**Local-first media asset manager with semantic search.**
+**Open-source AI metadata layer for DIT workflows — Resolve-native, CJK-first.**
 
 > 🌐 **English** | [繁體中文](README.zh-TW.md)
 
-Search, browse, rate, and tag your video/audio assets using AI-powered transcription and vector search. DaVinci Resolve-inspired dark UI.
+arkiv sits between your media drive and DaVinci Resolve: it ingests your footage, attaches AI-generated metadata (transcript, vision tags, atmosphere, energy, edit position), and surfaces clips via semantic search in any language — Chinese, Japanese, or English. The Resolve plugin lets you search, import with clip color, and drop frame markers without leaving the NLE.
+
+Designed for solo DITs and small crews who own their data: local-first, self-hosted, MIT license, no cloud dependency.
 
 ---
 
