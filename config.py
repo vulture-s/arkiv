@@ -1,14 +1,9 @@
-"""
-arkiv — Configuration
-All hardcoded values centralized here. Override via environment variables.
-"""
 from __future__ import annotations
 
 import hashlib
 import os
 from pathlib import Path
 
-# ── Paths ────────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
 DB_PATH = Path(os.getenv("ARKIV_DB_PATH", str(BASE_DIR / "media.db")))
 CHROMA_PATH = Path(os.getenv("ARKIV_CHROMA_PATH", str(BASE_DIR / "chroma_db")))
@@ -30,27 +25,153 @@ OLLAMA_URL = os.getenv("ARKIV_OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL = os.getenv("ARKIV_EMBED_MODEL", "nomic-embed-text")
 VISION_MODEL = os.getenv("ARKIV_VISION_MODEL", "qwen3-vl:8b")
 
-# ── ExifTool ─────────────────────────────────────────────────────────────────
 EXIFTOOL_PATH = os.getenv("ARKIV_EXIFTOOL_PATH", "exiftool")
 
-# ── Whisper ──────────────────────────────────────────────────────────────────
 import platform as _plat
+
 _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
 _DEFAULT_WHISPER = "mlx-community/whisper-large-v3-turbo" if _IS_MLX else "large-v3-turbo"
 WHISPER_MODEL = os.getenv("ARKIV_WHISPER_MODEL", _DEFAULT_WHISPER)
 
-# ── Transcription ────────────────────────────────────────────────────────────
-# Custom vocabulary: comma-separated terms for Whisper initial_prompt
-# e.g. "Furutech,Alpha Design Labs,byebyenoise!"
+WHISPER_GUARD_DEFAULT_MODE = 4
+WHISPER_GUARD_LAYERS = {
+    0: {
+        "name": "0 baseline",
+        "model": "medium",
+        "beam_size": 1,
+        "language_hint": None,
+        "vad_enabled": True,
+        "condition_on_previous_text": True,
+        "compression_ratio_threshold": None,
+        "logprob_threshold": None,
+        "llm_polish": False,
+        "llm_model": None,
+        "mlx_whisper": {
+            "path_or_hf_repo": "medium",
+            "beam_size": 1,
+            "condition_on_previous_text": True,
+            "compression_ratio_threshold": None,
+            "logprob_threshold": None,
+        },
+        "whisperx": {
+            "batch_size": 16,
+            "beam_size": 1,
+            "condition_on_previous_text": True,
+            "compression_ratio_threshold": None,
+            "log_prob_threshold": None,
+        },
+    },
+    1: {
+        "name": "1 +large-v3-turbo",
+        "model": "large-v3-turbo",
+        "beam_size": 1,
+        "language_hint": None,
+        "vad_enabled": True,
+        "condition_on_previous_text": True,
+        "compression_ratio_threshold": None,
+        "logprob_threshold": None,
+        "llm_polish": False,
+        "llm_model": None,
+        "mlx_whisper": {
+            "path_or_hf_repo": "large-v3-turbo",
+            "beam_size": 1,
+            "condition_on_previous_text": True,
+            "compression_ratio_threshold": None,
+            "logprob_threshold": None,
+        },
+        "whisperx": {
+            "batch_size": 16,
+            "beam_size": 1,
+            "condition_on_previous_text": True,
+            "compression_ratio_threshold": None,
+            "log_prob_threshold": None,
+        },
+    },
+    2: {
+        "name": "2 +zh hint",
+        "model": "large-v3-turbo",
+        "beam_size": 5,
+        "language_hint": "zh",
+        "vad_enabled": True,
+        "condition_on_previous_text": True,
+        "compression_ratio_threshold": None,
+        "logprob_threshold": None,
+        "llm_polish": False,
+        "llm_model": None,
+        "mlx_whisper": {
+            "path_or_hf_repo": "large-v3-turbo",
+            "beam_size": 5,
+            "condition_on_previous_text": True,
+            "compression_ratio_threshold": None,
+            "logprob_threshold": None,
+        },
+        "whisperx": {
+            "batch_size": 16,
+            "beam_size": 5,
+            "condition_on_previous_text": True,
+            "compression_ratio_threshold": None,
+            "log_prob_threshold": None,
+        },
+    },
+    3: {
+        "name": "3 +anti-hallucination",
+        "model": "large-v3-turbo",
+        "beam_size": 5,
+        "language_hint": "zh",
+        "vad_enabled": True,
+        "condition_on_previous_text": False,
+        "compression_ratio_threshold": 2.4,
+        "logprob_threshold": -1.0,
+        "llm_polish": False,
+        "llm_model": None,
+        "mlx_whisper": {
+            "path_or_hf_repo": "large-v3-turbo",
+            "beam_size": 5,
+            "condition_on_previous_text": False,
+            "compression_ratio_threshold": 2.4,
+            "logprob_threshold": -1.0,
+        },
+        "whisperx": {
+            "batch_size": 16,
+            "beam_size": 5,
+            "condition_on_previous_text": False,
+            "compression_ratio_threshold": 2.4,
+            "log_prob_threshold": -1.0,
+        },
+    },
+    4: {
+        "name": "4 +LLM polish",
+        "model": "large-v3-turbo",
+        "beam_size": 5,
+        "language_hint": "zh",
+        "vad_enabled": True,
+        "condition_on_previous_text": False,
+        "compression_ratio_threshold": 2.4,
+        "logprob_threshold": -1.0,
+        "llm_polish": True,
+        "llm_model": "qwen2.5:14b",
+        "mlx_whisper": {
+            "path_or_hf_repo": "large-v3-turbo",
+            "beam_size": 5,
+            "condition_on_previous_text": False,
+            "compression_ratio_threshold": 2.4,
+            "logprob_threshold": -1.0,
+        },
+        "whisperx": {
+            "batch_size": 16,
+            "beam_size": 5,
+            "condition_on_previous_text": False,
+            "compression_ratio_threshold": 2.4,
+            "log_prob_threshold": -1.0,
+        },
+    },
+}
+
 CUSTOM_VOCABULARY = os.getenv("ARKIV_CUSTOM_VOCABULARY", "")
-# Filter dictionary: comma-separated words to remove from transcript
-# e.g. "嗯,啊,呃,那個"
 FILTER_WORDS = os.getenv("ARKIV_FILTER_WORDS", "")
 
-# ── Server ───────────────────────────────────────────────────────────────────
 HOST = os.getenv("ARKIV_HOST", "0.0.0.0")
 PORT = int(os.getenv("ARKIV_PORT", "8501"))
 
-# ── ChromaDB ─────────────────────────────────────────────────────────────────
 COLLECTION_NAME = "media_assets"
 EMBED_DIM = 768
