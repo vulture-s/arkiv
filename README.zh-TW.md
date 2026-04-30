@@ -4,11 +4,13 @@
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://python.org)
 [![Tauri](https://img.shields.io/badge/Tauri-Desktop_App-FFC131.svg)](https://tauri.app)
 
-**本地優先的媒體素材管理器，支援語義搜尋。**
-
-使用 AI 轉錄與向量搜尋，瀏覽、搜尋、評級、標記你的影音素材。DaVinci Resolve 風格的深色介面。
+**DIT 工作流的開源 AI 素材標註層 — Resolve 原生、CJK 優先。**
 
 > 🌐 [English](README.md) | **繁體中文**
+
+arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附上 AI 標註（逐字稿、視覺標籤、氛圍、能量、剪輯位置），並用任何語言（中文、日文、英文）的語義搜尋找回 clip。Resolve plugin 讓你搜尋、帶 clip color 匯入、加 frame marker，不用離開 NLE。
+
+為 solo DIT 與小團隊設計，資料自己持有：本地優先、自架、MIT license、零雲端依賴。
 
 ---
 
