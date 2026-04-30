@@ -47,7 +47,7 @@ WHISPER_GUARD_LAYERS = {
         "llm_polish": False,
         "llm_model": None,
         "mlx_whisper": {
-            "path_or_hf_repo": "medium",
+            "path_or_hf_repo": "mlx-community/whisper-medium",
             "beam_size": 1,
             "condition_on_previous_text": True,
             "compression_ratio_threshold": None,
@@ -73,7 +73,7 @@ WHISPER_GUARD_LAYERS = {
         "llm_polish": False,
         "llm_model": None,
         "mlx_whisper": {
-            "path_or_hf_repo": "large-v3-turbo",
+            "path_or_hf_repo": "mlx-community/whisper-large-v3-turbo",
             "beam_size": 1,
             "condition_on_previous_text": True,
             "compression_ratio_threshold": None,
@@ -99,7 +99,7 @@ WHISPER_GUARD_LAYERS = {
         "llm_polish": False,
         "llm_model": None,
         "mlx_whisper": {
-            "path_or_hf_repo": "large-v3-turbo",
+            "path_or_hf_repo": "mlx-community/whisper-large-v3-turbo",
             "beam_size": 5,
             "condition_on_previous_text": True,
             "compression_ratio_threshold": None,
@@ -125,7 +125,7 @@ WHISPER_GUARD_LAYERS = {
         "llm_polish": False,
         "llm_model": None,
         "mlx_whisper": {
-            "path_or_hf_repo": "large-v3-turbo",
+            "path_or_hf_repo": "mlx-community/whisper-large-v3-turbo",
             "beam_size": 5,
             "condition_on_previous_text": False,
             "compression_ratio_threshold": 2.4,
@@ -151,7 +151,7 @@ WHISPER_GUARD_LAYERS = {
         "llm_polish": True,
         "llm_model": "qwen2.5:14b",
         "mlx_whisper": {
-            "path_or_hf_repo": "large-v3-turbo",
+            "path_or_hf_repo": "mlx-community/whisper-large-v3-turbo",
             "beam_size": 5,
             "condition_on_previous_text": False,
             "compression_ratio_threshold": 2.4,
