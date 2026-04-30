@@ -66,34 +66,67 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 ## 快速開始
 
 ### 前置需求
-- Python 3.9+
-- FFmpeg 6.0+
-- Ollama 搭配 `nomic-embed-text` 模型
-- **DaVinci Resolve Plugin 額外需求**：需安裝 [Python 3.10 Framework 版本](https://www.python.org/downloads/release/python-31011/)（macOS 64-bit universal2 installer .pkg）。Homebrew / 系統內建 Python 不被 DaVinci 識別。安裝後重啟 DaVinci，Console 左下角出現 Py3 選項即代表成功。
 
-### 安裝
+| 依賴 | macOS (brew) | Linux (apt) | Windows |
+|---|---|---|---|
+| Python 3.9+ | `brew install python` | `sudo apt install python3 python3-venv` | [python.org](https://python.org) |
+| FFmpeg 6.0+ | `brew install ffmpeg` | `sudo apt install ffmpeg` | [ffmpeg.org](https://ffmpeg.org/download.html) |
+| Ollama | `brew install ollama` | [ollama.com/download](https://ollama.com/download) | [ollama.com/download](https://ollama.com/download) |
+
+> **DaVinci Resolve Plugin 額外需求 (macOS)**：Resolve 需要 [python.org 官方 Python 3.10 Framework 安裝檔 (.pkg)](https://www.python.org/downloads/release/python-31011/) — Homebrew Python 不被識別。安裝路徑：`/Library/Frameworks/Python.framework/Versions/3.10/`。安裝後重啟 Resolve，Console 左下角應顯示 Py3，scripts 透過 Workspace > Scripts 載入。
+
+### 安裝 — macOS (brew + pip)
+
+```bash
+brew install python ffmpeg ollama
+git clone https://github.com/vulture-s/arkiv.git
+cd arkiv
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pip install mlx-whisper          # Apple Silicon (Metal GPU)
+ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+python health.py
+```
+
+### 安裝 — Linux (pip)
+
+```bash
+sudo apt install python3 python3-venv ffmpeg
+git clone https://github.com/vulture-s/arkiv.git
+cd arkiv
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pip install faster-whisper torch  # NVIDIA CUDA GPU
+# pip install faster-whisper      # CPU 後備
+ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+python health.py
+```
+
+### 安裝 — Windows (pip, PowerShell)
+
+```powershell
+# 先手動安裝 Python 3.9+、FFmpeg、Ollama，然後：
+git clone https://github.com/vulture-s/arkiv.git
+cd arkiv
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+pip install faster-whisper torch  # NVIDIA CUDA GPU
+# pip install faster-whisper      # CPU 後備
+ollama pull nomic-embed-text; ollama pull qwen3-vl:8b; ollama pull qwen2.5:14b
+$env:PYTHONUTF8=1; python health.py
+```
+
+### 安裝 — Docker (跨平台)
 
 ```bash
 git clone https://github.com/vulture-s/arkiv.git
 cd arkiv
-python -m venv .venv
-source .venv/bin/activate        # macOS / Linux
-# .venv\Scripts\activate         # Windows (PowerShell)
-pip install -r requirements.txt
-
-# 安裝 Whisper 後端（擇一）：
-pip install mlx-whisper          # macOS Apple Silicon
-pip install faster-whisper torch  # NVIDIA GPU
-pip install faster-whisper        # 純 CPU
-
-# 下載 Ollama 模型
-ollama pull nomic-embed-text
-ollama pull qwen3-vl:8b    # 視覺幀描述
-ollama pull qwen2.5:14b    # LLM 轉錄潤稿
-
-# 檢查環境
-python health.py
+docker compose up -d
+# 開啟 http://localhost:8501
 ```
+
+> 模型會在 Ollama container 首次啟動時自動下載（可能需要幾分鐘）。
 
 ### 方式 A：Web UI — 在瀏覽器中瀏覽、搜尋、評級、標記
 
@@ -148,13 +181,6 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 ```
 
 </details>
-
-### Docker
-
-```bash
-docker compose up -d
-# 開啟 http://localhost:8501
-```
 
 ## 設定
 
