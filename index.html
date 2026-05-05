@@ -1008,6 +1008,22 @@ async function doPlayMedia(id) {
   vid.autoplay = true;
   vid.volume = 0.8;
   vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
+  // Phase 7.7g: server 對 HEVC/ProRes 無 proxy 時回 409 + JSON。
+  // <video> 載入失敗只給 onerror 不給 body，重發一次 GET 拿 status 判斷是不是
+  // need_proxy，然後 surface「建 proxy」按鈕讓使用者 trigger /api/proxy/build。
+  vid.onerror = async function() {
+    try {
+      var probe = await fetch('/api/stream/' + id, { method: 'GET' });
+      if (probe.status !== 409) return;
+      var info = await probe.json();
+      if (!info || !info.need_proxy) return;
+      container.innerHTML = ''
+        + '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:16px;text-align:center;color:#e4e4e7;background:#18181b">'
+        +   '<div style="font-size:12px;line-height:1.5">瀏覽器無法播放 HEVC / ProRes 原檔<br><span style="color:#71717a">' + (info.filename || '') + '</span></div>'
+        +   '<button onclick="doBuildProxyForOne(' + id + ')" style="background:#3b82f6;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px">生成 720p H.264 proxy</button>'
+        + '</div>';
+    } catch(e) { /* network error: 不 surface，留給 player 原本的錯誤狀態 */ }
+  };
   container.appendChild(vid);
 
   // Integrate controls into waveform area
@@ -1397,6 +1413,19 @@ async function checkProxyStatus() {
     var el = document.getElementById('proxyStatus');
     if (el) el.textContent = 'Proxy: ' + d.proxied + '/' + d.total + ' 已生成（' + d.size_mb + ' MB）';
   } catch(e) {}
+}
+
+// Phase 7.7g: 從 player 內 surface 的「需建 proxy」按鈕觸發。複用 /api/proxy/build
+// (builds all missing in background) — 此 endpoint 沒有 per-id 變種，所以一鍵把
+// 待生成的全跑完，使用者下次點任何 HEVC 都能直接播。
+async function doBuildProxyForOne(id) {
+  try {
+    var r = await fetch('/api/proxy/build', { method: 'POST' });
+    var d = await r.json();
+    await tauriMessage(d.message || '已開始生成 proxy（背景執行）\n完成後重新點選此片即可播放。');
+  } catch(e) {
+    await tauriMessage('觸發 proxy 生成失敗：' + e.message);
+  }
 }
 
 async function startProxyBuild() {

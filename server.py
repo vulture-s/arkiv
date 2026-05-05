@@ -16,7 +16,7 @@ from typing import Optional, Set
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1250,6 +1250,28 @@ def stream_media(media_id: int):
     # Only serve known media extensions
     if file_path.suffix.lower() not in MEDIA_EXTS:
         raise HTTPException(403, "不是媒體檔案")
+
+    # Phase 7.7g: HEVC/ProRes 沒對應 proxy 時不要 silently 送原檔（Chrome/WKWebView
+    # 都播不出來，使用者只看到「無法播放」），改回 409 + JSON，前端可 surface
+    # 「需先建 proxy」的引導 + POST /api/proxy/build 觸發背景生成。
+    import ingest
+    try:
+        if ingest.needs_proxy(str(file_path)):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "need_proxy": True,
+                    "media_id": media_id,
+                    "filename": rec.get("filename"),
+                    "reason": "browser-incompatible codec (HEVC/ProRes); proxy required for playback",
+                    "hint": "POST /api/proxy/build to queue proxy generation",
+                },
+            )
+    except Exception:
+        # ffprobe 失敗（NAS unreachable、binary 缺、permission 等）→ 回退到送原檔，
+        # 維持舊行為，不要因為偵測失敗就阻斷沒問題的播放。
+        pass
+
     mime, _ = mimetypes.guess_type(str(file_path))
     if not mime:
         mime = "video/mp4"
