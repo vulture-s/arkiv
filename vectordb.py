@@ -90,20 +90,42 @@ def get_collection(reset: bool = False):
 # ── Index operations ──────────────────────────────────────────────────────────
 
 def build_doc_text(record: dict) -> str:
-    """Compose a searchable text from a media record (for frame-tags only records)."""
+    """Compose a searchable text from a media record (for frame-tags only records).
+
+    audit Round-1 critical fix（2026-05-05）：原本只讀 frame_tags 裡的 `keywords`
+    key，但 production vision pipeline（vision.py）寫的是 `description` + `tags`，
+    根本沒有 `keywords` 欄。實測恬馨庫 427 row × 5 frame 的 vision 描述 + tag
+    全部 silently 沒進 vector index，semantic search 對視覺內容召回極差。
+
+    現在順序：description（每 frame 完整敘述，最有 semantic value）+ tags list
+    + 保留 keywords legacy fallback（早期 schema 的舊資料 / 向後兼容）。
+    """
     parts = [f"[{record['filename']}]"]
     if record.get("transcript"):
         parts.append(record["transcript"])
     if record.get("frame_tags"):
         try:
-            tags = json.loads(record["frame_tags"])
-            kw = " ".join(
-                t.get("keywords", "") for t in tags if isinstance(t, dict)
-            )
-            if kw:
-                parts.append(kw)
+            frames = json.loads(record["frame_tags"])
         except (json.JSONDecodeError, TypeError):
-            pass
+            frames = []
+        if isinstance(frames, list):
+            chunks = []
+            for f in frames:
+                if not isinstance(f, dict):
+                    continue
+                desc = f.get("description")
+                if isinstance(desc, str) and desc.strip():
+                    chunks.append(desc.strip())
+                tags_field = f.get("tags")
+                if isinstance(tags_field, list):
+                    chunks.extend(t.strip() for t in tags_field
+                                  if isinstance(t, str) and t.strip())
+                # Legacy schema fallback: 早期版本把 vision 結果壓成 "keywords" 字串
+                kw = f.get("keywords")
+                if isinstance(kw, str) and kw.strip():
+                    chunks.append(kw.strip())
+            if chunks:
+                parts.append(" ".join(chunks))
     return " ".join(parts)
 
 

@@ -29,16 +29,17 @@ def test_chunk_text_handles_short_empty_chinese_and_english():
 def test_build_doc_text_supports_transcript_filename_only_and_bad_json():
     vectordb = importlib.import_module("vectordb")
 
-    with_transcript = vectordb.build_doc_text(
+    # Legacy schema 用 "keywords" 字串（早期版本）
+    legacy = vectordb.build_doc_text(
         {
             "filename": "clip.mp4",
             "transcript": "中文逐字稿",
             "frame_tags": '[{"keywords":"人物 場景"}]',
         }
     )
-    assert "[clip.mp4]" in with_transcript
-    assert "中文逐字稿" in with_transcript
-    assert "人物 場景" in with_transcript
+    assert "[clip.mp4]" in legacy
+    assert "中文逐字稿" in legacy
+    assert "人物 場景" in legacy
 
     filename_only = vectordb.build_doc_text(
         {"filename": "only-name.mp4", "transcript": "", "frame_tags": None}
@@ -49,6 +50,55 @@ def test_build_doc_text_supports_transcript_filename_only_and_bad_json():
         {"filename": "broken.mp4", "transcript": "", "frame_tags": "{bad json}"}
     )
     assert bad_json == "[broken.mp4]"
+
+
+def test_build_doc_text_extracts_production_vision_schema():
+    """audit critical fix：production frame_tags 是 description + tags 結構，
+    不是 legacy keywords，舊邏輯讓 vision 全部沒進 vector index。"""
+    vectordb = importlib.import_module("vectordb")
+    import json
+    frame_tags = json.dumps([
+        {
+            "description": "戶外體育課，孩童在跳繩。",
+            "tags": ["兒童", "戶外", "運動"],
+            "content_type": "A-Roll",
+            "atmosphere": "活潑",
+        },
+        {
+            "description": "近景特寫人物表情。",
+            "tags": ["特寫", "人物"],
+        },
+    ], ensure_ascii=False)
+
+    doc = vectordb.build_doc_text({
+        "filename": "clip.mp4",
+        "transcript": "",
+        "frame_tags": frame_tags,
+    })
+    # Description 拉進 doc text — 不再 silently 漏掉
+    assert "戶外體育課，孩童在跳繩。" in doc
+    assert "近景特寫人物表情。" in doc
+    # Tags 也拉進來
+    assert "兒童" in doc and "戶外" in doc and "運動" in doc
+    assert "特寫" in doc and "人物" in doc
+
+
+def test_build_doc_text_handles_mixed_schema_in_same_record():
+    """新舊混合：有 description / tags 的 frame 跟有 keywords 的 frame 並存應同時拉。"""
+    vectordb = importlib.import_module("vectordb")
+    import json
+    frame_tags = json.dumps([
+        {"description": "新版描述", "tags": ["新版-tag"]},
+        {"keywords": "舊版 keyword 字串"},
+    ], ensure_ascii=False)
+    doc = vectordb.build_doc_text({
+        "filename": "mixed.mp4",
+        "transcript": "",
+        "frame_tags": frame_tags,
+    })
+    assert "新版描述" in doc
+    assert "新版-tag" in doc
+    assert "舊版 keyword 字串" in doc
 
 
 def test_embed_truncates_before_request(monkeypatch):
