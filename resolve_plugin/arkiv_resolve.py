@@ -18,7 +18,14 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
-ARKIV_API = "http://localhost:8501"
+# Resolve API base from env so users running arkiv on a non-default port (or on
+# a remote host they Tailscale into) can point the plugin without a code edit.
+# ARKIV_API takes precedence; fallback composes from ARKIV_HOST + ARKIV_PORT to
+# match the env vars used by config.py / server.py.
+ARKIV_API = os.environ.get("ARKIV_API") or "http://{host}:{port}".format(
+    host=os.environ.get("ARKIV_HOST", "localhost"),
+    port=os.environ.get("ARKIV_PORT", "8501"),
+)
 
 
 def download_metadata_csv(dest_path=None):
