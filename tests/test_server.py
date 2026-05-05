@@ -242,6 +242,57 @@ def test_export_to_file_accepts_trim_params(tmp_path, fastapi_client, sample_rec
     assert "前段台詞" not in content
 
 
+def test_export_metadata_csv_defuses_formula_injection(fastapi_client, sample_record):
+    """Codex audit: filename / tags 開頭 =/+/-/@/TAB/CR 在 Excel 會當公式執行。"""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/=cmd_injection.mp4",
+        filename="=cmd|'/c calc'!A1",  # canonical Excel injection payload
+        transcript="-IMPORTXML(\"foo\")",
+        frame_tags="@SUM(A1:A10)",
+        content_type=None,
+    ))
+    db.add_tag(1, "+regular-tag")
+
+    resp = fastapi_client.get("/api/export/metadata-csv")
+    assert resp.status_code == 200
+    body = resp.content.decode("utf-8")
+    import csv as _csv
+    from io import StringIO
+    rows = list(_csv.reader(StringIO(body)))
+    # Each cell that started with =/+/-/@ must be prefixed by a single quote.
+    assert rows[1][0].startswith("'=")  # filename
+    assert rows[1][1].startswith("'@")  # description (frame_tags first line)
+    assert rows[1][2].startswith("'+")  # keywords (only +regular-tag)
+    # Sanity: no row cell still leads with bare =/+/-/@.
+    for cell in rows[1]:
+        assert not cell.startswith(("=", "+", "-", "@", "\t", "\r"))
+
+
+def test_export_metadata_csv_dedups_content_type_case_insensitive(fastapi_client, sample_record):
+    """Codex audit: vision 寫 'B-Roll'，tags 強制小寫 'b-roll'，naive dedup 會雙吐。"""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/clip-x.mp4",
+        filename="clip-x.mp4",
+        transcript="",
+        frame_tags="",
+        content_type="B-Roll",
+    ))
+    db.add_tag(1, "b-roll")  # db.py forces .lower()
+    db.add_tag(1, "people")
+
+    resp = fastapi_client.get("/api/export/metadata-csv")
+    body = resp.content.decode("utf-8")
+    import csv as _csv
+    from io import StringIO
+    rows = list(_csv.reader(StringIO(body)))
+    keywords = rows[1][2]
+    # b-roll appears once, not twice (case-insensitive dedup)
+    assert keywords.lower().count("b-roll") == 1
+    assert "people" in keywords
+
+
 def test_export_metadata_csv_returns_davinci_compatible_columns(fastapi_client, sample_record):
     db = importlib.import_module("db")
     db.upsert(sample_record(

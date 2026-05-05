@@ -422,6 +422,21 @@ def size_by_ext():
 
 # ── Metadata Export (Phase 7.6) ──────────────────────────────────────────────
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: str) -> str:
+    """Defuse CSV formula injection (Excel/Sheets execute leading =/+/-/@/TAB/CR).
+    DaVinci 不執行公式，但 user 在 Excel preview 會中招。Prefix 一個 single quote
+    是 Excel/Sheets 標準 escape — DaVinci import 時會把整段當成字串收進 metadata。
+    """
+    if not value:
+        return value
+    if value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 @app.get("/api/export/metadata-csv")
 def export_metadata_csv():
     """DaVinci Resolve metadata CSV — File Name as match key.
@@ -455,10 +470,14 @@ def export_metadata_csv():
             elif row["transcript"]:
                 desc = row["transcript"].strip()[:200]
 
-            # Keywords: manual tags + content_type (semicolon-separated for Resolve)
+            # Keywords: manual tags + content_type (semicolon-separated for Resolve).
+            # Dedup case-insensitively: tags 強制 lower (db.py:340)，content_type 由
+            # vision.py 寫入有大寫（如「B-Roll」），naive dedup 會兩個都吐出來。
             keywords = list(tags)
-            if row["content_type"] and row["content_type"] not in keywords:
-                keywords.append(row["content_type"])
+            if row["content_type"]:
+                ct_lower = row["content_type"].lower()
+                if not any(k.lower() == ct_lower for k in keywords):
+                    keywords.append(row["content_type"])
             keyword_str = "; ".join(keywords)
 
             # Comments: atmosphere / energy / edit_position annotations
@@ -476,7 +495,13 @@ def export_metadata_csv():
             if row["frame_tags"]:
                 scene = row["frame_tags"].replace("\n", " ").replace("\r", " ").strip()
 
-            writer.writerow([row["filename"], desc, keyword_str, comments, scene])
+            writer.writerow([
+                _csv_safe(row["filename"]),
+                _csv_safe(desc),
+                _csv_safe(keyword_str),
+                _csv_safe(comments),
+                _csv_safe(scene),
+            ])
 
     return Response(
         content=buf.getvalue(),

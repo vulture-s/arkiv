@@ -1008,22 +1008,6 @@ async function doPlayMedia(id) {
   vid.autoplay = true;
   vid.volume = 0.8;
   vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
-  // Phase 7.7g: server 對 HEVC/ProRes 無 proxy 時回 409 + JSON。
-  // <video> 載入失敗只給 onerror 不給 body，重發一次 GET 拿 status 判斷是不是
-  // need_proxy，然後 surface「建 proxy」按鈕讓使用者 trigger /api/proxy/build。
-  vid.onerror = async function() {
-    try {
-      var probe = await fetch('/api/stream/' + id, { method: 'GET' });
-      if (probe.status !== 409) return;
-      var info = await probe.json();
-      if (!info || !info.need_proxy) return;
-      container.innerHTML = ''
-        + '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:16px;text-align:center;color:#e4e4e7;background:#18181b">'
-        +   '<div style="font-size:12px;line-height:1.5">瀏覽器無法播放 HEVC / ProRes 原檔<br><span style="color:#71717a">' + (info.filename || '') + '</span></div>'
-        +   '<button onclick="doBuildProxyForOne(' + id + ')" style="background:#3b82f6;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px">生成 720p H.264 proxy</button>'
-        + '</div>';
-    } catch(e) { /* network error: 不 surface，留給 player 原本的錯誤狀態 */ }
-  };
   container.appendChild(vid);
 
   // Integrate controls into waveform area
@@ -1077,10 +1061,42 @@ async function doPlayMedia(id) {
     var svg = document.querySelector('#ppBtn svg');
     if (svg) svg.innerHTML = '<path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>';
   };
-  // Error handling — show error in preview
-  vid.onerror = function() {
+  // Error handling — distinguish 7.7g 409 (need_proxy) from generic stream failure.
+  // Single onerror to avoid the previous bug where a later assignment shadowed the
+  // earlier 409 handler. probeFor409 重發 GET 拿 status：<video> element 不暴露
+  // response body 給 JS 所以非重發不可。
+  vid.onerror = async function() {
+    var info = null;
+    try {
+      var probe = await fetch('/api/stream/' + id, { method: 'GET' });
+      if (probe.status === 409) {
+        info = await probe.json();
+      }
+    } catch(e) { /* network error → fall through to generic error UI */ }
+
     vid.remove();
     var wp = document.getElementById('inspectorWaveform'); if (wp) wp.parentElement.remove();
+
+    if (info && info.need_proxy) {
+      // 7.7g surface：HEVC/ProRes 無 proxy。filename 用 textContent 寫入避免
+      // DB filename 內含 HTML 造成 XSS（Codex audit 標的 should-fix）。
+      var box = document.createElement('div');
+      box.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:16px;text-align:center;color:#e4e4e7;background:#18181b';
+      var msg = document.createElement('div');
+      msg.style.cssText = 'font-size:12px;line-height:1.5';
+      msg.textContent = '瀏覽器無法播放 HEVC / ProRes 原檔';
+      var fn = document.createElement('div');
+      fn.style.cssText = 'color:#71717a;font-size:11px';
+      fn.textContent = info.filename || '';
+      var btn = document.createElement('button');
+      btn.style.cssText = 'background:#3b82f6;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px';
+      btn.textContent = '生成 720p H.264 proxy';
+      btn.onclick = function() { doBuildProxyForOne(id); };
+      box.appendChild(msg); box.appendChild(fn); box.appendChild(btn);
+      container.appendChild(box);
+      return;
+    }
+
     var errDiv = document.createElement('div');
     errDiv.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:4;background:rgba(0,0,0,0.7)';
     errDiv.innerHTML = '<div style="text-align:center;color:#f87171;font-size:12px"><div style="font-size:20px;margin-bottom:4px">&#9888;</div>串流失敗 — 檔案可能不存在</div>';
