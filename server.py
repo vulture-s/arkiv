@@ -424,6 +424,18 @@ def size_by_ext():
 # ── Metadata Export (Phase 7.6) ──────────────────────────────────────────────
 
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+_BLOCKED_EXPORT_DIRS = [Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"),
+                        Path("C:/Windows"), Path("C:/Program Files")]
+
+
+def _assert_export_dest_safe(dest: Path) -> None:
+    """Reject writes to system / OS directories. Shared by export-to endpoints."""
+    for b in _BLOCKED_EXPORT_DIRS:
+        try:
+            dest.relative_to(b.resolve())
+            raise HTTPException(403, "不允許匯出到系統目錄")
+        except ValueError:
+            pass
 
 
 def _csv_safe(value: str) -> str:
@@ -438,14 +450,9 @@ def _csv_safe(value: str) -> str:
     return value
 
 
-@app.get("/api/export/metadata-csv")
-def export_metadata_csv():
-    """DaVinci Resolve metadata CSV — File Name as match key.
-
-    Import in Resolve: File → Import Metadata from CSV.
-    Matches Media Pool clip by filename, populates Description / Keywords /
-    Comments / Scene panels so Smart Bins can filter by tag/content_type.
-    """
+def _build_metadata_csv() -> str:
+    """Build the DaVinci Resolve metadata CSV body. Shared by GET (blob download
+    for browser) and POST -to (Tauri native save dialog)."""
     import csv
     from io import StringIO
 
@@ -504,13 +511,42 @@ def export_metadata_csv():
                 _csv_safe(scene),
             ])
 
+    return buf.getvalue()
+
+
+@app.get("/api/export/metadata-csv")
+def export_metadata_csv():
+    """DaVinci Resolve metadata CSV — File Name as match key.
+
+    Import in Resolve: File → Import Metadata from CSV.
+    Browser path: returns CSV body for blob download.
+    """
     return Response(
-        content=buf.getvalue(),
+        content=_build_metadata_csv(),
         media_type="text/csv; charset=utf-8",
         headers={
             "Content-Disposition": 'attachment; filename="arkiv_davinci_metadata.csv"',
         },
     )
+
+
+class MetadataCsvExportRequest(BaseModel):
+    dest: str
+
+
+@app.post("/api/export/metadata-csv-to")
+def export_metadata_csv_to(body: MetadataCsvExportRequest):
+    """Tauri WKWebView path: server writes CSV directly to user-picked dest.
+
+    WKWebView 對 <a download> blob 觸發下載不可靠（Tauri docs 也建議走 fs API），
+    所以 Tauri front-end 用 dialog.save 拿 path 後 POST 來這裡，由 server 直接寫
+    檔；browser 端則繼續用 GET + blob download。"""
+    dest = Path(body.dest).expanduser().resolve()
+    _assert_export_dest_safe(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    csv_body = _build_metadata_csv()
+    dest.write_text(csv_body, encoding="utf-8")
+    return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
 
 
 # ── Ingest ────────────────────────────────────────────────────────────────────

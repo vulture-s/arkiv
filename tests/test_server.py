@@ -364,6 +364,38 @@ def test_proxy_filename_is_scoped_by_source_path():
     assert same_id_hevin == config.proxy_path_for(1, "/Users/hevin/clip.mov")
 
 
+def test_export_metadata_csv_to_writes_to_user_picked_path(
+    fastapi_client, sample_record, tmp_path
+):
+    """Tauri WKWebView 路徑：server 直接寫檔，body 跟 GET endpoint 一致。"""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/clipA.mp4", filename="clipA.mp4"))
+    db.upsert(sample_record(path="/tmp/clipB.mp4", filename="clipB.mp4"))
+
+    dest = tmp_path / "subdir" / "metadata.csv"
+    resp = fastapi_client.post(
+        "/api/export/metadata-csv-to", json={"dest": str(dest)}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["path"] == str(dest)
+    assert body["size"] > 0
+    assert dest.exists()
+
+    # body matches GET endpoint — read_bytes 避免 read_text 把 csv writer 的
+    # \r\n 行尾正規化成 \n，造成假的不相等
+    get_resp = fastapi_client.get("/api/export/metadata-csv")
+    assert dest.read_bytes() == get_resp.content
+
+
+def test_export_metadata_csv_to_rejects_system_dirs(fastapi_client):
+    resp = fastapi_client.post(
+        "/api/export/metadata-csv-to", json={"dest": "/etc/arkiv-injected.csv"}
+    )
+    assert resp.status_code == 403
+
+
 def test_proxy_build_one_queues_single_media_when_proxy_missing(
     fastapi_client, sample_record, tmp_path, monkeypatch
 ):

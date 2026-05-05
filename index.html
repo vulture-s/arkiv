@@ -962,10 +962,30 @@ async function doExportGoodEdl() {
 }
 
 async function doExportDaVinciCsv() {
-  // Phase 7.6c: blob download (works in both Tauri WKWebView and browser).
-  // CSV is small (one row per clip) so we don't need server-side write.
+  // Phase 7.6c + P2 audit Batch D: WKWebView 對 blob download 不可靠（Tauri docs
+  // 建議走 fs API），所以 Tauri 用 dialog.save 拿 path 後 POST /export/metadata-csv-to
+  // 由 server 寫檔；browser 端 fallback 走 blob download。
   var filename = 'arkiv_davinci_metadata.csv';
   try {
+    if (isTauri && window.__TAURI__ && window.__TAURI__.dialog) {
+      try {
+        var savePath = await window.__TAURI__.dialog.save({ defaultPath: filename });
+        if (!savePath) return;  // user cancelled
+        var r = await fetch('/api/export/metadata-csv-to', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dest: savePath })
+        });
+        if (r.ok) {
+          var d = await r.json();
+          await tauriMessage('已匯出：' + d.path + '\n\n在 DaVinci Resolve：\nFile → Import Metadata From → CSV');
+        } else {
+          await tauriMessage('CSV 匯出失敗：HTTP ' + r.status);
+        }
+        return;
+      } catch(te) { console.log('Tauri CSV export fallback to blob:', te); }
+    }
+    // Browser fallback: blob download
     var resp = await fetch('/api/export/metadata-csv');
     if (!resp.ok) { await tauriMessage('CSV 匯出失敗：HTTP ' + resp.status); return; }
     var blob = await resp.blob();
