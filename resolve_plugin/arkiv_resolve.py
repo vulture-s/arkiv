@@ -12,10 +12,38 @@ Usage:
     In DaVinci Resolve → Workspace → Scripts → arkiv_resolve
 """
 import json
+import os
+import tempfile
 import urllib.request
 import urllib.parse
+from pathlib import Path
 
 ARKIV_API = "http://localhost:8501"
+
+
+def download_metadata_csv(dest_path=None):
+    """Phase 7.6d: fetch DaVinci metadata CSV from arkiv and write to disk.
+
+    Returns the destination path on success, None on failure. The CSV maps
+    each clip's filename to Description / Keywords / Comments / Scene so the
+    user can run File → Import Metadata From → CSV in Resolve immediately.
+    """
+    if dest_path is None:
+        cache_dir = Path(tempfile.gettempdir()) / "arkiv"
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            cache_dir = Path(tempfile.gettempdir())
+        dest_path = cache_dir / "davinci_metadata.csv"
+    try:
+        url = f"{ARKIV_API}/api/export/metadata-csv"
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            data = resp.read()
+        Path(dest_path).write_bytes(data)
+        return str(dest_path)
+    except Exception as e:
+        print(f"[arkiv] Metadata CSV 下載失敗：{e}")
+        return None
 
 
 def get_resolve():
@@ -183,6 +211,18 @@ def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
                             print(f"[arkiv]   {clip_name} → Tags: {tag_str}")
                         break
         print(f"[arkiv] 完成：共匯入 {total_imported} 個片段到 {len(groups)} 個 Bin")
+
+        # Phase 7.6d: auto-download metadata CSV and tell the user how to import.
+        # arkiv 的 SetMetadata API 對 Keywords/Comments 在新版 Resolve 不寫入，
+        # 改走 CSV import 路線；這裡幫使用者把檔下載好，貼路徑就能用。
+        csv_path = download_metadata_csv()
+        if csv_path:
+            print("[arkiv] ─────────────────────────────────────────")
+            print(f"[arkiv] Metadata CSV 已就緒：{csv_path}")
+            print("[arkiv] 在 Resolve 選 File → Import Metadata From → CSV，")
+            print("[arkiv] 開啟上面那個檔即可填入 Description / Keywords / Comments / Scene。")
+            print("[arkiv] ─────────────────────────────────────────")
+
         return True
     else:
         print("[arkiv] 匯入失敗")
@@ -493,7 +533,11 @@ def create_ui(resolve):
             if paths:
                 success = import_to_resolve(resolve, paths, ratings, tags)
                 if success:
-                    win.Find("StatusLabel").Text = f"已匯入 {len(paths)} 個片段"
+                    # Phase 7.6d: import_to_resolve 已下載 CSV 並 print 路徑到
+                    # console；StatusLabel 受字數限制，改用 chevron 提示去看 console。
+                    win.Find("StatusLabel").Text = (
+                        f"已匯入 {len(paths)} 個片段 → 詳見 console 的 Metadata CSV 路徑"
+                    )
                 else:
                     win.Find("StatusLabel").Text = "匯入失敗 — 請檢查媒體庫"
             else:

@@ -194,6 +194,11 @@ window.onunhandledrejection = function(e) {
     EDL 匯出
   </button>
 
+  <button class="export-btn ml-1.5 shrink-0" title="匯出全庫 metadata 為 DaVinci CSV（File → Import Metadata from CSV）" onclick="doExportDaVinciCsv()">
+    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+    DaVinci CSV
+  </button>
+
   <button class="theme-toggle ml-1.5 shrink-0" onclick="toggleTheme()" title="切換主題" id="theme-btn">
     <svg class="w-3.5 h-3.5 dark-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
     <svg class="w-3.5 h-3.5 light-icon" style="display:none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
@@ -954,6 +959,22 @@ async function doExportGoodEdl() {
   const goodItems = state.items.filter(r => r.rating === 'good');
   if (goodItems.length === 0) { await tauriMessage('沒有 GOOD 評級的素材'); return; }
   await doExport(goodItems[0].id, 'edl');
+}
+
+async function doExportDaVinciCsv() {
+  // Phase 7.6c: blob download (works in both Tauri WKWebView and browser).
+  // CSV is small (one row per clip) so we don't need server-side write.
+  var filename = 'arkiv_davinci_metadata.csv';
+  try {
+    var resp = await fetch('/api/export/metadata-csv');
+    if (!resp.ok) { await tauriMessage('CSV 匯出失敗：HTTP ' + resp.status); return; }
+    var blob = await resp.blob();
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a'); a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    await tauriMessage('已匯出 ' + filename + '\n\n在 DaVinci Resolve：\nFile → Import Metadata From → CSV');
+  } catch(e) { await tauriMessage('CSV 匯出錯誤：' + e.message); }
 }
 
 async function doOpenFile(id) {
