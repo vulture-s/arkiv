@@ -739,3 +739,44 @@ def test_stream_ignores_legacy_proxy_from_another_install(
     assert resp.status_code == 404
     assert b"DO-NOT-SERVE" not in resp.content
     assert legacy_contamination.read_bytes() == b"another-users-content-DO-NOT-SERVE"
+
+
+def test_ingest_scan_rejects_path_outside_allowed_roots(fastapi_client, monkeypatch, tmp_path):
+    """Codex Round-2 audit (J1): /api/ingest/scan used to walk any path the
+    caller supplied, returning size + abs path of every media file under it —
+    full filesystem inventory leak to anyone on the Tailscale net. Now the
+    target must resolve under an allowlisted root (PROJECT_ROOT, ~/Desktop,
+    ~/Documents, ~/Movies, ~/Pictures, /Volumes/*, or ARKIV_INGEST_ROOTS)."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setenv("ARKIV_INGEST_ROOTS", str(sandbox))
+
+    out_of_bounds = tmp_path / "out_of_bounds"
+    out_of_bounds.mkdir()
+    resp = fastapi_client.post("/api/ingest/scan", json={"path": str(out_of_bounds)})
+    assert resp.status_code == 403
+    assert "ingest" in resp.text or "批准" in resp.text
+
+
+def test_ingest_scan_accepts_path_under_allowed_root(fastapi_client, monkeypatch, tmp_path):
+    sandbox = tmp_path / "sandbox"
+    nested = sandbox / "shoot1"
+    nested.mkdir(parents=True)
+    monkeypatch.setenv("ARKIV_INGEST_ROOTS", str(sandbox))
+
+    resp = fastapi_client.post("/api/ingest/scan", json={"path": str(nested)})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "files" in body and "total" in body
+
+
+def test_ingest_endpoint_rejects_path_outside_allowed_roots(fastapi_client, monkeypatch, tmp_path):
+    """Same J1 bound applied to the ingest trigger endpoint, not just scan."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setenv("ARKIV_INGEST_ROOTS", str(sandbox))
+
+    out_of_bounds = tmp_path / "evil"
+    out_of_bounds.mkdir()
+    resp = fastapi_client.post("/api/ingest", json={"path": str(out_of_bounds), "limit": 1})
+    assert resp.status_code == 403

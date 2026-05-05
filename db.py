@@ -35,13 +35,31 @@ def to_relative(abs_path: str) -> str:
 
 
 def resolve_path(rel_path: str) -> str:
-    """Relative path -> absolute under PROJECT_ROOT. Idempotent."""
+    """Relative path -> absolute under PROJECT_ROOT. Idempotent.
+
+    Codex Round-2 audit (J2): poisoned DB row with `../../../etc/passwd` was
+    joined naively, letting /api/stream/{id} serve out-of-root files. Now the
+    canonical form is checked against PROJECT_ROOT — relative paths that escape
+    the root raise instead of silently expanding.
+
+    Absolute paths are still passed through as-is (some legacy rows store
+    absolutes, and they came in via trusted ingest paths). The 8.0c per-project
+    storage migration will eventually flip everything to relative.
+    """
     if not rel_path:
         return rel_path
     path_obj = Path(rel_path)
     if path_obj.is_absolute():
         return str(path_obj)
-    return str(_config.PROJECT_ROOT / path_obj)
+    project_root = _config.PROJECT_ROOT.resolve()
+    joined = (project_root / path_obj).resolve()
+    try:
+        joined.relative_to(project_root)
+    except ValueError:
+        raise ValueError(
+            f"DB rel_path 解析後逃出 PROJECT_ROOT 邊界：{rel_path!r} → {joined!s}"
+        )
+    return str(joined)
 
 
 def init_db():

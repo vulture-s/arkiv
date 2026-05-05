@@ -165,3 +165,29 @@ def test_get_media_filtered_applies_sort_and_combined_filters(tmp_db, sample_rec
     rows, total = db.get_media_filtered(sort="size", rating="unrated")
     assert total == 1
     assert rows[0]["path"] == "/tmp/video-unrated.mov"
+
+
+def test_resolve_path_rejects_traversal_outside_project_root():
+    """Codex Round-2 audit (J2): a poisoned DB row with `../../../etc/passwd`
+    used to silently expand under PROJECT_ROOT and let /api/stream serve
+    out-of-root files. Now resolve_path raises so the streaming endpoint
+    refuses the row instead of leaking host secrets."""
+    import pytest
+    db = importlib.import_module("db")
+
+    with pytest.raises(ValueError, match="逃出 PROJECT_ROOT"):
+        db.resolve_path("../../../etc/passwd")
+    with pytest.raises(ValueError, match="逃出 PROJECT_ROOT"):
+        db.resolve_path("../../../../../tmp/escape")
+
+
+def test_resolve_path_passes_through_inside_root_and_absolute():
+    db = importlib.import_module("db")
+    # Relative inside root → joined absolute path under PROJECT_ROOT
+    inside = db.resolve_path("media/clip.mp4")
+    assert inside.endswith("media/clip.mp4")
+    # Absolute path passed through as-is (legacy rows)
+    abs_path = "/tmp/some_clip.mp4"
+    assert db.resolve_path(abs_path) == abs_path
+    # Empty stays empty (idempotent)
+    assert db.resolve_path("") == ""

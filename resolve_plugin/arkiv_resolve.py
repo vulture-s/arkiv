@@ -22,9 +22,29 @@ from pathlib import Path
 # a remote host they Tailscale into) can point the plugin without a code edit.
 # ARKIV_API takes precedence; fallback composes from ARKIV_HOST + ARKIV_PORT to
 # match the env vars used by config.py / server.py.
-ARKIV_API = os.environ.get("ARKIV_API") or "http://{host}:{port}".format(
-    host=os.environ.get("ARKIV_HOST", "localhost"),
-    port=os.environ.get("ARKIV_PORT", "8501"),
+def _validate_arkiv_api(url):
+    """Reject schemes / hosts that turn the plugin into an SSRF gadget.
+
+    Codex Round-2 audit (J4): a malicious ARKIV_API like
+    http://169.254.169.254/latest/meta-data/ would have the plugin pull cloud
+    metadata on every search / import. Plugin runs inside operator's Resolve, so
+    treat env override as untrusted-ish — http/https only, no link-local."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"ARKIV_API 必須是 http/https scheme：{url!r}")
+    host = parsed.hostname or ""
+    if host.startswith("169.254.") or host == "0.0.0.0":
+        raise ValueError(
+            f"ARKIV_API 不可指向 link-local / cloud metadata 位址：{url!r}"
+        )
+    return url
+
+
+ARKIV_API = _validate_arkiv_api(
+    os.environ.get("ARKIV_API") or "http://{host}:{port}".format(
+        host=os.environ.get("ARKIV_HOST", "localhost"),
+        port=os.environ.get("ARKIV_PORT", "8501"),
+    )
 )
 
 

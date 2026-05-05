@@ -702,12 +702,61 @@ class ScanRequest(BaseModel):
 
 MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
 
+def _allowed_ingest_roots() -> list:
+    """Approved roots for ingest scan / ingest endpoints.
+
+    Default: PROJECT_ROOT (where arkiv 's own DB lives) + standard user media
+    locations. Override with ARKIV_INGEST_ROOTS env (colon-separated).
+
+    Codex Round-2 audit (J1): without bounds, /api/ingest/scan walked any path
+    a Tailscale collaborator could supply, returning size + abs path of every
+    media file — full filesystem inventory leak.
+    """
+    custom = os.environ.get("ARKIV_INGEST_ROOTS", "").strip()
+    if custom:
+        return [Path(p).expanduser().resolve() for p in custom.split(":") if p.strip()]
+    home = Path.home()
+    roots = [
+        config.PROJECT_ROOT.resolve() if config.PROJECT_ROOT else None,
+        (home / "Desktop").resolve(),
+        (home / "Documents").resolve(),
+        (home / "Movies").resolve(),
+        (home / "Pictures").resolve(),
+    ]
+    # /Volumes/* (Mac SMB mounts of NAS shares) — allow each top-level mount
+    volumes = Path("/Volumes")
+    if volumes.exists():
+        try:
+            for vol in volumes.iterdir():
+                if vol.is_dir():
+                    roots.append(vol.resolve())
+        except OSError:
+            pass
+    return [r for r in roots if r is not None]
+
+
+def _assert_ingest_path_safe(target: Path) -> None:
+    roots = _allowed_ingest_roots()
+    canonical = target.resolve()
+    for root in roots:
+        try:
+            canonical.relative_to(root)
+            return
+        except ValueError:
+            continue
+    raise HTTPException(
+        403,
+        f"ingest 路徑必須在批准的目錄底下：{[str(r) for r in roots]} (override via ARKIV_INGEST_ROOTS env)",
+    )
+
+
 @app.post("/api/ingest/scan")
 def scan_media(body: ScanRequest):
     """Quick scan — return file list without processing."""
     target = Path(body.path).expanduser().resolve()
     if not target.is_dir():
         raise HTTPException(400, "路徑不是有效的目錄")
+    _assert_ingest_path_safe(target)
     files = []
     for f in sorted(target.rglob("*")):
         if f.suffix.lower() in MEDIA_EXTS:
@@ -722,6 +771,7 @@ def ingest_media(body: IngestRequest):
     target = Path(body.path).expanduser().resolve()
     if not target.is_dir():
         raise HTTPException(400, "路徑不是有效的目錄")
+    _assert_ingest_path_safe(target)
     cmd = [sys.executable, str(ROOT / "ingest.py"), "--dir", str(target)]
     if body.limit > 0:
         cmd += ["--limit", str(body.limit)]
