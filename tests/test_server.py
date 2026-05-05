@@ -521,6 +521,58 @@ def test_export_metadata_csv_to_rejects_system_dirs(fastapi_client):
     assert resp.status_code == 403
 
 
+def test_export_dest_blocks_ssh_keypath(fastapi_client):
+    """Codex Round-2 Critical fix：denylist 沒擋的 ~/.ssh/authorized_keys
+    現在 allowlist 模式下必須拒絕。"""
+    import os
+    home = os.path.expanduser("~")
+    resp = fastapi_client.post(
+        "/api/export/metadata-csv-to",
+        json={"dest": f"{home}/.ssh/authorized_keys.csv"},  # 副檔名 csv 也擋
+    )
+    assert resp.status_code == 403
+
+
+def test_export_dest_blocks_launchagents(fastapi_client):
+    import os
+    home = os.path.expanduser("~")
+    resp = fastapi_client.post(
+        "/api/export/metadata-csv-to",
+        json={"dest": f"{home}/Library/LaunchAgents/evil.csv"},
+    )
+    assert resp.status_code == 403
+
+
+def test_export_dest_blocks_disallowed_extension(fastapi_client, tmp_path):
+    """副檔名白名單：.plist / .pem / .ssh-config 等執行/憑證檔禁。"""
+    resp = fastapi_client.post(
+        "/api/export/metadata-csv-to",
+        json={"dest": str(tmp_path / "evil.plist")},
+    )
+    assert resp.status_code == 403
+
+
+def test_export_dest_allows_user_documents(
+    fastapi_client, sample_record, tmp_path, monkeypatch
+):
+    """合法路徑：~/Documents/foo.csv 之類使用者明確 dialog.save 選的位置應該通過。"""
+    db = importlib.import_module("db")
+    import server
+    db.upsert(sample_record(path="/tmp/x.mp4", filename="x.mp4"))
+
+    # Pretend tmp_path lives under ~/Documents (via env override) so we don't
+    # actually write into the user's Documents dir during tests.
+    monkeypatch.setenv("ARKIV_EXPORT_ROOTS", str(tmp_path))
+    importlib.reload(server)
+
+    dest = tmp_path / "ok.csv"
+    resp = fastapi_client.post(
+        "/api/export/metadata-csv-to", json={"dest": str(dest)}
+    )
+    assert resp.status_code == 200
+    assert dest.exists()
+
+
 def test_proxy_build_one_queues_single_media_when_proxy_missing(
     fastapi_client, sample_record, tmp_path, monkeypatch
 ):

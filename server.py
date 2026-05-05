@@ -424,18 +424,51 @@ def size_by_ext():
 # ── Metadata Export (Phase 7.6) ──────────────────────────────────────────────
 
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-_BLOCKED_EXPORT_DIRS = [Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"),
-                        Path("C:/Windows"), Path("C:/Program Files")]
+def _allowed_export_roots() -> list:
+    """Approved roots for export-to endpoints. User can override with
+    ARKIV_EXPORT_ROOTS env (colon-separated list of abs paths)."""
+    custom = os.environ.get("ARKIV_EXPORT_ROOTS", "").strip()
+    if custom:
+        return [Path(p).expanduser().resolve() for p in custom.split(":") if p.strip()]
+    home = Path.home()
+    return [
+        (home / "Desktop").resolve(),
+        (home / "Documents").resolve(),
+        (home / "Downloads").resolve(),
+        (home / "Movies").resolve(),
+        # Cross-platform tmp + project root for tests / scripted exports
+        Path("/tmp").resolve(),
+        Path(os.environ.get("TMPDIR", "/tmp")).resolve(),
+    ]
+
+
+_ALLOWED_EXPORT_EXTS = {
+    ".csv", ".srt", ".vtt", ".edl", ".fcpxml", ".xml", ".txt", ".json",
+}
 
 
 def _assert_export_dest_safe(dest: Path) -> None:
-    """Reject writes to system / OS directories. Shared by export-to endpoints."""
-    for b in _BLOCKED_EXPORT_DIRS:
+    """Reject writes outside approved user export roots.
+
+    Codex Round-2 audit Critical fix: 舊版 denylist 只擋 6 個系統 dir，能寫
+    `~/.ssh/authorized_keys` / `/Library/LaunchAgents/*.plist` / `/var/log`
+    等敏感位置。Tailscale 共享 + 無 auth 場景下任何 collaborator 直接 RCE。
+
+    新策略：allowlist — dest 的 canonical path 必須落在 ALLOWED 之一底下；
+    副檔名也限定在常見匯出格式（.csv/.srt/.vtt/.edl/.fcpxml/.xml/.txt/.json），
+    防止寫 .plist / .pem / .ssh-config 之類執行/憑證檔。
+    """
+    canonical = dest.resolve()
+    if canonical.suffix.lower() not in _ALLOWED_EXPORT_EXTS:
+        raise HTTPException(403, f"不允許的匯出副檔名：{canonical.suffix}")
+    roots = _allowed_export_roots()
+    for root in roots:
         try:
-            dest.relative_to(b.resolve())
-            raise HTTPException(403, "不允許匯出到系統目錄")
+            canonical.relative_to(root)
+            return  # under approved root
         except ValueError:
-            pass
+            continue
+    raise HTTPException(403, f"匯出路徑必須在批准的目錄下：{[str(r) for r in roots]}")
 
 
 def _csv_safe(value: str) -> str:
@@ -1247,19 +1280,16 @@ class ExportToRequest(BaseModel):
 
 @app.post("/api/media/{media_id}/export-to")
 def export_to_file(media_id: int, body: ExportToRequest):
-    """Export and write directly to a local path (for Tauri native save dialog)."""
+    """Export and write directly to a local path (for Tauri native save dialog).
+
+    Codex Round-2 Critical fix：原本內聯一份過時的 _blocked denylist（漏掉
+    ~/.ssh / ~/Library/LaunchAgents 等敏感位置），改走 _assert_export_dest_safe
+    共用 helper（allowlist of approved user export roots + 副檔名白名單）。
+    """
     resp = export_media(media_id, body.fmt, in_s=body.in_s, out_s=body.out_s)
     content = resp.body.decode("utf-8")
     dest = Path(body.dest).expanduser().resolve()
-    # Block writes to sensitive system directories
-    _blocked = [Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"),
-                Path("C:/Windows"), Path("C:/Program Files")]
-    for b in _blocked:
-        try:
-            dest.relative_to(b.resolve())
-            raise HTTPException(403, "不允許匯出到系統目錄")
-        except ValueError:
-            pass  # not under blocked path — OK
+    _assert_export_dest_safe(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, encoding="utf-8")
     return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
