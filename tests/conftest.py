@@ -37,13 +37,51 @@ def _install_fake_modules():
     fake_soundfile.write = lambda *args, **kwargs: None
     sys.modules.setdefault("soundfile", fake_soundfile)
 
+    # Production mlx_whisper.transcribe returns {text, language, segments=[
+    #   {start, end, text, no_speech_prob, avg_logprob, compression_ratio, ...}
+    # ]}. Default stub yields one realistic-shape segment so a future test that
+    # imports transcribe.transcribe() doesn't silently flow through an empty list
+    # (audit Codex Round-2 Scope C nit). Tests that need empty behaviour can still
+    # monkeypatch this lambda.
     fake_mlx = types.ModuleType("mlx_whisper")
     fake_mlx.transcribe = lambda *args, **kwargs: {
-        "text": "",
-        "segments": [],
-        "language": kwargs.get("language", "zh"),
+        "text": "fake stub segment",
+        "language": kwargs.get("language", "zh") or "zh",
+        "segments": [{
+            "start": 0.0, "end": 1.0,
+            "text": "fake stub segment",
+            "no_speech_prob": 0.1,
+            "avg_logprob": -0.3,
+            "compression_ratio": 1.2,
+        }],
     }
     sys.modules.setdefault("mlx_whisper", fake_mlx)
+
+    # WhisperX (CUDA path). Production: whisperx.load_model() → has .transcribe();
+    # whisperx.load_audio() → np-like; whisperx.load_align_model() / whisperx.align().
+    # Stub keeps the call surface so transcribe._transcribe_whisperx can run end-to-end
+    # without CUDA / cuDNN. Tests for postprocess shape still drive _postprocess
+    # directly via monkeypatch.
+    fake_whisperx = types.ModuleType("whisperx")
+
+    class _FakeWhisperXModel(object):
+        def transcribe(self, audio, **kwargs):
+            return {
+                "language": kwargs.get("language", "zh") or "zh",
+                "segments": [{
+                    "start": 0.0, "end": 1.0,
+                    "text": "fake whisperx segment",
+                    "no_speech_prob": 0.1,
+                    "avg_logprob": -0.3,
+                    "compression_ratio": 1.2,
+                }],
+            }
+
+    fake_whisperx.load_model = lambda *args, **kwargs: _FakeWhisperXModel()
+    fake_whisperx.load_audio = lambda *args, **kwargs: object()
+    fake_whisperx.load_align_model = lambda *args, **kwargs: (object(), {"language": "zh"})
+    fake_whisperx.align = lambda segments, *args, **kwargs: {"segments": segments}
+    sys.modules.setdefault("whisperx", fake_whisperx)
 
     fake_fw = types.ModuleType("faster_whisper")
 
@@ -94,6 +132,12 @@ def sample_record():
     def _make(**overrides):
         state["value"] += 1
         idx = state["value"]
+        # Production frame_tags shape (vision.py PROMPT — see vision.py:15-27):
+        # list of dicts each carrying description / tags / content_type /
+        # focus_score / exposure / stability / audio_quality / atmosphere /
+        # energy / edit_position / edit_reason. Pre-Codex-Round-2-C the fixture
+        # used legacy `keywords` shape, which let the C2 frame_tags-as-text bug
+        # slip past unit tests. Now it mirrors what vision pipeline writes.
         base = {
             "path": "/tmp/media_{0}.mp4".format(idx),
             "filename": "媒體_{0}.mp4".format(idx),
@@ -107,7 +151,19 @@ def sample_record():
             "transcript": "這是第{0}段中文逐字稿，用來驗證 UTF-8 與查詢行為。".format(idx),
             "lang": "zh",
             "frame_tags": json.dumps(
-                [{"keywords": "人物 訪談 場景{0}".format(idx)}],
+                [{
+                    "description": "場景{0} 描述：人物訪談畫面。".format(idx),
+                    "tags": ["人物", "訪談", "場景{0}".format(idx)],
+                    "content_type": "Talking-Head",
+                    "focus_score": 5,
+                    "exposure": "normal",
+                    "stability": "穩定",
+                    "audio_quality": "清晰",
+                    "atmosphere": "正式",
+                    "energy": "中",
+                    "edit_position": "中段",
+                    "edit_reason": "fixture sample {0}".format(idx),
+                }],
                 ensure_ascii=False,
             ),
             "thumbnail_path": "/tmp/thumb_{0}.jpg".format(idx),

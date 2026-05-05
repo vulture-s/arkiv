@@ -52,7 +52,12 @@ def test_media_detail_returns_200_and_404(fastapi_client, sample_record):
     assert response.status_code == 200
     data = response.json()
     assert data["path"] == "/tmp/interview-zh.mp4"
-    assert data["frame_tags_parsed"][0]["keywords"] == "人物 訪談 場景1"
+    # Production vision schema fields (audit Round-2 Scope C fix — was legacy
+    # `keywords` key, see conftest.sample_record for the full shape).
+    parsed = data["frame_tags_parsed"][0]
+    assert parsed["description"] == "場景1 描述：人物訪談畫面。"
+    assert parsed["tags"] == ["人物", "訪談", "場景1"]
+    assert parsed["content_type"] == "Talking-Head"
     assert data["tags"][0]["name"] == "訪談"
     assert data["frames"] == []
 
@@ -367,7 +372,12 @@ def test_proxy_filename_is_scoped_by_source_path():
 def test_export_metadata_csv_parses_vision_json_into_columns(fastapi_client, sample_record):
     """Audit Batch E F1 critical fix: frame_tags 是 JSON list，必須解出
     description / tags / content_type / atmosphere / energy / edit_position，不能
-    把整段 JSON 當 plain text 塞到 Description 欄。"""
+    把整段 JSON 當 plain text 塞到 Description 欄。
+
+    Partial-field payload 是刻意：本 test 驗 _parse_frame_tags 對缺欄位的
+    robustness（focus_score/exposure/stability/audio_quality/edit_reason 等
+    quality 欄缺席仍能解出主要結構）。完整 11 欄 schema 在 conftest sample_record。
+    """
     import json as _json
     db = importlib.import_module("db")
     vision_payload = _json.dumps([

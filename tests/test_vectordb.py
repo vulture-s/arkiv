@@ -54,7 +54,12 @@ def test_build_doc_text_supports_transcript_filename_only_and_bad_json():
 
 def test_build_doc_text_extracts_production_vision_schema():
     """audit critical fix：production frame_tags 是 description + tags 結構，
-    不是 legacy keywords，舊邏輯讓 vision 全部沒進 vector index。"""
+    不是 legacy keywords，舊邏輯讓 vision 全部沒進 vector index。
+
+    Partial-field（缺 focus_score / exposure / stability / audio_quality /
+    edit_reason）是刻意：本 test 只驗 build_doc_text 對 description + tags 的
+    抽取，quality 欄不影響 vector index（只進 metadata 不進 doc text）。完整
+    schema 在 conftest sample_record。"""
     vectordb = importlib.import_module("vectordb")
     import json
     frame_tags = json.dumps([
