@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 from typing import Dict, List
 
+import codec
 import config
 import db
 import frames as frm
@@ -23,8 +24,8 @@ import vision as vis
 
 SUPPORTED = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts"}
-# Codecs that browsers can't play — need proxy
-PROXY_CODECS = {"prores", "hevc", "hev1", "ap4h", "ap4x", "apch", "apcn", "apcs", "apco"}
+# Codecs needing browser-playable proxy — single source of truth in codec.py.
+PROXY_CODECS = codec.PROXY_CODECS
 
 
 def _warm_up_vision_model():
@@ -211,17 +212,10 @@ def exiftool_extract(path: str) -> dict:
 
 
 def needs_proxy(path: str) -> bool:
-    """Check if a video file uses a codec that browsers can't play."""
-    cmd = [
-        "ffprobe", "-v", "quiet", "-select_streams", "v:0",
-        "-show_entries", "stream=codec_name", "-of", "csv=p=0", path
-    ]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        codec = r.stdout.strip().strip(",").lower()
-        return codec in PROXY_CODECS
-    except Exception:
-        return False
+    """Backward-compatible bool shim. Returns True only when codec.needs_proxy
+    確定要 proxy（codec.NEEDED）；UNKNOWN/NOT_NEEDED 都當不需要，與舊 except→False
+    行為一致。新 code 直接呼叫 codec.needs_proxy() 拿 tri-state 比較精準。"""
+    return codec.needs_proxy(path) == codec.NEEDED
 
 
 def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[str]:

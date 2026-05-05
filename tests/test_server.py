@@ -369,7 +369,7 @@ def test_stream_returns_409_when_hevc_source_has_no_proxy(
 ):
     """Phase 7.7g: HEVC/ProRes 無 proxy 時回 409 + JSON 而非 silently 送原檔。"""
     db = importlib.import_module("db")
-    import ingest
+    import codec
 
     fake_mov = tmp_path / "iphone_clip.mov"
     fake_mov.write_bytes(b"fake-hevc-bytes")
@@ -378,8 +378,8 @@ def test_stream_returns_409_when_hevc_source_has_no_proxy(
         filename="iphone_clip.mov",
         ext=".mov",
     ))
-    # Pretend ffprobe says HEVC — bypass the real binary in tests
-    monkeypatch.setattr(ingest, "needs_proxy", lambda p: True)
+    codec.clear_cache()
+    monkeypatch.setattr(codec, "probe_codec", lambda p, timeout=10.0: "hevc")
 
     resp = fastapi_client.get("/api/stream/1")
     assert resp.status_code == 409
@@ -398,7 +398,7 @@ def test_stream_serves_h264_source_unchanged_when_proxy_check_says_no(
 ):
     """H.264 .mp4 / .mov 應該繼續直送原檔，不要被 7.7g 的 409 路徑誤殺。"""
     db = importlib.import_module("db")
-    import ingest
+    import codec
 
     real_mp4 = tmp_path / "fx30_clip.mp4"
     real_mp4.write_bytes(b"fake-h264-bytes")
@@ -407,19 +407,20 @@ def test_stream_serves_h264_source_unchanged_when_proxy_check_says_no(
         filename="fx30_clip.mp4",
         ext=".mp4",
     ))
-    monkeypatch.setattr(ingest, "needs_proxy", lambda p: False)
+    codec.clear_cache()
+    monkeypatch.setattr(codec, "probe_codec", lambda p, timeout=10.0: "h264")
 
     resp = fastapi_client.get("/api/stream/1")
     assert resp.status_code == 200
     assert resp.content == b"fake-h264-bytes"
 
 
-def test_stream_falls_back_to_original_when_proxy_probe_raises(
+def test_stream_falls_back_to_original_when_proxy_probe_returns_unknown(
     fastapi_client, sample_record, tmp_path, monkeypatch
 ):
-    """ffprobe 失敗（NAS unreachable / binary 缺）不能阻斷正常播放。"""
+    """ffprobe 失敗 → codec.UNKNOWN tri-state，stream endpoint 應 fall through 送原檔。"""
     db = importlib.import_module("db")
-    import ingest
+    import codec
 
     real_clip = tmp_path / "unknown_codec.mp4"
     real_clip.write_bytes(b"fallback-bytes")
@@ -428,10 +429,9 @@ def test_stream_falls_back_to_original_when_proxy_probe_raises(
         filename="unknown_codec.mp4",
         ext=".mp4",
     ))
-
-    def _explode(_p):
-        raise RuntimeError("ffprobe missing")
-    monkeypatch.setattr(ingest, "needs_proxy", _explode)
+    codec.clear_cache()
+    # probe_codec returns None → needs_proxy() yields UNKNOWN → endpoint serves original
+    monkeypatch.setattr(codec, "probe_codec", lambda p, timeout=10.0: None)
 
     resp = fastapi_client.get("/api/stream/1")
     assert resp.status_code == 200

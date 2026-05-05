@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import codec
 import config
 import db
 
@@ -1279,23 +1280,19 @@ def stream_media(media_id: int):
     # Phase 7.7g: HEVC/ProRes 沒對應 proxy 時不要 silently 送原檔（Chrome/WKWebView
     # 都播不出來，使用者只看到「無法播放」），改回 409 + JSON，前端可 surface
     # 「需先建 proxy」的引導 + POST /api/proxy/build 觸發背景生成。
-    import ingest
-    try:
-        if ingest.needs_proxy(str(file_path)):
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "need_proxy": True,
-                    "media_id": media_id,
-                    "filename": rec.get("filename"),
-                    "reason": "browser-incompatible codec (HEVC/ProRes); proxy required for playback",
-                    "hint": "POST /api/proxy/build to queue proxy generation",
-                },
-            )
-    except Exception:
-        # ffprobe 失敗（NAS unreachable、binary 缺、permission 等）→ 回退到送原檔，
-        # 維持舊行為，不要因為偵測失敗就阻斷沒問題的播放。
-        pass
+    # tri-state: NEEDED → 409；NOT_NEEDED / UNKNOWN（ffprobe 失敗、binary 缺、
+    # NAS unreachable）→ fall through，維持送原檔的舊 fallback 行為。
+    if codec.needs_proxy(str(file_path)) == codec.NEEDED:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "need_proxy": True,
+                "media_id": media_id,
+                "filename": rec.get("filename"),
+                "reason": "browser-incompatible codec (HEVC/ProRes); proxy required for playback",
+                "hint": "POST /api/proxy/build to queue proxy generation",
+            },
+        )
 
     mime, _ = mimetypes.guess_type(str(file_path))
     if not mime:
@@ -1309,7 +1306,7 @@ def stream_media(media_id: int):
 
 # ── Proxy Management ─────────────────────────────────────────────────────────
 
-PROXY_CODECS = {"hevc", "hev1", "prores", "ap4h", "ap4x", "apch", "apcn", "apcs", "apco"}
+# PROXY_CODECS lives in codec.py — single source of truth.
 
 @app.get("/api/proxy/status")
 def proxy_status():
