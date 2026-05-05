@@ -420,6 +420,73 @@ def size_by_ext():
         return [dict(r) for r in rows]
 
 
+# ── Metadata Export (Phase 7.6) ──────────────────────────────────────────────
+
+@app.get("/api/export/metadata-csv")
+def export_metadata_csv():
+    """DaVinci Resolve metadata CSV — File Name as match key.
+
+    Import in Resolve: File → Import Metadata from CSV.
+    Matches Media Pool clip by filename, populates Description / Keywords /
+    Comments / Scene panels so Smart Bins can filter by tag/content_type.
+    """
+    import csv
+    from io import StringIO
+
+    buf = StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["File Name", "Description", "Keywords", "Comments", "Scene"])
+
+    with db.get_conn() as conn:
+        media_rows = conn.execute(
+            "SELECT id, filename, transcript, frame_tags, content_type, "
+            "atmosphere, energy, edit_position FROM media ORDER BY id"
+        ).fetchall()
+        for row in media_rows:
+            tag_rows = conn.execute(
+                "SELECT name FROM tags WHERE media_id=? ORDER BY name", (row["id"],)
+            ).fetchall()
+            tags = [t["name"] for t in tag_rows]
+
+            # Description: prefer vision frame_tags first line, fallback to transcript prefix
+            desc = ""
+            if row["frame_tags"]:
+                desc = row["frame_tags"].split("\n")[0].strip()[:200]
+            elif row["transcript"]:
+                desc = row["transcript"].strip()[:200]
+
+            # Keywords: manual tags + content_type (semicolon-separated for Resolve)
+            keywords = list(tags)
+            if row["content_type"] and row["content_type"] not in keywords:
+                keywords.append(row["content_type"])
+            keyword_str = "; ".join(keywords)
+
+            # Comments: atmosphere / energy / edit_position annotations
+            comment_parts = []
+            if row["atmosphere"]:
+                comment_parts.append(f"atmosphere:{row['atmosphere']}")
+            if row["energy"]:
+                comment_parts.append(f"energy:{row['energy']}")
+            if row["edit_position"]:
+                comment_parts.append(f"edit:{row['edit_position']}")
+            comments = " | ".join(comment_parts)
+
+            # Scene: full multi-line frame_tags collapsed to single line for CSV cell
+            scene = ""
+            if row["frame_tags"]:
+                scene = row["frame_tags"].replace("\n", " ").replace("\r", " ").strip()
+
+            writer.writerow([row["filename"], desc, keyword_str, comments, scene])
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="arkiv_davinci_metadata.csv"',
+        },
+    )
+
+
 # ── Ingest ────────────────────────────────────────────────────────────────────
 
 class IngestRequest(BaseModel):

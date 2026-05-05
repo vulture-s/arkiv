@@ -242,6 +242,63 @@ def test_export_to_file_accepts_trim_params(tmp_path, fastapi_client, sample_rec
     assert "前段台詞" not in content
 
 
+def test_export_metadata_csv_returns_davinci_compatible_columns(fastapi_client, sample_record):
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/clip-a.mp4",
+        filename="clip-a.mp4",
+        transcript="這是 A 段訪談的開頭",
+        frame_tags="室內訪談\n人物特寫",
+        content_type="interview",
+        atmosphere="warm",
+        energy="calm",
+        edit_position="b-roll",
+    ))
+    db.upsert(sample_record(
+        path="/tmp/clip-b.mp4",
+        filename="clip-b.mp4",
+        transcript="",
+        frame_tags="",
+        content_type=None,
+        atmosphere=None,
+        energy=None,
+    ))
+    db.add_tag(1, "people")
+    db.add_tag(1, "warm-tone")
+
+    resp = fastapi_client.get("/api/export/metadata-csv")
+    assert resp.status_code == 200
+    assert "text/csv" in resp.headers["content-type"]
+    assert "arkiv_davinci_metadata.csv" in resp.headers["content-disposition"]
+
+    body = resp.content.decode("utf-8")
+    lines = body.splitlines()
+    # Header + 2 rows
+    assert len(lines) == 3
+    assert lines[0] == "File Name,Description,Keywords,Comments,Scene"
+
+    # Row 1: filename match-key, vision frame_tags first line in Description,
+    # tags + content_type joined by '; ' in Keywords, atmosphere/energy in Comments.
+    import csv as _csv
+    from io import StringIO
+    rows = list(_csv.reader(StringIO(body)))
+    assert rows[1][0] == "clip-a.mp4"
+    assert rows[1][1] == "室內訪談"
+    assert "people" in rows[1][2] and "warm-tone" in rows[1][2] and "interview" in rows[1][2]
+    assert rows[1][2].count(";") == 2  # 3 keywords: 2 tags + content_type (dedup-safe)
+    assert "atmosphere:warm" in rows[1][3] and "energy:calm" in rows[1][3]
+    assert "edit:b-roll" in rows[1][3]
+    # Scene flattens \n to space
+    assert "\n" not in rows[1][4]
+    assert "室內訪談" in rows[1][4] and "人物特寫" in rows[1][4]
+
+    # Row 2: empty metadata produces empty cells but row still emitted.
+    assert rows[2][0] == "clip-b.mp4"
+    assert rows[2][1] == ""
+    assert rows[2][2] == ""
+    assert rows[2][3] == ""
+
+
 def test_proxy_filename_is_scoped_by_source_path():
     # Regression: a proxies/ directory copied from another installation
     # must not be served as the local user's content. Filenames carry a
