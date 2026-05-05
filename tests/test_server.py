@@ -364,6 +364,131 @@ def test_proxy_filename_is_scoped_by_source_path():
     assert same_id_hevin == config.proxy_path_for(1, "/Users/hevin/clip.mov")
 
 
+def test_export_metadata_csv_parses_vision_json_into_columns(fastapi_client, sample_record):
+    """Audit Batch E F1 critical fix: frame_tags 是 JSON list，必須解出
+    description / tags / content_type / atmosphere / energy / edit_position，不能
+    把整段 JSON 當 plain text 塞到 Description 欄。"""
+    import json as _json
+    db = importlib.import_module("db")
+    vision_payload = _json.dumps([
+        {
+            "description": "戶外體育課，孩童跳繩。",
+            "tags": ["兒童", "戶外", "運動"],
+            "content_type": "A-Roll",
+            "atmosphere": "活潑",
+            "energy": "高",
+            "edit_position": "中段-互動",
+        },
+        {
+            "description": "近景特寫。",
+            "tags": ["特寫"],
+        },
+    ], ensure_ascii=False)
+    db.upsert(sample_record(
+        path="/tmp/clipA.mp4",
+        filename="clipA.mp4",
+        frame_tags=vision_payload,
+        # Media-level columns NULL — exporter 必須回退到從 frame_tags 抽
+        content_type=None, atmosphere=None, energy=None, edit_position=None,
+    ))
+
+    resp = fastapi_client.get("/api/export/metadata-csv")
+    body = resp.content.decode("utf-8")
+    import csv as _csv
+    from io import StringIO
+    rows = list(_csv.reader(StringIO(body)))
+    # Header + 1 data row
+    assert len(rows) == 2
+    fname, desc, kw, comments, scene = rows[1]
+    assert fname == "clipA.mp4"
+    # Description = first frame description, NOT raw JSON
+    assert desc == "戶外體育課，孩童跳繩。"
+    assert "{" not in desc, "raw JSON must not leak into Description"
+    # Keywords: vision tags + content_type, dedup case-insensitive
+    assert "兒童" in kw and "戶外" in kw and "運動" in kw and "特寫" in kw
+    assert "A-Roll" in kw
+    # Comments: pulled from JSON since media-level cols are NULL
+    assert "atmosphere:活潑" in comments
+    assert "energy:高" in comments
+    assert "edit:中段-互動" in comments
+    # Scene: all frame descriptions joined by ' | '
+    assert "戶外體育課，孩童跳繩。" in scene and "近景特寫。" in scene
+
+
+def test_export_metadata_csv_legacy_plain_text_frame_tags_still_works(fastapi_client, sample_record):
+    """Old DB rows with non-JSON frame_tags shouldn't blow up."""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/legacy.mp4",
+        filename="legacy.mp4",
+        frame_tags="這是舊 schema 寫進去的純文字\n第二行也應該被忽略",
+        content_type=None, atmosphere=None, energy=None, edit_position=None,
+    ))
+    resp = fastapi_client.get("/api/export/metadata-csv")
+    assert resp.status_code == 200
+    body = resp.content.decode("utf-8")
+    import csv as _csv
+    from io import StringIO
+    rows = list(_csv.reader(StringIO(body)))
+    assert rows[1][1] == "這是舊 schema 寫進去的純文字"  # first line only
+
+
+def test_export_metadata_csv_filters_by_ids_query_param(fastapi_client, sample_record):
+    """Audit Batch E F5: ?ids=1,3 只回傳那兩筆，不是整庫 dump。"""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/a.mp4", filename="a.mp4"))
+    db.upsert(sample_record(path="/tmp/b.mp4", filename="b.mp4"))
+    db.upsert(sample_record(path="/tmp/c.mp4", filename="c.mp4"))
+
+    resp = fastapi_client.get("/api/export/metadata-csv?ids=1,3")
+    assert resp.status_code == 200
+    body = resp.content.decode("utf-8")
+    import csv as _csv
+    from io import StringIO
+    rows = list(_csv.reader(StringIO(body)))
+    # Header + 2 rows (ids 1 and 3, not 2)
+    assert len(rows) == 3
+    filenames = {rows[1][0], rows[2][0]}
+    assert filenames == {"a.mp4", "c.mp4"}
+
+
+def test_export_metadata_csv_ids_empty_filter_returns_header_only(fastapi_client, sample_record):
+    """?ids= 全空字串視為「filter 但無 id」→ 只回 header，不回任何 row。"""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/a.mp4", filename="a.mp4"))
+    resp = fastapi_client.get("/api/export/metadata-csv?ids=,,,")
+    assert resp.status_code == 200
+    body = resp.content.decode("utf-8")
+    assert body.splitlines() == ["File Name,Description,Keywords,Comments,Scene"]
+
+
+def test_export_metadata_csv_invalid_ids_returns_400(fastapi_client):
+    resp = fastapi_client.get("/api/export/metadata-csv?ids=abc,1")
+    assert resp.status_code == 400
+
+
+def test_export_metadata_csv_to_accepts_ids_for_batch_scoped_export(
+    fastapi_client, sample_record, tmp_path
+):
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/a.mp4", filename="a.mp4"))
+    db.upsert(sample_record(path="/tmp/b.mp4", filename="b.mp4"))
+    dest = tmp_path / "scoped.csv"
+    resp = fastapi_client.post(
+        "/api/export/metadata-csv-to",
+        json={"dest": str(dest), "ids": [2]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["rows"] == 1
+    csv_text = dest.read_bytes().decode("utf-8")
+    import csv as _csv
+    from io import StringIO
+    rows = list(_csv.reader(StringIO(csv_text)))
+    assert len(rows) == 2
+    assert rows[1][0] == "b.mp4"
+
+
 def test_export_metadata_csv_to_writes_to_user_picked_path(
     fastapi_client, sample_record, tmp_path
 ):

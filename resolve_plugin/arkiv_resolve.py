@@ -28,12 +28,15 @@ ARKIV_API = os.environ.get("ARKIV_API") or "http://{host}:{port}".format(
 )
 
 
-def download_metadata_csv(dest_path=None):
-    """Phase 7.6d: fetch DaVinci metadata CSV from arkiv and write to disk.
+def download_metadata_csv(dest_path=None, media_ids=None):
+    """Phase 7.6d + audit Batch E F5: fetch DaVinci metadata CSV and write to disk.
 
     Returns the destination path on success, None on failure. The CSV maps
     each clip's filename to Description / Keywords / Comments / Scene so the
     user can run File → Import Metadata From → CSV in Resolve immediately.
+
+    media_ids: 給 list 時走 batch-scoped 路徑（?ids=1,2,3），CSV 只含這幾支
+    剛 import 的 clip；不給 → 整庫（既有行為，CLI / 整庫匯出走這條）。
     """
     if dest_path is None:
         cache_dir = Path(tempfile.gettempdir()) / "arkiv"
@@ -44,6 +47,9 @@ def download_metadata_csv(dest_path=None):
         dest_path = cache_dir / "davinci_metadata.csv"
     try:
         url = f"{ARKIV_API}/api/export/metadata-csv"
+        if media_ids:
+            ids_str = ",".join(str(int(i)) for i in media_ids)
+            url += "?" + urllib.parse.urlencode({"ids": ids_str})
         with urllib.request.urlopen(url, timeout=30) as resp:
             data = resp.read()
         Path(dest_path).write_bytes(data)
@@ -141,11 +147,14 @@ def _get_or_create_bin(media_pool, root_folder, bin_name):
     return new_bin
 
 
-def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
+def import_to_resolve(resolve, file_paths, ratings=None, tags=None, media_ids=None):
     """Import files into the current Resolve project's Media Pool.
     Auto-creates Bin folders by camera/source under Master.
     ratings: dict mapping file_path -> rating string (good/ng/review)
     tags: dict mapping file_path -> list of tag name strings
+    media_ids: list of arkiv media ids being imported — passed through to
+        download_metadata_csv() so the resulting CSV is batch-scoped to just
+        these clips, not the entire library (audit Batch E F5).
     """
     if not resolve:
         print("[arkiv] Resolve 未連線")
@@ -222,7 +231,8 @@ def import_to_resolve(resolve, file_paths, ratings=None, tags=None):
         # Phase 7.6d: auto-download metadata CSV and tell the user how to import.
         # arkiv 的 SetMetadata API 對 Keywords/Comments 在新版 Resolve 不寫入，
         # 改走 CSV import 路線；這裡幫使用者把檔下載好，貼路徑就能用。
-        csv_path = download_metadata_csv()
+        # batch-scoped (audit F5): 只下載剛 import 的這幾支的 metadata，不是整庫。
+        csv_path = download_metadata_csv(media_ids=media_ids)
         if csv_path:
             print("[arkiv] ─────────────────────────────────────────")
             print(f"[arkiv] Metadata CSV 已就緒：{csv_path}")
@@ -525,6 +535,7 @@ def create_ui(resolve):
             paths = []
             ratings = {}
             tags = {}
+            media_ids = []
             for sel_id in selected:
                 row = selected[sel_id]
                 fname = row.Text[0]
@@ -532,13 +543,15 @@ def create_ui(resolve):
                 if item_data and item_data.get("path"):
                     p = item_data["path"]
                     paths.append(p)
+                    if item_data.get("id"):
+                        media_ids.append(item_data["id"])
                     if item_data.get("rating"):
                         ratings[p] = item_data["rating"]
                     item_tags = item_data.get("tags", [])
                     if item_tags:
                         tags[p] = [t["name"] for t in item_tags]
             if paths:
-                success = import_to_resolve(resolve, paths, ratings, tags)
+                success = import_to_resolve(resolve, paths, ratings, tags, media_ids=media_ids or None)
                 if success:
                     # Phase 7.6d: import_to_resolve 已下載 CSV 並 print 路徑到
                     # console；StatusLabel 受字數限制，改用 chevron 提示去看 console。
@@ -621,9 +634,11 @@ def run_cli_mode(resolve):
             continue
         try:
             indices = [int(x.strip()) for x in sel.split(",")]
-            paths = [items[i]["path"] for i in indices if 0 <= i < len(items)]
+            valid = [items[i] for i in indices if 0 <= i < len(items)]
+            paths = [it["path"] for it in valid]
+            media_ids = [it["id"] for it in valid if it.get("id")]
             if paths and resolve:
-                import_to_resolve(resolve, paths)
+                import_to_resolve(resolve, paths, media_ids=media_ids or None)
         except (ValueError, IndexError) as e:
             print(f"無效選擇：{e}")
         print()

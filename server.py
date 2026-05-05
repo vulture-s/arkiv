@@ -450,9 +450,76 @@ def _csv_safe(value: str) -> str:
     return value
 
 
-def _build_metadata_csv() -> str:
+def _parse_frame_tags(frame_tags_value):
+    """Decode frame_tags JSON list into structured fields used by CSV export.
+
+    Real-world DB（example: 恬馨庫 427 rows）每筆 frame_tags 是 vision pipeline
+    寫入的 JSON list，每個 frame 都是 dict：
+      {description, tags, content_type, focus_score, exposure, stability,
+       audio_quality, atmosphere, energy, edit_position, edit_reason}
+
+    7.6b 第一版用 .split('\\n')[0] 把整段 JSON 當 plain text，DaVinci
+    Description 就會看到 raw JSON 字串（audit Batch E F1 critical fix）。
+
+    Returns (first_description, all_descriptions, vision_tags, content_type,
+             atmosphere, energy, edit_position) — 後 4 個欄是「第一個非空 frame
+    的值」用來補 media-level columns 為 NULL 的庫（Phase 8.2 hoist 還沒跑）。
+    Legacy 純文字 frame_tags（早期 schema）→ 退化成 ('first line', [first line], [], …Nones)。
+    """
+    if not frame_tags_value:
+        return ("", [], [], None, None, None, None)
+    try:
+        ft = json.loads(frame_tags_value)
+    except (ValueError, TypeError):
+        # legacy plain-text frame_tags — split on newlines so Scene retains 全段，
+        # Description 取第一行（保持 7.6b 第一版的 plain-text 行為）
+        lines = [ln.strip() for ln in str(frame_tags_value).splitlines() if ln.strip()]
+        first = lines[0] if lines else ""
+        return (first[:200], lines, [], None, None, None, None)
+    if not isinstance(ft, list):
+        return ("", [], [], None, None, None, None)
+
+    descriptions = []
+    tags_set = []
+    seen_tags = set()
+    content_type = None
+    atmosphere = None
+    energy = None
+    edit_position = None
+    for frame in ft:
+        if not isinstance(frame, dict):
+            continue
+        d = frame.get("description")
+        if isinstance(d, str) and d.strip():
+            descriptions.append(d.strip())
+        t = frame.get("tags")
+        if isinstance(t, list):
+            for tag in t:
+                if isinstance(tag, str) and tag.strip() and tag not in seen_tags:
+                    tags_set.append(tag.strip())
+                    seen_tags.add(tag)
+        # First non-empty wins for these — frames after the first usually agree
+        if not content_type and isinstance(frame.get("content_type"), str):
+            content_type = frame["content_type"]
+        if not atmosphere and isinstance(frame.get("atmosphere"), str):
+            atmosphere = frame["atmosphere"]
+        if not energy and isinstance(frame.get("energy"), str):
+            energy = frame["energy"]
+        if not edit_position and isinstance(frame.get("edit_position"), str):
+            edit_position = frame["edit_position"]
+
+    first_desc = descriptions[0][:200] if descriptions else ""
+    return (first_desc, descriptions, tags_set, content_type, atmosphere, energy, edit_position)
+
+
+def _build_metadata_csv(media_ids=None) -> str:
     """Build the DaVinci Resolve metadata CSV body. Shared by GET (blob download
-    for browser) and POST -to (Tauri native save dialog)."""
+    for browser) and POST -to (Tauri native save dialog).
+
+    media_ids: Optional iterable of media ids — when provided, only those rows
+    are exported (audit Batch E F5: plugin import 後 download CSV 應該只含剛
+    import 的 N 個 clip，不是整庫 dump 出去 — 既改善 UX 也避免不相關 transcript
+    被一起 share 出去)。None = 整庫匯出（既有 Web UI 行為）。"""
     import csv
     from io import StringIO
 
@@ -460,48 +527,61 @@ def _build_metadata_csv() -> str:
     writer = csv.writer(buf)
     writer.writerow(["File Name", "Description", "Keywords", "Comments", "Scene"])
 
+    sql = ("SELECT id, filename, transcript, frame_tags, content_type, "
+           "atmosphere, energy, edit_position FROM media")
+    params: list = []
+    if media_ids is not None:
+        ids = [int(i) for i in media_ids]
+        if not ids:
+            return buf.getvalue()  # empty → header only, no rows
+        sql += " WHERE id IN (" + ",".join("?" * len(ids)) + ")"
+        params.extend(ids)
+    sql += " ORDER BY id"
+
     with db.get_conn() as conn:
-        media_rows = conn.execute(
-            "SELECT id, filename, transcript, frame_tags, content_type, "
-            "atmosphere, energy, edit_position FROM media ORDER BY id"
-        ).fetchall()
+        media_rows = conn.execute(sql, params).fetchall()
         for row in media_rows:
             tag_rows = conn.execute(
                 "SELECT name FROM tags WHERE media_id=? ORDER BY name", (row["id"],)
             ).fetchall()
             tags = [t["name"] for t in tag_rows]
 
-            # Description: prefer vision frame_tags first line, fallback to transcript prefix
-            desc = ""
-            if row["frame_tags"]:
-                desc = row["frame_tags"].split("\n")[0].strip()[:200]
-            elif row["transcript"]:
-                desc = row["transcript"].strip()[:200]
+            # Vision JSON parsing — real source for Description / Scene + fallback for
+            # media-level NULL content_type / atmosphere / energy / edit_position.
+            (vision_desc, all_descs, vision_tags,
+             ct_json, atmo_json, energy_json, edit_json) = _parse_frame_tags(row["frame_tags"])
 
-            # Keywords: manual tags + content_type (semicolon-separated for Resolve).
-            # Dedup case-insensitively: tags 強制 lower (db.py:340)，content_type 由
-            # vision.py 寫入有大寫（如「B-Roll」），naive dedup 會兩個都吐出來。
+            # Description: vision first-frame description, fallback transcript prefix
+            desc = vision_desc or (row["transcript"].strip()[:200] if row["transcript"] else "")
+
+            # Keywords: manual tags + vision tags + content_type. Dedup case-insensitively
+            # because tags 強制 lower (db.py:340) 但 vision/content_type 帶大寫（"B-Roll"）。
             keywords = list(tags)
-            if row["content_type"]:
-                ct_lower = row["content_type"].lower()
-                if not any(k.lower() == ct_lower for k in keywords):
-                    keywords.append(row["content_type"])
+            seen_lower = {k.lower() for k in keywords}
+            for vt in vision_tags:
+                if vt.lower() not in seen_lower:
+                    keywords.append(vt)
+                    seen_lower.add(vt.lower())
+            ct_value = row["content_type"] or ct_json
+            if ct_value and ct_value.lower() not in seen_lower:
+                keywords.append(ct_value)
             keyword_str = "; ".join(keywords)
 
-            # Comments: atmosphere / energy / edit_position annotations
+            # Comments: media-level cols win, else fallback to JSON-derived
+            atmo = row["atmosphere"] or atmo_json
+            energy = row["energy"] or energy_json
+            edit_pos = row["edit_position"] or edit_json
             comment_parts = []
-            if row["atmosphere"]:
-                comment_parts.append(f"atmosphere:{row['atmosphere']}")
-            if row["energy"]:
-                comment_parts.append(f"energy:{row['energy']}")
-            if row["edit_position"]:
-                comment_parts.append(f"edit:{row['edit_position']}")
+            if atmo:
+                comment_parts.append(f"atmosphere:{atmo}")
+            if energy:
+                comment_parts.append(f"energy:{energy}")
+            if edit_pos:
+                comment_parts.append(f"edit:{edit_pos}")
             comments = " | ".join(comment_parts)
 
-            # Scene: full multi-line frame_tags collapsed to single line for CSV cell
-            scene = ""
-            if row["frame_tags"]:
-                scene = row["frame_tags"].replace("\n", " ").replace("\r", " ").strip()
+            # Scene: 把所有 frame description 合成一段（DaVinci Smart Bin 可 contains 搜）
+            scene = " | ".join(all_descs)
 
             writer.writerow([
                 _csv_safe(row["filename"]),
@@ -514,15 +594,36 @@ def _build_metadata_csv() -> str:
     return buf.getvalue()
 
 
+def _parse_ids_query(ids_query):
+    """Decode ?ids=1,2,3 query string → [int]. Returns None when no filter requested."""
+    if not ids_query:
+        return None
+    parsed = []
+    for raw in ids_query.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            parsed.append(int(raw))
+        except ValueError:
+            raise HTTPException(400, f"無效的 media id: {raw!r}")
+    return parsed  # may be [] if all entries were blank → caller treats as filter-with-no-rows
+
+
 @app.get("/api/export/metadata-csv")
-def export_metadata_csv():
+def export_metadata_csv(ids: Optional[str] = None):
     """DaVinci Resolve metadata CSV — File Name as match key.
 
     Import in Resolve: File → Import Metadata from CSV.
     Browser path: returns CSV body for blob download.
+
+    ids query param (CSV of integers): batch-scoped export — plugin import 後
+    呼叫時只想拿剛 import 的 N 個 clip 對應的 row，不要把整庫 transcript 一起
+    塞給協作者（audit Batch E F5）。
     """
+    media_ids = _parse_ids_query(ids)
     return Response(
-        content=_build_metadata_csv(),
+        content=_build_metadata_csv(media_ids=media_ids),
         media_type="text/csv; charset=utf-8",
         headers={
             "Content-Disposition": 'attachment; filename="arkiv_davinci_metadata.csv"',
@@ -532,6 +633,7 @@ def export_metadata_csv():
 
 class MetadataCsvExportRequest(BaseModel):
     dest: str
+    ids: Optional[list] = None  # batch-scoped variant; None = full library
 
 
 @app.post("/api/export/metadata-csv-to")
@@ -540,13 +642,20 @@ def export_metadata_csv_to(body: MetadataCsvExportRequest):
 
     WKWebView 對 <a download> blob 觸發下載不可靠（Tauri docs 也建議走 fs API），
     所以 Tauri front-end 用 dialog.save 拿 path 後 POST 來這裡，由 server 直接寫
-    檔；browser 端則繼續用 GET + blob download。"""
+    檔；browser 端則繼續用 GET + blob download。
+    body.ids 給時為 batch-scoped；不給為整庫匯出。"""
     dest = Path(body.dest).expanduser().resolve()
     _assert_export_dest_safe(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    csv_body = _build_metadata_csv()
+    media_ids = None
+    if body.ids is not None:
+        try:
+            media_ids = [int(i) for i in body.ids]
+        except (TypeError, ValueError):
+            raise HTTPException(400, "ids 必須是整數 list")
+    csv_body = _build_metadata_csv(media_ids=media_ids)
     dest.write_text(csv_body, encoding="utf-8")
-    return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
+    return {"ok": True, "path": str(dest), "size": dest.stat().st_size, "rows": len(media_ids) if media_ids is not None else None}
 
 
 # ── Ingest ────────────────────────────────────────────────────────────────────
