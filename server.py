@@ -1340,6 +1340,27 @@ def proxy_build(background_tasks: BackgroundTasks):
     return {"message": f"開始生成 {len(to_build)} 個 proxy（背景執行）", "queued": len(to_build)}
 
 
+@app.post("/api/proxy/build/{media_id}")
+def proxy_build_one(media_id: int, background_tasks: BackgroundTasks):
+    """Per-id proxy build — surface 自 7.7g 409 「生成 proxy」按鈕，使用者點到
+    哪個 HEVC 就只建那個，避免 build all 整庫拖時間。"""
+    proxy_dir = config.PROXIES_DIR
+    proxy_dir.mkdir(parents=True, exist_ok=True)
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到媒體")
+    src = db.resolve_path(rec["path"])
+    if config.proxy_path_for(media_id, src).exists():
+        return {"message": "proxy 已存在", "queued": 0, "media_id": media_id}
+    background_tasks.add_task(_build_proxies, [{"id": media_id, "path": rec["path"]}])
+    return {
+        "message": f"開始生成 proxy（背景執行）",
+        "queued": 1,
+        "media_id": media_id,
+        "filename": rec.get("filename"),
+    }
+
+
 def _build_proxies(items: list):
     """Background task: generate H.264 proxy for each file."""
     import ingest

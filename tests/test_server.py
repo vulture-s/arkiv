@@ -364,6 +364,64 @@ def test_proxy_filename_is_scoped_by_source_path():
     assert same_id_hevin == config.proxy_path_for(1, "/Users/hevin/clip.mov")
 
 
+def test_proxy_build_one_queues_single_media_when_proxy_missing(
+    fastapi_client, sample_record, tmp_path, monkeypatch
+):
+    """Per-id proxy build: 只 queue 指定 media，不撈整庫。"""
+    db = importlib.import_module("db")
+    config = importlib.import_module("config")
+
+    src = tmp_path / "src.mov"
+    src.write_bytes(b"hevc-bytes")
+    db.upsert(sample_record(path=str(src), filename="src.mov", ext=".mov"))
+    proxies_dir = tmp_path / "proxies"; proxies_dir.mkdir()
+    monkeypatch.setattr(config, "PROXIES_DIR", proxies_dir)
+
+    queued = []
+    import server
+    monkeypatch.setattr(server, "_build_proxies", lambda items: queued.extend(items))
+
+    resp = fastapi_client.post("/api/proxy/build/1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["queued"] == 1
+    assert body["media_id"] == 1
+    assert body["filename"] == "src.mov"
+    assert len(queued) == 1
+    assert queued[0]["id"] == 1
+
+
+def test_proxy_build_one_returns_404_for_missing_media(fastapi_client):
+    resp = fastapi_client.post("/api/proxy/build/99999")
+    assert resp.status_code == 404
+
+
+def test_proxy_build_one_skips_when_proxy_already_exists(
+    fastapi_client, sample_record, tmp_path, monkeypatch
+):
+    db = importlib.import_module("db")
+    config = importlib.import_module("config")
+
+    src = tmp_path / "src.mov"
+    src.write_bytes(b"hevc-bytes")
+    db.upsert(sample_record(path=str(src), filename="src.mov", ext=".mov"))
+    proxies_dir = tmp_path / "proxies"; proxies_dir.mkdir()
+    monkeypatch.setattr(config, "PROXIES_DIR", proxies_dir)
+    # Pre-create the proxy file with the hash-scoped name
+    config.proxy_path_for(1, str(src)).write_bytes(b"existing-proxy")
+
+    import server
+    queued = []
+    monkeypatch.setattr(server, "_build_proxies", lambda items: queued.extend(items))
+
+    resp = fastapi_client.post("/api/proxy/build/1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["queued"] == 0
+    assert "已存在" in body["message"]
+    assert queued == []
+
+
 def test_stream_returns_409_when_hevc_source_has_no_proxy(
     fastapi_client, sample_record, tmp_path, monkeypatch
 ):

@@ -1431,12 +1431,11 @@ async function checkProxyStatus() {
   } catch(e) {}
 }
 
-// Phase 7.7g: 從 player 內 surface 的「需建 proxy」按鈕觸發。複用 /api/proxy/build
-// (builds all missing in background) — 此 endpoint 沒有 per-id 變種，所以一鍵把
-// 待生成的全跑完，使用者下次點任何 HEVC 都能直接播。
+// Phase 7.7g surface 的「建 proxy」按鈕：用 /api/proxy/build/{id} 只建這一支，
+// 不要拖整庫待生成的一起跑。Audit Codex P2-fix Batch B（2026-05-05）。
 async function doBuildProxyForOne(id) {
   try {
-    var r = await fetch('/api/proxy/build', { method: 'POST' });
+    var r = await fetch('/api/proxy/build/' + id, { method: 'POST' });
     var d = await r.json();
     await tauriMessage(d.message || '已開始生成 proxy（背景執行）\n完成後重新點選此片即可播放。');
   } catch(e) {
