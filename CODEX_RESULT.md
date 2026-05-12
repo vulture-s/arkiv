@@ -125,3 +125,69 @@ $ python -m pytest tests/
 - `A.2` Plugin search crash — 需要 DaVinci Resolve 環境重現，靜態看不出 root cause
 - `D.8` AC 5/6 Windows dialog 手動驗證證據
 - `D.9` Tauri sidecar PyInstaller 打包（跨 commit 大工程，需 Windows + Mac 驗）
+
+---
+
+## VERIFY A2 — `1efb315` Chrome 實驗（branch `verify-a2-proxy-playback`, 2026-05-12）
+
+把上面 `## ⚠️ REVIEW` 表第一行（`312b627 proxy Chrome 播放`）落地。流程依 `VERIFY.md`，在 `.arkiv-worktrees/verify-a2-proxy-playback` 跑 worktree code + `.arkiv/` 真資料。
+
+### Step 1 — ffprobe codec 參數
+
+| 項目 | id=1 FX30.5365.MP4 (H.264 422 10-bit) | id=34 A001_03110959_C462.mov (HEVC Rext) | VERIFY 過關 |
+|---|---|---|---|
+| 來源 codec | h264 | hevc | — |
+| 來源 pix_fmt | yuv422p10le | yuv422p10le | — |
+| 來源 profile | High 4:2:2 | Rext | — |
+| **舊** proxy pix_fmt | `yuv422p10le` | `yuv422p10le` | ❌（fix 前 Chrome 拒播） |
+| **舊** proxy profile | High 4:2:2 | High 4:2:2 | ❌ |
+| **新** codec | h264 | h264 | ✅ |
+| **新** profile | High | High | ✅ |
+| **新** level | 40 | 40 | ✅ |
+| **新** pix_fmt | `yuvj420p` ⚠️ | `yuv420p` | ✅ / ⚠️ |
+| **新** scale | 1280×720 | 406×720 | ✅ |
+| **新** fps | 60000/1001 | 60000/1001 | ✅ |
+| `+faststart` | yes | yes | ✅ |
+| `-g 30` GOP | yes | yes | ✅ |
+
+### Step 2 — Chrome 實播
+
+URL `http://127.0.0.1:8501`（worktree uvicorn + `ARKIV_DB_PATH/PROXIES_DIR` 指 `.arkiv/`）。
+
+- ✅ id=1, id=34 都正常播
+- ✅ Network: `/api/stream/{id}` 回 206 Partial Content + `video/mp4` + `accept-ranges: bytes`
+- ✅ Console **無** `DEMUXER_ERROR` / `MEDIA_ELEMENT_ERROR`
+
+### Step 3 — In/Out marker
+
+- ✅ 拖 In/Out marker 可設、IN/OUT 時間 label 正確
+- ⚠️ marker 不鎖播放（見下方 Finding #3）— VERIFY.md Step 3 AC 字面只要 label 顯示正確，鎖區間播放不在 AC
+
+### 結論：A2 — **PASS**
+
+按 VERIFY.md 過關判定表，pix_fmt / profile / level / Chrome 實播四項全綠（pix_fmt 表格未列 `yuvj420p` 為 fail 值；功能等價於 `yuv420p`）。
+
+### 發現（不阻擋 A2，但需要決策）
+
+**Finding #1 — yuvj420p 邊角**：FX30 H.264 來源帶 `color_range=pc` flag，`-pix_fmt yuv420p` 餵給 libx264 後輸出標記成 `yuvj420p`（= yuv420p + full-range Y）。同 4:2:0 chroma，Chrome 兩種都播。
+- 修法：`ingest.py:234` 後加 `"-color_range", "tv"` 強制 broadcast range，pix_fmt 就會落在 `yuv420p`
+- 影響：cosmetic / 嚴格通過 VERIFY 字面 AC
+- 風險：強制 tv range 對 graded full-range 素材會輕微壓暗，但 proxy 是 review 用途、原檔不動
+
+**Finding #2 — Thumbnails 404 (server.py:70 latent bug) — FIXED in this branch**：worktree 啟動跑出整片 `/thumbnails/*.jpg` 404。根因：`server.py:70` 寫死 `thumbs_dir = ROOT / "thumbnails"`，**沒讀 `config.THUMBNAILS_DIR`**（後者才會吃 `ARKIV_THUMBNAILS_DIR`）。從 `86134e6` (2026-03-27) 第一個 commit 就這樣。production 用 `.arkiv/` 當 ROOT 剛好對到所以沒人發現；任何用 env var 重定向 thumbnails 路徑的部署 (test rig / docker / worktree 驗證) 都會 100% 爆。
+- 修法：改 `thumbs_dir = config.THUMBNAILS_DIR` + `mkdir(parents=True, exist_ok=True)`（已套用）
+- 驗證：worktree server 重啟後 `/thumbnails/FX30.5365.jpg` → 200 / image/jpeg / 11289 bytes，`/api/stream/{id}` 回歸 206 OK
+- 範圍：跟 A2 (1efb315) 完全無關，是潛在 bug，但同一 branch 順手解掉
+
+**Finding #3 — In/Out marker 不鎖播放**：`setupMarkerDrag` (`index.html:454`) 只寫 `inOutState.in/out` + marker DOM 位置；`vid.ontimeupdate` (line 1068) 沒讀 `inOutState`、沒 clamp `currentTime`。`inOutState` 只在 export 端被讀 (line 920-937)。
+- 性質：**by design**（IN/OUT = export trim，不是 playback loop）。不是 A2 引入的 regression
+- VERIFY.md Step 3 AC 字面：「拖 marker / 看 IN/OUT label 正確 / (bonus) export 帶 trim」— 鎖區間播放不在 AC
+- 若視為 NLE-style missing feature → 需要在 `ontimeupdate` 加 `if (vid.currentTime >= inOutState.out) vid.currentTime = inOutState.in`、`vid.play()` 開始時若 `currentTime < inOutState.in` 也跳到 IN。Loop vs once 兩種行為要先定。
+
+### 環境
+
+- Worktree: `C:\Users\user\.arkiv-worktrees\verify-a2-proxy-playback @ 1a91413`
+- Server: worktree uvicorn (PID 27180) on port 8501，env 指向 `C:\Users\user\.arkiv\` 共用真資料
+- 重生 proxy 用 `ingest.generate_proxy(force=True)` 直接 Python call（非整個 `--regenerate-proxies`，只重做 sample 2 個）
+- 新 proxy: `1_fcf5f32b78.mp4` (7.0 MB), `34_4e9ecb1f7d.mp4` (1.0 MB)，沿用 production `C:\Users\user\.arkiv\proxies\`
+- ffprobe: `C:\Users\user\AppData\Local\Microsoft\WinGet\Links\ffprobe.exe`

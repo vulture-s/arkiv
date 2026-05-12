@@ -66,9 +66,12 @@ app.add_middleware(
 
 ROOT = Path(__file__).parent
 
-# Serve thumbnails as static files (create dir if missing so mount always works)
-thumbs_dir = ROOT / "thumbnails"
-thumbs_dir.mkdir(exist_ok=True)
+# Serve thumbnails as static files (create dir if missing so mount always works).
+# Honor ARKIV_THUMBNAILS_DIR (via config.THUMBNAILS_DIR) instead of hardcoding
+# ROOT / "thumbnails" — otherwise any deployment that points thumbnails elsewhere
+# (test rig, docker, worktree QA) silently 404s every /thumbnails/*.jpg.
+thumbs_dir = config.THUMBNAILS_DIR
+thumbs_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnails")
 
 
