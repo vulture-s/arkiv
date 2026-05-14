@@ -857,7 +857,7 @@ def main():
         bench_data = {
             "timestamp": datetime.now().isoformat(),
             "pipeline": f"faster-whisper {config.WHISPER_MODEL} + Silero VAD + {config.VISION_MODEL}",
-            "gpu": "NVIDIA GeForce RTX 4070",
+            "gpu": detect_gpu(),
             "total_duration_s": round(total_dur, 1),
             "total_process_s": round(batch_elapsed, 1),
             "overall_speed_x": round(total_dur / max(batch_elapsed, 1), 1),
@@ -865,6 +865,41 @@ def main():
         }
         bench_path.write_text(json.dumps(bench_data, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"Bench log saved: {bench_path}")
+
+
+def detect_gpu() -> str:
+    """Return short GPU description for bench log (cross-platform)."""
+    import subprocess
+    if sys.platform == "darwin":
+        try:
+            r = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType"],
+                capture_output=True, text=True, timeout=5,
+            )
+            chipset = metal = None
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("Chipset Model:"):
+                    chipset = line.split(":", 1)[1].strip()
+                elif line.startswith("Metal Support:"):
+                    metal = line.split(":", 1)[1].strip()
+            if chipset:
+                return f"{chipset} ({metal})" if metal else chipset
+        except Exception:
+            pass
+        return "Apple Silicon GPU"
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            lines = r.stdout.strip().splitlines()
+            if lines:
+                return lines[0]
+    except Exception:
+        pass
+    return "Unknown GPU"
 
 
 if __name__ == "__main__":
