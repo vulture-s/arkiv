@@ -224,7 +224,7 @@ def _transcribe_mlx(wav: str, language: str) -> tuple:
         word_timestamps=True,
         condition_on_previous_text=layer["condition_on_previous_text"],
         no_speech_threshold=NO_SPEECH_THRESHOLD,
-        beam_size=layer["beam_size"],
+        # beam_size removed: mlx-whisper 0.4.3 does not support beam search
     )
     _optional_option(opts, "compression_ratio_threshold", layer["compression_ratio_threshold"])
     _optional_option(opts, "logprob_threshold", layer["logprob_threshold"])
