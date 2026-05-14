@@ -125,7 +125,7 @@ def _call_vision(img_path, prompt, max_retries=2):
                 OLLAMA_URL, data=payload,
                 headers={"Content-Type": "application/json"},
             )
-            resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
+            resp = json.loads(urllib.request.urlopen(req, timeout=300).read())
             raw = resp.get("response", "").strip()
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw)
