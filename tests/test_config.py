@@ -130,10 +130,41 @@ def test_detect_exiftool_all_miss_returns_literal(monkeypatch, tmp_path):
     # Point all env-var-based candidates at empty tmp_path so none exist
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty1"))
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "empty2"))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "empty_home"))
     # Hard-coded /usr/local/bin/exiftool etc. may exist on Mac CI — skip if so
-    import shutil as _real_shutil
     if any(Path(p).exists() for p in ["/usr/local/bin/exiftool", "/opt/homebrew/bin/exiftool",
                                        "/usr/bin/exiftool", "C:/Program Files/exiftool/exiftool.exe",
-                                       "C:/ProgramData/chocolatey/bin/exiftool.exe"]):
+                                       "C:/ProgramData/chocolatey/bin/exiftool.exe",
+                                       "C:/Strawberry/perl/bin/exiftool.bat"]):
         pytest.skip("hardcoded common path exists on host — can't isolate")
     assert config._detect_exiftool() == "exiftool"
+
+
+def test_detect_exiftool_empty_env_falls_through(monkeypatch):
+    """ARKIV_EXIFTOOL_PATH='' (empty string, e.g. user explicitly cleared) →
+    treated same as unset, falls through to shutil.which (not returned as empty)."""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    monkeypatch.setenv("ARKIV_EXIFTOOL_PATH", "")
+    monkeypatch.setattr("shutil.which", lambda name: "/from/which/exiftool" if name == "exiftool" else None)
+    assert config._detect_exiftool() == "/from/which/exiftool"
+
+
+def test_detect_exiftool_user_local_bin(tmp_path, monkeypatch):
+    """Linux pipx / user install: ~/.local/bin/exiftool detected via Path.home() candidate."""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    fake_home = tmp_path / "fakehome"
+    fake_exif = fake_home / ".local" / "bin" / "exiftool"
+    fake_exif.parent.mkdir(parents=True)
+    fake_exif.write_text("fake")
+    monkeypatch.delenv("ARKIV_EXIFTOOL_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "empty"))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    # Skip if hardcoded paths exist on host (Mac/Linux CI)
+    if any(Path(p).exists() for p in ["/usr/local/bin/exiftool", "/opt/homebrew/bin/exiftool",
+                                       "/usr/bin/exiftool"]):
+        pytest.skip("hardcoded common path exists on host — can't isolate")
+    assert config._detect_exiftool() == str(fake_exif)

@@ -106,11 +106,13 @@ def _detect_exiftool() -> str:
         Path("C:/Program Files/exiftool/exiftool.exe"),
         Path("C:/ProgramData/chocolatey/bin/exiftool.exe"),
         Path(os.environ.get("USERPROFILE", "")) / "scoop" / "shims" / "exiftool.exe",
+        Path("C:/Strawberry/perl/bin/exiftool.bat"),  # Strawberry Perl install
         # macOS
         Path("/opt/homebrew/bin/exiftool"),
-        Path("/usr/local/bin/exiftool"),
+        Path("/usr/local/bin/exiftool"),  # Intel brew / Linux manual / Arch / NixOS
         # Linux
-        Path("/usr/bin/exiftool"),
+        Path("/usr/bin/exiftool"),  # apt default
+        Path.home() / ".local" / "bin" / "exiftool",  # pipx / user install
     ]
     for c in candidates:
         try:
