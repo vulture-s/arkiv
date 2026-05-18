@@ -156,6 +156,7 @@ def exiftool_extract(path: str) -> dict:
         "-FNumber", "-ApertureValue",
         "-FocalLength",
         "-CreateDate", "-DateTimeOriginal",
+        "-Keys:CreationDate",
         "-n",  # numeric output for GPS
         path,
     ]
@@ -194,7 +195,7 @@ def exiftool_extract(path: str) -> dict:
             pass
 
     # Creation date — prefer CreateDate, fallback DateTimeOriginal
-    cdate = d.get("CreateDate") or d.get("DateTimeOriginal")
+    cdate = d.get("CreateDate") or d.get("DateTimeOriginal") or d.get("CreationDate")
     cdate_str = str(cdate) if cdate else None
 
     return {
@@ -210,6 +211,36 @@ def exiftool_extract(path: str) -> dict:
         "focal_length": fl,
         "creation_date": cdate_str,
         "reel_name": d.get("ReelName") or d.get("CameraReelName") or d.get("Reel#") or d.get("ReelNumber"),
+    }
+
+
+def parse_xavc_sidecar(mp4_path: str) -> dict:
+    from pathlib import Path
+    import xml.etree.ElementTree as ET
+
+    p = Path(mp4_path)
+    sidecar = p.with_name(p.stem + "M01.XML")
+    if not sidecar.exists():
+        return {}
+    try:
+        tree = ET.parse(sidecar)
+        root = tree.getroot()
+        ns = {"x": root.tag.split("}")[0].lstrip("{")} if "}" in root.tag else {}
+    except (ET.ParseError, OSError):
+        return {}
+
+    def find_attr(xpath_with_x, xpath_plain, attr):
+        if ns:
+            el = root.find(xpath_with_x, ns)
+        else:
+            el = root.find(xpath_plain)
+        return el.get(attr) if el is not None else None
+
+    return {
+        "camera_make": find_attr(".//x:Device", ".//Device", "manufacturer"),
+        "camera_model": find_attr(".//x:Device", ".//Device", "modelName"),
+        "lens_model": find_attr(".//x:Lens", ".//Lens", "modelName"),
+        "creation_date": find_attr(".//x:CreationDate", ".//CreationDate", "value"),
     }
 
 
@@ -309,6 +340,10 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None)
         return {}
 
     exif = exiftool_extract(str(path))
+    sidecar = parse_xavc_sidecar(str(path))
+    for k, v in sidecar.items():
+        if v and not exif.get(k):
+            exif[k] = v
 
     record = {
         "path": db.to_relative(str(path)),
