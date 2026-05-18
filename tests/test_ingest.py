@@ -36,3 +36,54 @@ def test_parse_xavc_sidecar_malformed(tmp_path):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import ingest
     assert ingest.parse_xavc_sidecar(str(mp4)) == {}
+
+
+# B10b2: Blackmagic Cam app (iOS) per-vendor lens tag
+
+def test_exiftool_lens_falls_back_to_bmd_camera_lens_type(monkeypatch):
+    """Blackmagic Cam app writes lens in non-standard `Blackmagic-design Camera
+    Lens Type` (Keys group). When standard `-LensModel` returns empty, fall
+    back to BMD tag so iPhone clips recorded via BMD Cam still populate lens."""
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    fake_stdout = json.dumps([{
+        "SourceFile": "iphone.mov",
+        "Model": "Apple iPhone 16 Pro 48mm",
+        "Blackmagic-designCameraLensType": "iPhone 16 Pro 48mm",
+        # LensModel intentionally absent (BMD Cam doesn't write it)
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    result = ingest.exiftool_extract("iphone.mov")
+    assert result["lens_model"] == "iPhone 16 Pro 48mm"
+    assert result["camera_model"] == "Apple iPhone 16 Pro 48mm"
+
+
+def test_exiftool_lens_prefers_standard_lensmodel_over_bmd(monkeypatch):
+    """If both standard LensModel and BMD tag present, standard wins (e.g.
+    BMD app on a Sony body that already writes LensModel)."""
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    fake_stdout = json.dumps([{
+        "SourceFile": "edge.mov",
+        "LensModel": "Standard 24-70mm f/2.8",
+        "Blackmagic-designCameraLensType": "Generic BMD lens",
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    result = ingest.exiftool_extract("edge.mov")
+    assert result["lens_model"] == "Standard 24-70mm f/2.8"

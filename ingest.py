@@ -157,6 +157,11 @@ def exiftool_extract(path: str) -> dict:
         "-FocalLength",
         "-CreateDate", "-DateTimeOriginal",
         "-Keys:CreationDate",
+        # Blackmagic Cam app (iOS) writes per-vendor schema in [Keys] group.
+        # Lens info goes to "Blackmagic-design Camera Lens Type" (short form
+        # collapses spaces). Other BMD fields (ISO/Aperture/ShutterAngle/WB)
+        # not consumed yet — see todo B10b3.
+        "-Blackmagic-designCameraLensType",
         "-n",  # numeric output for GPS
         path,
     ]
@@ -201,7 +206,7 @@ def exiftool_extract(path: str) -> dict:
     return {
         "camera_make": d.get("Make"),
         "camera_model": d.get("Model"),
-        "lens_model": d.get("LensModel"),
+        "lens_model": d.get("LensModel") or d.get("Blackmagic-designCameraLensType"),
         "gps_lat": d.get("GPSLatitude"),
         "gps_lon": d.get("GPSLongitude"),
         "color_space": str(d.get("ColorSpace")) if d.get("ColorSpace") else None,
