@@ -9,6 +9,7 @@ arkiv.db
 chroma_db/
 thumbnails/
 proxies/
+waveforms/
 
 # Benchmark artefacts — results contain private transcripts / filenames,
 # and the scripts below have hardcoded personal paths. Keep local only.

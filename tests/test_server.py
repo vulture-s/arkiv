@@ -218,6 +218,51 @@ def test_edl_export_shifts_source_tc_by_trim_in(fastapi_client, sample_record):
     assert "01:00:30:00" not in body
 
 
+def test_edl_reel_uses_exiftool_when_set(fastapi_client, sample_record):
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/reel-a.mp4",
+        filename="reel-a.mp4",
+        reel_name="A001",
+    ))
+
+    resp = fastapi_client.get("/api/media/1/export/edl")
+    assert resp.status_code == 200
+    line = next(line for line in resp.text.splitlines() if line.startswith("001  "))
+    assert line[5:13] == "A001    "
+
+
+def test_edl_reel_falls_back_to_stem_when_null(fastapi_client, sample_record):
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/fx30_c001.mp4",
+        filename="FX30_C001.MP4",
+        reel_name=None,
+    ))
+
+    resp = fastapi_client.get("/api/media/1/export/edl")
+    assert resp.status_code == 200
+    line = next(line for line in resp.text.splitlines() if line.startswith("001  "))
+    assert line[5:13] == "FX30_C00"
+
+
+def test_edl_reel_strips_non_ascii(fastapi_client, sample_record):
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/reel-ascii.mp4",
+        filename="reel-ascii.mp4",
+        reel_name="\u4e2d\u6587A1",
+    ))
+
+    resp = fastapi_client.get("/api/media/1/export/edl")
+    assert resp.status_code == 200
+    assert all(byte < 128 for byte in resp.content)
+    line = next(line for line in resp.text.splitlines() if line.startswith("001  "))
+    reel_field = line[5:13]
+    assert reel_field == "??A1    "
+    assert reel_field.isascii()
+
+
 def test_fcpxml_export_keeps_asset_full_but_clip_uses_trim(fastapi_client, sample_record):
     _insert_media_with_segments(sample_record)
 

@@ -66,9 +66,12 @@ app.add_middleware(
 
 ROOT = Path(__file__).parent
 
-# Serve thumbnails as static files (create dir if missing so mount always works)
-thumbs_dir = ROOT / "thumbnails"
-thumbs_dir.mkdir(exist_ok=True)
+# Serve thumbnails as static files (create dir if missing so mount always works).
+# Honor ARKIV_THUMBNAILS_DIR (via config.THUMBNAILS_DIR) instead of hardcoding
+# ROOT / "thumbnails" — otherwise any deployment that points thumbnails elsewhere
+# (test rig, docker, worktree QA) silently 404s every /thumbnails/*.jpg.
+thumbs_dir = config.THUMBNAILS_DIR
+thumbs_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnails")
 
 
@@ -1027,6 +1030,12 @@ def clear_cache(target: str = Query("app", description="app|thumbnails|chromadb|
 
 # ── Export ────────────────────────────────────────────────────────────────────
 
+def _edl_reel(rec, stem):
+    value = rec.get("reel_name") or stem
+    value = value.encode("ascii", "replace").decode("ascii")
+    return value[:8].ljust(8)
+
+
 @app.get("/api/media/{media_id}/export/{fmt}")
 def export_media(
     media_id: int,
@@ -1198,8 +1207,7 @@ def export_media(
         rec_end = _edl_tc(rec_base + duration, clip_fps, is_df)
 
         edl = f"TITLE: {stem}\nFCM: {fcm}\n\n"
-        # Use filename stem as reel name (max 8 chars for CMX3600 compat)
-        reel = stem[:8].ljust(8)
+        reel = _edl_reel(rec, stem)
         edl += f"001  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
         edl += f"* FROM CLIP NAME: {filename}\n"
         if start_tc_str:

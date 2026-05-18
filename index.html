@@ -1066,6 +1066,17 @@ async function doPlayMedia(id) {
 
   // Sync timeupdate
   vid.ontimeupdate = function() {
+    // Trim playback: when user has set IN/OUT markers, loop playback within
+    // the range (NLE play-range behavior). Threshold matches export trim
+    // detection in doExportTrim (0.05s slack), so default 0/duration markers
+    // don't trigger clamping and full-clip playback is unchanged.
+    if (inOutState.id === id && vid.duration) {
+      var inS = inOutState.in, outS = inOutState.out;
+      var hasTrim = (inS > 0.05 || outS < vid.duration - 0.05);
+      if (hasTrim && (vid.currentTime >= outS || vid.currentTime < inS - 0.05)) {
+        vid.currentTime = inS;
+      }
+    }
     var pct = vid.duration ? (vid.currentTime / vid.duration * 100) : 0;
     if (playhead) playhead.style.left = pct + '%';
     var el = document.getElementById('currentTimeDisplay');
@@ -1074,6 +1085,14 @@ async function doPlayMedia(id) {
     if (pt) { var s = Math.floor(vid.currentTime), m = Math.floor(s/60); s = s%60; pt.textContent = m + ':' + (s<10?'0':'') + s; }
   };
   vid.onplay = function() {
+    // If user hit play with playhead outside the trim range, snap to IN first.
+    if (inOutState.id === id && vid.duration) {
+      var inS = inOutState.in, outS = inOutState.out;
+      var hasTrim = (inS > 0.05 || outS < vid.duration - 0.05);
+      if (hasTrim && (vid.currentTime >= outS || vid.currentTime < inS - 0.05)) {
+        vid.currentTime = inS;
+      }
+    }
     var svg = document.querySelector('#ppBtn svg');
     if (svg) svg.innerHTML = '<rect x="5" y="3" width="3" height="14"/><rect x="12" y="3" width="3" height="14"/>';
   };
