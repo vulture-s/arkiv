@@ -80,6 +80,7 @@ def init_db():
                 transcript     TEXT,
                 lang           TEXT,
                 frame_tags     TEXT,
+                reel_name      TEXT,
                 thumbnail_path TEXT,
                 processed_at   TEXT
             )
@@ -124,6 +125,7 @@ def init_db():
             ("aperture", "REAL"),
             ("focal_length", "REAL"),
             ("creation_date", "TEXT"),
+            ("reel_name", "TEXT"),
             ("content_type", "TEXT"),
             ("start_tc", "TEXT"),
             # Phase 9.4: Whisper segment timestamps for precise SRT/VTT
@@ -214,6 +216,7 @@ _ALLOWED_COLS = {
     "processed_at", "rating", "rating_note", "camera_make", "camera_model",
     "lens_model", "gps_lat", "gps_lon", "color_space", "iso", "shutter_speed",
     "aperture", "focal_length", "creation_date", "content_type",
+    "reel_name",
     "start_tc",
     "segments_json",
     "words_json",

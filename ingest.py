@@ -151,6 +151,7 @@ def exiftool_extract(path: str) -> dict:
         "-GPSLatitude", "-GPSLongitude",
         "-ColorSpace",
         "-ISO",
+        "-ReelName", "-CameraReelName", "-Reel#", "-ReelNumber",
         "-ShutterSpeed", "-ExposureTime",
         "-FNumber", "-ApertureValue",
         "-FocalLength",
@@ -208,6 +209,7 @@ def exiftool_extract(path: str) -> dict:
         "aperture": ap,
         "focal_length": fl,
         "creation_date": cdate_str,
+        "reel_name": d.get("ReelName") or d.get("CameraReelName") or d.get("Reel#") or d.get("ReelNumber"),
     }
 
 
