@@ -87,3 +87,53 @@ def test_config_accepts_localhost_and_tailscale_ollama():
     # Tailscale CGNAT (Ollama on NAS)
     code, stderr = _check_config_loads({"ARKIV_OLLAMA_URL": "http://100.64.154.6:11434"})
     assert code == 0, f"unexpected failure: {stderr}"
+
+
+# ── B10c: ExifTool auto-detect fallback chain ────────────────────────────────
+
+def test_detect_exiftool_env_var_wins(monkeypatch):
+    """ARKIV_EXIFTOOL_PATH env > everything else (trusts user override blindly)"""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    monkeypatch.setenv("ARKIV_EXIFTOOL_PATH", "/custom/path/exiftool")
+    assert config._detect_exiftool() == "/custom/path/exiftool"
+
+
+def test_detect_exiftool_falls_back_to_shutil_which(monkeypatch):
+    """No env → shutil.which lookup"""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    monkeypatch.delenv("ARKIV_EXIFTOOL_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/exiftool" if name == "exiftool" else None)
+    assert config._detect_exiftool() == "/usr/local/bin/exiftool"
+
+
+def test_detect_exiftool_falls_back_to_common_paths(tmp_path, monkeypatch):
+    """No env + which miss → scan common install paths (Windows winget LOCALAPPDATA pattern)"""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    fake_exif = tmp_path / "Programs" / "ExifTool" / "exiftool.exe"
+    fake_exif.parent.mkdir(parents=True)
+    fake_exif.write_text("fake")
+    monkeypatch.delenv("ARKIV_EXIFTOOL_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert config._detect_exiftool() == str(fake_exif)
+
+
+def test_detect_exiftool_all_miss_returns_literal(monkeypatch, tmp_path):
+    """All fallbacks miss → returns 'exiftool' literal (subprocess fails loud later)"""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    monkeypatch.delenv("ARKIV_EXIFTOOL_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    # Point all env-var-based candidates at empty tmp_path so none exist
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty1"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "empty2"))
+    # Hard-coded /usr/local/bin/exiftool etc. may exist on Mac CI — skip if so
+    import shutil as _real_shutil
+    if any(Path(p).exists() for p in ["/usr/local/bin/exiftool", "/opt/homebrew/bin/exiftool",
+                                       "/usr/bin/exiftool", "C:/Program Files/exiftool/exiftool.exe",
+                                       "C:/ProgramData/chocolatey/bin/exiftool.exe"]):
+        pytest.skip("hardcoded common path exists on host — can't isolate")
+    assert config._detect_exiftool() == "exiftool"

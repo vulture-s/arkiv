@@ -79,7 +79,50 @@ OLLAMA_URL = _validate_http_url(
 EMBED_MODEL = os.getenv("ARKIV_EMBED_MODEL", "nomic-embed-text")
 VISION_MODEL = os.getenv("ARKIV_VISION_MODEL", "qwen3-vl:8b")
 
-EXIFTOOL_PATH = os.getenv("ARKIV_EXIFTOOL_PATH", "exiftool")
+def _detect_exiftool() -> str:
+    """Resolve ExifTool binary path via fallback chain.
+
+    Priority: ARKIV_EXIFTOOL_PATH env > shutil.which('exiftool') > common
+    per-platform install paths. Returns "exiftool" literal as last resort
+    so subprocess fails loudly (WinError 2 / FileNotFoundError).
+
+    Background: winget/scoop/chocolatey on Windows don't add ExifTool to
+    PATH by default. Before this, fresh PC install would silent-skip every
+    exiftool_extract() call.
+    """
+    import shutil as _shutil
+
+    env_val = os.getenv("ARKIV_EXIFTOOL_PATH")
+    if env_val:
+        return env_val
+
+    which = _shutil.which("exiftool")
+    if which:
+        return which
+
+    candidates = [
+        # Windows
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "ExifTool" / "exiftool.exe",
+        Path("C:/Program Files/exiftool/exiftool.exe"),
+        Path("C:/ProgramData/chocolatey/bin/exiftool.exe"),
+        Path(os.environ.get("USERPROFILE", "")) / "scoop" / "shims" / "exiftool.exe",
+        # macOS
+        Path("/opt/homebrew/bin/exiftool"),
+        Path("/usr/local/bin/exiftool"),
+        # Linux
+        Path("/usr/bin/exiftool"),
+    ]
+    for c in candidates:
+        try:
+            if c.exists():
+                return str(c)
+        except OSError:
+            continue
+
+    return "exiftool"
+
+
+EXIFTOOL_PATH = _detect_exiftool()
 
 import platform as _plat
 
