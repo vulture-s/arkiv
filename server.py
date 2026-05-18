@@ -1031,7 +1031,14 @@ def clear_cache(target: str = Query("app", description="app|thumbnails|chromadb|
 # ── Export ────────────────────────────────────────────────────────────────────
 
 def _edl_reel(rec, stem):
-    value = rec.get("reel_name") or stem
+    # CMX3600 reel: ASCII only, 8 chars, no control chars (would inject EDL lines).
+    # Treat blank/whitespace-only reel_name as missing → stem fallback.
+    raw = rec.get("reel_name")
+    value = raw.strip() if isinstance(raw, str) and raw.strip() else stem
+    # Strip ASCII control chars (0x00-0x1F + 0x7F) BEFORE ASCII conversion —
+    # encode("ascii", "replace") would happily pass \r\n through, letting a
+    # poisoned reel_name like "A001\r\nFCM: NONAME" inject EDL header lines.
+    value = "".join(c for c in value if 0x20 <= ord(c) < 0x7F or ord(c) >= 0x80)
     value = value.encode("ascii", "replace").decode("ascii")
     return value[:8].ljust(8)
 
