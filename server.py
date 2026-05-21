@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
+import config
 
 
 # ── WebSocket connection manager ────────────────────────────────────────────
@@ -67,8 +68,8 @@ app.add_middleware(
 ROOT = Path(__file__).parent
 
 # Serve thumbnails as static files (create dir if missing so mount always works)
-thumbs_dir = ROOT / "thumbnails"
-thumbs_dir.mkdir(exist_ok=True)
+thumbs_dir = config.THUMBNAILS_DIR
+thumbs_dir.mkdir(exist_ok=True, parents=True)
 app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnails")
 
 
@@ -596,12 +597,12 @@ def cache_info():
         size = sum(f.stat().st_size for f in ollama_dir.rglob("*") if f.is_file())
         caches["ollama"] = {"path": str(ollama_dir), "size_mb": round(size / 1048576)}
     # ChromaDB
-    chroma = ROOT / "chroma_db"
+    chroma = config.CHROMA_PATH
     if chroma.exists():
         size = sum(f.stat().st_size for f in chroma.rglob("*") if f.is_file())
         caches["chromadb"] = {"path": str(chroma), "size_mb": round(size / 1048576)}
     # Thumbnails
-    thumbs = ROOT / "thumbnails"
+    thumbs = config.THUMBNAILS_DIR
     if thumbs.exists():
         count = len(list(thumbs.glob("*")))
         size = sum(f.stat().st_size for f in thumbs.rglob("*") if f.is_file())
@@ -622,7 +623,7 @@ def clear_cache(target: str = Query("app", description="app|thumbnails|chromadb|
     import shutil
     cleared = []
     if target in ("app", "thumbnails", "all"):
-        thumbs = ROOT / "thumbnails"
+        thumbs = config.THUMBNAILS_DIR
         if thumbs.exists():
             for f in thumbs.iterdir():
                 f.unlink(missing_ok=True)
@@ -633,7 +634,7 @@ def clear_cache(target: str = Query("app", description="app|thumbnails|chromadb|
             shutil.rmtree(pycache, ignore_errors=True)
             cleared.append("__pycache__")
     if target in ("chromadb", "all"):
-        chroma = ROOT / "chroma_db"
+        chroma = config.CHROMA_PATH
         if chroma.exists():
             shutil.rmtree(chroma, ignore_errors=True)
             cleared.append("chromadb")
@@ -1152,7 +1153,7 @@ def stream_media(media_id: int):
     if not rec:
         raise HTTPException(404, "找不到媒體")
     # Check for proxy first (browser-friendly H.264)
-    proxy_path = ROOT / "proxies" / f"{media_id}.mp4"
+    proxy_path = config.PROXIES_DIR / f"{media_id}.mp4"
     if proxy_path.exists():
         return FileResponse(
             path=str(proxy_path),
@@ -1182,8 +1183,8 @@ PROXY_CODECS = {"hevc", "hev1", "prores", "ap4h", "ap4x", "apch", "apcn", "apcs"
 @app.get("/api/proxy/status")
 def proxy_status():
     """Check proxy status for all media files."""
-    proxy_dir = ROOT / "proxies"
-    proxy_dir.mkdir(exist_ok=True)
+    proxy_dir = config.PROXIES_DIR
+    proxy_dir.mkdir(exist_ok=True, parents=True)
     existing = {p.stem for p in proxy_dir.glob("*.mp4")}
     with db.get_conn() as conn:
         total = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
@@ -1195,8 +1196,8 @@ def proxy_status():
 @app.post("/api/proxy/build")
 def proxy_build(background_tasks: BackgroundTasks):
     """Queue proxy generation for all HEVC/ProRes files without proxy."""
-    proxy_dir = ROOT / "proxies"
-    proxy_dir.mkdir(exist_ok=True)
+    proxy_dir = config.PROXIES_DIR
+    proxy_dir.mkdir(exist_ok=True, parents=True)
     existing = {p.stem for p in proxy_dir.glob("*.mp4")}
     with db.get_conn() as conn:
         rows = conn.execute("SELECT id, path FROM media").fetchall()
