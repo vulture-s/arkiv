@@ -106,13 +106,21 @@ def main():
 
     # ── ExifTool ────────────────────────────────────────────────────────
     print("\n-- ExifTool --")
-    exiftool = shutil.which("exiftool")
-    if plat == "docker":
-        check("exiftool", exiftool is not None, "(optional in Docker)", required=False)
+    import config as _config
+    exiftool_resolved = _config.EXIFTOOL_PATH
+    # config.EXIFTOOL_PATH may be absolute path (auto-detected) or literal "exiftool" (PATH lookup)
+    if os.sep in exiftool_resolved or "/" in exiftool_resolved:
+        exiftool_ok = Path(exiftool_resolved).exists()
     else:
-        check("exiftool", exiftool is not None,
-              f"({exiftool})" if exiftool else "(not found — install for rich metadata extraction)",
-              required=False)
+        exiftool_ok = shutil.which(exiftool_resolved) is not None
+    detail = (
+        f"({exiftool_resolved})" if exiftool_ok
+        else f"(not found — set ARKIV_EXIFTOOL_PATH or add to PATH; resolved: {exiftool_resolved!r})"
+    )
+    if plat == "docker":
+        check("exiftool", exiftool_ok, "(optional in Docker)", required=False)
+    else:
+        check("exiftool", exiftool_ok, detail, required=False)
 
     # ── Whisper ─────────────────────────────────────────────────────────
     print("\n-- Whisper --")
