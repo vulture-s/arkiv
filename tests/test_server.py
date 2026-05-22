@@ -263,6 +263,57 @@ def test_edl_reel_strips_non_ascii(fastapi_client, sample_record):
     assert reel_field.isascii()
 
 
+def test_edl_reel_strips_control_chars_no_injection(fastapi_client, sample_record):
+    """CRITICAL: poisoned reel_name with \\r\\n must NOT inject EDL lines."""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/inject.mp4",
+        filename="inject.mp4",
+        reel_name="A001\r\nFCM: NONAME\r\n002  EVIL",
+    ))
+
+    resp = fastapi_client.get("/api/media/1/export/edl")
+    assert resp.status_code == 200
+    # Should still have exactly ONE event line (starting with "001  ")
+    event_lines = [l for l in resp.text.splitlines() if l.lstrip().startswith(("001", "002"))]
+    assert len(event_lines) == 1, f"Expected 1 event line, got: {event_lines}"
+    # Reel field stays inside 8-char window — no embedded newline
+    reel_field = event_lines[0][5:13]
+    assert "\n" not in reel_field
+    assert "\r" not in reel_field
+    assert len(reel_field) == 8
+
+
+def test_edl_reel_whitespace_only_falls_back_to_stem(fastapi_client, sample_record):
+    """Whitespace-only reel_name (e.g. "   ") must fall back to filename stem."""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/whitespace_clip.mp4",
+        filename="FX30_C002.MP4",
+        reel_name="   ",
+    ))
+
+    resp = fastapi_client.get("/api/media/1/export/edl")
+    assert resp.status_code == 200
+    line = next(line for line in resp.text.splitlines() if line.startswith("001  "))
+    assert line[5:13] == "FX30_C00"
+
+
+def test_edl_reel_empty_string_falls_back_to_stem(fastapi_client, sample_record):
+    """Empty-string reel_name (vs NULL) must also fall back to stem."""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/empty_clip.mp4",
+        filename="FX30_C003.MP4",
+        reel_name="",
+    ))
+
+    resp = fastapi_client.get("/api/media/1/export/edl")
+    assert resp.status_code == 200
+    line = next(line for line in resp.text.splitlines() if line.startswith("001  "))
+    assert line[5:13] == "FX30_C00"
+
+
 def test_fcpxml_export_keeps_asset_full_but_clip_uses_trim(fastapi_client, sample_record):
     _insert_media_with_segments(sample_record)
 
