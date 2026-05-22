@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.3.0 (2026-05-22) — DIT Companion
+
+### New Features
+- **DaVinci Resolve metadata CSV export** — `/api/export/metadata-csv` endpoint + toolbar button + plugin auto-prompt. Drop-in for Resolve's `File → Import Metadata from CSV` workflow (Phase 7.6b/c/d/e)
+- **ExifTool full integration** — Sony XAVC sidecar `.XML` parsing, iPhone Keys group fallback, Blackmagic Cam app per-vendor lens tags (`Blackmagic-designCameraLensType`). LensModel chain: ExifTool LensModel → BMD vendor tag
+- **ExifTool auto-detect** — `config._detect_exiftool()` fallback chain (env var → `shutil.which` → Windows winget LOCALAPPDATA / Program Files / chocolatey / scoop / macOS homebrew / Linux apt + `~/.local/bin` + Strawberry Perl). Solves silent skip on fresh Windows clone
+- **HEVC/ProRes browser proxy** — `/api/proxy/build/{id}` POST endpoint + 409 surface in frontend + "build proxy" button (Phase 7.7g)
+- **Tauri panic hook** — surfaces Rust crashes to stderr (Windows dialog crash diagnosis)
+
+### Bug Fixes
+- **EDL reel name (B10)** — was `stem[:8]` unconditionally. Now uses ExifTool ReelName when present, falls back to filename stem; sanitizes control chars; pads/truncates to 8-char CMX3600 spec
+- **EDL reel injection hotfix (B10-hotfix)** — control char (`\r\n` etc.) stripped before encode; whitespace-only reel falls back to stem (Codex audit)
+- **Tauri dialog crash (Windows)** — `rfd` folder picker crash workaround: drop `title` arg
+- **Vision Ollama timeout** — bump 120s → 300s for large prompts
+- **mlx-whisper backend** — drop unsupported `beam_size` kwarg
+
+### Security
+- Codex Round 1+2 audit: 5 SSRF / path-bound hardenings (Batch J), export-to dest allowlist (blocks `~/.ssh` / LaunchAgents RCE), CSV formula injection prevention, XSS hardening, vectordb `build_doc_text` production schema alignment
+
+### Internals
+- Cross-platform `detect_gpu()` for `bench_ingest.json`
+- `arkiv_resolve.py` honors `ARKIV_API` / `ARKIV_HOST` / `ARKIV_PORT` env
+- 6+ new tests (ExifTool fallback chain + reel name regressions + CSV scope + BMD lens + ExifTool sidecar)
+
+### Known Issues
+- Resolve conform pathname pattern `*/%R/%D` mis-parses paths like `iphone 16pro` as reel — workaround: set conform pattern to filename-based, or use FCPXML import (B10c-resolve, open)
+
+---
+
 ## v0.2.1 (2026-04-12)
 
 ### Performance
