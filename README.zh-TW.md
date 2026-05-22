@@ -60,7 +60,11 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 - **標籤系統** — 自動（AI）+ 手動標籤，附自動補全
 - **DaVinci Resolve 風格 UI** — 深色主題、三欄式佈局、膠卷條、波形圖
 - **匯出** — SRT、VTT、TXT、EDL（DF/NDF 時間碼）、FCPXML 1.8（FCPX + DaVinci 相容）
-- **Tauri 原生應用** — 桌面應用程式，支援原生檔案/資料夾對話框
+- **DaVinci Resolve 詮釋資料 CSV 匯出** — `/api/export/metadata-csv` 端點輸出片段詮釋資料（Camera／Lens／ISO／Shutter／Aperture／GPS／CreateDate），可直接餵 Resolve 的「檔案 → 從 CSV 匯入詮釋資料」。外掛匯入後自動提示
+- **ExifTool 整合** — 每支片段自動擷取 12 個欄位（Make／Model／LensModel／GPS／ColorSpace／ISO／Shutter／Aperture／FocalLength／CreateDate）。支援 sidecar：Sony XAVC `.XML`、iPhone Keys group、Blackmagic Cam app 廠商專屬鏡頭標籤。Windows 自動偵測 exiftool 二進位位置（winget／scoop／chocolatey／Program Files）
+- **EDL reel 名** — 採 ExifTool ReelName，缺失時 fallback 到檔名 stem（8 字元 CMX3600 規格相容、控制字元已過濾）
+- **HEVC／ProRes 瀏覽器代理** — 瀏覽器播放時依需求自動產生 H.264 代理（Phase 7.7g）
+- **Tauri 原生應用** — 桌面應用程式，支援原生檔案/資料夾對話框（Windows panic hook 將 Rust crash 寫到 stderr）
 - **DaVinci Resolve 外掛** — 搜尋、匯入（含片段顏色）、新增幀標記
 
 ## 快速開始
@@ -212,6 +216,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | LLM 潤稿 | Ollama qwen2.5:14b（標點 + 錯字校正） |
 | 視覺 | Ollama qwen3-vl:8b（品牌/物件辨識） |
 | 媒體 | FFmpeg（探測、縮圖、幀擷取） |
+| 詮釋資料 | ExifTool（12 欄位、sidecar-aware、跨平台自動偵測） |
 | 匯出 | SRT、VTT、TXT、EDL（DF/NDF）、FCPXML 1.8 |
 | 桌面 | Tauri（原生應用程式包裝） |
 | NLE 外掛 | DaVinci Resolve（匯入 + 片段上色 + 標記） |
@@ -269,13 +274,13 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 | Apple Silicon | — | 必要 | — | |
 | fastapi + uvicorn | 必要 | 必要 | 必要 | |
 
-### 最新結果 (v0.2.0)
+### 最新結果 (v0.3.0)
 
 | 平台 | 環境健檢 | 冒煙測試 | 日期 |
 |------|----------|----------|------|
-| macOS M2 Max | 18/19 PASS, 0 FAIL, 1 SKIP | 9/9 PASS | 2026-04-03 |
-| Windows 11 (RTX 4070) | 17/18 PASS, 0 FAIL, 1 SKIP | 9/9 PASS | 2026-04-02 |
-| Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS | 2026-04-01 |
+| macOS M2 Max | TBD | TBD | 2026-05-22 |
+| Windows 11 (RTX 4070) | TBD | TBD | 2026-05-22 |
+| Linux (Docker) | TBD | TBD | 2026-05-22 |
 
 ## 授權
 

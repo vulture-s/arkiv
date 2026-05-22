@@ -60,7 +60,11 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **Tag system** — auto (AI) + manual tags with autocomplete
 - **DaVinci Resolve UI** — dark theme, 3-panel layout, filmstrip, waveform
 - **Export** — SRT, VTT, TXT, EDL (drop-frame TC), FCPXML 1.8 (FCPX + DaVinci compatible)
-- **Tauri native app** — desktop app with native file/folder dialogs
+- **DaVinci Resolve metadata CSV** — `/api/export/metadata-csv` endpoint exports clip metadata (Camera/Lens/ISO/Shutter/Aperture/GPS/CreateDate) ready for Resolve's `File → Import Metadata from CSV`. Plugin auto-prompts after import
+- **ExifTool integration** — auto-extracts 12 fields per clip (Make/Model/LensModel/GPS/ColorSpace/ISO/Shutter/Aperture/FocalLength/CreateDate). Sidecar-aware for Sony XAVC `.XML`, iPhone Keys group, Blackmagic Cam app per-vendor lens tags. Auto-detects exiftool binary on Windows (winget/scoop/chocolatey/Program Files)
+- **EDL reel name** — uses ExifTool ReelName with safe fallback to filename stem (8-char CMX3600 compat, control-char sanitized)
+- **HEVC/ProRes browser proxy** — auto-builds H.264 proxy on demand for browser playback (Phase 7.7g)
+- **Tauri native app** — desktop app with native file/folder dialogs (Windows panic hook surfaces Rust crashes to stderr)
 - **DaVinci Resolve plugin** — search, import with clip color, add frame markers
 
 ## Quick Start
@@ -214,6 +218,7 @@ Copy `.env.example` to `.env` and customize:
 | LLM Polish | Ollama qwen2.5:14b (punctuation + typo correction) |
 | Vision | Ollama qwen3-vl:8b (brand/object recognition) |
 | Media | FFmpeg (probe, thumbnails, frame extraction) |
+| Metadata | ExifTool (12 fields, sidecar-aware, cross-platform auto-detect) |
 | Export | SRT, VTT, TXT, EDL (DF/NDF), FCPXML 1.8 |
 | Desktop | Tauri (native app wrapper) |
 | NLE Plugin | DaVinci Resolve (import + clip color + markers) |
@@ -271,13 +276,13 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 | Apple Silicon | — | Required | — | |
 | fastapi + uvicorn | Required | Required | Required | |
 
-### Latest Results (v0.1.0)
+### Latest Results (v0.3.0)
 
 | Platform | Health Check | Smoke Test | Date |
 |----------|-------------|------------|------|
-| macOS M2 Max | 18/19 PASS, 0 FAIL, 1 SKIP | 9/9 PASS | 2026-04-03 |
-| Windows 11 (RTX 4070) | 17/18 PASS, 0 FAIL, 1 SKIP | 9/9 PASS | 2026-04-02 |
-| Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS | 2026-04-01 |
+| macOS M2 Max | TBD | TBD | 2026-05-22 |
+| Windows 11 (RTX 4070) | TBD | TBD | 2026-05-22 |
+| Linux (Docker) | TBD | TBD | 2026-05-22 |
 
 ## License
 
