@@ -281,8 +281,8 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 | Platform | Health Check | Smoke Test | Date |
 |----------|-------------|------------|------|
 | macOS M2 Max | TBD | TBD | 2026-05-22 |
-| Windows 11 (RTX 4070) | TBD | TBD | 2026-05-22 |
-| Linux (Docker) | TBD | TBD | 2026-05-22 |
+| Windows 11 (RTX 4070) | 19/19 PASS, 0 FAIL, 0 SKIP | 9/9 PASS | 2026-05-22 |
+| Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS | 2026-05-22 |
 
 ## License
 

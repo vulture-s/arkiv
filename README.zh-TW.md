@@ -279,8 +279,8 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 | 平台 | 環境健檢 | 冒煙測試 | 日期 |
 |------|----------|----------|------|
 | macOS M2 Max | TBD | TBD | 2026-05-22 |
-| Windows 11 (RTX 4070) | TBD | TBD | 2026-05-22 |
-| Linux (Docker) | TBD | TBD | 2026-05-22 |
+| Windows 11 (RTX 4070) | 19/19 PASS, 0 FAIL, 0 SKIP | 9/9 PASS | 2026-05-22 |
+| Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS | 2026-05-22 |
 
 ## 授權
 
