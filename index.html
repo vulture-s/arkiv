@@ -298,14 +298,24 @@ var isTauri = !!(window.__TAURI__);
 async function tauriMessage(msg) {
   if (isTauri) {
     try { await window.__TAURI__.dialog.message(msg, { title: 'arkiv' }); return; }
-    catch(e) {}
+    catch(e) { console.warn('tauriMessage dialog.message failed:', e); }
+    // In Tauri 2 webview, raw alert() is intercepted by plugin:dialog|message
+    // — if ACL rejects, fall back to console log instead of crashing.
+    console.log('[arkiv]', msg);
+    return;
   }
   alert(msg);
 }
 async function tauriAsk(msg) {
   if (isTauri) {
     try { return await window.__TAURI__.dialog.ask(msg, { title: 'arkiv' }); }
-    catch(e) {}
+    catch(e) { console.warn('tauriAsk dialog.ask failed:', e); }
+    // In Tauri 2 webview, raw confirm() is intercepted by plugin:dialog|confirm
+    // which is not in default ACL — return true (auto-accept) instead of
+    // unhandled rejection. Critical destructive actions should use their own
+    // inline confirm UI, not rely on this fallback.
+    console.warn('[arkiv] tauriAsk fallback auto-accept:', msg);
+    return true;
   }
   return confirm(msg);
 }
