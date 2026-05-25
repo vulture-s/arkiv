@@ -583,9 +583,122 @@ def _regenerate_proxies():
     print(f"\nRegenerated: {ok}  Failed: {failed}")
 
 
+def _migrate_storage():
+    """Phase 8.0c migration: BASE_DIR/{media.db, thumbnails/, chroma_db/, proxies/}
+    → BASE_DIR/.arkiv/{project.db, thumbnails/, chroma_db/, proxies/}.
+
+    Idempotent: refuses if new layout already exists.
+    Backup-first: writes BASE_DIR/.legacy-backup-{ts}.tar.gz before any move.
+    Verify-after: sqlite COUNT + thumbnails file count cross-check.
+    """
+    import tarfile
+    import sqlite3
+
+    base = config.BASE_DIR
+    arkiv_dir = base / ".arkiv"
+
+    pairs = [
+        (base / "media.db", arkiv_dir / "project.db", "DB"),
+        (base / "thumbnails", arkiv_dir / "thumbnails", "thumbnails"),
+        (base / "chroma_db", arkiv_dir / "chroma_db", "chroma_db"),
+        (base / "proxies", arkiv_dir / "proxies", "proxies"),
+    ]
+
+    # Idempotency check
+    new_db = arkiv_dir / "project.db"
+    if new_db.exists():
+        print(f"[SKIP] {new_db} 已存在 — migration 已跑過。")
+        print(f"       如要重跑：先 rm -rf {arkiv_dir} 再執行。")
+        return
+
+    # What's actually movable? (skip symlinks — they're workarounds, leave them)
+    to_move = [
+        (src, dst, name) for src, dst, name in pairs
+        if src.exists() and not src.is_symlink()
+    ]
+
+    if not to_move:
+        print(f"[INFO] BASE_DIR ({base}) 沒有 legacy storage 要搬。")
+        print(f"       建立空 {arkiv_dir}/ 供新 ingest 使用。")
+        arkiv_dir.mkdir(parents=True, exist_ok=True)
+        # Also clean dangling symlinks (e.g. 5/15 thumbnails workaround)
+        for src, _, name in pairs:
+            if src.is_symlink():
+                target = src.resolve(strict=False)
+                if not target.exists():
+                    print(f"       拆 dangling symlink: {src} -> {target}")
+                    src.unlink()
+        return
+
+    # Backup
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = base / f".legacy-backup-{ts}.tar.gz"
+    print(f"[1/3] Backup → {backup_path}")
+    try:
+        with tarfile.open(backup_path, "w:gz") as tar:
+            for src, _, name in to_move:
+                tar.add(src, arcname=src.name)
+                print(f"        + {name}: {src.name}")
+    except OSError as e:
+        print(f"[FATAL] backup failed: {e}")
+        sys.exit(5)
+
+    # Pre-move counts for verification
+    pre_db_count = 0
+    pre_thumb_count = 0
+    legacy_db = base / "media.db"
+    legacy_thumbs = base / "thumbnails"
+    if legacy_db.exists():
+        try:
+            conn = sqlite3.connect(str(legacy_db))
+            pre_db_count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+            conn.close()
+        except sqlite3.Error:
+            pass
+    if legacy_thumbs.exists() and legacy_thumbs.is_dir():
+        pre_thumb_count = sum(1 for _ in legacy_thumbs.iterdir())
+
+    # Move
+    print(f"[2/3] Move → {arkiv_dir}/")
+    arkiv_dir.mkdir(parents=True, exist_ok=True)
+    for src, dst, name in to_move:
+        print(f"        {src.name} → {dst.relative_to(base)}")
+        shutil.move(str(src), str(dst))
+
+    # Also clean any dangling symlinks left behind
+    for src, _, name in pairs:
+        if src.exists() and src.is_symlink():
+            target = src.resolve(strict=False)
+            if not target.exists():
+                print(f"        拆 dangling symlink: {src.name} -> {target}")
+                src.unlink()
+
+    # Verify
+    print(f"[3/3] Verify")
+    if new_db.exists():
+        try:
+            conn = sqlite3.connect(str(new_db))
+            post_db_count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
+            conn.close()
+            ok_mark = "✓" if post_db_count == pre_db_count else f"✗ (pre={pre_db_count} post={post_db_count})"
+            print(f"        media rows: {post_db_count} {ok_mark}")
+        except sqlite3.Error as e:
+            print(f"        [WARN] sqlite check failed: {e}")
+    new_thumbs = arkiv_dir / "thumbnails"
+    if new_thumbs.exists():
+        post_thumb_count = sum(1 for _ in new_thumbs.iterdir())
+        ok_mark = "✓" if post_thumb_count == pre_thumb_count else f"✗ (pre={pre_thumb_count} post={post_thumb_count})"
+        print(f"        thumbnails: {post_thumb_count} {ok_mark}")
+
+    print(f"\n[DONE] Storage migrated → {arkiv_dir}")
+    print(f"       Backup: {backup_path}")
+    print(f"       Rollback (if needed):")
+    print(f"         rm -rf {arkiv_dir} && tar xzf {backup_path} -C {base}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ingest media files into SQLite DB")
-    parser.add_argument("--dir", required=True, help="Media directory to scan")
+    parser.add_argument("--dir", help="Media directory to scan (required unless --migrate-* / --regenerate-proxies / --vision-only)")
     parser.add_argument("--limit", type=int, default=0, help="Max files to process (0=all)")
     parser.add_argument("--skip-vision", action="store_true", help="Skip llava frame description")
     parser.add_argument("--refresh", action="store_true", help="Re-process already-indexed files (thumbnail + vision)")
@@ -600,12 +713,44 @@ def main():
         action="store_true",
         help="刪除並重建所有 HEVC/ProRes proxy（套用最新編碼設定）",
     )
+    parser.add_argument(
+        "--migrate-storage",
+        action="store_true",
+        help="Phase 8.0c: 搬 legacy BASE_DIR/{media.db, thumbnails/, chroma_db/, proxies/} → BASE_DIR/.arkiv/",
+    )
     parser.add_argument("--recursive", "-r", action="store_true", help="Recursively scan subdirectories")
     parser.add_argument("--db", default="", help="Path to SQLite DB (default: media.db next to ingest.py)")
     args = parser.parse_args()
 
+    # --dir validation: required only when actually ingesting
+    maintenance_mode = (
+        args.migrate_storage or args.migrate_relative
+        or args.regenerate_proxies or args.vision_only
+    )
+    if not maintenance_mode and not args.dir:
+        parser.error("--dir is required unless using --migrate-storage / --migrate-relative / --regenerate-proxies / --vision-only")
+
     if args.db:
         db.DB_PATH = Path(args.db)
+
+    # --migrate-storage runs BEFORE db.init_db() because it creates the
+    # storage layout (BASE_DIR/.arkiv/) that init_db needs. Other maintenance
+    # modes operate on an already-initialized DB.
+    if args.migrate_storage:
+        _migrate_storage()
+        return
+
+    # Phase 8.0e: pre-flight storage check before any pipeline work.
+    # Skip for maintenance modes (they're the tools that fix broken state).
+    if not (args.migrate_relative or args.regenerate_proxies):
+        import health
+        ok_pf, errors_pf = health.preflight_paths()
+        if not ok_pf:
+            print("\n[FATAL] Storage preflight 失敗：")
+            for e in errors_pf:
+                print(f"  - {e}")
+            print("\n        修法後重跑；或先跑 --migrate-storage 落 Phase 8.0c layout。")
+            sys.exit(4)
 
     db.init_db()
 
@@ -746,6 +891,7 @@ def main():
         _warm_up_vision_model()
 
         vision_ok, vision_fail = 0, 0
+        consecutive_vision_fail = 0  # halt-on-N-consecutive (Phase 6 / R6)
         for vi, (fpath, (record, frames)) in enumerate(phase1_results.items(), 1):
             fname = Path(fpath).name
             video_frames = [fd for fd in frames if fd.get("thumbnail_path")]
@@ -827,6 +973,7 @@ def main():
                 v_elapsed = _time.time() - v_start
                 print(f" [{v_elapsed:.1f}s] [OK]")
                 vision_ok += 1
+                consecutive_vision_fail = 0  # reset streak on success
                 # Write auto tags from vision
                 with db.get_conn() as conn:
                     mid = _get_media_id_for_path(Path(fpath))
@@ -839,8 +986,27 @@ def main():
             except Exception as e:
                 print(f" [ERROR: {e}]")
                 vision_fail += 1
+                consecutive_vision_fail += 1
+                # Halt on consecutive failures (likely Ollama disconnect / model crash).
+                # Symmetric with still_failed halt above — don't burn through every file
+                # writing the same error 200 times.
+                if consecutive_vision_fail >= 3:
+                    remaining = len(phase1_results) - vi
+                    print(f"\n{'!'*60}")
+                    print(f"VISION HALTED: {consecutive_vision_fail} consecutive failures (last: {fname})")
+                    print(f"  Completed: {vision_ok}  |  Remaining: {remaining}")
+                    print(f"  Likely Ollama disconnect / model crash. Resume with:")
+                    print(f"    py -3.12 ingest.py --dir <path> --vision-only")
+                    print(f"{'!'*60}\n")
+                    break
 
         print(f"Vision done. OK={vision_ok}  fail={vision_fail}")
+    elif need_vision and ok == 0 and failed > 0:
+        # Phase 1 全 fail → Phase 2 沒檔可跑（不是「沒新檔」是「上游全炸」）
+        print(f"\nPhase 2 skipped: phase 1 had {failed}/{len(files)} failures, no frames to process.")
+    elif need_vision and skipped > 0 and ok == 0:
+        # 全部 already-processed + 沒開 --refresh
+        print(f"\nPhase 2 skipped: all {skipped} files already indexed (use --refresh to re-vision).")
     elif need_vision:
         print("\nNo new files to run vision on.")
 
@@ -907,6 +1073,16 @@ def main():
         }
         bench_path.write_text(json.dumps(bench_data, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"Bench log saved: {bench_path}")
+
+    # Phase 8.0e (R1): exit code reflects actual ingest outcome.
+    # Before this, main() always fell through to exit 0 — 222/222 fail
+    # on 2026-05-25 still returned 0, hiding the regression from runner.
+    _vfail = locals().get("vision_fail", 0)
+    if failed and not ok:
+        sys.exit(2)  # all phase 1 failed
+    if failed or _vfail:
+        sys.exit(1)  # partial fail (phase 1 or phase 2)
+    # else: implicit exit 0
 
 
 def detect_gpu() -> str:

@@ -49,6 +49,81 @@ def detect_os() -> str:
     return s  # 'windows' or 'linux'
 
 
+def preflight_paths():
+    """Phase 8.0e + 8.0f: pre-flight check for ingest/server startup.
+
+    Returns (ok: bool, errors: list[str]). Verifies the 4 storage paths
+    are writable and (if PROJECT_ROOT lives on a NAS mount) that the
+    mount is alive. Catches the 2026-05-25 overnight failure mode where
+    a dangling thumbnails symlink let mkdir(exist_ok=True) raise
+    FileExistsError on every video, causing 222/222 ingest fails while
+    main() still returned exit 0.
+    """
+    import config
+    import sqlite3
+
+    errors = []
+    project_root = config.PROJECT_ROOT.expanduser().resolve(strict=False)
+
+    # 8.0f: NAS mount precondition. macOS auto-unmounts SMB shares; cron
+    # / overnight jobs hit dangling /Volumes/<share> with no warning.
+    if "/Volumes/" in str(project_root):
+        try:
+            mount_root = Path("/Volumes") / project_root.relative_to("/Volumes").parts[0]
+            if not mount_root.exists():
+                errors.append(
+                    f"PROJECT_ROOT 位於 NAS mount {mount_root} 但未掛載；"
+                    f"預期路徑 {project_root}（Finder ⌘K 連線或 mount -t smbfs）"
+                )
+                return (False, errors)  # downstream checks meaningless
+        except ValueError:
+            pass
+
+    # 8.0e: per-path writable + symlink-target check
+    paths_to_check = [
+        ("DB_PATH parent", config.DB_PATH.parent),
+        ("THUMBNAILS_DIR", config.THUMBNAILS_DIR),
+        ("PROXIES_DIR", config.PROXIES_DIR),
+        ("CHROMA_PATH", config.CHROMA_PATH),
+    ]
+    for name, p in paths_to_check:
+        # Dangling symlink: entry exists but target missing. mkdir(exist_ok=True)
+        # does NOT cure this — it still raises FileExistsError.
+        if p.is_symlink():
+            target = p.resolve(strict=False)
+            if not target.exists():
+                errors.append(
+                    f"{name} 是 dangling symlink: {p} -> {target}（target 不存在）"
+                )
+                continue
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            probe = p / ".preflight_probe"
+            probe.write_text("ok")
+            probe.unlink()
+        except OSError as e:
+            errors.append(f"{name} 不可寫: {p} ({e.__class__.__name__}: {e})")
+
+    # Sample DB resolve: stale PROJECT_ROOT after media move shows up here
+    if config.DB_PATH.exists():
+        try:
+            conn = sqlite3.connect(str(config.DB_PATH))
+            row = conn.execute("SELECT path FROM media LIMIT 1").fetchone()
+            conn.close()
+            if row and row[0]:
+                rel = row[0]
+                resolved = project_root / rel if not Path(rel).is_absolute() else Path(rel)
+                if not resolved.exists():
+                    errors.append(
+                        f"DB sample row resolve fail: {rel} → {resolved} 不存在；"
+                        f"PROJECT_ROOT 可能 stale（設錯或素材已搬）"
+                    )
+        except sqlite3.Error:
+            pass  # init_db 未跑 / schema 不存在 — preflight 不負責建表
+
+    return (len(errors) == 0, errors)
+
+
 def main():
     # Parse --platform arg
     plat = None
