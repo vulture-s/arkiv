@@ -9,15 +9,48 @@ import config
 THUMBNAILS_DIR = config.THUMBNAILS_DIR
 
 
+def _ensure_thumbnails_dir() -> None:
+    """Phase 8.0e last-line defense. Dangling symlink (target gone) →
+    mkdir(exist_ok=True) raises FileExistsError on every call, which is
+    what triggered 222/222 fails on 2026-05-25 overnight. Preflight in
+    health.py should catch this earlier; this stays as fallback so the
+    failure mode is loud (sys.exit 3) instead of 222× silent retries."""
+    if THUMBNAILS_DIR.is_symlink():
+        target = THUMBNAILS_DIR.resolve(strict=False)
+        if not target.exists():
+            import sys
+            print(
+                f"\n[FATAL] THUMBNAILS_DIR 是 dangling symlink: "
+                f"{THUMBNAILS_DIR} -> {target}（target 不存在）。\n"
+                f"        修法：rm {THUMBNAILS_DIR} 後重跑；或設 ARKIV_THUMBNAILS_DIR env",
+                file=sys.stderr,
+            )
+            sys.exit(3)
+    THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _run_ffmpeg(cmd, out_path: Optional[Path] = None) -> bool:
+    """Strict ffmpeg success: returncode == 0 AND out_path (if given)
+    is a non-zero-size file. 0-byte file from ffmpeg-exit-0-but-failed
+    is treated as fail (avoids registering empty frames as valid)."""
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        return False
+    if out_path is not None:
+        if not out_path.exists() or out_path.stat().st_size == 0:
+            return False
+    return True
+
+
 def extract_thumbnail(video_path: str, duration_s: float) -> Optional[str]:
     """
     Extract one representative frame (50% position) and save permanently
     to thumbnails/{stem}.jpg. Returns saved path or None on failure.
     """
-    THUMBNAILS_DIR.mkdir(exist_ok=True)
+    _ensure_thumbnails_dir()
     stem = Path(video_path).stem
     out = THUMBNAILS_DIR / f"{stem}.jpg"
-    if out.exists():
+    if out.exists() and out.stat().st_size > 0:
         return str(out)
 
     t = max(duration_s * 0.5, 1.0)
@@ -26,8 +59,7 @@ def extract_thumbnail(video_path: str, duration_s: float) -> Optional[str]:
         "-vf", "scale=320:-1",
         "-frames:v", "1", str(out), "-y"
     ]
-    subprocess.run(cmd, capture_output=True)
-    return str(out) if out.exists() else None
+    return str(out) if _run_ffmpeg(cmd, out) else None
 
 
 def _adaptive_frame_count(duration_s: float) -> int:
@@ -47,7 +79,7 @@ def extract_frames(video_path: str, duration_s: float, fps: float) -> List[Dict]
     - Short clip: fixed evenly-spaced frames
     - Long clip: scene detect with adaptive cap, fallback to fixed frames
     """
-    THUMBNAILS_DIR.mkdir(exist_ok=True)
+    _ensure_thumbnails_dir()
     stem = Path(video_path).stem
     n_frames = _adaptive_frame_count(duration_s)
 
@@ -73,19 +105,20 @@ def _extract_fixed_persistent(
     for i, pct in enumerate(positions):
         t = duration_s * pct
         out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
-        if not out.exists():
+        already_ok = out.exists() and out.stat().st_size > 0
+        if not already_ok:
             cmd = [
                 "ffmpeg", "-ss", str(t), "-i", video_path,
                 "-vf", "scale=320:-1",
                 "-frames:v", "1", str(out), "-y"
             ]
-            subprocess.run(cmd, capture_output=True)
-        if out.exists():
-            results.append({
-                "index": i,
-                "timestamp_s": round(t, 2),
-                "thumbnail_path": str(out),
-            })
+            if not _run_ffmpeg(cmd, out):
+                continue
+        results.append({
+            "index": i,
+            "timestamp_s": round(t, 2),
+            "thumbnail_path": str(out),
+        })
     return results
 
 
@@ -103,6 +136,8 @@ def _extract_scene_persistent(
         "-vsync", "vfr", "-f", "null", "-"
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        return []
 
     # Parse timestamps from showinfo output
     timestamps = []
@@ -124,17 +159,18 @@ def _extract_scene_persistent(
     results = []
     for i, t in enumerate(timestamps[:max_frames]):
         out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
-        if not out.exists():
+        already_ok = out.exists() and out.stat().st_size > 0
+        if not already_ok:
             cmd = [
                 "ffmpeg", "-ss", str(t), "-i", video_path,
                 "-vf", "scale=320:-1",
                 "-frames:v", "1", str(out), "-y"
             ]
-            subprocess.run(cmd, capture_output=True)
-        if out.exists():
-            results.append({
-                "index": i,
-                "timestamp_s": round(t, 2),
-                "thumbnail_path": str(out),
-            })
+            if not _run_ffmpeg(cmd, out):
+                continue
+        results.append({
+            "index": i,
+            "timestamp_s": round(t, 2),
+            "thumbnail_path": str(out),
+        })
     return results

@@ -47,20 +47,28 @@ def _validate_http_url(url: str, env_var: str) -> str:
     return url
 
 
-DB_PATH = _validate_writable_path(
-    Path(os.getenv("ARKIV_DB_PATH", str(BASE_DIR / "media.db"))), "ARKIV_DB_PATH"
-)
-CHROMA_PATH = _validate_writable_path(
-    Path(os.getenv("ARKIV_CHROMA_PATH", str(BASE_DIR / "chroma_db"))), "ARKIV_CHROMA_PATH"
-)
-THUMBNAILS_DIR = _validate_writable_path(
-    Path(os.getenv("ARKIV_THUMBNAILS_DIR", str(BASE_DIR / "thumbnails"))), "ARKIV_THUMBNAILS_DIR"
-)
-PROXIES_DIR = _validate_writable_path(
-    Path(os.getenv("ARKIV_PROXIES_DIR", str(BASE_DIR / "proxies"))), "ARKIV_PROXIES_DIR"
-)
+# Phase 8.0c: PROJECT_ROOT = single source of truth. 4 storage paths
+# default to PROJECT_ROOT/.arkiv/<xxx>; explicit ARKIV_<X>_PATH env still
+# overrides per-path. Before 8.0c, defaults were BASE_DIR/xxx so "moving
+# PROJECT_ROOT" left thumbnails/proxies stranded at install location —
+# the 2026-05-15 thumbnails→NAS symlink workaround was a band-aid for
+# exactly this gap (server.py:70 also hardcoded ROOT, fixed in 2026-05-21).
 PROJECT_ROOT = _validate_writable_path(
     Path(os.getenv("ARKIV_PROJECT_ROOT", str(BASE_DIR))), "ARKIV_PROJECT_ROOT"
+)
+_ARKIV_DIR = PROJECT_ROOT / ".arkiv"
+
+DB_PATH = _validate_writable_path(
+    Path(os.getenv("ARKIV_DB_PATH", str(_ARKIV_DIR / "project.db"))), "ARKIV_DB_PATH"
+)
+CHROMA_PATH = _validate_writable_path(
+    Path(os.getenv("ARKIV_CHROMA_PATH", str(_ARKIV_DIR / "chroma_db"))), "ARKIV_CHROMA_PATH"
+)
+THUMBNAILS_DIR = _validate_writable_path(
+    Path(os.getenv("ARKIV_THUMBNAILS_DIR", str(_ARKIV_DIR / "thumbnails"))), "ARKIV_THUMBNAILS_DIR"
+)
+PROXIES_DIR = _validate_writable_path(
+    Path(os.getenv("ARKIV_PROXIES_DIR", str(_ARKIV_DIR / "proxies"))), "ARKIV_PROXIES_DIR"
 )
 
 
