@@ -680,14 +680,14 @@ def _migrate_storage():
             conn = sqlite3.connect(str(new_db))
             post_db_count = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
             conn.close()
-            ok_mark = "✓" if post_db_count == pre_db_count else f"✗ (pre={pre_db_count} post={post_db_count})"
+            ok_mark = "[OK]" if post_db_count == pre_db_count else f"[FAIL] (pre={pre_db_count} post={post_db_count})"
             print(f"        media rows: {post_db_count} {ok_mark}")
         except sqlite3.Error as e:
             print(f"        [WARN] sqlite check failed: {e}")
     new_thumbs = arkiv_dir / "thumbnails"
     if new_thumbs.exists():
         post_thumb_count = sum(1 for _ in new_thumbs.iterdir())
-        ok_mark = "✓" if post_thumb_count == pre_thumb_count else f"✗ (pre={pre_thumb_count} post={post_thumb_count})"
+        ok_mark = "[OK]" if post_thumb_count == pre_thumb_count else f"[FAIL] (pre={pre_thumb_count} post={post_thumb_count})"
         print(f"        thumbnails: {post_thumb_count} {ok_mark}")
 
     print(f"\n[DONE] Storage migrated → {arkiv_dir}")
