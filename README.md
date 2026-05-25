@@ -45,6 +45,8 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
   └─────────┘  └──────────────┘
 ```
 
+→ **Full pipeline (4 stages, storage layout, exit codes, maintenance modes)**: [docs/pipeline.md](docs/pipeline.md)
+
 ## Screenshots
 
 ![ARKIV UI](screenshot.jpg)
@@ -131,6 +133,16 @@ docker compose up -d
 ```
 
 > Models are pulled automatically inside the Ollama container on first run (may take a few minutes).
+
+### Upgrading from v0.3.0 → v0.3.1
+
+v0.3.1 changes the default storage layout (artifacts now live in `BASE_DIR/.arkiv/` — see Phase 8.0c). One-shot migration:
+
+```bash
+cd ~/.arkiv && git pull && python ingest.py --migrate-storage
+```
+
+Full SOP (backup, rollback, per-project layout): [docs/pipeline.md#upgrading-from-v030](docs/pipeline.md#upgrading-from-v030) · [CHANGELOG v0.3.1](CHANGELOG.md)
 
 ### Option A: Web UI — browse, search, rate, and tag in the browser
 

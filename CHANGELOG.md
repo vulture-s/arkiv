@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.3.1 (2026-05-25) — Per-Project Storage + Startup Preflight
+
+> **⚠️ Breaking change** — default storage layout moves from `BASE_DIR/{media.db, thumbnails/, chroma_db/, proxies/}` to `BASE_DIR/.arkiv/{project.db, ...}`. One-shot migration provided. See [Upgrade SOP](docs/pipeline.md#upgrading-from-v030) before running.
+
+### New Features
+- **Phase 8.0c per-project storage** — `config.PROJECT_ROOT` is now the single source of truth. All 4 storage paths (DB, thumbnails, chroma, proxies) default to `PROJECT_ROOT/.arkiv/<xxx>`. Explicit `ARKIV_<X>_PATH` env vars still override per-path. Setting `ARKIV_PROJECT_ROOT=/path/to/your/footage/` produces a self-contained, portable archive next to the media.
+- **Phase 8.0e startup health check** — new `health.preflight_paths()` runs before any pipeline work. Catches: dangling symlinks, unwritable storage, NAS mount precondition (`/Volumes/` paths), stale `PROJECT_ROOT` (sample DB resolve fails). Returns `(ok, errors)` for embedding in other entry points. `ingest.py main()` calls it pre-warm-up; fail → `sys.exit(4)`.
+- **Phase 8.0f NAS-unavailable degradation** — preflight short-circuits with explicit "NAS not mounted" message + expected path when `PROJECT_ROOT` lives on `/Volumes/` but mount root is gone. Avoids the "process N files with the same root error" failure mode.
+- **`--migrate-storage`** — one-shot migration from legacy `BASE_DIR/xxx` to new `BASE_DIR/.arkiv/xxx` layout. Backup-first (`.legacy-backup-{ts}.tar.gz`), idempotent, cross-checks `sqlite COUNT` + thumbnails file count post-move, cleans dangling symlinks left over from pre-8.0c workarounds.
+- **`docs/pipeline.md`** + **`docs/pipeline.zh-TW.md`** — complete pipeline reference (4 stages, paths, exit codes, maintenance modes, upgrade SOP) in EN + zh-TW.
+
+### Bug Fixes — Silent failure suite
+- **Exit code reflects fail state** — `ingest.py main()` now exits non-zero on any failure: `2` if all files failed, `1` on partial fail, `3` on dangling symlink, `4` on preflight fail. Before this, `main()` always exited 0 even with 222/222 file failures, hiding regressions from launchd/cron runners.
+- **`frames.py` dangling symlink defense** — new `_ensure_thumbnails_dir()` helper fails fast (exit 3) instead of letting `Path.mkdir(exist_ok=True)` raise `FileExistsError` on every file. Last line of defense behind preflight.
+- **`frames.py` strict ffmpeg success check** — new `_run_ffmpeg()` enforces both `returncode == 0` AND non-zero-size output file. Catches "ffmpeg exits 0 but writes 0-byte file" edge case that would otherwise register empty frames as valid.
+- **Phase 2 honest skip messages** — when vision phase starts with empty queue, message now distinguishes "phase 1 had X/Y failures" vs "all already indexed" vs "genuinely no new files". Replaces single misleading "No new files to run vision on".
+- **Phase 2 halt-on-3-consecutive-fail** — symmetric with existing `still_failed` halt for both-models-fail. Avoids burning through every remaining file writing the same Ollama-disconnect / model-crash error.
+
+### Bug Fixes — Other
+- **`--dir` argparse fix** — maintenance modes (`--migrate-storage` / `--migrate-relative` / `--regenerate-proxies` / `--vision-only`) no longer require `--dir`. Long-standing usability bug (running `ingest.py --migrate-relative` previously failed with argparse error).
+
+### Internals
+- `health.preflight_paths()` returns `(bool, list[str])` for programmatic embedding (server startup, smoke tests, CI gates).
+- Migration backup format = single `.tar.gz` per timestamp; rollback is `rm -rf .arkiv/ && tar xzf <backup>`.
+
+### Documentation
+- `docs/pipeline.md` + `docs/pipeline.zh-TW.md` ship with full 4-stage flow, storage layout diagram, exit code table, maintenance mode reference, upgrade SOP with rollback, and per-project layout example.
+- README (EN + zh-TW) Architecture section links to the new pipeline doc + adds "Upgrading from v0.3.0 → v0.3.1" mini section.
+
+### Driving incident
+Codified after 2026-05-25 overnight ingest failure: 222 video files, 222/222 phase-1 fail on dangling thumbnails symlink (5/15 NAS workaround for `server.py:70` hardcode, since fixed but symlink never cleaned), exit code 0 hid the regression. Root-cause-of-root-cause was Phase 8.0c never wiring config defaults despite roadmap BEFORE/AFTER table specifying it.
+
+---
+
 ## v0.3.0 (2026-05-22) — DIT Companion
 
 ### New Features

@@ -45,6 +45,8 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
   └─────────┘  └──────────────┘
 ```
 
+→ **完整 pipeline（4 階段、儲存路徑、exit code、maintenance modes）**：[docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)
+
 ## 截圖
 
 ![ARKIV UI](screenshot.jpg)
@@ -131,6 +133,16 @@ docker compose up -d
 ```
 
 > 模型會在 Ollama container 首次啟動時自動下載（可能需要幾分鐘）。
+
+### 從 v0.3.0 升級到 v0.3.1
+
+v0.3.1 改了預設儲存 layout（產出檔案落 `BASE_DIR/.arkiv/` — 見 Phase 8.0c）。一鍵 migration：
+
+```bash
+cd ~/.arkiv && git pull && python ingest.py --migrate-storage
+```
+
+完整 SOP（backup、rollback、per-project layout）：[docs/pipeline.zh-TW.md#v030--v031-升級](docs/pipeline.zh-TW.md#v030--v031-升級) · [CHANGELOG v0.3.1](CHANGELOG.md)
 
 ### 方式 A：Web UI — 在瀏覽器中瀏覽、搜尋、評級、標記
 
