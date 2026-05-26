@@ -57,6 +57,7 @@ PROJECT_ROOT = _validate_writable_path(
     Path(os.getenv("ARKIV_PROJECT_ROOT", str(BASE_DIR))), "ARKIV_PROJECT_ROOT"
 )
 _ARKIV_DIR = PROJECT_ROOT / ".arkiv"
+_ASCMHL_DIR = PROJECT_ROOT / "ascmhl"
 
 DB_PATH = _validate_writable_path(
     Path(os.getenv("ARKIV_DB_PATH", str(_ARKIV_DIR / "project.db"))), "ARKIV_DB_PATH"

@@ -111,6 +111,9 @@ def init_db():
         """)
         # migrations: add columns if upgrading from older schema
         for col, typ in [
+            ("file_hash", "TEXT"),
+            ("hash_algo", "TEXT DEFAULT 'xxh3-128'"),
+            ("hash_verified_at", "TEXT"),
             ("thumbnail_path", "TEXT"),
             ("rating", "TEXT"),
             ("rating_note", "TEXT"),
@@ -215,7 +218,8 @@ def is_processed(path: str) -> bool:
 _ALLOWED_COLS = {
     "path", "filename", "ext", "duration_s", "size_mb", "width", "height",
     "fps", "has_audio", "transcript", "lang", "frame_tags", "thumbnail_path",
-    "processed_at", "rating", "rating_note", "camera_make", "camera_model",
+    "processed_at", "rating", "rating_note", "file_hash", "hash_algo",
+    "hash_verified_at", "camera_make", "camera_model",
     "lens_model", "gps_lat", "gps_lon", "color_space", "iso", "shutter_speed",
     "aperture", "focal_length", "creation_date", "white_balance", "content_type",
     "reel_name",
