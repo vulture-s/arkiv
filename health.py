@@ -67,6 +67,19 @@ def _project_path(project):
     return Path(str(raw)).expanduser()
 
 
+def _check_mount(path):
+    project_path = Path(path).expanduser()
+    project_posix = project_path.as_posix()
+    if not project_posix.startswith("/Volumes/"):
+        return True
+    try:
+        mount_root_name = project_posix.split("/")[2]
+        mount_root = Path("/Volumes") / mount_root_name
+        return mount_root.exists()
+    except Exception:
+        return True
+
+
 def project_health(project):
     project_path = _project_path(project)
     if not project_path.exists():
@@ -80,15 +93,8 @@ def project_health(project):
     if not chroma_path.is_dir():
         return HealthStatus.CHROMA_MISSING
 
-    project_posix = project_path.as_posix()
-    if project_posix.startswith("/Volumes/"):
-        try:
-            mount_root_name = project_posix.split("/")[2]
-            mount_root = Path("/Volumes") / mount_root_name
-            if not mount_root.exists():
-                return HealthStatus.NAS_UNMOUNTED
-        except Exception:
-            pass
+    if not _check_mount(project_path):
+        return HealthStatus.NAS_UNMOUNTED
 
     return HealthStatus.OK
 
@@ -108,6 +114,10 @@ def preflight_paths():
 
     errors = []
     project_root = config.PROJECT_ROOT.expanduser().resolve(strict=False)
+
+    if not _check_mount(project_root):
+        errors.append(f"PROJECT_ROOT NAS mount unavailable: {project_root}")
+        return (False, errors)
 
     # 8.0f: NAS mount precondition. macOS auto-unmounts SMB shares; cron
     # / overnight jobs hit dangling /Volumes/<share> with no warning.
