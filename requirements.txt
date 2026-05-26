@@ -6,6 +6,7 @@ pydantic>=2.0
 chromadb>=1.0
 requests>=2.28
 pandas>=1.5
+xxhash>=2.0.0
 
 # Media processing
 pillow>=9.0
