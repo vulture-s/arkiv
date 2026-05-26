@@ -7,6 +7,7 @@ Usage:
 from __future__ import annotations
 import argparse
 import json
+import logging
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,7 @@ SUPPORTED = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mp3", ".
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts"}
 # Codecs needing browser-playable proxy — single source of truth in codec.py.
 PROXY_CODECS = codec.PROXY_CODECS
+logger = logging.getLogger(__name__)
 
 
 def _warm_up_vision_model():
@@ -65,6 +67,55 @@ def _unload_ollama_model(model: str):
         print(f"  Unloaded {model} from VRAM")
     except Exception as e:
         print(f"  Warning: could not unload {model}: {e}")
+
+
+def _normalize_bmd_tag(value):
+    if value is None:
+        return None
+    tag = str(value).strip().lower()
+    return tag or None
+
+
+def _shutter_angle_to_speed(angle, fps, path=None):
+    try:
+        angle_value = float(angle)
+        fps_value = float(fps)
+        if angle_value <= 0 or fps_value <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        logger.warning(
+            "Blackmagic-designCameraShutterAngle parse failed for %s: angle=%r fps=%r",
+            path or "media",
+            angle,
+            fps,
+        )
+        return None
+
+    denominator = round((360.0 * fps_value) / angle_value)
+    if denominator <= 0:
+        logger.warning(
+            "Blackmagic-designCameraShutterAngle parse failed for %s: angle=%r fps=%r",
+            path or "media",
+            angle,
+            fps,
+        )
+        return None
+    return "1/{0}".format(denominator)
+
+
+def _white_balance_string(kelvin, tint, path=None):
+    try:
+        kelvin_value = float(kelvin)
+        tint_value = float(tint)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Blackmagic-designCameraWhiteBalance parse failed for %s: kelvin=%r tint=%r",
+            path or "media",
+            kelvin,
+            tint,
+        )
+        return None
+    return "{0}K T{1}".format(int(round(kelvin_value)), int(round(tint_value)))
 
 
 def probe(path: str) -> Optional[Dict]:
@@ -143,7 +194,7 @@ def probe(path: str) -> Optional[Dict]:
     }
 
 
-def exiftool_extract(path: str) -> dict:
+def exiftool_extract(path: str, fps: Optional[float] = None) -> dict:
     """Extract EXIF metadata via exiftool -json. Returns dict of 12 fields."""
     cmd = [
         config.EXIFTOOL_PATH, "-json",
@@ -162,6 +213,13 @@ def exiftool_extract(path: str) -> dict:
         # collapses spaces). Other BMD fields (ISO/Aperture/ShutterAngle/WB)
         # not consumed yet — see todo B10b3.
         "-Blackmagic-designCameraLensType",
+        "-Blackmagic-designCameraIso",
+        "-Blackmagic-designCameraAperture",
+        "-Blackmagic-designCameraShutterAngle",
+        "-Blackmagic-designCameraWhiteBalanceKelvin",
+        "-Blackmagic-designCameraWhiteBalanceTint",
+        "-Blackmagic-designCameraEnvironment",
+        "-Blackmagic-designCameraDayNight",
         "-n",  # numeric output for GPS
         path,
     ]
@@ -189,6 +247,8 @@ def exiftool_extract(path: str) -> dict:
     # Parse shutter speed — prefer ExposureTime as string
     ss = d.get("ShutterSpeed") or d.get("ExposureTime")
     ss_str = str(ss) if ss else None
+    if not ss_str and d.get("Blackmagic-designCameraShutterAngle") is not None:
+        ss_str = _shutter_angle_to_speed(d.get("Blackmagic-designCameraShutterAngle"), fps, path=path)
 
     # Parse aperture — prefer FNumber
     ap_raw = d.get("FNumber") or d.get("ApertureValue")
@@ -197,9 +257,28 @@ def exiftool_extract(path: str) -> dict:
         try:
             ap = float(ap_raw)
         except (ValueError, TypeError):
-            pass
+            logger.warning("Aperture parse failed for %s: value=%r", path, ap_raw)
+    elif d.get("Blackmagic-designCameraAperture") is not None:
+        ap = d.get("Blackmagic-designCameraAperture")
 
     # Creation date — prefer CreateDate, fallback DateTimeOriginal
+    white_balance = None
+    if d.get("Blackmagic-designCameraWhiteBalanceKelvin") is not None or d.get("Blackmagic-designCameraWhiteBalanceTint") is not None:
+        white_balance = _white_balance_string(
+            d.get("Blackmagic-designCameraWhiteBalanceKelvin"),
+            d.get("Blackmagic-designCameraWhiteBalanceTint"),
+            path=path,
+        )
+
+    auto_tags = []
+    for tag_value in (
+        d.get("Blackmagic-designCameraEnvironment"),
+        d.get("Blackmagic-designCameraDayNight"),
+    ):
+        tag_name = _normalize_bmd_tag(tag_value)
+        if tag_name and tag_name not in auto_tags:
+            auto_tags.append(tag_name)
+
     cdate = d.get("CreateDate") or d.get("DateTimeOriginal") or d.get("CreationDate")
     cdate_str = str(cdate) if cdate else None
 
@@ -210,12 +289,14 @@ def exiftool_extract(path: str) -> dict:
         "gps_lat": d.get("GPSLatitude"),
         "gps_lon": d.get("GPSLongitude"),
         "color_space": str(d.get("ColorSpace")) if d.get("ColorSpace") else None,
-        "iso": d.get("ISO"),
+        "iso": d.get("ISO") if d.get("ISO") is not None else d.get("Blackmagic-designCameraIso"),
         "shutter_speed": ss_str,
         "aperture": ap,
         "focal_length": fl,
         "creation_date": cdate_str,
         "reel_name": d.get("ReelName") or d.get("CameraReelName") or d.get("Reel#") or d.get("ReelNumber"),
+        "white_balance": white_balance,
+        "_auto_tags": auto_tags,
     }
 
 
@@ -344,7 +425,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None)
         print(" [ffprobe failed]")
         return {}
 
-    exif = exiftool_extract(str(path))
+    exif = exiftool_extract(str(path), fps=meta.get("fps") or (existing.get("fps") if existing else None))
     sidecar = parse_xavc_sidecar(str(path))
     for k, v in sidecar.items():
         if v and not exif.get(k):
@@ -838,6 +919,13 @@ def main():
             if record:
                 frames = record.pop("_frames", [])
                 db.upsert(record)
+                auto_tags = record.get("_auto_tags") or []
+                if auto_tags:
+                    mid = _get_media_id_for_path(f)
+                    if mid:
+                        with db.get_conn() as conn:
+                            for tag_name in auto_tags:
+                                db.add_tag(mid, tag_name, source="auto", _conn=conn)
                 # Store frame records (without vision descriptions yet)
                 if frames:
                     with db.get_conn() as conn:

@@ -87,3 +87,95 @@ def test_exiftool_lens_prefers_standard_lensmodel_over_bmd(monkeypatch):
     monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
     result = ingest.exiftool_extract("edge.mov")
     assert result["lens_model"] == "Standard 24-70mm f/2.8"
+
+
+def test_bmd_metadata_parsing_and_shutter_angle_conversion(monkeypatch):
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    fake_stdout = json.dumps([{
+        "SourceFile": "bmd.mov",
+        "Blackmagic-designCameraIso": 640,
+        "Blackmagic-designCameraAperture": 2.8,
+        "Blackmagic-designCameraShutterAngle": 172.8,
+        "Blackmagic-designCameraWhiteBalanceKelvin": 5600,
+        "Blackmagic-designCameraWhiteBalanceTint": 10,
+        "Blackmagic-designCameraEnvironment": "Indoor",
+        "Blackmagic-designCameraDayNight": "Night",
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    result = ingest.exiftool_extract("bmd.mov", fps=24)
+    assert result["iso"] == 640
+    assert result["aperture"] == 2.8
+    assert result["shutter_speed"] == "1/50"
+    assert result["white_balance"] == "5600K T10"
+    assert result["_auto_tags"] == ["indoor", "night"]
+
+
+def test_bmd_shutter_angle_conversion_examples():
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    cases = [
+        (172.8, 24, "1/50"),
+        (360.0, 24, "1/24"),
+        (90.0, 24, "1/96"),
+        (180.0, 25, "1/50"),
+    ]
+    for angle, fps, expected in cases:
+        assert ingest._shutter_angle_to_speed(angle, fps) == expected
+
+
+def test_bmd_shutter_angle_parse_fail_logs_warning(monkeypatch, caplog):
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    fake_stdout = json.dumps([{
+        "SourceFile": "broken.mov",
+        "Blackmagic-designCameraShutterAngle": "not-a-number",
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    with caplog.at_level("WARNING"):
+        result = ingest.exiftool_extract("broken.mov", fps=24)
+    assert result["shutter_speed"] is None
+    assert any("Blackmagic-designCameraShutterAngle parse failed" in record.message for record in caplog.records)
+
+
+def test_bmd_metadata_roundtrips_white_balance_column(tmp_db, sample_record):
+    import importlib
+
+    db = importlib.import_module("db")
+    db.upsert(
+        sample_record(
+            path="/tmp/bmd.mov",
+            filename="bmd.mov",
+            iso=800,
+            aperture=2.8,
+            shutter_speed="1/50",
+            white_balance="5600K T0",
+        )
+    )
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT iso, aperture, shutter_speed, white_balance FROM media WHERE path = ?",
+            ("/tmp/bmd.mov",),
+        ).fetchone()
+    assert row["iso"] == 800
+    assert row["aperture"] == 2.8
+    assert row["shutter_speed"] == "1/50"
+    assert row["white_balance"] == "5600K T0"
