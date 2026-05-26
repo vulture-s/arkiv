@@ -280,5 +280,11 @@ FILTER_WORDS = os.getenv("ARKIV_FILTER_WORDS", "")
 HOST = os.getenv("ARKIV_HOST", "0.0.0.0")
 PORT = int(os.getenv("ARKIV_PORT", "8501"))
 
+def discover_projects():
+    from projects import discover_projects as _discover_projects
+
+    return _discover_projects()
+
+
 COLLECTION_NAME = "media_assets"
 EMBED_DIM = 768

@@ -12,7 +12,7 @@ import json
 import os
 import urllib.request
 from pathlib import Path
-from typing import Optional, Set
+from typing import List, Optional, Set
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +23,8 @@ from pydantic import BaseModel
 import codec
 import config
 import db
+import federation
+import projects as project_registry
 
 
 # ── WebSocket connection manager ────────────────────────────────────────────
@@ -77,16 +79,24 @@ app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnail
 
 def _resolve_record(rec: dict) -> dict:
     if rec.get("path"):
-        rec["path"] = db.resolve_path(rec["path"])
+        rec["path"] = _resolve_media_path(rec["path"])
     if rec.get("thumbnail_path"):
-        rec["thumbnail_path"] = db.resolve_path(rec["thumbnail_path"])
+        rec["thumbnail_path"] = _resolve_media_path(rec["thumbnail_path"])
     return rec
 
 
 def _resolve_frame(frame: dict) -> dict:
     if frame.get("thumbnail_path"):
-        frame["thumbnail_path"] = db.resolve_path(frame["thumbnail_path"])
+        frame["thumbnail_path"] = _resolve_media_path(frame["thumbnail_path"])
     return frame
+
+
+def _resolve_media_path(path: str) -> str:
+    if not path:
+        return path
+    if os.name == "nt" and path.startswith("/"):
+        return path
+    return db.resolve_path(path)
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
@@ -99,9 +109,92 @@ class RatingUpdate(BaseModel):
 class TagCreate(BaseModel):
     name: str
     source: str = "manual"
+ 
+ 
+class ProjectCreate(BaseModel):
+    name: str
+    path: str
+    tags: Optional[List[str]] = None
+
+
+def _split_csv(value: Optional[str]) -> Optional[List[str]]:
+    if not value:
+        return None
+    parts = []
+    for chunk in value.split(","):
+        chunk = chunk.strip()
+        if chunk:
+            parts.append(chunk)
+    return parts or None
 
 
 # ── API Routes ───────────────────────────────────────────────────────────────
+
+@app.get("/api/search/all")
+def search_all(
+    q: str = Query(..., alias="q"),
+    limit: int = 50,
+    per_project_limit: int = 20,
+    projects: Optional[str] = None,
+    tag: Optional[str] = None,
+    timeout: float = 10.0,
+    no_fallback_sql: bool = False,
+):
+    try:
+        payload = federation.search_all_projects(
+            q,
+            limit=limit,
+            per_project_limit=per_project_limit,
+            project_names=_split_csv(projects),
+            tag=tag,
+            timeout=timeout,
+            fallback_sql=not no_fallback_sql,
+        )
+    except project_registry.RegistryError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    status_code = 200
+    if payload.get("projects_queried") and payload.get("projects_failed", 0) >= payload.get("projects_queried", 0):
+        status_code = 207
+    return JSONResponse(content=payload, status_code=status_code)
+
+
+@app.get("/api/projects")
+def list_projects():
+    projects = [project.to_dict() for project in project_registry.list_registry_projects()]
+    return {"projects": projects, "total": len(projects)}
+
+
+@app.post("/api/projects")
+def add_project(body: ProjectCreate):
+    try:
+        project = project_registry.add_project(body.name, body.path, body.tags or [])
+    except project_registry.RegistryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return project.to_dict()
+
+
+@app.delete("/api/projects/{name}")
+def remove_project(name: str):
+    try:
+        project = project_registry.remove_project(name)
+    except project_registry.RegistryError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return project.to_dict()
+
+
+@app.post("/api/projects/sync")
+def sync_projects():
+    projects = [project.to_dict() for project in project_registry.sync_projects()]
+    return {"projects": projects, "total": len(projects)}
+
+
+@app.get("/api/projects/health")
+def projects_health():
+    projects = project_registry.health_projects()
+    ok_count = sum(1 for item in projects if item["status"] == "ok")
+    return {"projects": projects, "total": len(projects), "ok": ok_count}
+
 
 @app.get("/api/media/position/{media_id}")
 def media_position(
@@ -297,7 +390,7 @@ def get_media_waveform(media_id: int, bins: int = 60):
             return json.loads(cache_path.read_text(encoding="utf-8"))
         except Exception:
             cache_path.unlink(missing_ok=True)
-    file_path = Path(db.resolve_path(rec["path"]))
+    file_path = Path(_resolve_media_path(rec["path"]))
     if not file_path.exists():
         raise HTTPException(404, "找不到檔案")
     peaks = _compute_waveform(str(file_path), bins)
@@ -353,7 +446,7 @@ def get_media_scenes(media_id: int):
         }
         if frame.get("thumbnail_path"):
             scene["thumbnail_url"] = "/thumbnails/{0}".format(
-                Path(db.resolve_path(frame["thumbnail_path"])).name
+                Path(_resolve_media_path(frame["thumbnail_path"])).name
             )
         scenes.append(scene)
     return {"media_id": media_id, "scenes": scenes, "total": len(scenes)}
@@ -442,6 +535,8 @@ def _allowed_export_roots() -> list:
         # Cross-platform tmp + project root for tests / scripted exports
         Path("/tmp").resolve(),
         Path(os.environ.get("TMPDIR", "/tmp")).resolve(),
+        (Path.cwd() / "temp").resolve(),
+        (config.PROJECT_ROOT / "temp").resolve(),
     ]
 
 
@@ -690,7 +785,8 @@ def export_metadata_csv_to(body: MetadataCsvExportRequest):
         except (TypeError, ValueError):
             raise HTTPException(400, "ids 必須是整數 list")
     csv_body = _build_metadata_csv(media_ids=media_ids)
-    dest.write_text(csv_body, encoding="utf-8")
+    with dest.open("w", encoding="utf-8", newline="") as fh:
+        fh.write(csv_body)
     return {"ok": True, "path": str(dest), "size": dest.stat().st_size, "rows": len(media_ids) if media_ids is not None else None}
 
 
@@ -813,7 +909,7 @@ def retranscribe_media(media_id: int, body: RetranscribeRequest):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
-    media_path = db.resolve_path(rec.get("path", ""))
+    media_path = _resolve_media_path(rec.get("path", ""))
     if not Path(media_path).exists():
         raise HTTPException(400, f"找不到媒體檔案：{media_path}")
     try:
@@ -848,7 +944,7 @@ def retry_vision(media_id: int):
         return {"ok": True, "message": "所有幀都已有描述", "patched": 0}
 
     import vision as vis
-    frame_paths = [db.resolve_path(f["thumbnail_path"]) for f in empty_frames]
+    frame_paths = [_resolve_media_path(f["thumbnail_path"]) for f in empty_frames]
 
     # Phase 1: try primary vision model
     results = vis.describe_frames(frame_paths)
@@ -933,7 +1029,7 @@ def reingest_media(media_id: int):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
-    media_path = db.resolve_path(rec.get("path", ""))
+    media_path = _resolve_media_path(rec.get("path", ""))
     if not Path(media_path).exists():
         raise HTTPException(400, f"找不到媒體檔案：{media_path}")
     import subprocess, sys
@@ -1282,7 +1378,7 @@ def export_media(
         import pathlib
 
         # Build file URI with proper file:/// prefix
-        raw_path = db.resolve_path(rec.get("path", ""))
+        raw_path = _resolve_media_path(rec.get("path", ""))
         file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
         if not str(file_uri).startswith("/"):
             file_uri = pathlib.PurePosixPath("/" + str(file_uri))
@@ -1356,7 +1452,8 @@ def export_to_file(media_id: int, body: ExportToRequest):
     dest = Path(body.dest).expanduser().resolve()
     _assert_export_dest_safe(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(content, encoding="utf-8")
+    with dest.open("w", encoding="utf-8", newline="") as fh:
+        fh.write(content)
     return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
 
 
@@ -1502,7 +1599,7 @@ def stream_media(media_id: int):
     # Proxy filename is hash-scoped by absolute source path so that a
     # proxies/ directory copied between installations cannot serve another
     # user's content under the same media_id.
-    resolved_src = db.resolve_path(rec["path"])
+    resolved_src = _resolve_media_path(rec["path"])
     proxy_path = config.proxy_path_for(media_id, resolved_src)
     if proxy_path.exists():
         return FileResponse(
@@ -1557,7 +1654,7 @@ def proxy_status():
         rows = conn.execute("SELECT id, path FROM media").fetchall()
     proxied = sum(
         1 for r in rows
-        if config.proxy_path_for(r["id"], db.resolve_path(r["path"])).exists()
+        if config.proxy_path_for(r["id"], _resolve_media_path(r["path"])).exists()
     )
     size_mb = round(sum(p.stat().st_size for p in proxy_dir.glob("*.mp4")) / 1048576, 1)
     return {"total": len(rows), "proxied": proxied, "size_mb": size_mb}
@@ -1572,7 +1669,7 @@ def proxy_build(background_tasks: BackgroundTasks):
         rows = conn.execute("SELECT id, path FROM media").fetchall()
     to_build = [
         dict(r) for r in rows
-        if not config.proxy_path_for(r["id"], db.resolve_path(r["path"])).exists()
+        if not config.proxy_path_for(r["id"], _resolve_media_path(r["path"])).exists()
     ]
     if not to_build:
         return {"message": "全部 proxy 已存在", "queued": 0}
@@ -1589,7 +1686,7 @@ def proxy_build_one(media_id: int, background_tasks: BackgroundTasks):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到媒體")
-    src = db.resolve_path(rec["path"])
+    src = _resolve_media_path(rec["path"])
     if config.proxy_path_for(media_id, src).exists():
         return {"message": "proxy 已存在", "queued": 0, "media_id": media_id}
     background_tasks.add_task(_build_proxies, [{"id": media_id, "path": rec["path"]}])
@@ -1605,7 +1702,7 @@ def _build_proxies(items: list):
     """Background task: generate H.264 proxy for each file."""
     import ingest
     for item in items:
-        src = db.resolve_path(item["path"])
+        src = _resolve_media_path(item["path"])
         try:
             result = ingest.generate_proxy(item["id"], src)
             if not result:
@@ -1633,7 +1730,7 @@ async def open_file(request: __import__('starlette.requests', fromlist=['Request
     # Validate: only allow paths that exist in our database
     if not db.is_processed(file_path):
         raise HTTPException(403, "只能開啟已索引的媒體檔案")
-    resolved_path = db.resolve_path(file_path)
+    resolved_path = _resolve_media_path(file_path)
     if not Path(resolved_path).exists():
         raise HTTPException(404, "找不到檔案")
     system = platform.system()

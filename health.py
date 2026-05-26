@@ -14,11 +14,21 @@ import platform
 import shutil
 import subprocess
 import sys
+from enum import Enum
 from pathlib import Path
 
 PASS = 0
 FAIL = 0
 SKIP = 0
+
+
+class HealthStatus(str, Enum):
+    OK = "ok"
+    PATH_NOT_FOUND = "path_not_found"
+    DB_MISSING = "db_missing"
+    CHROMA_MISSING = "chroma_missing"
+    NAS_UNMOUNTED = "nas_unmounted"
+    TIMEOUT = "timeout"
 
 
 def check(name: str, ok: bool, detail: str = "", required: bool = True):
@@ -47,6 +57,40 @@ def detect_os() -> str:
     if s == "darwin":
         return "macos"
     return s  # 'windows' or 'linux'
+
+
+def _project_path(project):
+    if isinstance(project, dict):
+        raw = project.get("path", "")
+    else:
+        raw = getattr(project, "path", "")
+    return Path(str(raw)).expanduser()
+
+
+def project_health(project):
+    project_path = _project_path(project)
+    if not project_path.exists():
+        return HealthStatus.PATH_NOT_FOUND
+
+    db_path = project_path / ".arkiv" / "project.db"
+    if not db_path.exists():
+        return HealthStatus.DB_MISSING
+
+    chroma_path = project_path / ".arkiv" / "chroma_db"
+    if not chroma_path.is_dir():
+        return HealthStatus.CHROMA_MISSING
+
+    project_posix = project_path.as_posix()
+    if project_posix.startswith("/Volumes/"):
+        try:
+            mount_root_name = project_posix.split("/")[2]
+            mount_root = Path("/Volumes") / mount_root_name
+            if not mount_root.exists():
+                return HealthStatus.NAS_UNMOUNTED
+        except Exception:
+            pass
+
+    return HealthStatus.OK
 
 
 def preflight_paths():
