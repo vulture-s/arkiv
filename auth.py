@@ -23,6 +23,8 @@ SCOPES = frozenset((
     "projects_read",
     "projects_write",
     "ingest_write",
+    "chat_read",
+    "chat_write",
     "admin",
 ))
 

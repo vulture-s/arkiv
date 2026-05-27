@@ -14,13 +14,14 @@ import urllib.request
 from pathlib import Path
 from typing import List, Optional, Set
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import admin
+import chat
 import codec
 from auth import require_scopes
 import config
@@ -127,6 +128,21 @@ class CreateTokenRequest(BaseModel):
     allowed_ips: Optional[List[str]] = None
 
 
+class ChatRequest(BaseModel):
+    prompt: str
+    conversation_id: Optional[str] = None
+    project_scope: Optional[List[str]] = None
+
+
+class ChatResponse(BaseModel):
+    conversation_id: str
+    assistant_text: str
+    scene_ids: List[object]
+    intent: Optional[str] = None
+    tokens_used: int
+    latency_ms: int
+
+
 def _split_csv(value: Optional[str]) -> Optional[List[str]]:
     if not value:
         return None
@@ -163,6 +179,45 @@ def _bootstrap_admin_token():
 
 
 # ── API Routes ───────────────────────────────────────────────────────────────
+
+@app.post("/api/chat", response_model=ChatResponse)
+def chat_endpoint(
+    request: Request,
+    req: ChatRequest,
+    _tok: dict = Depends(require_scopes("chat_write")),
+) -> ChatResponse:
+    del request
+    if req.conversation_id is None:
+        conv_id = chat.create_conversation(
+            user_token_id=_tok.get("id"),
+            first_prompt=req.prompt,
+            project_scope=req.project_scope,
+        )
+    else:
+        conv_id = req.conversation_id
+        if not chat.conversation_exists(conv_id):
+            raise HTTPException(status_code=400, detail="Unknown conversation_id")
+
+    chat.persist_message(conv_id, role="user", content=req.prompt)
+    result = chat.dispatch(req.prompt, conv_id, project_scope=req.project_scope)
+    chat.persist_message(
+        conv_id,
+        role="assistant",
+        content=result["assistant_text"],
+        intent=result.get("intent", "compilation"),
+        scene_ids=result["scene_ids"],
+        tokens_used=result["tokens_used"],
+        stage=result.get("stage", "done"),
+        latency_ms=result.get("latency_ms"),
+    )
+    return ChatResponse(
+        conversation_id=conv_id,
+        assistant_text=result["assistant_text"],
+        scene_ids=result["scene_ids"],
+        intent=result.get("intent", "compilation"),
+        tokens_used=result["tokens_used"],
+        latency_ms=result.get("latency_ms", 0),
+    )
 
 @app.get("/api/search/all")
 def search_all(

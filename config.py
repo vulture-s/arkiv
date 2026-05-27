@@ -88,9 +88,11 @@ def proxy_path_for(media_id: int, abs_source_path: str) -> Path:
 OLLAMA_URL = _validate_http_url(
     os.getenv("ARKIV_OLLAMA_URL", "http://localhost:11434"), "ARKIV_OLLAMA_URL"
 )
+ARKIV_CHAT_MODEL = os.getenv("ARKIV_CHAT_MODEL", "qwen2.5:14b")
+ARKIV_INTENT_MODEL = os.getenv("ARKIV_INTENT_MODEL", "qwen2.5:7b-instruct")
 OLLAMA_CHAT_MODEL = os.getenv(
     "ARKIV_OLLAMA_CHAT_MODEL",
-    os.getenv("ARKIV_CHAT_MODEL", "qwen2.5:14b"),
+    ARKIV_CHAT_MODEL,
 )
 OLLAMA_EMBED_MODEL = os.getenv(
     "ARKIV_OLLAMA_EMBED_MODEL",

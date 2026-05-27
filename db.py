@@ -195,6 +195,34 @@ def init_db():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_access_token_scopes_token_id ON access_token_scopes(token_id)"
         )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_conversations (
+                id TEXT PRIMARY KEY,
+                user_token_id TEXT,
+                title TEXT,
+                project_scope_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                intent TEXT,
+                scene_ids_json TEXT,
+                tokens_used INTEGER DEFAULT 0,
+                stage TEXT,
+                latency_ms INTEGER,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages(conversation_id, created_at)"
+        )
 
 
 def migrate_to_relative():

@@ -1,4 +1,14 @@
 # Changelog
+## Unreleased — Chat RAG B.4a Baseline
+
+### New Features
+- **Chat baseline** — added `chat.py` with the 5-intent classifier skeleton, compilation handler, conversation/message persistence helpers, and B.4b stubs for the remaining handlers.
+- **POST `/api/chat`** — authenticated chat write endpoint creates or continues conversations, persists user/assistant messages, and returns assistant text plus scene IDs.
+- **Chat storage/auth config** — `init_db()` now creates `chat_conversations` / `chat_messages`, auth scopes include `chat_read` / `chat_write`, and config exposes `ARKIV_CHAT_MODEL` / `ARKIV_INTENT_MODEL`.
+
+### Tests
+- Added `tests/test_chat.py` covering conversation creation, continuation, `chat_write` enforcement, and invalid conversation IDs.
+
 ## v0.4.2 (2026-05-27) ??LLM Router Abstraction
 
 > **Refactor release.** Shared Ollama routing now lives in `llm.py` and is used by vision analysis, embedding, and transcript polish call sites without changing the public module-level API surface.

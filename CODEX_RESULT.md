@@ -1,3 +1,161 @@
+# Codex Result - chat-rag-B.4a
+
+## What Changed
+
+- [x] Added `chat.py` with B.4a intent classification, `handle_compilation`, conversation helpers, message persistence, and B.4b stubs for refinement / similarity / analytics / general.
+- [x] Added `chat_conversations` and `chat_messages` tables plus `idx_chat_msg_conv` in `db.init_db()`.
+- [x] Added `chat_read` and `chat_write` to `auth.SCOPES` without changing middleware or token CRUD logic.
+- [x] Added `ARKIV_CHAT_MODEL` and `ARKIV_INTENT_MODEL` config defaults.
+- [x] Added POST `/api/chat` with `Depends(require_scopes("chat_write"))`.
+- [x] Added `tests/test_chat.py` coverage for new conversation, existing conversation, missing `chat_write`, and invalid conversation ID.
+- [x] Updated `CHANGELOG.md`.
+
+## Test Results
+
+Command:
+
+```text
+.venv/bin/python -c "from db import init_db; init_db()"
+```
+
+Exit code:
+
+```text
+0
+```
+
+Output:
+
+```text
+<no output>
+```
+
+Command:
+
+```text
+.venv/bin/python -m py_compile chat.py server.py db.py auth.py config.py tests/test_chat.py
+```
+
+Exit code:
+
+```text
+0
+```
+
+Output:
+
+```text
+<no output>
+```
+
+Command:
+
+```text
+.venv/bin/pytest tests/test_chat.py -v
+```
+
+Exit code:
+
+```text
+0
+```
+
+Output:
+
+```text
+============================= test session starts ==============================
+platform darwin -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0 -- /Users/vulturemacmini/code/arkiv/.venv/bin/python3.11
+rootdir: /Users/vulturemacmini/code/arkiv
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items
+
+tests/test_chat.py::test_chat_create_conversation_returns_conv_id PASSED [ 25%]
+tests/test_chat.py::test_chat_continues_existing_conversation PASSED     [ 50%]
+tests/test_chat.py::test_chat_requires_chat_write_scope PASSED           [ 75%]
+tests/test_chat.py::test_chat_invalid_conversation_id_returns_400 PASSED [100%]
+
+=============================== warnings summary ===============================
+tests/test_chat.py::test_chat_create_conversation_returns_conv_id
+tests/test_chat.py::test_chat_create_conversation_returns_conv_id
+tests/test_chat.py::test_chat_continues_existing_conversation
+tests/test_chat.py::test_chat_continues_existing_conversation
+tests/test_chat.py::test_chat_requires_chat_write_scope
+tests/test_chat.py::test_chat_requires_chat_write_scope
+tests/test_chat.py::test_chat_invalid_conversation_id_returns_400
+tests/test_chat.py::test_chat_invalid_conversation_id_returns_400
+  /Users/vulturemacmini/code/arkiv/server.py:157: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+tests/test_chat.py::test_chat_create_conversation_returns_conv_id
+tests/test_chat.py::test_chat_create_conversation_returns_conv_id
+tests/test_chat.py::test_chat_continues_existing_conversation
+tests/test_chat.py::test_chat_continues_existing_conversation
+tests/test_chat.py::test_chat_requires_chat_write_scope
+tests/test_chat.py::test_chat_requires_chat_write_scope
+tests/test_chat.py::test_chat_invalid_conversation_id_returns_400
+tests/test_chat.py::test_chat_invalid_conversation_id_returns_400
+  /Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/fastapi/applications.py:4598: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 4 passed, 16 warnings in 0.26s ========================
+```
+
+Command:
+
+```text
+.venv/bin/pytest tests/ -v
+```
+
+Exit code:
+
+```text
+1
+```
+
+Summary output:
+
+```text
+collected 173 items
+tests/test_chat.py::test_chat_create_conversation_returns_conv_id PASSED
+tests/test_chat.py::test_chat_continues_existing_conversation PASSED
+tests/test_chat.py::test_chat_requires_chat_write_scope PASSED
+tests/test_chat.py::test_chat_invalid_conversation_id_returns_400 PASSED
+
+FAILED tests/test_mhl.py::test_native_c4_reference_matches_chain - FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\user\\AppData\\Local\\Temp\\ascmhl-native\\ascmhl\\ascmhl_chain.xml'
+FAILED tests/test_offload.py::test_two_destination_copy_and_mhl_verify - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+FAILED tests/test_offload.py::test_hash_mismatch_marks_unverified_after_retries - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+FAILED tests/test_offload.py::test_resume_picks_up_pending_from_state - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+FAILED tests/test_offload.py::test_source_unmount_cleans_partials_and_keeps_completed_files - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+FAILED tests/test_offload.py::test_sidecar_families_all_copy - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+============ 6 failed, 165 passed, 2 skipped, 230 warnings in 5.45s ============
+```
+
+## REVIEW
+
+- `⚠️ REVIEW:` B.4a accepts `project_scope` and stores it on new conversations, but `handle_compilation` does not pass it into `vectordb.search()` because the current `vectordb.search(query, n_results=10)` signature has no `project_scope` parameter. The B.4c handover is where `vectordb.py` is scheduled to change.
+- `⚠️ REVIEW:` The roadmap file required by `AGENTS.md` was not present at `/Users/vulturemacmini/Desktop/hevin-ai-os/references/plans/arkiv/arkiv-roadmap.md`; a `find` under `/Users/vulturemacmini/Desktop` found no matching `hevin-ai-os` roadmap/dev-log paths, so the external roadmap was not updated.
+
+## Unfinished
+
+- None for B.4a.
+
+## Spec Deviations
+
+- Added one extra B.4a edge test for invalid `conversation_id` returning HTTP 400.
+
 # Codex Result - llm-router-b0
 
 ## What Changed
