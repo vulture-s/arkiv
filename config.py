@@ -88,8 +88,20 @@ def proxy_path_for(media_id: int, abs_source_path: str) -> Path:
 OLLAMA_URL = _validate_http_url(
     os.getenv("ARKIV_OLLAMA_URL", "http://localhost:11434"), "ARKIV_OLLAMA_URL"
 )
-EMBED_MODEL = os.getenv("ARKIV_EMBED_MODEL", "nomic-embed-text")
-VISION_MODEL = os.getenv("ARKIV_VISION_MODEL", "qwen3-vl:8b")
+OLLAMA_CHAT_MODEL = os.getenv(
+    "ARKIV_OLLAMA_CHAT_MODEL",
+    os.getenv("ARKIV_CHAT_MODEL", "qwen2.5:14b"),
+)
+OLLAMA_EMBED_MODEL = os.getenv(
+    "ARKIV_OLLAMA_EMBED_MODEL",
+    os.getenv("ARKIV_EMBED_MODEL", "nomic-embed-text:latest"),
+)
+OLLAMA_VISION_MODEL = os.getenv(
+    "ARKIV_OLLAMA_VISION_MODEL",
+    os.getenv("ARKIV_VISION_MODEL", "qwen3-vl:8b"),
+)
+EMBED_MODEL = OLLAMA_EMBED_MODEL
+VISION_MODEL = OLLAMA_VISION_MODEL
 
 def _detect_exiftool() -> str:
     """Resolve ExifTool binary path via fallback chain.

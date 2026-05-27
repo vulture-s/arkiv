@@ -1,4 +1,15 @@
 # Changelog
+## v0.4.2 (2026-05-27) ??LLM Router Abstraction
+
+> **Refactor release.** Shared Ollama routing now lives in `llm.py` and is used by vision analysis, embedding, and transcript polish call sites without changing the public module-level API surface.
+
+### New Features
+- **`llm.py` router** ??centralized `chat` / `embed` / `vision` helpers with consistent request payloads, token counting, and provider metadata.
+- **Router coverage** ??`tests/test_llm_router.py` adds focused schema, json-mode, token clamping, and default-model checks.
+
+### Internals
+- `vision.py`, `vectordb.py`, and `transcribe.py` now route Ollama calls through the shared abstraction while keeping existing module names and fallback hooks intact.
+- `config.py` now exposes `OLLAMA_CHAT_MODEL`, `OLLAMA_EMBED_MODEL`, and `OLLAMA_VISION_MODEL` while preserving the legacy `EMBED_MODEL` / `VISION_MODEL` aliases.
 
 ## v0.4.1 (2026-05-27) — API Scope Token Auth
 

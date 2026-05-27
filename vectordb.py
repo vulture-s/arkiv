@@ -8,6 +8,7 @@ import requests
 import chromadb
 
 from config import CHROMA_PATH, COLLECTION_NAME, EMBED_MODEL, OLLAMA_URL
+from llm import embed
 
 OLLAMA_EMBED_URL = f"{OLLAMA_URL}/api/embeddings"
 CHUNK_SIZE = 180      # words per chunk (Latin) or chars×4 (CJK)
@@ -17,14 +18,6 @@ EMBED_MAX_CHARS = 2000  # hard cap before sending to Ollama
 
 
 # ── Embedding ────────────────────────────────────────────────────────────────
-
-def embed(text: str) -> list[float]:
-    """Embed a single text via Ollama."""
-    text = text[:EMBED_MAX_CHARS]
-    r = requests.post(OLLAMA_EMBED_URL, json={"model": EMBED_MODEL, "prompt": text}, timeout=30)
-    r.raise_for_status()
-    return r.json()["embedding"]
-
 
 def embed_batch(texts: list[str]) -> list[list[float]]:
     return [embed(t) for t in texts]

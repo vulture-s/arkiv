@@ -13,7 +13,15 @@ import soundfile as sf
 from silero_vad import load_silero_vad, get_speech_timestamps
 import torch
 
-from config import WHISPER_MODEL, OLLAMA_URL, CUSTOM_VOCABULARY, FILTER_WORDS, WHISPER_GUARD_DEFAULT_MODE, WHISPER_GUARD_LAYERS
+from config import (
+    WHISPER_MODEL,
+    CUSTOM_VOCABULARY,
+    FILTER_WORDS,
+    WHISPER_GUARD_DEFAULT_MODE,
+    WHISPER_GUARD_LAYERS,
+    OLLAMA_CHAT_MODEL,
+)
+from llm import chat
 NO_SPEECH_THRESHOLD = 0.6
 DEFAULT_LANGUAGE = "zh"
 WHISPER_LANGUAGE_HINT = None
@@ -29,7 +37,7 @@ WHISPER_GUARD_ACTIVE_MODE = WHISPER_GUARD_DEFAULT_MODE
 WHISPER_GUARD_ACTIVE_LAYER = WHISPER_GUARD_LAYERS[WHISPER_GUARD_ACTIVE_MODE]
 WHISPER_MODEL = WHISPER_GUARD_ACTIVE_LAYER["mlx_whisper"]["path_or_hf_repo"] if _USE_MLX else WHISPER_GUARD_ACTIVE_LAYER["model"]
 WHISPER_LANGUAGE_HINT = WHISPER_GUARD_ACTIVE_LAYER["language_hint"]
-WHISPER_LLM_MODEL = WHISPER_GUARD_ACTIVE_LAYER["llm_model"] or WHISPER_LLM_MODEL
+WHISPER_LLM_MODEL = WHISPER_GUARD_ACTIVE_LAYER["llm_model"] or OLLAMA_CHAT_MODEL
 VAD_ENABLED = WHISPER_GUARD_ACTIVE_LAYER["vad_enabled"]
 LLM_POLISH = WHISPER_GUARD_ACTIVE_LAYER["llm_polish"]
 
@@ -83,7 +91,7 @@ def _apply_whisper_guard_mode(mode):
     WHISPER_GUARD_ACTIVE_LAYER = WHISPER_GUARD_LAYERS.get(mode, WHISPER_GUARD_LAYERS[WHISPER_GUARD_DEFAULT_MODE])
     WHISPER_MODEL = WHISPER_GUARD_ACTIVE_LAYER["mlx_whisper"]["path_or_hf_repo"] if _USE_MLX else WHISPER_GUARD_ACTIVE_LAYER["model"]
     WHISPER_LANGUAGE_HINT = WHISPER_GUARD_ACTIVE_LAYER["language_hint"]
-    WHISPER_LLM_MODEL = WHISPER_GUARD_ACTIVE_LAYER["llm_model"] or "qwen2.5:14b"
+    WHISPER_LLM_MODEL = WHISPER_GUARD_ACTIVE_LAYER["llm_model"] or OLLAMA_CHAT_MODEL
     VAD_ENABLED = WHISPER_GUARD_ACTIVE_LAYER["vad_enabled"]
     LLM_POLISH = WHISPER_GUARD_ACTIVE_LAYER["llm_polish"]
     return WHISPER_GUARD_ACTIVE_LAYER
@@ -393,19 +401,14 @@ def warm_up_ollama():
     global _ollama_warm
     if _ollama_warm:
         return
-    import requests as _req
     try:
-        _req.post(f"{OLLAMA_URL}/api/generate", json={
-            "model": "qwen2.5:14b", "prompt": "hi", "stream": False,
-            "options": {"num_predict": 1}
-        }, timeout=30)
+        chat("hi", model=OLLAMA_CHAT_MODEL)
         _ollama_warm = True
     except Exception:
         pass
 
 
 def _llm_polish(text: str, language: str = "zh") -> str:
-    import requests as _req
     MODEL = WHISPER_LLM_MODEL
 
     lang_name = {"zh": "繁體中文", "en": "English", "ja": "日本語", "ko": "한국어"}.get(language, language)
@@ -426,16 +429,10 @@ def _llm_polish(text: str, language: str = "zh") -> str:
 校正後："""
 
     try:
-        r = _req.post(f"{OLLAMA_URL}/api/generate", json={
-            "model": MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.1, "num_predict": len(text) * 2}
-        }, timeout=60)
-        if r.ok:
-            polished = r.json().get("response", "").strip()
-            if polished and 0.5 < len(polished) / max(len(text), 1) < 2.0:
-                return polished
+        result = chat(prompt, model=MODEL)
+        polished = result.get("text", "").strip()
+        if polished and 0.5 < len(polished) / max(len(text), 1) < 2.0:
+            return polished
     except Exception:
         pass
     return text

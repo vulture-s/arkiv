@@ -2,10 +2,12 @@ from __future__ import annotations
 import base64
 import json
 import re
-import urllib.request
 from typing import Dict, List
 
+import requests
+
 import config
+from llm import vision
 
 OLLAMA_URL = f"{config.OLLAMA_URL}/api/generate"
 VISION_MODEL = config.VISION_MODEL
@@ -113,20 +115,10 @@ def _call_vision(img_path, prompt, max_retries=2):
     """Send image to Ollama vision, return raw response text."""
     with open(img_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
-    payload = json.dumps({
-        "model": VISION_MODEL,
-        "prompt": prompt,
-        "images": [b64],
-        "stream": False,
-    }).encode()
     for attempt in range(max_retries):
         try:
-            req = urllib.request.Request(
-                OLLAMA_URL, data=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            resp = json.loads(urllib.request.urlopen(req, timeout=300).read())
-            raw = resp.get("response", "").strip()
+            resp = vision(prompt=prompt, image_b64=b64, model=VISION_MODEL)
+            raw = resp.get("text", "").strip()
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw)
             return raw.strip()
