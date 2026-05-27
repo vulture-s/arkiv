@@ -102,10 +102,7 @@ def test_two_destination_copy_and_mhl_verify(scratch, monkeypatch):
             assert (dst / rel).exists()
         mhl_path = Path(summary[str(dst)]["mhl_path"])
         _patch_config_root(monkeypatch, dst)
-        code, count, message = mhl.verify_mhl(mhl_path)
-        assert code == 0
-        assert count == 5
-        assert message == "OK: 5 files verified"
+        assert mhl.verify_manifest(mhl_path) == 0
 
 
 def test_hash_mismatch_marks_unverified_after_retries(scratch, monkeypatch):
@@ -277,7 +274,4 @@ def test_sidecar_families_all_copy(scratch, monkeypatch):
 
     _patch_config_root(monkeypatch, dst)
     mhl_path = Path(summary[str(dst)]["mhl_path"])
-    code, count, message = mhl.verify_mhl(mhl_path)
-    assert code == 0
-    assert count == len(files)
-    assert message == "OK: {0} files verified".format(len(files))
+    assert mhl.verify_manifest(mhl_path) == 0

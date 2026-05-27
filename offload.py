@@ -7,8 +7,6 @@ import json
 import os
 import sys
 import unicodedata
-import xml.etree.ElementTree as ET
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,25 +21,15 @@ except Exception:  # pragma: no cover - optional dependency
     xxhash = None
 
 
-MHL_NS = "http://www.mhl.media"
-ET.register_namespace("", MHL_NS)
-DEFAULT_HASH = "xxh3-128"
+DEFAULT_HASH = "xxh3"
 DEFAULT_RETRY_LIMIT = 3
 DEFAULT_CHUNK_SIZE = 1 << 20
 STATE_VERSION = 1
 TEST_MUTATOR = None
 
 
-def _tag(name):
-    return "{%s}%s" % (MHL_NS, name)
-
-
 def _now_utc():
     return datetime.now(timezone.utc)
-
-
-def _utc_iso(dt):
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _ensure_parent(path):
@@ -53,26 +41,31 @@ def _normalize_relpath(path, root):
     return unicodedata.normalize("NFC", rel.as_posix())
 
 
-def _hash_file(path, algo=DEFAULT_HASH, chunk_size=DEFAULT_CHUNK_SIZE):
+def _fallback_hasher(algo):
+    if algo == "xxh3":
+        if xxhash is None:
+            raise RuntimeError("xxhash module required for xxh3 hashing")
+        return xxhash.xxh3_64()
+    if algo == "md5":
+        return hashlib.md5()
+    if algo == "sha1":
+        return hashlib.sha1()
+    if algo == "sha256":
+        return hashlib.sha256()
+    raise ValueError("unsupported algo: {0}".format(algo))
+
+
+def _hash_file(path, algo=DEFAULT_HASH):
     if mhl is not None and hasattr(mhl, "hash_file"):
-        return mhl.hash_file(path, algo=algo, chunk_size=chunk_size)
-    if algo == "xxh3-128":
-        h = xxhash.xxh3_128() if xxhash is not None else hashlib.blake2b(digest_size=16)
-    elif algo == "md5":
-        h = hashlib.md5()
-    elif algo == "sha1":
-        h = hashlib.sha1()
-    elif algo == "sha256":
-        h = hashlib.sha256()
-    else:
-        raise ValueError("unsupported algo: {0}".format(algo))
+        return mhl.hash_file(path, algo=algo)
+    hasher = _fallback_hasher(algo)
     with path.open("rb") as handle:
         while True:
-            chunk = handle.read(chunk_size)
+            chunk = handle.read(DEFAULT_CHUNK_SIZE)
             if not chunk:
                 break
-            h.update(chunk)
-    return h.hexdigest().lower()
+            hasher.update(chunk)
+    return hasher.hexdigest().lower()
 
 
 def _collect_sources(src, include_heic=False):
@@ -183,50 +176,18 @@ def _ensure_file_records(state, source_files, dsts):
     return state
 
 
-def _next_sequence_number(output_dir):
-    max_num = 0
-    if output_dir.exists():
-        for path in output_dir.glob("*.mhl"):
-            parts = path.name.split("_", 1)
-            if len(parts) != 2:
-                continue
-            prefix = parts[0]
-            if prefix.isdigit():
-                max_num = max(max_num, int(prefix))
-    return max_num + 1
-
-
-def _mhl_output_path(dst_root, op, now):
-    ascmhl_dir = Path(dst_root) / "ascmhl"
-    seq = _next_sequence_number(ascmhl_dir)
-    return ascmhl_dir / "{0:03d}_{1}_{2}.mhl".format(seq, op, now.astimezone(timezone.utc).strftime("%Y-%m-%d"))
-
-
-def _write_mhl(dst_root, verified_rel_paths, hash_algo, author="arkiv", op="offload", now=None):
-    now = now or _now_utc()
+def _write_mhl(dst_root, hash_algo, op="offload"):
+    if mhl is None or not hasattr(mhl, "create_manifest"):
+        raise RuntimeError("mhl.create_manifest required for MHL emit")
     dst_root = Path(dst_root).expanduser().resolve(strict=False)
-    output = _mhl_output_path(dst_root, op, now)
-    root = ET.Element(_tag("mhl"), {"version": "2.0"})
-    creator = ET.SubElement(root, _tag("creatorinfo"))
-    ET.SubElement(creator, _tag("tool"), {"name": "arkiv", "version": "0.3.0"})
-    ET.SubElement(creator, _tag("author")).text = author
-    ET.SubElement(creator, _tag("location")).text = "./ascmhl/"
-    ET.SubElement(creator, _tag("creationdate")).text = _utc_iso(now)
-
-    process = ET.SubElement(root, _tag("processinfo"))
-    ET.SubElement(process, _tag("operation")).text = op
-    ET.SubElement(process, _tag("timestamp")).text = _utc_iso(now)
-    ET.SubElement(process, _tag("device")).text = "local"
-
-    hashlist = ET.SubElement(root, _tag("hashlist"))
-    for rel in verified_rel_paths:
-        abs_path = dst_root / rel
-        entry = ET.SubElement(hashlist, _tag("hash"), {"file": rel, "action": "verified"})
-        ET.SubElement(entry, _tag("checksum"), {"type": hash_algo}).text = _hash_file(abs_path, hash_algo)
-
-    _ensure_parent(output)
-    ET.ElementTree(root).write(str(output), encoding="utf-8", xml_declaration=True)
-    return output
+    output_dir = dst_root / "ascmhl"
+    mhl_path, _chain_path = mhl.create_manifest(
+        source=dst_root,
+        output=output_dir,
+        primary_hash=hash_algo,
+        op=op,
+    )
+    return mhl_path
 
 
 def _check_destination_mount(dst_root):
@@ -260,20 +221,8 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
             pass
 
         try:
-            src_hash = None
             with src_path.open("rb") as src_handle, partial_path.open("wb") as dst_handle:
-                hasher = xxhash.xxh3_128() if hash_algo == "xxh3-128" and xxhash is not None else None
-                if hash_algo == "md5":
-                    hasher = hashlib.md5()
-                elif hash_algo == "sha1":
-                    hasher = hashlib.sha1()
-                elif hash_algo == "sha256":
-                    hasher = hashlib.sha256()
-                elif hasher is None:
-                    if hash_algo == "xxh3-128":
-                        hasher = hashlib.blake2b(digest_size=16)
-                    else:
-                        raise ValueError("unsupported algo: {0}".format(hash_algo))
+                hasher = _fallback_hasher(hash_algo)
                 while True:
                     chunk = src_handle.read(chunk_size)
                     if not chunk:
@@ -289,7 +238,7 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
                 src_hash = hasher.hexdigest().lower()
             if callable(TEST_MUTATOR):
                 TEST_MUTATOR(src_path, partial_path, attempt, file_state["bytes_copied"])
-            dst_hash = _hash_file(partial_path, hash_algo, chunk_size=chunk_size)
+            dst_hash = _hash_file(partial_path, hash_algo)
             file_state["src_hash"] = src_hash
             file_state["dst_hash"] = dst_hash
             if src_hash != dst_hash:
@@ -320,31 +269,10 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
     return False
 
 
-@contextmanager
-def _patched_config_project_root(root):
-    try:
-        import config
-    except Exception:
-        yield None
-        return
-    old_project_root = getattr(config, "PROJECT_ROOT", None)
-    old_ascmhl = getattr(config, "_ASCMHL_DIR", None)
-    config.PROJECT_ROOT = Path(root)
-    config._ASCMHL_DIR = Path(root) / "ascmhl"
-    try:
-        yield config
-    finally:
-        if old_project_root is not None:
-            config.PROJECT_ROOT = old_project_root
-        if old_ascmhl is not None:
-            config._ASCMHL_DIR = old_ascmhl
-
-
 def _verify_emitted_mhl(dst_root, mhl_path):
-    if mhl is None or not hasattr(mhl, "verify_mhl"):
+    if mhl is None or not hasattr(mhl, "verify_manifest"):
         return None
-    with _patched_config_project_root(dst_root):
-        return mhl.verify_mhl(mhl_path)
+    return mhl.verify_manifest(mhl_path)
 
 
 def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=None, retry_limit=DEFAULT_RETRY_LIMIT, chunk_size=DEFAULT_CHUNK_SIZE, verify=True, emit_mhl=True, dry_run=False, progress="tui"):
@@ -411,16 +339,14 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
         _save_state(state_path, state)
 
         mhl_path = None
-        if emit_mhl:
-            mhl_path = _write_mhl(dst_root, verified_rel_paths, hash_algo, now=_now_utc())
+        if emit_mhl and verified_rel_paths:
+            mhl_path = _write_mhl(dst_root, hash_algo, op="offload")
             dst_state["mhl_path"] = str(mhl_path)
             _save_state(state_path, state)
             if verify:
                 verify_result = _verify_emitted_mhl(dst_root, mhl_path)
-                if verify_result is not None:
-                    code, _, message = verify_result
-                    if code != 0:
-                        raise RuntimeError("mhl verify failed for {0}: {1}".format(mhl_path, message))
+                if verify_result is not None and verify_result != 0:
+                    raise RuntimeError("mhl verify failed for {0}: exit code {1}".format(mhl_path, verify_result))
 
         summary[dst_key] = {
             "verified_files": len(verified_rel_paths),
@@ -460,17 +386,11 @@ def build_parser():
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    hash_algo = {
-        "xxh3": "xxh3-128",
-        "md5": "md5",
-        "sha1": "sha1",
-        "sha256": "sha256",
-    }[args.hash_algo]
     try:
         code, summary, state_path = run_offload(
             args.src,
             args.dst,
-            hash_algo=hash_algo,
+            hash_algo=args.hash_algo,
             include_heic=args.include_heic,
             resume=args.resume,
             retry_limit=args.retry_limit,
