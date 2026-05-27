@@ -68,6 +68,9 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **HEVC/ProRes browser proxy** — auto-builds H.264 proxy on demand for browser playback (Phase 7.7g)
 - **Tauri native app** — desktop app with native file/folder dialogs (Windows panic hook surfaces Rust crashes to stderr)
 - **DaVinci Resolve plugin** — search, import with clip color, add frame markers
+- **ASC MHL v2 hash manifests** — `mhl.py create` / `verify` CLI emits real `urn:ASC:MHL:v2.0` with `xxh3` / `md5` / `sha1` / `sha256` / `c4`, directory + structure root hashes, chained `ascmhl_chain.xml`. Interop-verified with ASC reference impl 1.2 — drop-in for Silverstack / MediaVerify / Hedge / YoYotta workflows
+- **Multi-destination offload** — `offload.py --src <SD> --dst <A> --dst <B>` does chunked parallel copy + per-file hash verify + 3× retry on mismatch + atomic rename + sidecar-aware (XAVC / ARRI / RED / iPhone Live Photo). Resumable JSON state file — kill mid-copy and pending files pick up exactly where they stopped. Emits per-dst MHL v2
+- **Camera report CSV** — `camera_report.py` writes 20-col DIT-spec CSV (Reel / TC / Camera / Lens / ISO / Shutter / Aperture / WB / FPS / Codec / ...) for Resolve's `File → Import Metadata from CSV`. Day-summary footer aggregates clip count + runtime by camera / by card
 
 ## Quick Start
 

@@ -68,6 +68,9 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 - **HEVC／ProRes 瀏覽器代理** — 瀏覽器播放時依需求自動產生 H.264 代理（Phase 7.7g）
 - **Tauri 原生應用** — 桌面應用程式，支援原生檔案/資料夾對話框（Windows panic hook 將 Rust crash 寫到 stderr）
 - **DaVinci Resolve 外掛** — 搜尋、匯入（含片段顏色）、新增幀標記
+- **ASC MHL v2 雜湊清單** — `mhl.py create` / `verify` CLI 產出真正的 `urn:ASC:MHL:v2.0` 格式，支援 `xxh3` / `md5` / `sha1` / `sha256` / `c4`，含 directory + structure root hash、鏈式 `ascmhl_chain.xml`。已跟 ASC 官方 reference impl 1.2 互通驗證 — 可直接接 Silverstack / MediaVerify / Hedge / YoYotta 工作流
+- **多目的地 offload** — `offload.py --src <SD> --dst <A> --dst <B>` chunked 平行 copy + 每檔 hash 驗證 + mismatch 3× retry + atomic rename + sidecar 感知（XAVC / ARRI / RED / iPhone Live Photo）。可恢復的 JSON state file — copy 一半 kill 掉，pending 檔案下次接著跑。每個 dst 結尾 emit MHL v2
+- **攝影日報 CSV** — `camera_report.py` 產 20 欄 DIT 規格 CSV（Reel / TC / Camera / Lens / ISO / Shutter / Aperture / WB / FPS / Codec / ...），可直接餵 Resolve 的「檔案 → 從 CSV 匯入詮釋資料」。Day-summary footer 統計片段數 + 時長（依攝影機 / 依記憶卡）
 
 ## 快速開始
 

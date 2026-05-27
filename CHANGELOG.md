@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.4.0 (2026-05-27) — W3 DIT three-pack complete
+
+> **DIT companion ready.** Three new CLI tools bring arkiv from "AI metadata layer" to "DIT-grade companion": hash manifests interoperable with Silverstack / Hedge / MediaVerify, multi-destination resumable offload, and Resolve-friendly camera reports.
+
+### New Features
+- **ASC MHL v2 generation + verify** — `mhl.py create` / `mhl.py verify` CLI emits `urn:ASC:MHL:v2.0` manifests with `xxh3` / `md5` / `sha1` / `sha256` / `c4` hashing, directory + structure root hashes, and a chained `ascmhl_chain.xml`. Output lands at `<PROJECT_ROOT>/ascmhl/NNNN_<dir>_<timestamp>Z.mhl`. Round-trips through ASC reference impl 1.2 (`ascmhl info` reads emitted manifests, exit 0).
+- **Multi-destination offload** — `offload.py --src <SD> --dst <dst1> --dst <dst2>` does chunked-read parallel copy with per-file hash verify, retry up to N times on hash mismatch, atomic `.partial → final` rename, sidecar-aware (Sony XAVC / ARRI / RED / iPhone Live Photo / generic). JSON state file at `offload-state.json` lets you kill mid-copy and resume — pending files pick up exactly where they stopped. Emits a per-dst MHL v2 manifest verifying every copied file (via `mhl.create_manifest`).
+- **Camera report CSV + day summary** — `camera_report.py` writes a 20-column DIT-spec CSV (Reel / TC / Date / Camera / Lens / ISO / Shutter / Aperture / WB / FPS / Codec / Resolution / FileSize / Notes / ...) ready for Resolve's `File → Import Metadata from CSV`. Day-summary footer aggregates clip count / total runtime / by-camera / by-card.
+
+### Internals
+- `mhl.py` 723 lines, real ASC MHL v2 schema with `creatorinfo` (incl. `hostname`), `processinfo.process` enum (ingest/offload/verify), per-file `<hash>` + per-directory `<directoryhash>` with `<content>` + `<structure>` separation, `<roothash>` aggregate. `xxhash>=2.0.0` required for `xxh3` / `xxh64`.
+- `offload.py` 416 lines + 5 pytest scenarios (2-dst copy, hash-mismatch retry, mid-copy resume, src-unmount cleanup, sidecar families).
+- `camera_report.py` 501 lines + 2 pytest scenarios.
+- `health.py` gains `_check_mount(path)` helper extracted from `project_health()` — single mount-precondition check reused by offload + ingest preflight.
+
+### Driving incident
+W3 milestone (per `references/plans/arkiv/2026-04-29-positioning-and-moat.md` §6): pre-W3, arkiv could only claim "AI metadata layer for DIT workflows" (soft). W3 ship locks in "DIT companion" (hard) — minimum bar to not get fact-checked on r/DaVinciResolve / r/cinematography.
+
+---
+
 ## v0.3.1 (2026-05-25) — Per-Project Storage + Startup Preflight
 
 > **⚠️ Breaking change** — default storage layout moves from `BASE_DIR/{media.db, thumbnails/, chroma_db/, proxies/}` to `BASE_DIR/.arkiv/{project.db, ...}`. One-shot migration provided. See [Upgrade SOP](docs/pipeline.md#upgrading-from-v030) before running.
