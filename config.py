@@ -72,6 +72,9 @@ PROXIES_DIR = _validate_writable_path(
     Path(os.getenv("ARKIV_PROXIES_DIR", str(_ARKIV_DIR / "proxies"))), "ARKIV_PROXIES_DIR"
 )
 
+# Auth bootstrap (auth-tokens-1b handover).
+ARKIV_ADMIN_BOOTSTRAP_TOKEN = os.getenv("ARKIV_ADMIN_BOOTSTRAP_TOKEN", "").strip()
+
 
 def proxy_path_for(media_id: int, abs_source_path: str) -> Path:
     # media_id alone is not enough — a proxies/ dir copied between

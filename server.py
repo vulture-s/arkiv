@@ -14,13 +14,15 @@ import urllib.request
 from pathlib import Path
 from typing import List, Optional, Set
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import admin
 import codec
+from auth import require_scopes
 import config
 import db
 import federation
@@ -117,6 +119,14 @@ class ProjectCreate(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class CreateTokenRequest(BaseModel):
+    name: str
+    scopes: List[str]
+    description: Optional[str] = None
+    expires_in_days: Optional[int] = None
+    allowed_ips: Optional[List[str]] = None
+
+
 def _split_csv(value: Optional[str]) -> Optional[List[str]]:
     if not value:
         return None
@@ -126,6 +136,30 @@ def _split_csv(value: Optional[str]) -> Optional[List[str]]:
         if chunk:
             parts.append(chunk)
     return parts or None
+
+
+@app.on_event("startup")
+def _bootstrap_admin_token():
+    raw = admin.bootstrap_admin_token_if_empty()
+    if raw:
+        print("=" * 70, flush=True)
+        print("[BOOTSTRAP] Admin token seeded from ARKIV_ADMIN_BOOTSTRAP_TOKEN env.", flush=True)
+        print("            Token name: 'bootstrap', scope: ['admin']", flush=True)
+        print("            Generate per-machine tokens via POST /api/admin/tokens,", flush=True)
+        print("            then unset ARKIV_ADMIN_BOOTSTRAP_TOKEN + revoke 'bootstrap'.", flush=True)
+        print("=" * 70, flush=True)
+        return
+
+    with db.get_conn() as conn:
+        count = conn.execute("SELECT COUNT(*) AS c FROM access_tokens").fetchone()["c"]
+    if count == 0:
+        print("=" * 70, flush=True)
+        print("[BOOTSTRAP] No access tokens in DB and ARKIV_ADMIN_BOOTSTRAP_TOKEN unset.", flush=True)
+        print("            API endpoints will return 401. To bootstrap:", flush=True)
+        print("              1. export ARKIV_ADMIN_BOOTSTRAP_TOKEN=$(openssl rand -base64 32)", flush=True)
+        print("              2. restart server (it will seed admin token)", flush=True)
+        print("              3. POST /api/admin/tokens to create per-machine tokens", flush=True)
+        print("=" * 70, flush=True)
 
 
 # ── API Routes ───────────────────────────────────────────────────────────────
@@ -139,6 +173,7 @@ def search_all(
     tag: Optional[str] = None,
     timeout: float = 10.0,
     no_fallback_sql: bool = False,
+    _tok: dict = Depends(require_scopes("videos_read")),
 ):
     try:
         payload = federation.search_all_projects(
@@ -160,13 +195,18 @@ def search_all(
 
 
 @app.get("/api/projects")
-def list_projects():
+def list_projects(
+    _tok: dict = Depends(require_scopes("projects_read")),
+):
     projects = [project.to_dict() for project in project_registry.list_registry_projects()]
     return {"projects": projects, "total": len(projects)}
 
 
 @app.post("/api/projects")
-def add_project(body: ProjectCreate):
+def add_project(
+    body: ProjectCreate,
+    _tok: dict = Depends(require_scopes("projects_write")),
+):
     try:
         project = project_registry.add_project(body.name, body.path, body.tags or [])
     except project_registry.RegistryError as exc:
@@ -175,7 +215,10 @@ def add_project(body: ProjectCreate):
 
 
 @app.delete("/api/projects/{name}")
-def remove_project(name: str):
+def remove_project(
+    name: str,
+    _tok: dict = Depends(require_scopes("projects_write")),
+):
     try:
         project = project_registry.remove_project(name)
     except project_registry.RegistryError as exc:
@@ -184,13 +227,17 @@ def remove_project(name: str):
 
 
 @app.post("/api/projects/sync")
-def sync_projects():
+def sync_projects(
+    _tok: dict = Depends(require_scopes("projects_write")),
+):
     projects = [project.to_dict() for project in project_registry.sync_projects()]
     return {"projects": projects, "total": len(projects)}
 
 
 @app.get("/api/projects/health")
-def projects_health():
+def projects_health(
+    _tok: dict = Depends(require_scopes("projects_read")),
+):
     projects = project_registry.health_projects()
     ok_count = sum(1 for item in projects if item["status"] == "ok")
     return {"projects": projects, "total": len(projects), "ok": ok_count}
@@ -203,6 +250,7 @@ def media_position(
     lang: Optional[str] = None,
     rating: Optional[str] = None,
     media_type: Optional[str] = None,
+    _tok: dict = Depends(require_scopes("videos_read")),
 ):
     """Find the row offset of a media item in the current sort/filter view."""
     filters = {}
@@ -225,7 +273,9 @@ def media_position(
 
 
 @app.get("/api/media/pool")
-def media_pool():
+def media_pool(
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
     """Lightweight full list for left sidebar media pool — grouped by folder."""
     with db.get_conn() as conn:
         rows = conn.execute(
@@ -259,6 +309,7 @@ def list_media(
     rating: Optional[str] = None,
     media_type: Optional[str] = None,
     q: Optional[str] = None,
+    _tok: dict = Depends(require_scopes("videos_read")),
 ):
     """List media with filters, sorting, and pagination."""
     if q:
@@ -349,7 +400,10 @@ def list_media(
 
 
 @app.get("/api/media/{media_id}")
-def get_media_detail(media_id: int):
+def get_media_detail(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
     """Get full media record with tags and frames."""
     rec = db.get_record_by_id(media_id)
     if not rec:
@@ -373,7 +427,11 @@ def get_media_detail(media_id: int):
 
 
 @app.get("/api/media/{media_id}/waveform")
-def get_media_waveform(media_id: int, bins: int = 60):
+def get_media_waveform(
+    media_id: int,
+    bins: int = 60,
+    _tok: dict = Depends(require_scopes("media_read")),
+):
     """Return pre-computed audio peaks (0..1) for the inspector waveform.
     Cached per (id, bins) under waveforms/<id>_<bins>.json."""
     rec = db.get_record_by_id(media_id)
@@ -426,7 +484,10 @@ def _compute_waveform(path: str, bins: int):
 
 
 @app.get("/api/media/{media_id}/scenes")
-def get_media_scenes(media_id: int):
+def get_media_scenes(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("media_read")),
+):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
@@ -453,7 +514,11 @@ def get_media_scenes(media_id: int):
 
 
 @app.patch("/api/media/{media_id}/rating")
-def update_rating(media_id: int, body: RatingUpdate):
+def update_rating(
+    media_id: int,
+    body: RatingUpdate,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
     """Set or clear rating for a media asset."""
     rec = db.get_record_by_id(media_id)
     if not rec:
@@ -463,12 +528,19 @@ def update_rating(media_id: int, body: RatingUpdate):
 
 
 @app.get("/api/media/{media_id}/tags")
-def get_tags(media_id: int):
+def get_tags(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
     return db.get_tags(media_id)
 
 
 @app.post("/api/media/{media_id}/tags")
-def add_tag(media_id: int, body: TagCreate):
+def add_tag(
+    media_id: int,
+    body: TagCreate,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
@@ -477,13 +549,19 @@ def add_tag(media_id: int, body: TagCreate):
 
 
 @app.delete("/api/media/{media_id}/tags/{tag_name}")
-def remove_tag(media_id: int, tag_name: str):
+def remove_tag(
+    media_id: int,
+    tag_name: str,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
     db.remove_tag(media_id, tag_name)
     return {"ok": True, "tags": db.get_tags(media_id)}
 
 
 @app.get("/api/stats")
-def get_stats():
+def get_stats(
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
     """Aggregate stats for dashboard."""
     stats = db.get_stats()
     stats["rating"] = db.get_rating_stats()
@@ -492,13 +570,17 @@ def get_stats():
 
 
 @app.get("/api/tags")
-def get_all_tags():
+def get_all_tags(
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
     """All unique tag names for autocomplete."""
     return db.get_all_tag_names()
 
 
 @app.get("/api/duration-by-lang")
-def duration_by_lang():
+def duration_by_lang(
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT lang, SUM(duration_s) as total_s, COUNT(*) as count "
@@ -508,7 +590,9 @@ def duration_by_lang():
 
 
 @app.get("/api/size-by-ext")
-def size_by_ext():
+def size_by_ext(
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT ext, SUM(size_mb) as total_mb, COUNT(*) as count "
@@ -742,7 +826,10 @@ def _parse_ids_query(ids_query):
 
 
 @app.get("/api/export/metadata-csv")
-def export_metadata_csv(ids: Optional[str] = None):
+def export_metadata_csv(
+    ids: Optional[str] = None,
+    _tok: dict = Depends(require_scopes("media_read")),
+):
     """DaVinci Resolve metadata CSV — File Name as match key.
 
     Import in Resolve: File → Import Metadata from CSV.
@@ -768,7 +855,10 @@ class MetadataCsvExportRequest(BaseModel):
 
 
 @app.post("/api/export/metadata-csv-to")
-def export_metadata_csv_to(body: MetadataCsvExportRequest):
+def export_metadata_csv_to(
+    body: MetadataCsvExportRequest,
+    _tok: dict = Depends(require_scopes("media_read")),
+):
     """Tauri WKWebView path: server writes CSV directly to user-picked dest.
 
     WKWebView 對 <a download> blob 觸發下載不可靠（Tauri docs 也建議走 fs API），
@@ -850,7 +940,10 @@ def _assert_ingest_path_safe(target: Path) -> None:
 
 
 @app.post("/api/ingest/scan")
-def scan_media(body: ScanRequest):
+def scan_media(
+    body: ScanRequest,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
     """Quick scan — return file list without processing."""
     target = Path(body.path).expanduser().resolve()
     if not target.is_dir():
@@ -864,7 +957,10 @@ def scan_media(body: ScanRequest):
     return {"total": len(files), "new": sum(1 for f in files if not f["already"]), "files": files}
 
 @app.post("/api/ingest")
-def ingest_media(body: IngestRequest):
+def ingest_media(
+    body: IngestRequest,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
     """Trigger ingest from the web UI — runs ingest.py as subprocess."""
     import subprocess, sys
     target = Path(body.path).expanduser().resolve()
@@ -891,7 +987,10 @@ class RetranscribeRequest(BaseModel):
     language: str = "zh"
 
 @app.get("/api/media/{media_id}/remotion-props")
-def get_remotion_props(media_id: int):
+def get_remotion_props(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("media_read")),
+):
     """Export word-level timestamps as Remotion CellPhoneReel props."""
     rec = db.get_record_by_id(media_id)
     if not rec:
@@ -904,7 +1003,11 @@ def get_remotion_props(media_id: int):
     }
 
 @app.post("/api/media/{media_id}/retranscribe")
-def retranscribe_media(media_id: int, body: RetranscribeRequest):
+def retranscribe_media(
+    media_id: int,
+    body: RetranscribeRequest,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
     """Re-run Whisper with specified language."""
     rec = db.get_record_by_id(media_id)
     if not rec:
@@ -932,7 +1035,10 @@ def retranscribe_media(media_id: int, body: RetranscribeRequest):
 
 
 @app.post("/api/media/{media_id}/retry-vision")
-def retry_vision(media_id: int):
+def retry_vision(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
     """Retry vision analysis on frames with empty descriptions.
     Two-phase fallback: primary model → lighter fallback model."""
     rec = db.get_record_by_id(media_id)
@@ -1024,7 +1130,10 @@ def retry_vision(media_id: int):
 
 
 @app.post("/api/media/{media_id}/reingest")
-def reingest_media(media_id: int):
+def reingest_media(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
     """Re-run full ingest pipeline: probe + whisper + thumbnail + llava + embed."""
     rec = db.get_record_by_id(media_id)
     if not rec:
@@ -1057,7 +1166,9 @@ def _dir_size_mb(p: Path) -> int:
 
 
 @app.get("/api/cache/info")
-def cache_info():
+def cache_info(
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
     """Show cache sizes."""
     caches = {}
     # HuggingFace model cache
@@ -1094,7 +1205,10 @@ def cache_info():
 
 
 @app.post("/api/cache/clear")
-def clear_cache(target: str = Query("app", description="app|thumbnails|chromadb|waveforms|all")):
+def clear_cache(
+    target: str = Query("app", description="app|thumbnails|chromadb|waveforms|all"),
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
     """Clear caches. target: app (pycache+thumbnails+waveforms), thumbnails, chromadb, waveforms, all."""
     import shutil
     cleared = []
@@ -1145,6 +1259,7 @@ def export_media(
     fmt: str,
     in_s: Optional[float] = None,
     out_s: Optional[float] = None,
+    _tok: dict = Depends(require_scopes("media_read")),
 ):
     rec = db.get_record_by_id(media_id)
     if not rec:
@@ -1440,7 +1555,11 @@ class ExportToRequest(BaseModel):
     out_s: Optional[float] = None
 
 @app.post("/api/media/{media_id}/export-to")
-def export_to_file(media_id: int, body: ExportToRequest):
+def export_to_file(
+    media_id: int,
+    body: ExportToRequest,
+    _tok: dict = Depends(require_scopes("media_read")),
+):
     """Export and write directly to a local path (for Tauri native save dialog).
 
     Codex Round-2 Critical fix：原本內聯一份過時的 _blocked denylist（漏掉
@@ -1455,6 +1574,54 @@ def export_to_file(media_id: int, body: ExportToRequest):
     with dest.open("w", encoding="utf-8", newline="") as fh:
         fh.write(content)
     return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
+
+
+# ── Admin Tokens ─────────────────────────────────────────────────────────────
+
+
+@app.post("/api/admin/tokens")
+def admin_create_token(
+    req: CreateTokenRequest,
+    _tok: dict = Depends(require_scopes("admin")),
+):
+    try:
+        return admin.create_token(
+            name=req.name,
+            scopes=req.scopes,
+            description=req.description,
+            expires_in_days=req.expires_in_days,
+            allowed_ips=req.allowed_ips,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/admin/tokens")
+def admin_list_tokens(
+    _tok: dict = Depends(require_scopes("admin")),
+):
+    return {"tokens": admin.list_tokens()}
+
+
+@app.get("/api/admin/tokens/{token_id}")
+def admin_get_token(
+    token_id: str,
+    _tok: dict = Depends(require_scopes("admin")),
+):
+    token = admin.get_token(token_id)
+    if not token:
+        raise HTTPException(404, "Token not found")
+    return token
+
+
+@app.delete("/api/admin/tokens/{token_id}")
+def admin_revoke_token(
+    token_id: str,
+    _tok: dict = Depends(require_scopes("admin")),
+):
+    if not admin.revoke_token(token_id):
+        raise HTTPException(404, "Token not found")
+    return {"ok": True, "deleted": token_id}
 
 
 # ── WebSocket: Ingest Progress ───────────────────────────────────────────
