@@ -1,3 +1,200 @@
+# Codex Result - chat-rag-B.4b
+
+## What Changed
+
+- [x] Implemented `handle_refinement` in `chat.py` using the latest assistant `scene_ids_json`, current media schema fields, LLM JSON filtering, and compilation fallback when there is no prior result set.
+- [x] Implemented `handle_similarity` in `chat.py` using `scene/id <number>` extraction or prior scene fallback; it dynamically calls `vectordb.find_similar` if present and falls back to compilation if not.
+- [x] Implemented `handle_analytics` in `chat.py` with LLM metric extraction, aggregate SQLite queries against existing `processed_at` / `duration_s` columns, and summary generation.
+- [x] Implemented `handle_general` in `chat.py` as pure LLM chat with no vector search.
+- [x] Added GET `/api/chat/history/{conv_id}` and GET `/api/chat/conversations` in `server.py` with `chat_read` scope enforcement.
+- [x] Expanded `tests/test_chat.py` to 12 cases covering all B.4b handlers and both GET endpoints.
+- [x] Updated `CHANGELOG.md`.
+- [ ] External hevin-ai-os roadmap/dev-log were not updated because the documented local paths do not exist on this machine.
+
+## Test Results
+
+Command:
+
+```text
+.venv/bin/python -m py_compile chat.py server.py tests/test_chat.py
+```
+
+Exit code:
+
+```text
+0
+```
+
+Output:
+
+```text
+<no output>
+```
+
+Command:
+
+```text
+.venv/bin/pytest tests/test_chat.py -v
+```
+
+Exit code:
+
+```text
+0
+```
+
+Output:
+
+```text
+============================= test session starts ==============================
+platform darwin -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0 -- /Users/vulturemacmini/code/arkiv/.venv/bin/python3.11
+rootdir: /Users/vulturemacmini/code/arkiv
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 12 items
+
+tests/test_chat.py::test_chat_create_conversation_returns_conv_id PASSED [  8%]
+tests/test_chat.py::test_chat_continues_existing_conversation PASSED     [ 16%]
+tests/test_chat.py::test_chat_requires_chat_write_scope PASSED           [ 25%]
+tests/test_chat.py::test_chat_invalid_conversation_id_returns_400 PASSED [ 33%]
+tests/test_chat.py::test_chat_refinement_filters_prior_results PASSED    [ 41%]
+tests/test_chat.py::test_chat_refinement_without_prior_results_falls_back_to_compilation PASSED [ 50%]
+tests/test_chat.py::test_chat_similarity_uses_reference_id PASSED        [ 58%]
+tests/test_chat.py::test_chat_analytics_count_intent PASSED              [ 66%]
+tests/test_chat.py::test_chat_general_intent_no_vector_search PASSED     [ 75%]
+tests/test_chat.py::test_chat_history_endpoint_returns_messages PASSED   [ 83%]
+tests/test_chat.py::test_chat_history_404_for_missing_conv PASSED        [ 91%]
+tests/test_chat.py::test_chat_conversations_list_endpoint PASSED         [100%]
+
+=============================== warnings summary ===============================
+tests/test_chat.py: 24 warnings
+  /Users/vulturemacmini/code/arkiv/server.py:157: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+tests/test_chat.py: 24 warnings
+  /Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/fastapi/applications.py:4598: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 12 passed, 48 warnings in 0.62s ========================
+```
+
+Command:
+
+```text
+.venv/bin/pytest tests/ -v
+```
+
+Exit code:
+
+```text
+1
+```
+
+Summary output:
+
+```text
+collected 181 items
+tests/test_chat.py::test_chat_create_conversation_returns_conv_id PASSED
+tests/test_chat.py::test_chat_continues_existing_conversation PASSED
+tests/test_chat.py::test_chat_requires_chat_write_scope PASSED
+tests/test_chat.py::test_chat_invalid_conversation_id_returns_400 PASSED
+tests/test_chat.py::test_chat_refinement_filters_prior_results PASSED
+tests/test_chat.py::test_chat_refinement_without_prior_results_falls_back_to_compilation PASSED
+tests/test_chat.py::test_chat_similarity_uses_reference_id PASSED
+tests/test_chat.py::test_chat_analytics_count_intent PASSED
+tests/test_chat.py::test_chat_general_intent_no_vector_search PASSED
+tests/test_chat.py::test_chat_history_endpoint_returns_messages PASSED
+tests/test_chat.py::test_chat_history_404_for_missing_conv PASSED
+tests/test_chat.py::test_chat_conversations_list_endpoint PASSED
+
+FAILED tests/test_mhl.py::test_native_c4_reference_matches_chain - FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\user\\AppData\\Local\\Temp\\ascmhl-native\\ascmhl\\ascmhl_chain.xml'
+FAILED tests/test_offload.py::test_two_destination_copy_and_mhl_verify - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+FAILED tests/test_offload.py::test_hash_mismatch_marks_unverified_after_retries - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+FAILED tests/test_offload.py::test_resume_picks_up_pending_from_state - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+FAILED tests/test_offload.py::test_source_unmount_cleans_partials_and_keeps_completed_files - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+FAILED tests/test_offload.py::test_sidecar_families_all_copy - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
+============ 6 failed, 173 passed, 2 skipped, 262 warnings in 5.74s ============
+```
+
+Command:
+
+```text
+.venv/bin/python health.py
+```
+
+Exit code:
+
+```text
+1
+```
+
+Output:
+
+```text
+
+═══ arkiv Health Check (pc / macos) ═══
+
+-- Python --
+  [PASS] Python >= 3.9 (3.11.15)
+
+-- FFmpeg --
+  [PASS] ffmpeg (/opt/homebrew/bin/ffmpeg)
+  [PASS] ffprobe (/opt/homebrew/bin/ffprobe)
+
+-- Ollama --
+  [PASS] ollama binary (/opt/homebrew/bin/ollama)
+  [FAIL] ollama server (not running)
+
+-- ExifTool --
+  [PASS] exiftool (/opt/homebrew/bin/exiftool)
+
+-- Whisper --
+Traceback (most recent call last):
+  File "/Users/vulturemacmini/code/arkiv/health.py", line 373, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/vulturemacmini/code/arkiv/health.py", line 260, in main
+    import mlx_whisper  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^
+  File "/Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/mlx_whisper/__init__.py", line 3, in <module>
+    from . import audio, decoding, load_models
+  File "/Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/mlx_whisper/decoding.py", line 250, in <module>
+    @mx.compile
+     ^^^^^^^^^^
+RuntimeError: [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.
+Exception ignored in atexit callback: <nanobind.nb_func object at 0x108b44f20>
+RuntimeError: [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.
+```
+
+## REVIEW
+
+- `⚠️ REVIEW:` `health.py` did not pass in this sandbox because Ollama is not running and `mlx_whisper` cannot access a Metal device in the headless macOS session. This is an environment verification failure, not a chat code failure.
+- `⚠️ REVIEW:` The handover pseudocode references media columns that do not exist in the current schema (`description`, `tags`, `location`, `created_at`, `duration_seconds`, `project_name`). B.4b implementation uses actual columns already present in `db.py`: `filename`, `transcript`, `frame_tags`, `processed_at`, and `duration_s`.
+- `⚠️ REVIEW:` `vectordb.find_similar` is not present in this repo. Per the hard constraint not to implement B.4c `vectordb.search(project_scope=...)`, `handle_similarity` dynamically uses `find_similar` if available and falls back to compilation otherwise.
+- `⚠️ REVIEW:` The external roadmap/dev-log paths required by `AGENTS.md` do not exist: `/Users/vulturemacmini/Desktop/hevin-ai-os/references/plans/arkiv/arkiv-roadmap.md` and `/Users/vulturemacmini/Desktop/hevin-ai-os/references/project-logs/arkiv/dev-log.md`.
+
+## Unfinished
+
+- None for the B.4b code/test scope.
+- Environment gate remains unresolved until Ollama is running and Metal is available to `mlx_whisper`.
+
+## Spec Deviations
+
+- Similarity does not add `vectordb.find_similar` to `vectordb.py`; this avoids touching vector DB behavior while B.4c owns project-scope vector work.
+- Analytics omits `by_project` because the current `media` table has no `project_name` column.
+
 # Codex Result - chat-rag-B.4a
 
 ## What Changed

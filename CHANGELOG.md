@@ -1,4 +1,19 @@
 # Changelog
+## Unreleased — Chat RAG B.4b Sub-Dispatch
+
+### New Features
+- **Chat handler expansion** — implemented `refinement`, `similarity`, `analytics`, and `general` handlers in `chat.py`, replacing the B.4b stubs while leaving B.4a classifier/dispatch/persistence helpers unchanged.
+- **Chat read APIs** — added authenticated GET `/api/chat/history/{conv_id}` and GET `/api/chat/conversations` endpoints with `chat_read` scope enforcement.
+
+### Tests
+- Expanded `tests/test_chat.py` from 4 to 12 cases covering refinement fallback/filtering, similarity reference IDs, analytics count, general no-vector path, and both new GET endpoints.
+- Verified `tests/test_chat.py -v` passes 12/12.
+- Full suite now reports 173 passed / 6 known platform-reference failures / 2 skipped on this Mac sandbox.
+
+### Notes
+- Similarity dynamically uses `vectordb.find_similar` when available and falls back to compilation otherwise; `vectordb.search(project_scope=...)` remains untouched for B.4c.
+- Analytics uses the current schema columns (`processed_at`, `duration_s`) rather than the handover pseudocode column names that do not exist in `db.py`.
+
 ## Unreleased — Chat RAG B.4a Baseline
 
 ### New Features

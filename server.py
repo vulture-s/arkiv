@@ -219,6 +219,53 @@ def chat_endpoint(
         latency_ms=result.get("latency_ms", 0),
     )
 
+
+@app.get("/api/chat/history/{conv_id}")
+def get_chat_history(
+    request: Request,
+    conv_id: str,
+    limit: int = 50,
+    _tok: dict = Depends(require_scopes("chat_read")),
+) -> dict:
+    del request, _tok
+    with db.get_conn() as conn:
+        conv = conn.execute(
+            "SELECT id, title, project_scope_json, created_at, updated_at "
+            "FROM chat_conversations WHERE id = ?",
+            (conv_id,),
+        ).fetchone()
+        if not conv:
+            raise HTTPException(status_code=404, detail="conversation not found")
+
+        rows = conn.execute(
+            "SELECT id, role, content, intent, scene_ids_json, tokens_used, stage, "
+            "latency_ms, created_at FROM chat_messages "
+            "WHERE conversation_id = ? ORDER BY created_at ASC LIMIT ?",
+            (conv_id, limit),
+        ).fetchall()
+
+    return {
+        "conversation": dict(conv),
+        "messages": [dict(row) for row in rows],
+    }
+
+
+@app.get("/api/chat/conversations")
+def list_chat_conversations(
+    request: Request,
+    limit: int = 50,
+    _tok: dict = Depends(require_scopes("chat_read")),
+) -> dict:
+    del request, _tok
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, title, project_scope_json, created_at, updated_at "
+            "FROM chat_conversations ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return {"conversations": [dict(row) for row in rows]}
+
+
 @app.get("/api/search/all")
 def search_all(
     q: str = Query(..., alias="q"),

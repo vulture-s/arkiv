@@ -6,6 +6,7 @@ Remaining handlers stay as B.4b stubs.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from nanoid import generate as nanoid_generate
@@ -84,20 +85,220 @@ def handle_compilation(
     }
 
 
-def handle_refinement(*args, **kwargs):
-    raise NotImplementedError("B.4b")
+def _media_summary(row) -> str:
+    parts = [row["filename"] or "untitled"]
+    if row["transcript"]:
+        parts.append(row["transcript"][:120])
+    if row["frame_tags"]:
+        parts.append(row["frame_tags"][:160])
+    return " ".join(parts)
 
 
-def handle_similarity(*args, **kwargs):
-    raise NotImplementedError("B.4b")
+def handle_refinement(
+    prompt: str,
+    history: List[Dict[str, Any]],
+    project_scope: Optional[List[str]],
+    conversation_id: str,
+) -> Dict[str, Any]:
+    with get_conn() as conn:
+        last_assistant = conn.execute(
+            "SELECT scene_ids_json FROM chat_messages "
+            "WHERE conversation_id = ? AND role = 'assistant' AND scene_ids_json IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+
+        if not last_assistant or not last_assistant["scene_ids_json"]:
+            return handle_compilation(prompt, history, project_scope, conversation_id)
+
+        try:
+            prior_ids = json.loads(last_assistant["scene_ids_json"])
+        except (TypeError, ValueError):
+            prior_ids = []
+
+        if not prior_ids:
+            return handle_compilation(prompt, history, project_scope, conversation_id)
+
+        placeholders = ",".join("?" * len(prior_ids))
+        rows = conn.execute(
+            "SELECT id, filename, transcript, frame_tags FROM media "
+            "WHERE id IN ({0})".format(placeholders),
+            prior_ids,
+        ).fetchall()
+
+    scene_text = "; ".join(
+        "{0}: {1}".format(row["id"], _media_summary(row)[:120]) for row in rows
+    )
+    filter_prompt = (
+        "用戶上輪結果 {0} 個 scene，refine 條件：{1}\n"
+        "場景簡述 (id: desc): {2}\n"
+        "回 JSON: {{\"filtered_ids\": [<ids>], \"reason\": \"<一句中文>\"}}"
+    ).format(len(rows), prompt, scene_text)
+    result = llm_chat(filter_prompt, model=ARKIV_CHAT_MODEL, conversation=history, json_mode=True)
+    try:
+        parsed = json.loads(result["text"])
+        filtered = parsed.get("filtered_ids", prior_ids)
+    except (TypeError, ValueError):
+        parsed = {"reason": "filter parse fail，保留全部"}
+        filtered = prior_ids
+
+    if not isinstance(filtered, list):
+        filtered = prior_ids
+    return {
+        "assistant_text": "從 {0} 個 refine 到 {1} 個。{2}".format(
+            len(prior_ids), len(filtered), parsed.get("reason", "")
+        ),
+        "scene_ids": filtered,
+        "intent": "refinement",
+        "tokens_used": result.get("tokens_used", 0),
+        "stage": "done",
+        "latency_ms": result.get("latency_ms", 0),
+    }
 
 
-def handle_analytics(*args, **kwargs):
-    raise NotImplementedError("B.4b")
+def handle_similarity(
+    prompt: str,
+    history: List[Dict[str, Any]],
+    project_scope: Optional[List[str]],
+    conversation_id: str,
+) -> Dict[str, Any]:
+    match = re.search(r"(?:scene|id)\s*(\d+)", prompt, re.IGNORECASE)
+    if match:
+        ref_id = int(match.group(1))
+    else:
+        with get_conn() as conn:
+            last_assistant = conn.execute(
+                "SELECT scene_ids_json FROM chat_messages "
+                "WHERE conversation_id = ? AND role = 'assistant' AND scene_ids_json IS NOT NULL "
+                "ORDER BY created_at DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        if not last_assistant or not last_assistant["scene_ids_json"]:
+            return handle_compilation(prompt, history, project_scope, conversation_id)
+        try:
+            prior_ids = json.loads(last_assistant["scene_ids_json"])
+        except (TypeError, ValueError):
+            prior_ids = []
+        if not prior_ids:
+            return handle_compilation(prompt, history, project_scope, conversation_id)
+        ref_id = int(prior_ids[0])
+
+    import vectordb
+
+    find_similar = getattr(vectordb, "find_similar", None)
+    if find_similar is None:
+        return handle_compilation(prompt, history, project_scope, conversation_id)
+
+    similar = find_similar(ref_id, n_results=20, project_scope=project_scope)
+    summary = llm_chat(
+        "跟 scene {0} 相似的 {1} 個 scene。一句繁中說明。".format(ref_id, len(similar)),
+        model=ARKIV_CHAT_MODEL,
+        conversation=history,
+    )
+    return {
+        "assistant_text": summary["text"],
+        "scene_ids": [r.get("media_id") for r in similar if r.get("media_id")],
+        "intent": "similarity",
+        "tokens_used": summary.get("tokens_used", 0),
+        "stage": "done",
+        "latency_ms": summary.get("latency_ms", 0),
+    }
 
 
-def handle_general(*args, **kwargs):
-    raise NotImplementedError("B.4b")
+def handle_analytics(
+    prompt: str,
+    history: List[Dict[str, Any]],
+    project_scope: Optional[List[str]],
+    conversation_id: str,
+) -> Dict[str, Any]:
+    del project_scope, conversation_id
+    analytics_prompt = (
+        "從用戶問題抓出統計參數，回 JSON：\n"
+        "{{\"metric\": \"count\" | \"duration_sum\" | \"by_month\", "
+        "\"time_range\": {{\"start\": \"YYYY-MM\" or null, \"end\": \"YYYY-MM\" or null}}}}\n"
+        "用戶問：{0}"
+    ).format(prompt)
+    params_result = llm_chat(
+        analytics_prompt,
+        model=ARKIV_INTENT_MODEL,
+        conversation=history,
+        json_mode=True,
+    )
+    try:
+        params = json.loads(params_result["text"])
+    except (TypeError, ValueError):
+        params = {"metric": "count", "time_range": {"start": None, "end": None}}
+    if not isinstance(params, dict):
+        params = {"metric": "count", "time_range": {"start": None, "end": None}}
+    if not isinstance(params.get("time_range"), dict):
+        params["time_range"] = {"start": None, "end": None}
+
+    where = ""
+    args = []
+    if params["time_range"].get("start"):
+        where += " AND processed_at >= ?"
+        args.append(params["time_range"]["start"] + "-01")
+    if params["time_range"].get("end"):
+        where += " AND processed_at < ?"
+        args.append(params["time_range"]["end"] + "-32")
+
+    metric = params.get("metric", "count")
+    with get_conn() as conn:
+        if metric == "duration_sum":
+            row = conn.execute(
+                "SELECT COALESCE(SUM(duration_s), 0) AS s FROM media WHERE 1=1 {0}".format(where),
+                args,
+            ).fetchone()
+            stat = "總時長 {0:.1f} 小時".format((row["s"] or 0) / 3600)
+        elif metric == "by_month":
+            rows = conn.execute(
+                "SELECT substr(processed_at, 1, 7) AS month, COUNT(*) AS n "
+                "FROM media WHERE 1=1 {0} GROUP BY month ORDER BY month".format(where),
+                args,
+            ).fetchall()
+            stat = "\n".join("- {0}: {1}".format(r["month"], r["n"]) for r in rows)
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM media WHERE 1=1 {0}".format(where),
+                args,
+            ).fetchone()
+            stat = "找到 {0} 個 media".format(row["n"])
+
+    summary = llm_chat(
+        "統計結果：\n{0}\n用一段繁中描述。".format(stat),
+        model=ARKIV_CHAT_MODEL,
+        conversation=history,
+    )
+    return {
+        "assistant_text": summary["text"],
+        "scene_ids": [],
+        "intent": "analytics",
+        "tokens_used": params_result.get("tokens_used", 0) + summary.get("tokens_used", 0),
+        "stage": "done",
+        "latency_ms": params_result.get("latency_ms", 0) + summary.get("latency_ms", 0),
+    }
+
+
+def handle_general(
+    prompt: str,
+    history: List[Dict[str, Any]],
+    project_scope: Optional[List[str]],
+    conversation_id: str,
+) -> Dict[str, Any]:
+    del project_scope, conversation_id
+    system = (
+        "你是 arkiv video archive 助手。用戶問題不需要查 video 庫，請直接回答。"
+        "如果用戶其實想找 scene，提示他換問法（例：『給我所有黃昏鏡頭』）。"
+    )
+    result = llm_chat(prompt, model=ARKIV_CHAT_MODEL, system=system, conversation=history)
+    return {
+        "assistant_text": result["text"],
+        "scene_ids": [],
+        "intent": "general",
+        "tokens_used": result.get("tokens_used", 0),
+        "stage": "done",
+        "latency_ms": result.get("latency_ms", 0),
+    }
 
 
 HANDLERS = {
