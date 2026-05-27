@@ -167,6 +167,34 @@ def init_db():
                 conn.execute(f"ALTER TABLE frames ADD COLUMN {col} {typ}")
             except Exception:
                 pass
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS access_tokens (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                token_hash TEXT UNIQUE NOT NULL,
+                expires_at TEXT,
+                allowed_ips_json TEXT NOT NULL DEFAULT '["*"]',
+                last_used_at TEXT,
+                last_used_ip TEXT,
+                last_used_user_agent TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS access_token_scopes (
+                token_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                PRIMARY KEY (token_id, scope),
+                FOREIGN KEY (token_id) REFERENCES access_tokens(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens(token_hash)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_access_token_scopes_token_id ON access_token_scopes(token_id)"
+        )
 
 
 def migrate_to_relative():
