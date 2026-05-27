@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import requests
 from fastapi.testclient import TestClient
 from unittest.mock import patch
 
@@ -167,12 +168,15 @@ def test_chat_similarity_uses_reference_id(fastapi_client):
         mock_cls.return_value = _intent("similarity")
         mock_similar.return_value = [{"media_id": 11}, {"media_id": 12}]
         mock_chat.return_value = {"text": "找到相似鏡頭", "tokens_used": 25, "latency_ms": 9}
-        response = fastapi_client.post("/api/chat", json={"prompt": "跟 scene 42 像的"})
+        response = fastapi_client.post(
+            "/api/chat",
+            json={"prompt": "跟 scene 42 像的", "project_scope": ["projectA"]},
+        )
 
     assert response.status_code == 200
     assert response.json()["intent"] == "similarity"
     assert response.json()["scene_ids"] == [11, 12]
-    mock_similar.assert_called_once_with(42, n_results=20, project_scope=None)
+    mock_similar.assert_called_once_with(42, n_results=20, project_scope=["projectA"])
 
 
 def test_chat_analytics_count_intent(fastapi_client, tmp_db, sample_record):
@@ -241,3 +245,91 @@ def test_chat_conversations_list_endpoint(fastapi_client):
     ids = [item["id"] for item in response.json()["conversations"]]
     assert first in ids
     assert second in ids
+
+
+def test_chat_handles_ollama_timeout(fastapi_client):
+    with patch("chat.classify_intent", side_effect=requests.exceptions.Timeout):
+        response = fastapi_client.post("/api/chat", json={"prompt": "test"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "暫時無回應" in data["assistant_text"]
+    assert data["intent"] == "general"
+    assert data["scene_ids"] == []
+
+
+def test_chat_trims_oversize_prompt(fastapi_client):
+    long_prompt = "x" * 10000
+    with patch("chat.classify_intent") as mock_cls, patch("chat.llm_chat") as mock_chat, patch("chat.vector_search") as mock_search:
+        mock_cls.return_value = _intent("general")
+        mock_chat.return_value = {"text": "ok", "tokens_used": 10, "latency_ms": 2}
+        response = fastapi_client.post("/api/chat", json={"prompt": long_prompt})
+
+    assert response.status_code == 200
+    called_prompt = mock_cls.call_args.args[0]
+    assert len(called_prompt) <= 4000
+    assert "prompt 過長已截斷" in called_prompt
+    mock_search.assert_not_called()
+
+
+def test_chat_classifier_fallback_on_invalid_intent(fastapi_client):
+    with patch("chat.llm_chat") as mock_chat, patch("chat.vector_search") as mock_search:
+        mock_chat.return_value = {
+            "text": '{"intent": "bogus_intent", "search_params": {"query": "x"}, "limit": 999}',
+            "tokens_used": 50,
+            "latency_ms": 10,
+        }
+        response = fastapi_client.post("/api/chat", json={"prompt": "test"})
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "general"
+    mock_search.assert_not_called()
+
+
+def test_chat_project_scope_passes_to_vectordb(fastapi_client):
+    with patch("chat.classify_intent") as mock_cls, patch("chat.llm_chat") as mock_chat, patch("chat.vector_search") as mock_search:
+        mock_cls.return_value = _intent("compilation")
+        mock_chat.return_value = {"text": "scoped result", "tokens_used": 20, "latency_ms": 8}
+        mock_search.return_value = [{"media_id": 7}]
+        response = fastapi_client.post(
+            "/api/chat",
+            json={"prompt": "test", "project_scope": ["projectA"]},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["scene_ids"] == [7]
+    assert mock_search.call_args.kwargs.get("project_scope") == ["projectA"]
+
+
+def test_chat_full_flow_compilation_to_refinement(fastapi_client, tmp_db, sample_record):
+    import db
+
+    ids = _seed_media(db, sample_record, count=3)
+    with patch("chat.classify_intent") as mock_cls, patch("chat.llm_chat") as mock_chat, patch("chat.vector_search") as mock_search:
+        mock_cls.side_effect = [
+            _intent("compilation"),
+            _intent("compilation"),
+            _intent("refinement"),
+        ]
+        mock_search.return_value = [{"media_id": ids[0]}, {"media_id": ids[1]}, {"media_id": ids[2]}]
+        mock_chat.side_effect = [
+            {"text": "先找到 3 個鏡頭", "tokens_used": 20, "latency_ms": 8},
+            {
+                "text": json.dumps({"filtered_ids": ids[:1], "reason": "只保留第一個"}),
+                "tokens_used": 30,
+                "latency_ms": 9,
+            },
+        ]
+
+        first = fastapi_client.post("/api/chat", json={"prompt": "給我訪談鏡頭"})
+        conv_id = first.json()["conversation_id"]
+        second = fastapi_client.post(
+            "/api/chat",
+            json={"prompt": "只要第一個", "conversation_id": conv_id},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["scene_ids"] == ids
+    assert second.json()["intent"] == "refinement"
+    assert second.json()["scene_ids"] == ids[:1]

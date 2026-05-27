@@ -54,6 +54,7 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 ## Features
 
 - **Semantic search** — query in natural language (Chinese/English/Japanese)
+- **Chat RAG over your video library** — 5-intent assistant for compilation searches, refinement, similarity, analytics, and general questions with persisted conversation memory
 - **AI transcription** — Whisper large-v3-turbo + Silero VAD + LLM polish (Apple Silicon MLX / NVIDIA CUDA)
 - **4-layer anti-hallucination guard** — VAD silence filter → no_speech threshold → blank/repeat filter → LLM correction
 - **Frame analysis** — qwen3-vl:8b vision descriptions with brand/object recognition
@@ -100,7 +101,32 @@ Use the token in requests:
 curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
 ```
 
-Available scopes: `videos_read`, `videos_write`, `media_read`, `collections_read`, `collections_write`, `projects_read`, `projects_write`, `ingest_write`, `admin`
+Available scopes: `videos_read`, `videos_write`, `media_read`, `collections_read`, `collections_write`, `projects_read`, `projects_write`, `ingest_write`, `chat_read`, `chat_write`, `admin`
+
+### Chat API — RAG over your video library
+
+Ask natural-language questions about your archive:
+
+- "Give me all sunset shots from May" → `compilation`
+- "Only the indoor ones" → `refinement`
+- "Similar to scene 42" → `similarity`
+- "How many hours did I shoot this month?" → `analytics`
+
+The classifier routes prompts to specialized handlers, stores conversation history, and threads the last 10 messages into the next response.
+
+```bash
+# Create a conversation
+curl -X POST http://localhost:8501/api/chat \
+  -H "Authorization: Bearer $ARKIV_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Give me all sunset shots"}'
+
+# Continue the same conversation
+curl -X POST http://localhost:8501/api/chat \
+  -H "Authorization: Bearer $ARKIV_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Only indoor ones", "conversation_id": "abc123"}'
+```
 
 ## Quick Start
 

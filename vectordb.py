@@ -5,6 +5,8 @@ Vector DB module — ChromaDB + Ollama nomic-embed-text
 import json
 import re
 import requests
+from typing import Any, Dict, List, Optional
+
 import chromadb
 
 from config import CHROMA_PATH, COLLECTION_NAME, EMBED_MODEL, OLLAMA_URL
@@ -19,13 +21,13 @@ EMBED_MAX_CHARS = 2000  # hard cap before sending to Ollama
 
 # ── Embedding ────────────────────────────────────────────────────────────────
 
-def embed_batch(texts: list[str]) -> list[list[float]]:
+def embed_batch(texts: List[str]) -> List[List[float]]:
     return [embed(t) for t in texts]
 
 
 # ── Chunking ─────────────────────────────────────────────────────────────────
 
-def _split_sentences(text: str) -> list[str]:
+def _split_sentences(text: str) -> List[str]:
     parts = re.split(r"(?<=[。？！.?!])\s*", text.strip())
     return [p.strip() for p in parts if p.strip()]
 
@@ -35,7 +37,7 @@ def _is_cjk(text: str) -> bool:
     return cjk > 20
 
 
-def chunk_text(text: str) -> list[str]:
+def chunk_text(text: str) -> List[str]:
     """Split text into overlapping chunks. Uses char-count for CJK, word-count for Latin."""
     sentences = _split_sentences(text)
     cjk = _is_cjk(text)
@@ -135,6 +137,7 @@ def upsert_record(col, record: dict) -> int:
         "duration_s": record.get("duration_s") or 0,
         "lang": record.get("lang") or "",
         "has_audio": record.get("has_audio") or 0,
+        "project_name": record.get("project_name") or "",
     }
 
     ids, embeddings, documents, metadatas = [], [], [], []
@@ -159,27 +162,35 @@ def upsert_record(col, record: dict) -> int:
     return len(ids)
 
 
-# ── Search ────────────────────────────────────────────────────────────────────
+def _scope_where(project_scope: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+    if not project_scope:
+        return None
+    return {"project_name": {"$in": project_scope}}
 
-def search(query: str, n_results: int = 10) -> list[dict]:
-    """
-    Semantic search. Returns deduplicated results (one per media file),
-    sorted by best cosine similarity.
-    """
-    col = get_collection()
-    q_embed = embed(query)
-    raw = col.query(
-        query_embeddings=[q_embed],
-        n_results=min(n_results * 3, col.count() or 1),
-        include=["documents", "metadatas", "distances"],
-    )
 
-    seen, results = set(), []
-    for doc, meta, dist in zip(
-        raw["documents"][0], raw["metadatas"][0], raw["distances"][0]
-    ):
+def _query_collection(col, query_embeddings, n_results, project_scope=None):
+    kwargs = {
+        "query_embeddings": query_embeddings,
+        "n_results": n_results,
+        "include": ["documents", "metadatas", "distances"],
+    }
+    where = _scope_where(project_scope)
+    if where:
+        kwargs["where"] = where
+    return col.query(**kwargs)
+
+
+def _process_query_results(raw: Dict[str, Any], n_results: int, skip_media_ids=None) -> List[Dict[str, Any]]:
+    skip = skip_media_ids or set()
+    seen = set()
+    results = []
+    documents = raw.get("documents") or [[]]
+    metadatas = raw.get("metadatas") or [[]]
+    distances = raw.get("distances") or [[]]
+
+    for doc, meta, dist in zip(documents[0], metadatas[0], distances[0]):
         media_id = meta["media_id"]
-        if media_id in seen:
+        if media_id in skip or media_id in seen:
             continue
         seen.add(media_id)
         results.append({
@@ -196,3 +207,57 @@ def search(query: str, n_results: int = 10) -> list[dict]:
             break
 
     return results
+
+
+# ── Search ────────────────────────────────────────────────────────────────────
+
+def search(
+    query: str,
+    n_results: int = 10,
+    project_scope: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Semantic search. Returns deduplicated results (one per media file),
+    sorted by best cosine similarity.
+    """
+    col = get_collection()
+    q_embed = embed(query)
+    raw = _query_collection(
+        col,
+        [q_embed],
+        min(n_results * 3, col.count() or 1),
+        project_scope=project_scope,
+    )
+    return _process_query_results(raw, n_results)
+
+
+def find_similar(
+    media_id: int,
+    n_results: int = 10,
+    project_scope: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Find media near the first indexed chunk for media_id.
+    """
+    col = get_collection()
+    media_id_str = str(media_id)
+    ref = col.get(
+        where={"media_id": media_id_str},
+        include=["embeddings"],
+        limit=1,
+    )
+    embeddings = ref.get("embeddings") or []
+    if not embeddings:
+        return []
+
+    raw = _query_collection(
+        col,
+        [embeddings[0]],
+        min((n_results + 1) * 3, col.count() or 1),
+        project_scope=project_scope,
+    )
+    return _process_query_results(
+        raw,
+        n_results,
+        skip_media_ids=set([media_id_str]),
+    )

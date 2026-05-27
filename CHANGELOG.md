@@ -1,4 +1,20 @@
 # Changelog
+## v0.5.0 - 2026-05-28
+
+### Added — Chat: RAG over your video library
+- **5-intent classifier** routes natural-language prompts to specialized handlers: `compilation`, `refinement`, `similarity`, `analytics`, and `general`.
+- **Conversation memory** persists chat messages and scene IDs, then feeds recent history into follow-up prompts.
+- **Project-scoped vector search** adds `project_scope` filtering to `vectordb.search()` and `vectordb.find_similar()`.
+- **Chat API docs** in README EN / zh-TW describe intent examples and authenticated curl quickstarts.
+
+### Hardening
+- Chat dispatch now handles Ollama `Timeout` / `ConnectionError` without returning HTTP 500.
+- Oversize prompts are trimmed before classification and handler execution.
+- Invalid or empty classifier intents fall back to `general`, and classifier limits are capped at 100.
+
+### Tests
+- Expanded `tests/test_chat.py` to 17 cases covering timeout handling, prompt trimming, classifier fallback, project scope propagation, and compilation-to-refinement flow.
+
 ## Unreleased — Chat RAG B.4b Sub-Dispatch
 
 ### New Features

@@ -54,6 +54,7 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 ## 功能特色
 
 - **語義搜尋** — 用自然語言查詢（中文／英文／日文）
+- **素材庫 Chat RAG** — 5-intent 助手支援素材清單搜尋、延伸篩選、相似鏡頭、統計與一般問答，並保留對話記憶
 - **AI 轉錄** — Whisper large-v3-turbo + Silero VAD + LLM 潤稿（Apple Silicon MLX / NVIDIA CUDA）
 - **四層反幻覺防護** — VAD 靜音過濾 → no_speech 門檻 → 空白/重複過濾 → LLM 校正
 - **幀分析** — qwen3-vl:8b 視覺描述，含品牌/物件辨識
@@ -100,7 +101,32 @@ python arkiv_token.py revoke <token-id>
 curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
 ```
 
-可用 scopes：`videos_read`、`videos_write`、`media_read`、`collections_read`、`collections_write`、`projects_read`、`projects_write`、`ingest_write`、`admin`
+可用 scopes：`videos_read`、`videos_write`、`media_read`、`collections_read`、`collections_write`、`projects_read`、`projects_write`、`ingest_write`、`chat_read`、`chat_write`、`admin`
+
+### Chat API — 素材庫 RAG 問答
+
+你可以用自然語言詢問素材庫：
+
+- 「給我五月所有黃昏鏡頭」→ `compilation`
+- 「只要室內的」→ `refinement`
+- 「找跟 scene 42 類似的」→ `similarity`
+- 「這個月總共拍了幾小時？」→ `analytics`
+
+分類器會把 prompt 交給對應 handler，對話歷史會寫入資料庫，下一輪回應會帶入最近 10 則訊息。
+
+```bash
+# 建立對話
+curl -X POST http://localhost:8501/api/chat \
+  -H "Authorization: Bearer $ARKIV_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "給我所有黃昏鏡頭"}'
+
+# 延續同一個對話
+curl -X POST http://localhost:8501/api/chat \
+  -H "Authorization: Bearer $ARKIV_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "只要室內的", "conversation_id": "abc123"}'
+```
 
 ## 快速開始
 

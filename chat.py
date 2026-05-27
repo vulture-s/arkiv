@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import requests
 from typing import Any, Dict, List, Optional
 
 from nanoid import generate as nanoid_generate
@@ -28,6 +29,15 @@ INTENT_PROMPT = """你是 video archive 助手。將用戶 prompt 分類成下�
 回 JSON: {"intent": "<one of above>", "search_params": {"query": "<extracted keyword>"}, "limit": <int default 20>}
 """
 
+MAX_PROMPT_CHARS = 4000
+KNOWN_INTENTS = {"compilation", "refinement", "similarity", "analytics", "general"}
+
+
+def _trim_prompt(prompt: str) -> str:
+    if len(prompt) <= MAX_PROMPT_CHARS:
+        return prompt
+    return prompt[:MAX_PROMPT_CHARS - 50] + "\n[...prompt 過長已截斷]"
+
 
 def classify_intent(prompt: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
     result = llm_chat(
@@ -44,6 +54,8 @@ def classify_intent(prompt: str, history: List[Dict[str, Any]]) -> Dict[str, Any
 
     if not isinstance(parsed, dict):
         parsed = {"intent": "general", "search_params": {"query": prompt}, "limit": 20}
+    if parsed.get("intent") not in KNOWN_INTENTS:
+        parsed["intent"] = "general"
     if not isinstance(parsed.get("search_params"), dict):
         parsed["search_params"] = {"query": prompt}
     if not parsed["search_params"].get("query"):
@@ -52,6 +64,7 @@ def classify_intent(prompt: str, history: List[Dict[str, Any]]) -> Dict[str, Any
         parsed["limit"] = int(parsed.get("limit", 20))
     except (TypeError, ValueError):
         parsed["limit"] = 20
+    parsed["limit"] = min(parsed["limit"], 100)
 
     parsed["tokens_used"] = result.get("tokens_used", 0)
     parsed["latency_ms"] = result.get("latency_ms", 0)
@@ -64,11 +77,12 @@ def handle_compilation(
     project_scope: Optional[List[str]],
     conversation_id: str,
 ) -> Dict[str, Any]:
-    del project_scope, conversation_id
+    del conversation_id
     intent = classify_intent(prompt, history)
     results = vector_search(
         intent["search_params"]["query"],
         n_results=intent.get("limit", 20),
+        project_scope=project_scope,
     )
     summary_prompt = (
         "用戶問：{0}\n搜到 {1} 個 scene。"
@@ -334,10 +348,42 @@ def dispatch(
     conversation_id: str,
     project_scope: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
+    prompt = _trim_prompt(prompt)
     history = load_history(conversation_id, limit=10)
-    intent_result = classify_intent(prompt, history)
-    handler = HANDLERS.get(intent_result.get("intent"), handle_compilation)
-    return handler(prompt, history, project_scope, conversation_id)
+    try:
+        intent_result = classify_intent(prompt, history)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+        return {
+            "assistant_text": "LLM 服務暫時無回應（{0}），請稍後再試。".format(
+                type(exc).__name__
+            ),
+            "scene_ids": [],
+            "tokens_used": 0,
+            "stage": "error",
+            "intent": "general",
+            "latency_ms": 0,
+        }
+
+    intent = intent_result.get("intent")
+    if intent not in KNOWN_INTENTS:
+        intent = "general"
+    handler = HANDLERS.get(intent, handle_general)
+    try:
+        result = handler(prompt, history, project_scope, conversation_id)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+        return {
+            "assistant_text": "處理時 LLM 失聯（{0}），已記錄 intent={1}。".format(
+                type(exc).__name__,
+                intent,
+            ),
+            "scene_ids": [],
+            "tokens_used": intent_result.get("tokens_used", 0),
+            "stage": "error",
+            "intent": intent,
+            "latency_ms": intent_result.get("latency_ms", 0),
+        }
+    result["intent"] = result.get("intent", intent)
+    return result
 
 
 def create_conversation(

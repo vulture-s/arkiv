@@ -1,49 +1,21 @@
-# Codex Result - chat-rag-B.4b
+# CODEX_RESULT — B.4c Chat RAG v0.5.0
 
-## What Changed
+## Completed
 
-- [x] Implemented `handle_refinement` in `chat.py` using the latest assistant `scene_ids_json`, current media schema fields, LLM JSON filtering, and compilation fallback when there is no prior result set.
-- [x] Implemented `handle_similarity` in `chat.py` using `scene/id <number>` extraction or prior scene fallback; it dynamically calls `vectordb.find_similar` if present and falls back to compilation if not.
-- [x] Implemented `handle_analytics` in `chat.py` with LLM metric extraction, aggregate SQLite queries against existing `processed_at` / `duration_s` columns, and summary generation.
-- [x] Implemented `handle_general` in `chat.py` as pure LLM chat with no vector search.
-- [x] Added GET `/api/chat/history/{conv_id}` and GET `/api/chat/conversations` in `server.py` with `chat_read` scope enforcement.
-- [x] Expanded `tests/test_chat.py` to 12 cases covering all B.4b handlers and both GET endpoints.
-- [x] Updated `CHANGELOG.md`.
-- [ ] External hevin-ai-os roadmap/dev-log were not updated because the documented local paths do not exist on this machine.
+- [x] Added chat edge defenses in `chat.py`: Ollama timeout/connection handling, oversize prompt trimming, invalid/empty intent fallback, and classifier limit cap.
+- [x] Passed `project_scope` from chat compilation/similarity paths into vector search.
+- [x] Implemented `project_scope` Chroma filtering in `vectordb.search()` and added `vectordb.find_similar()`.
+- [x] Added B.4c integration coverage in `tests/test_chat.py`; chat suite now has 17 cases.
+- [x] Updated README EN / zh-TW with Chat RAG feature and API quickstart.
+- [x] Added `CHANGELOG.md` v0.5.0 entry.
+- [x] Did not touch protected files: `auth.py`, `db.py`, `ingest.py`, `mhl.py`, `offload.py`, `camera_report.py`, `src-tauri/*`, or `docs/*` except the requested README files.
+- [x] Did not run `git add`.
 
 ## Test Results
 
-Command:
+### `.venv/bin/pytest tests/test_chat.py -v`
 
-```text
-.venv/bin/python -m py_compile chat.py server.py tests/test_chat.py
-```
-
-Exit code:
-
-```text
-0
-```
-
-Output:
-
-```text
-<no output>
-```
-
-Command:
-
-```text
-.venv/bin/pytest tests/test_chat.py -v
-```
-
-Exit code:
-
-```text
-0
-```
-
-Output:
+Exit code: 0
 
 ```text
 ============================= test session starts ==============================
@@ -52,97 +24,69 @@ rootdir: /Users/vulturemacmini/code/arkiv
 configfile: pytest.ini
 plugins: asyncio-1.4.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collecting ... collected 12 items
+collecting ... collected 17 items
 
-tests/test_chat.py::test_chat_create_conversation_returns_conv_id PASSED [  8%]
-tests/test_chat.py::test_chat_continues_existing_conversation PASSED     [ 16%]
-tests/test_chat.py::test_chat_requires_chat_write_scope PASSED           [ 25%]
-tests/test_chat.py::test_chat_invalid_conversation_id_returns_400 PASSED [ 33%]
-tests/test_chat.py::test_chat_refinement_filters_prior_results PASSED    [ 41%]
-tests/test_chat.py::test_chat_refinement_without_prior_results_falls_back_to_compilation PASSED [ 50%]
-tests/test_chat.py::test_chat_similarity_uses_reference_id PASSED        [ 58%]
-tests/test_chat.py::test_chat_analytics_count_intent PASSED              [ 66%]
-tests/test_chat.py::test_chat_general_intent_no_vector_search PASSED     [ 75%]
-tests/test_chat.py::test_chat_history_endpoint_returns_messages PASSED   [ 83%]
-tests/test_chat.py::test_chat_history_404_for_missing_conv PASSED        [ 91%]
-tests/test_chat.py::test_chat_conversations_list_endpoint PASSED         [100%]
+tests/test_chat.py::test_chat_create_conversation_returns_conv_id PASSED [  5%]
+tests/test_chat.py::test_chat_continues_existing_conversation PASSED     [ 11%]
+tests/test_chat.py::test_chat_requires_chat_write_scope PASSED           [ 17%]
+tests/test_chat.py::test_chat_invalid_conversation_id_returns_400 PASSED [ 23%]
+tests/test_chat.py::test_chat_refinement_filters_prior_results PASSED    [ 29%]
+tests/test_chat.py::test_chat_refinement_without_prior_results_falls_back_to_compilation PASSED [ 35%]
+tests/test_chat.py::test_chat_similarity_uses_reference_id PASSED        [ 41%]
+tests/test_chat.py::test_chat_analytics_count_intent PASSED              [ 47%]
+tests/test_chat.py::test_chat_general_intent_no_vector_search PASSED     [ 52%]
+tests/test_chat.py::test_chat_history_endpoint_returns_messages PASSED   [ 58%]
+tests/test_chat.py::test_chat_history_404_for_missing_conv PASSED        [ 64%]
+tests/test_chat.py::test_chat_conversations_list_endpoint PASSED         [ 70%]
+tests/test_chat.py::test_chat_handles_ollama_timeout PASSED              [ 76%]
+tests/test_chat.py::test_chat_trims_oversize_prompt PASSED               [ 82%]
+tests/test_chat.py::test_chat_classifier_fallback_on_invalid_intent PASSED [ 88%]
+tests/test_chat.py::test_chat_project_scope_passes_to_vectordb PASSED    [ 94%]
+tests/test_chat.py::test_chat_full_flow_compilation_to_refinement PASSED [100%]
 
 =============================== warnings summary ===============================
-tests/test_chat.py: 24 warnings
+tests/test_chat.py: 34 warnings
   /Users/vulturemacmini/code/arkiv/server.py:157: DeprecationWarning:
           on_event is deprecated, use lifespan event handlers instead.
 
-          Read more about it in the
-          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-
-    @app.on_event("startup")
-
-tests/test_chat.py: 24 warnings
+tests/test_chat.py: 34 warnings
   /Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/fastapi/applications.py:4598: DeprecationWarning:
           on_event is deprecated, use lifespan event handlers instead.
 
-          Read more about it in the
-          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-
-    return self.router.on_event(event_type)  # ty: ignore[deprecated]
-
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-======================= 12 passed, 48 warnings in 0.62s ========================
+======================= 17 passed, 68 warnings in 0.86s ========================
 ```
 
-Command:
+### `.venv/bin/pytest tests/ -v`
+
+Exit code: 1
 
 ```text
-.venv/bin/pytest tests/ -v
+Collected 186 items.
+178 passed, 2 skipped, 6 failed, 282 warnings in 5.97s.
+
+Failed tests:
+- tests/test_mhl.py::test_native_c4_reference_matches_chain
+- tests/test_offload.py::test_two_destination_copy_and_mhl_verify
+- tests/test_offload.py::test_hash_mismatch_marks_unverified_after_retries
+- tests/test_offload.py::test_resume_picks_up_pending_from_state
+- tests/test_offload.py::test_source_unmount_cleans_partials_and_keeps_completed_files
+- tests/test_offload.py::test_sidecar_families_all_copy
+
+Failure reasons observed:
+- test_mhl.py fails with FileNotFoundError for Windows-native reference path:
+  C:\Users\user\AppData\Local\Temp\ascmhl-native\ascmhl\ascmhl_chain.xml
+- test_offload.py failures share the existing git fixture failure:
+  fatal: invalid object name 'feat/13.1-mhl-v2'
 ```
 
-Exit code:
+### `.venv/bin/python health.py`
+
+Exit code: 1
 
 ```text
-1
-```
-
-Summary output:
-
-```text
-collected 181 items
-tests/test_chat.py::test_chat_create_conversation_returns_conv_id PASSED
-tests/test_chat.py::test_chat_continues_existing_conversation PASSED
-tests/test_chat.py::test_chat_requires_chat_write_scope PASSED
-tests/test_chat.py::test_chat_invalid_conversation_id_returns_400 PASSED
-tests/test_chat.py::test_chat_refinement_filters_prior_results PASSED
-tests/test_chat.py::test_chat_refinement_without_prior_results_falls_back_to_compilation PASSED
-tests/test_chat.py::test_chat_similarity_uses_reference_id PASSED
-tests/test_chat.py::test_chat_analytics_count_intent PASSED
-tests/test_chat.py::test_chat_general_intent_no_vector_search PASSED
-tests/test_chat.py::test_chat_history_endpoint_returns_messages PASSED
-tests/test_chat.py::test_chat_history_404_for_missing_conv PASSED
-tests/test_chat.py::test_chat_conversations_list_endpoint PASSED
-
-FAILED tests/test_mhl.py::test_native_c4_reference_matches_chain - FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\user\\AppData\\Local\\Temp\\ascmhl-native\\ascmhl\\ascmhl_chain.xml'
-FAILED tests/test_offload.py::test_two_destination_copy_and_mhl_verify - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-FAILED tests/test_offload.py::test_hash_mismatch_marks_unverified_after_retries - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-FAILED tests/test_offload.py::test_resume_picks_up_pending_from_state - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-FAILED tests/test_offload.py::test_source_unmount_cleans_partials_and_keeps_completed_files - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-FAILED tests/test_offload.py::test_sidecar_families_all_copy - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-============ 6 failed, 173 passed, 2 skipped, 262 warnings in 5.74s ============
-```
-
-Command:
-
-```text
-.venv/bin/python health.py
-```
-
-Exit code:
-
-```text
-1
-```
-
-Output:
-
-```text
+Traceback (most recent call last):
+  File "/Users/vulturemacmini/code/arkiv/health.py", line 373, in <module>
 
 ═══ arkiv Health Check (pc / macos) ═══
 
@@ -161,8 +105,6 @@ Output:
   [PASS] exiftool (/opt/homebrew/bin/exiftool)
 
 -- Whisper --
-Traceback (most recent call last):
-  File "/Users/vulturemacmini/code/arkiv/health.py", line 373, in <module>
     sys.exit(main())
              ^^^^^^
   File "/Users/vulturemacmini/code/arkiv/health.py", line 260, in main
@@ -174,460 +116,83 @@ Traceback (most recent call last):
     @mx.compile
      ^^^^^^^^^^
 RuntimeError: [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.
-Exception ignored in atexit callback: <nanobind.nb_func object at 0x108b44f20>
+Exception ignored in atexit callback: <nanobind.nb_func object at 0x108c1cf20>
 RuntimeError: [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.
 ```
 
-## REVIEW
+### `bash smoke-test.sh`
 
-- `⚠️ REVIEW:` `health.py` did not pass in this sandbox because Ollama is not running and `mlx_whisper` cannot access a Metal device in the headless macOS session. This is an environment verification failure, not a chat code failure.
-- `⚠️ REVIEW:` The handover pseudocode references media columns that do not exist in the current schema (`description`, `tags`, `location`, `created_at`, `duration_seconds`, `project_name`). B.4b implementation uses actual columns already present in `db.py`: `filename`, `transcript`, `frame_tags`, `processed_at`, and `duration_s`.
-- `⚠️ REVIEW:` `vectordb.find_similar` is not present in this repo. Per the hard constraint not to implement B.4c `vectordb.search(project_scope=...)`, `handle_similarity` dynamically uses `find_similar` if available and falls back to compilation otherwise.
-- `⚠️ REVIEW:` The external roadmap/dev-log paths required by `AGENTS.md` do not exist: `/Users/vulturemacmini/Desktop/hevin-ai-os/references/plans/arkiv/arkiv-roadmap.md` and `/Users/vulturemacmini/Desktop/hevin-ai-os/references/project-logs/arkiv/dev-log.md`.
+Exit code: 1
 
-## Unfinished
+```text
+═══ arkiv Smoke Test (pc) ═══
 
-- None for the B.4b code/test scope.
-- Environment gate remains unresolved until Ollama is running and Metal is available to `mlx_whisper`.
+── Environment ──
+Traceback (most recent call last):
+  File "/Users/vulturemacmini/code/arkiv/health.py", line 373, in <module>
+
+═══ arkiv Health Check (pc / macos) ═══
+
+-- Python --
+  [PASS] Python >= 3.9 (3.11.15)
+
+-- FFmpeg --
+  [PASS] ffmpeg (/opt/homebrew/bin/ffmpeg)
+  [PASS] ffprobe (/opt/homebrew/bin/ffprobe)
+
+-- Ollama --
+  [PASS] ollama binary (/opt/homebrew/bin/ollama)
+  [FAIL] ollama server (not running)
+
+-- ExifTool --
+  [PASS] exiftool (/opt/homebrew/bin/exiftool)
+
+-- Whisper --
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/vulturemacmini/code/arkiv/health.py", line 260, in main
+    import mlx_whisper  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^
+  File "/Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/mlx_whisper/__init__.py", line 3, in <module>
+    from . import audio, decoding, load_models
+  File "/Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/mlx_whisper/decoding.py", line 250, in <module>
+    @mx.compile
+     ^^^^^^^^^^
+RuntimeError: [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.
+Exception ignored in atexit callback: <nanobind.nb_func object at 0x108c1cf20>
+RuntimeError: [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.
+
+── Server ──
+  ✗ Server reachable HTTP 000000
+── API Endpoints ──
+  ✗ GET /api/media?limit=1 HTTP 000000
+  ✗ GET /api/stats HTTP 000000
+  ✗ GET /api/tags HTTP 000000
+  ✗ GET /api/duration-by-lang HTTP 000000
+  ✗ GET /api/size-by-ext HTTP 000000
+── Data ──
+  ✗ Media files indexed 0 files
+── Search ──
+  ✗ Semantic search HTTP 000000
+── Static ──
+  ✗ index.html served 0 bytes
+
+═══ Result: 0 PASS, 9 FAIL (pc) ═══
+```
+
+## Review Items
+
+- ⚠️ REVIEW: Full pytest still has the expected 6 Mac baseline failures in `test_mhl.py` and `test_offload.py`; no chat/vectordb tests failed.
+- ⚠️ REVIEW: `health.py` fails in this headless/sandboxed macOS session because Ollama is not running and `mlx_whisper` cannot access a Metal device.
+- ⚠️ REVIEW: `smoke-test.sh` fails because no local server is running on `localhost:8501`; it also inherits the same `health.py` Metal/Ollama failure.
+- ⚠️ REVIEW: The AGENTS.md hevin-ai-os paths are missing in this environment, so I could not read or update:
+  - `/Users/vulturemacmini/Desktop/hevin-ai-os/references/plans/arkiv/arkiv-roadmap.md`
+  - `/Users/vulturemacmini/Desktop/hevin-ai-os/references/project-logs/arkiv/dev-log.md`
+
+## Not Completed
+
+- [ ] Update hevin-ai-os roadmap/dev-log; blocked because the referenced local private repo path does not exist in this environment.
 
 ## Spec Deviations
 
-- Similarity does not add `vectordb.find_similar` to `vectordb.py`; this avoids touching vector DB behavior while B.4c owns project-scope vector work.
-- Analytics omits `by_project` because the current `media` table has no `project_name` column.
-
-# Codex Result - chat-rag-B.4a
-
-## What Changed
-
-- [x] Added `chat.py` with B.4a intent classification, `handle_compilation`, conversation helpers, message persistence, and B.4b stubs for refinement / similarity / analytics / general.
-- [x] Added `chat_conversations` and `chat_messages` tables plus `idx_chat_msg_conv` in `db.init_db()`.
-- [x] Added `chat_read` and `chat_write` to `auth.SCOPES` without changing middleware or token CRUD logic.
-- [x] Added `ARKIV_CHAT_MODEL` and `ARKIV_INTENT_MODEL` config defaults.
-- [x] Added POST `/api/chat` with `Depends(require_scopes("chat_write"))`.
-- [x] Added `tests/test_chat.py` coverage for new conversation, existing conversation, missing `chat_write`, and invalid conversation ID.
-- [x] Updated `CHANGELOG.md`.
-
-## Test Results
-
-Command:
-
-```text
-.venv/bin/python -c "from db import init_db; init_db()"
-```
-
-Exit code:
-
-```text
-0
-```
-
-Output:
-
-```text
-<no output>
-```
-
-Command:
-
-```text
-.venv/bin/python -m py_compile chat.py server.py db.py auth.py config.py tests/test_chat.py
-```
-
-Exit code:
-
-```text
-0
-```
-
-Output:
-
-```text
-<no output>
-```
-
-Command:
-
-```text
-.venv/bin/pytest tests/test_chat.py -v
-```
-
-Exit code:
-
-```text
-0
-```
-
-Output:
-
-```text
-============================= test session starts ==============================
-platform darwin -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0 -- /Users/vulturemacmini/code/arkiv/.venv/bin/python3.11
-rootdir: /Users/vulturemacmini/code/arkiv
-configfile: pytest.ini
-plugins: asyncio-1.4.0, anyio-4.13.0
-asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collecting ... collected 4 items
-
-tests/test_chat.py::test_chat_create_conversation_returns_conv_id PASSED [ 25%]
-tests/test_chat.py::test_chat_continues_existing_conversation PASSED     [ 50%]
-tests/test_chat.py::test_chat_requires_chat_write_scope PASSED           [ 75%]
-tests/test_chat.py::test_chat_invalid_conversation_id_returns_400 PASSED [100%]
-
-=============================== warnings summary ===============================
-tests/test_chat.py::test_chat_create_conversation_returns_conv_id
-tests/test_chat.py::test_chat_create_conversation_returns_conv_id
-tests/test_chat.py::test_chat_continues_existing_conversation
-tests/test_chat.py::test_chat_continues_existing_conversation
-tests/test_chat.py::test_chat_requires_chat_write_scope
-tests/test_chat.py::test_chat_requires_chat_write_scope
-tests/test_chat.py::test_chat_invalid_conversation_id_returns_400
-tests/test_chat.py::test_chat_invalid_conversation_id_returns_400
-  /Users/vulturemacmini/code/arkiv/server.py:157: DeprecationWarning:
-          on_event is deprecated, use lifespan event handlers instead.
-
-          Read more about it in the
-          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-
-    @app.on_event("startup")
-
-tests/test_chat.py::test_chat_create_conversation_returns_conv_id
-tests/test_chat.py::test_chat_create_conversation_returns_conv_id
-tests/test_chat.py::test_chat_continues_existing_conversation
-tests/test_chat.py::test_chat_continues_existing_conversation
-tests/test_chat.py::test_chat_requires_chat_write_scope
-tests/test_chat.py::test_chat_requires_chat_write_scope
-tests/test_chat.py::test_chat_invalid_conversation_id_returns_400
-tests/test_chat.py::test_chat_invalid_conversation_id_returns_400
-  /Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/fastapi/applications.py:4598: DeprecationWarning:
-          on_event is deprecated, use lifespan event handlers instead.
-
-          Read more about it in the
-          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-
-    return self.router.on_event(event_type)  # ty: ignore[deprecated]
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-======================== 4 passed, 16 warnings in 0.26s ========================
-```
-
-Command:
-
-```text
-.venv/bin/pytest tests/ -v
-```
-
-Exit code:
-
-```text
-1
-```
-
-Summary output:
-
-```text
-collected 173 items
-tests/test_chat.py::test_chat_create_conversation_returns_conv_id PASSED
-tests/test_chat.py::test_chat_continues_existing_conversation PASSED
-tests/test_chat.py::test_chat_requires_chat_write_scope PASSED
-tests/test_chat.py::test_chat_invalid_conversation_id_returns_400 PASSED
-
-FAILED tests/test_mhl.py::test_native_c4_reference_matches_chain - FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\user\\AppData\\Local\\Temp\\ascmhl-native\\ascmhl\\ascmhl_chain.xml'
-FAILED tests/test_offload.py::test_two_destination_copy_and_mhl_verify - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-FAILED tests/test_offload.py::test_hash_mismatch_marks_unverified_after_retries - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-FAILED tests/test_offload.py::test_resume_picks_up_pending_from_state - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-FAILED tests/test_offload.py::test_source_unmount_cleans_partials_and_keeps_completed_files - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-FAILED tests/test_offload.py::test_sidecar_families_all_copy - subprocess.CalledProcessError: Command '['git', '-c', 'safe.directory=C:/Users/user/.arkiv', '-C', '/Users/vulturemacmini/code/arkiv', 'show', 'feat/13.1-mhl-v2:mhl.py']' returned non-zero exit status 128.
-============ 6 failed, 165 passed, 2 skipped, 230 warnings in 5.45s ============
-```
-
-## REVIEW
-
-- `⚠️ REVIEW:` B.4a accepts `project_scope` and stores it on new conversations, but `handle_compilation` does not pass it into `vectordb.search()` because the current `vectordb.search(query, n_results=10)` signature has no `project_scope` parameter. The B.4c handover is where `vectordb.py` is scheduled to change.
-- `⚠️ REVIEW:` The roadmap file required by `AGENTS.md` was not present at `/Users/vulturemacmini/Desktop/hevin-ai-os/references/plans/arkiv/arkiv-roadmap.md`; a `find` under `/Users/vulturemacmini/Desktop` found no matching `hevin-ai-os` roadmap/dev-log paths, so the external roadmap was not updated.
-
-## Unfinished
-
-- None for B.4a.
-
-## Spec Deviations
-
-- Added one extra B.4a edge test for invalid `conversation_id` returning HTTP 400.
-
-# Codex Result - llm-router-b0
-
-## What Changed
-
-- [x] Added [llm.py](C:\Users\user\.arkiv\llm.py) with shared `chat` / `embed` / `vision` Ollama routing and provider metadata.
-- [x] Updated [vision.py](C:\Users\user\.arkiv\vision.py), [vectordb.py](C:\Users\user\.arkiv\vectordb.py), and [transcribe.py](C:\Users\user\.arkiv\transcribe.py) to route LLM traffic through the shared abstraction while preserving the existing module-level API surface.
-- [x] Added `OLLAMA_CHAT_MODEL`, `OLLAMA_EMBED_MODEL`, and `OLLAMA_VISION_MODEL` to [config.py](C:\Users\user\.arkiv\config.py) and kept the legacy aliases intact.
-- [x] Added [tests/test_llm_router.py](C:\Users\user\.arkiv\tests\test_llm_router.py) with 6 router coverage cases.
-- [x] Updated [CHANGELOG.md](C:\Users\user\.arkiv\CHANGELOG.md) with a top-level router refactor note.
-- [x] Verified `pytest tests/test_llm_router.py -v` passes 6/6.
-- [x] Verified `pytest tests/ -v` still ends at the same 9 pre-existing failures, with 160 tests passing.
-- [x] Verified `python health.py` returns 19/19 PASS.
-- [ ] Smoke test script executed, but the app was not reachable on `localhost:8501` during the run.
-
-## Test Results
-
-Command:
-
-```text
-$env:TMP='/c/tmp'; $env:TEMP='/c/tmp'; $env:TMPDIR='/c/tmp'; $env:PYTHONUTF8='1'; python -m pytest tests/test_llm_router.py -v
-```
-
-Exit code:
-
-```text
-0
-```
-
-Summary:
-
-```text
-6 passed, 1 warning in 0.10s
-```
-
-Command:
-
-```text
-$env:TMP='/c/tmp'; $env:TEMP='/c/tmp'; $env:TMPDIR='/c/tmp'; $env:PYTHONUTF8='1'; python -m pytest tests/ -v
-```
-
-Exit code:
-
-```text
-1
-```
-
-Summary:
-
-```text
-160 passed, 9 failed, 215 warnings in 19.48s
-```
-
-Pre-existing failures still present in the full suite:
-
-- `tests/test_config.py` 5 Windows/POSIX path-denylist cases
-- `tests/test_db.py::test_resolve_path_passes_through_inside_root_and_absolute`
-- `tests/test_phase8.py::test_to_relative_idempotent`
-- `tests/test_phase8.py::test_is_processed_both_forms`
-- `tests/test_phase8.py::test_migrate_to_relative`
-
-Command:
-
-```text
-$env:TMP='/c/tmp'; $env:TEMP='/c/tmp'; $env:TMPDIR='/c/tmp'; $env:PYTHONUTF8='1'; python health.py
-```
-
-Exit code:
-
-```text
-0
-```
-
-Summary:
-
-```text
-Result: 19/19 PASS, 0 FAIL, 0 SKIP
-```
-
-Command:
-
-```text
-$env:TMP='/c/tmp'; $env:TEMP='/c/tmp'; $env:TMPDIR='/c/tmp'; $env:PYTHONUTF8='1'; & 'C:\Program Files\Git\usr\bin\bash.exe' smoke-test.sh
-```
-
-Exit code:
-
-```text
-1
-```
-
-Summary:
-
-```text
-Result: 0 PASS, 9 FAIL (pc)
-```
-
-Smoke-test failure details:
-
-- `Server reachable HTTP 000000`
-- `GET /api/media?limit=1 HTTP 000000`
-- `GET /api/stats HTTP 000000`
-- `GET /api/tags HTTP 000000`
-- `GET /api/duration-by-lang HTTP 000000`
-- `GET /api/size-by-ext HTTP 000000`
-- `Media files indexed 0 files`
-- `Semantic search HTTP 000000`
-- `index.html served 0 bytes`
-
-## REVIEW
-
-- `⚠️ REVIEW:` The smoke test could not reach `localhost:8501` even after a manual `uvicorn server:app --host 127.0.0.1 --port 8501` launch reported startup complete. This looks like an environment reachability issue rather than a router regression, but the smoke script still fails in this session.
-
-# Codex Result - auth-tokens-1c
-
-## What Changed
-
-- [x] Added a new token-management CLI at [arkiv_token.py](C:\Users\user\.arkiv\arkiv_token.py).
-- [x] Updated the [fastapi_client](C:\Users\user\.arkiv\tests\conftest.py) fixture to inject a full-scope bearer token for authenticated server tests.
-- [x] Extended [tests/test_auth.py](C:\Users\user\.arkiv\tests\test_auth.py) with 5 new cases: CLI create, CLI list, CLI revoke, CIDR allowlist, and multi-scope coverage.
-- [x] Updated [README.md](C:\Users\user\.arkiv\README.md), [README.zh-TW.md](C:\Users\user\.arkiv\README.zh-TW.md), and [CHANGELOG.md](C:\Users\user\.arkiv\CHANGELOG.md) with the token-auth bootstrap and CLI usage.
-- [x] Verified the targeted auth suite passes end-to-end.
-- [x] Verified the full test suite returns to the expected 9 pre-existing failures.
-
-## Test Results
-
-Command:
-
-```text
-$env:TMP='/c/tmp'; $env:TEMP='/c/tmp'; $env:TMPDIR='/c/tmp'; $env:PYTHONUTF8='1'; python -m pytest tests/test_auth.py -v
-```
-
-Exit code:
-
-```text
-0
-```
-
-Summary:
-
-```text
-20 passed, 33 warnings in 3.39s
-```
-
-Command:
-
-```text
-$env:TMP='/c/tmp'; $env:TEMP='/c/tmp'; $env:TMPDIR='/c/tmp'; $env:PYTHONUTF8='1'; python -m pytest tests/ -v
-```
-
-Exit code:
-
-```text
-1
-```
-
-Summary:
-
-```text
-154 passed, 9 failed, 215 warnings in 14.34s
-```
-
-Pre-existing failures still present in the full suite:
-
-- `tests/test_config.py` 5 Windows/POSIX path-denylist cases
-- `tests/test_db.py::test_resolve_path_passes_through_inside_root_and_absolute`
-- `tests/test_phase8.py::test_to_relative_idempotent`
-- `tests/test_phase8.py::test_is_processed_both_forms`
-- `tests/test_phase8.py::test_migrate_to_relative`
-
-## ⚠️ REVIEW
-
-- The CLI revoke path explicitly deletes both `access_tokens` and `access_token_scopes`, but the existing API revoke path in `admin.py` still relies on the current SQLite setup and does not clean orphaned scope rows separately.
-- `fastapi_client` sets `ARKIV_EXPORT_ROOTS` to the system temp directory for test isolation; tests that need a different export root should override that env var explicitly.
-
-## Unfinished
-
-- None for this handover.
-
-## Spec Deviations
-
-- `fastapi_client` injects a token with all scopes, not just `admin`, because the existing server tests require `videos_read`, `media_read`, `projects_read`, `projects_write`, and `ingest_write` in addition to `admin`.
-
-# Codex Result - auth-tokens-1b
-
-## What Changed
-
-- [x] Added `ARKIV_ADMIN_BOOTSTRAP_TOKEN` to [config.py](C:\Users\user\.arkiv\config.py).
-- [x] Added new token admin service layer in [admin.py](C:\Users\user\.arkiv\admin.py).
-- [x] Guarded the 32 in-scope API routes in [server.py](C:\Users\user\.arkiv\server.py) with `Depends(require_scopes(...))`.
-- [x] Added the 4 `/api/admin/tokens` endpoints in [server.py](C:\Users\user\.arkiv\server.py).
-- [x] Added startup bootstrap logic in [server.py](C:\Users\user\.arkiv\server.py).
-- [x] Extended [tests/test_auth.py](C:\Users\user\.arkiv\tests\test_auth.py) with admin CRUD, bootstrap, and route-scope coverage.
-- [x] Verified the targeted auth test file passed.
-- [x] Wrote this `CODEX_RESULT.md` handover record.
-
-## Test Results
-
-Command:
-
-```text
-python -m pytest tests/test_auth.py -v
-```
-
-Exit code:
-
-```text
-0
-```
-
-Raw output:
-
-```text
-============================= test session starts ==============================
-platform win32 -- Python 3.12.10, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\user\AppData\Local\Programs\Python\Python312\python.exe
-rootdir: C:\Users\user\.arkiv
-configfile: pytest.ini
-plugins: anyio-4.12.1, dash-2.18.2
-collecting ... collected 15 items
-
-tests/test_auth.py::test_require_scopes_rejects_unknown_scope PASSED     [  6%]
-tests/test_auth.py::test_missing_authorization_returns_401 PASSED        [ 13%]
-tests/test_auth.py::test_invalid_token_returns_401 PASSED                [ 20%]
-tests/test_auth.py::test_expired_token_returns_401 PASSED                [ 26%]
-tests/test_auth.py::test_token_with_wrong_scope_returns_403 PASSED       [ 33%]
-tests/test_auth.py::test_valid_token_with_correct_scope_returns_200_and_updates_audit PASSED [ 40%]
-tests/test_auth.py::test_admin_crud_flow PASSED                          [ 46%]
-tests/test_auth.py::test_bootstrap_seeds_admin_when_db_empty_and_env_set PASSED [ 53%]
-tests/test_auth.py::test_bootstrap_noop_when_tokens_exist PASSED         [ 60%]
-tests/test_auth.py::test_bootstrap_noop_when_env_empty PASSED            [ 66%]
-tests/test_auth.py::test_route_scope_enforcement_samples[get-/api/media-videos_read-videos_write-None] PASSED [ 73%]
-tests/test_auth.py::test_route_scope_enforcement_samples[get-/api/stats-videos_read-videos_write-None] PASSED [ 80%]
-tests/test_auth.py::test_route_scope_enforcement_samples[get-/api/export/metadata-csv-media_read-videos_read-None] PASSED [ 86%]
-tests/test_auth.py::test_route_scope_enforcement_samples[post-/api/admin/tokens-admin-videos_read-_admin_create_body] PASSED [ 93%]
-tests/test_auth.py::test_route_scope_enforcement_samples[post-/api/ingest/scan-ingest_write-videos_read-_ingest_scan_body] PASSED [100%]
-
-============================== warnings summary ===============================
-..\AppData\Local\Programs\Python\Python312\Lib\site-packages\_pytest\config\__init__.py:1428
-  C:\Users\user\AppData\Local\Programs\Python\Python312\Lib\site-packages\_pytest\config\__init__.py:1428: PytestConfigWarning: Unknown config option: asyncio_mode
-  
-    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
-
-tests/test_auth.py: 16 warnings
-  C:\Users\user\.arkiv\server.py:141: DeprecationWarning: 
-          on_event is deprecated, use lifespan event handlers instead.
-  
-          Read more about it in the
-          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-          
-    @app.on_event("startup")
-
-tests/test_auth.py: 16 warnings
-  C:\Users\user\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\applications.py:4598: DeprecationWarning: 
-          on_event is deprecated, use lifespan event handlers instead.
-  
-          Read more about it in the
-          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-          
-    return self.router.on_event(event_type)  # ty: ignore[deprecated]
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-======================= 15 passed, 33 warnings in 1.10s =======================
-C:\Users\user\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.4.0.post2)/charset_normalizer (3.4.4) doesn't match a supported version!
-  warnings.warn(
-```
-
-## REVIEW
-
-- `⚠️ REVIEW:` The positive-path ingest scope check uses `/api/ingest/scan` instead of `/api/ingest` so the test exercises the same `ingest_write` guard without spawning the heavier ingest subprocess. The `/api/ingest` route is still guarded in `server.py`.
-- `⚠️ REVIEW:` Pytest still emits the existing `asyncio_mode` config warning and FastAPI `on_event` deprecation warnings. They did not fail the run.
-
-## Unfinished
-
-- Full-suite `pytest tests/ -v` was not run because the task asked me to stop after the targeted pytest passed.
-
-## Deviations
-
-- No implementation deviation from the Phase 0 whitelist.
-- The only test-level substitution is the lighter `/api/ingest/scan` positive-path coverage noted above.
+- `vectordb.find_similar(media_id=...)` looks up a reference embedding via Chroma metadata `where={"media_id": str(media_id)}` instead of `ids=[str(media_id)]`, because arkiv stores Chroma ids as chunk ids such as `<media_id>_t0` / `<media_id>_f0`.
