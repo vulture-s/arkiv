@@ -6,14 +6,9 @@ import ipaddress
 import json
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import List, Optional
 
 from auth import SCOPES, hash_token, new_raw_token, new_token_id
 from db import get_conn, init_db
-
-
-REPO_ROOT = Path(__file__).resolve().parent
 
 
 def _fail(message):
