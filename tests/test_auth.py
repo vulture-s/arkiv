@@ -1,9 +1,18 @@
 import importlib
+import json
+import os
+import re
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
@@ -21,6 +30,10 @@ def auth_app(tmp_db):
     @app.get("/test/write")
     def write_endpoint(_tok: dict = Depends(auth.require_scopes("videos_write"))):
         return {"ok": True, "scope": "videos_write"}
+
+    @app.get("/test/admin")
+    def admin_endpoint(_tok: dict = Depends(auth.require_scopes("admin"))):
+        return {"ok": True, "scope": "admin"}
 
     return app, auth
 
@@ -70,6 +83,30 @@ def _ingest_scan_body():
     target = config.PROJECT_ROOT / "temp" / "auth-scope-test"
     target.mkdir(parents=True, exist_ok=True)
     return {"path": str(target)}
+
+
+def _cli_env(tmp_db):
+    env = os.environ.copy()
+    env["ARKIV_DB_PATH"] = str(tmp_db)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def _run_cli(tmp_db, *args):
+    return subprocess.run(
+        [sys.executable, str(REPO_ROOT / "arkiv_token.py")] + list(args),
+        cwd=str(REPO_ROOT),
+        env=_cli_env(tmp_db),
+        capture_output=True,
+        text=True,
+    )
+
+
+def _extract_token_id(stdout):
+    match = re.search(r"^Token ID:\s+(.+)$", stdout, re.MULTILINE)
+    assert match, stdout
+    return match.group(1).strip()
 
 
 def test_require_scopes_rejects_unknown_scope(auth_app):
@@ -250,3 +287,144 @@ def test_route_scope_enforcement_samples(server_module, method, path, good_scope
 
         allowed = _request(client, method, path, token=good_raw, body=body)
         assert allowed.status_code == 200
+
+
+def test_cli_create_inserts_token(tmp_db):
+    result = _run_cli(
+        tmp_db,
+        "create",
+        "--name",
+        "pc-dev",
+        "--scopes",
+        "videos_read,videos_write",
+        "--ip-allowlist",
+        "127.0.0.1/32,100.64.0.0/10",
+        "--expires-in",
+        "30",
+        "--description",
+        "workstation token",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Token created." in result.stdout
+
+    token_id = _extract_token_id(result.stdout)
+
+    import db
+
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, name, description, expires_at, allowed_ips_json FROM access_tokens WHERE id = ?",
+            (token_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["name"] == "pc-dev"
+        assert row["description"] == "workstation token"
+        assert row["expires_at"] is not None
+        assert json.loads(row["allowed_ips_json"]) == ["127.0.0.1/32", "100.64.0.0/10"]
+
+        scope_rows = conn.execute(
+            "SELECT scope FROM access_token_scopes WHERE token_id = ? ORDER BY scope",
+            (token_id,),
+        ).fetchall()
+        assert [scope_row["scope"] for scope_row in scope_rows] == ["videos_read", "videos_write"]
+
+
+def test_cli_list_includes_created_tokens(tmp_db):
+    create = _run_cli(
+        tmp_db,
+        "create",
+        "--name",
+        "review-station",
+        "--scopes",
+        "media_read,videos_read",
+    )
+    assert create.returncode == 0, create.stdout + create.stderr
+
+    result = _run_cli(tmp_db, "list")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "review-station" in result.stdout
+    assert "media_read,videos_read" in result.stdout
+    assert "RAW TOKEN" not in result.stdout
+
+
+def test_cli_revoke_removes_token(tmp_db):
+    create = _run_cli(
+        tmp_db,
+        "create",
+        "--name",
+        "old-token",
+        "--scopes",
+        "videos_read",
+    )
+    assert create.returncode == 0, create.stdout + create.stderr
+    token_id = _extract_token_id(create.stdout)
+
+    revoke = _run_cli(tmp_db, "revoke", token_id)
+    assert revoke.returncode == 0, revoke.stdout + revoke.stderr
+    assert "Revoked token" in revoke.stdout
+
+    import db
+
+    with db.get_conn() as conn:
+        token_row = conn.execute(
+            "SELECT id FROM access_tokens WHERE id = ?",
+            (token_id,),
+        ).fetchone()
+        scope_rows = conn.execute(
+            "SELECT scope FROM access_token_scopes WHERE token_id = ?",
+            (token_id,),
+        ).fetchall()
+
+    assert token_row is None
+    assert scope_rows == []
+
+    listing = _run_cli(tmp_db, "list")
+    assert token_id[:22] not in listing.stdout
+    assert "old-token" not in listing.stdout
+
+
+def test_ip_allowlist_cidr_match(auth_app):
+    app, auth = auth_app
+    raw, _ = _insert_token(auth, "cidr", ["videos_read"], allowed_ips_json='["100.64.0.0/10"]')
+
+    allowed_client = TestClient(app, client=("100.64.5.3", 12345))
+    allowed = allowed_client.get(
+        "/test/read",
+        headers={"Authorization": "Bearer {0}".format(raw)},
+    )
+    assert allowed.status_code == 200
+
+    denied_client = TestClient(app, client=("100.128.0.1", 12345))
+    denied = denied_client.get(
+        "/test/read",
+        headers={"Authorization": "Bearer {0}".format(raw)},
+    )
+    assert denied.status_code == 403
+    assert "allowlist" in denied.json()["detail"].lower()
+
+
+def test_multi_scope_token_all_required_present(auth_app):
+    app, auth = auth_app
+    raw, _ = _insert_token(auth, "multi", ["videos_read", "videos_write"])
+
+    with TestClient(app) as client:
+        read = client.get(
+            "/test/read",
+            headers={"Authorization": "Bearer {0}".format(raw)},
+        )
+        assert read.status_code == 200
+        assert read.json() == {"ok": True, "scope": "videos_read"}
+
+        write = client.get(
+            "/test/write",
+            headers={"Authorization": "Bearer {0}".format(raw)},
+        )
+        assert write.status_code == 200
+        assert write.json() == {"ok": True, "scope": "videos_write"}
+
+        admin = client.get(
+            "/test/admin",
+            headers={"Authorization": "Bearer {0}".format(raw)},
+        )
+        assert admin.status_code == 403
+        assert "admin" in admin.json()["detail"].lower()

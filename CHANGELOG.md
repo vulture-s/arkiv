@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.1 (2026-05-27) — API Scope Token Auth
+
+> **Security release.** All `/api/*` endpoints now require a Bearer token with the proper scope. See [API Authentication](README.md#api-authentication) for the bootstrap SOP.
+
+### New Features
+- **`arkiv_token.py` CLI** — `create` / `list` / `show` / `revoke` subcommands manage access tokens directly in local SQLite, with scope validation, CIDR allowlists, and optional expiry.
+- **`tests/conftest.py` auth fixture** — `fastapi_client` now injects an admin bearer token so existing server tests continue to hit the real authenticated API without per-test boilerplate.
+- **Auth coverage** — `tests/test_auth.py` adds CLI create/list/revoke, CIDR allowlist, and multi-scope token cases.
+
+### Notes
+- Scope-based tokens are designed for multi-machine fleets: read-only review stations can use `videos_read` or `media_read`, ingest boxes can use `ingest_write`, and admin boxes can manage tokens.
+- Bootstrap remains first-run only: set `ARKIV_ADMIN_BOOTSTRAP_TOKEN`, start the server once, create per-machine tokens, then unset the env var and revoke the bootstrap token.
+
 ## v0.4.0 (2026-05-27) — W3 DIT three-pack complete
 
 > **DIT companion ready.** Three new CLI tools bring arkiv from "AI metadata layer" to "DIT-grade companion": hash manifests interoperable with Silverstack / Hedge / MediaVerify, multi-destination resumable offload, and Resolve-friendly camera reports.

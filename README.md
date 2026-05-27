@@ -72,6 +72,36 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **Multi-destination offload** — `offload.py --src <SD> --dst <A> --dst <B>` does chunked parallel copy + per-file hash verify + 3× retry on mismatch + atomic rename + sidecar-aware (XAVC / ARRI / RED / iPhone Live Photo). Resumable JSON state file — kill mid-copy and pending files pick up exactly where they stopped. Emits per-dst MHL v2
 - **Camera report CSV** — `camera_report.py` writes 20-col DIT-spec CSV (Reel / TC / Camera / Lens / ISO / Shutter / Aperture / WB / FPS / Codec / ...) for Resolve's `File → Import Metadata from CSV`. Day-summary footer aggregates clip count + runtime by camera / by card
 
+## API Authentication
+
+All `/api/*` endpoints require a Bearer token with the correct scope. Scope-based tokens let you split a fleet by machine role: read-only review stations can use `videos_read` or `media_read`, ingest machines can use `ingest_write`, and admin machines can manage tokens.
+
+First-time bootstrap:
+
+```bash
+export ARKIV_ADMIN_BOOTSTRAP_TOKEN=$(openssl rand -base64 32)
+python server.py
+```
+
+On first startup, the server seeds a single `admin` token from that env var. Use it once to create per-machine tokens, then unset it and revoke the bootstrap token.
+
+Create and manage tokens directly with the CLI:
+
+```bash
+python arkiv_token.py create --name "PC-dev" --scopes videos_read,videos_write --ip-allowlist 127.0.0.1/32,100.64.0.0/10 --expires-in 90
+python arkiv_token.py list
+python arkiv_token.py show <token-id>
+python arkiv_token.py revoke <token-id>
+```
+
+Use the token in requests:
+
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
+```
+
+Available scopes: `videos_read`, `videos_write`, `media_read`, `collections_read`, `collections_write`, `projects_read`, `projects_write`, `ingest_write`, `admin`
+
 ## Quick Start
 
 ### Prerequisites

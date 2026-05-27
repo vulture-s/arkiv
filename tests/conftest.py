@@ -1,7 +1,10 @@
 import importlib
 import json
+import os
 import sys
+import tempfile
 import types
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -184,5 +187,18 @@ def server_module(tmp_db):
 
 @pytest.fixture
 def fastapi_client(server_module):
-    with TestClient(server_module.app) as client:
-        yield client
+    import auth
+    import admin
+
+    token = admin.create_token(name="pytest-admin", scopes=sorted(auth.SCOPES))
+    headers = {"Authorization": "Bearer {0}".format(token["raw_token"])}
+    original_export_roots = os.environ.get("ARKIV_EXPORT_ROOTS")
+    os.environ["ARKIV_EXPORT_ROOTS"] = str(Path(tempfile.gettempdir()).resolve())
+    try:
+        with TestClient(server_module.app, headers=headers) as client:
+            yield client
+    finally:
+        if original_export_roots is None:
+            os.environ.pop("ARKIV_EXPORT_ROOTS", None)
+        else:
+            os.environ["ARKIV_EXPORT_ROOTS"] = original_export_roots

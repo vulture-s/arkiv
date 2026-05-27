@@ -72,6 +72,36 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 - **多目的地 offload** — `offload.py --src <SD> --dst <A> --dst <B>` chunked 平行 copy + 每檔 hash 驗證 + mismatch 3× retry + atomic rename + sidecar 感知（XAVC / ARRI / RED / iPhone Live Photo）。可恢復的 JSON state file — copy 一半 kill 掉，pending 檔案下次接著跑。每個 dst 結尾 emit MHL v2
 - **攝影日報 CSV** — `camera_report.py` 產 20 欄 DIT 規格 CSV（Reel / TC / Camera / Lens / ISO / Shutter / Aperture / WB / FPS / Codec / ...），可直接餵 Resolve 的「檔案 → 從 CSV 匯入詮釋資料」。Day-summary footer 統計片段數 + 時長（依攝影機 / 依記憶卡）
 
+## API 驗證
+
+所有 `/api/*` 端點都需要帶有正確 scope 的 Bearer token。這種以 scope 為基礎的 token 可以把整個機器群組拆開管理：只讀審片機可用 `videos_read` 或 `media_read`，匯入機可用 `ingest_write`，管理機可用 `admin`。
+
+第一次啟動時先做 bootstrap：
+
+```bash
+export ARKIV_ADMIN_BOOTSTRAP_TOKEN=$(openssl rand -base64 32)
+python server.py
+```
+
+第一次啟動時，server 會用這個 env var 建立一組 `admin` token。先用它建立各機器專用 token，之後再移除該 env 並撤銷 bootstrap token。
+
+直接用 CLI 建立與管理 token：
+
+```bash
+python arkiv_token.py create --name "PC-dev" --scopes videos_read,videos_write --ip-allowlist 127.0.0.1/32,100.64.0.0/10 --expires-in 90
+python arkiv_token.py list
+python arkiv_token.py show <token-id>
+python arkiv_token.py revoke <token-id>
+```
+
+在請求中使用 token：
+
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
+```
+
+可用 scopes：`videos_read`、`videos_write`、`media_read`、`collections_read`、`collections_write`、`projects_read`、`projects_write`、`ingest_write`、`admin`
+
 ## 快速開始
 
 ### 前置需求
