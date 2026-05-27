@@ -33,28 +33,50 @@ Can clean in B.4c or a separate micro-commit.
 
 ## What's BLOCKED
 
-**B.4a dispatch** — codex CLI not installed on Mac (`which codex` → not found, checked `/usr/local/bin`, `/opt/homebrew/bin`, `~/.local/bin`, `npm -g`, `pipx`). Cannot dispatch overnight from this machine.
+**B.4a dispatch** — `codex login` pending (last gap).
 
-### Audit point (raised by Hevin)
+### Mac pre-flight chain audit (Hevin 拍板)
 
 > 另一邊在 ssh mini relay 之前沒有全盤評估本機安裝的依賴 — 列入審計檢討
 
-This session reproduced the same anti-pattern: I committed to "Mac → dispatch B.4a" before verifying `codex` exists locally. The dep-inventory pre-flight check needs to be a hard step before any cross-surface dispatch promise. See hevin-ai-os 2026-05-27 dev-log §audit for the cross-surface audit entry.
+跨 surface dispatch 前 missing-dep 三層連環中：
+
+| 層 | 狀態 | 怎麼解 |
+|----|------|--------|
+| `codex` CLI | ✅ 已 `brew install codex` (0.134.0) + ripgrep | done |
+| `codex` CLI 語法 | ✅ 新版改 `codex cloud exec --env <ENV_ID> "<prompt>"`，舊 `task --background` 已 deprecated | 早上 dispatch 用新語法 |
+| `codex login` | 🚫 Not logged in，OAuth (ChatGPT) 要互動 browser | 早上 `codex login` 走一次 OAuth flow |
+| arkiv remote auth | ✅ 改 SSH (`git@github.com:vulture-s/arkiv.git`) | done |
+| Mac `.venv` + deps | ✅ 已建 + pip install ~600 MB | done |
+| Mac statusline | ✅ 對齊 M2 Max preset `ship-feat` + settings.json `statusLine` 字段補上 | done |
+
+每一層都應該 pre-flight 一次再開鏈，不是邊走邊撞。已寫進 hevin-ai-os `references/dev-logs/daily/2026-05-27.md §audit`。
 
 ---
 
-## Morning resume steps (from PC where codex CLI lives)
+## Morning resume steps
 
-1. `cd ~/code/arkiv && git pull origin main` (pick up `75e4a8a`)
-2. Verify B.0 on PC: `pytest tests/test_llm_router.py -v` → expect 6/6 PASS
-3. Dispatch B.4a:
+1. **One-time auth** (Mac 或 PC，任一台沒登過的)：
    ```
-   codex task --background --write
+   codex login                        # browser OAuth
+   codex cloud list                   # 找 ENV_ID（之前 PC dispatch 用的那個 env）
    ```
-   Prompt:
-   > Implement Feature B Iteration 2 sub-dispatch a (B.4a) per `docs/chat-rag-4a-handover.md` in this arkiv repo. 完整 spec 在 handover doc, 含 hard constraints + verify steps + commit msg.
-4. After Codex returns (exit 0, est ~30-60 min): Mac or PC verify (`pytest tests/test_chat.py -v` + `pytest tests/ -v` no regression), commit with handover-suggested msg, push.
-5. Then B.4b → B.4c sequentially per `docs/chat-rag-4b-handover.md` and `4c-handover.md`.
+2. `cd ~/code/arkiv && git pull origin main` (pick up `75e4a8a` + `934ef1d`)
+3. Verify B.0：`.venv/bin/pytest tests/test_llm_router.py -v` → 6/6 PASS (Mac 已驗，PC 拉新 commit 後重驗即可)
+4. **Dispatch B.4a**（新語法）：
+   ```
+   codex cloud exec --env <ENV_ID> "$(cat <<'EOF'
+   Implement Feature B Iteration 2 sub-dispatch a (B.4a) per
+   docs/chat-rag-4a-handover.md in this arkiv repo. 完整 spec 在
+   handover doc, 含 hard constraints + verify steps + commit msg.
+   EOF
+   )"
+   ```
+   會印 task-id（類似 `task-mpnXXXXX-xxxxxx`），記下來。
+5. 等 Codex 返回 (est 30-60 min，exit 0)：拉它寫的 diff (`codex cloud apply <task-id>` 或 `git pull` 看 working tree)
+6. Mac/PC verify：`.venv/bin/pytest tests/test_chat.py -v` 應該全 PASS + `.venv/bin/pytest tests/ -v` 9 pre-existing fail（或 Mac 上的 6 個 platform fail）不變
+7. Commit per handover-suggested msg + push
+8. Then B.4b → B.4c sequentially per `docs/chat-rag-4b-handover.md` 和 `4c-handover.md`
 
 ## Files state
 
