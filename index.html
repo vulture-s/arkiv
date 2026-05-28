@@ -145,6 +145,46 @@ window.onunhandledrejection = function(e) {
 
   .modal-panel { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; padding: 24px 32px; min-width: 300px; text-align: center; }
   .dropdown-panel { background: var(--panel); }
+
+  /* ── Chat MVP (interim — to be replaced by the Svelte redesign chat screen) ── */
+  .chat-open-btn { background: var(--surface-50); border: 1px solid #3b82f640; border-radius: 6px; padding: 3px 10px; font-size: 11px; color: #60a5fa; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.1s; }
+  .chat-open-btn:hover { border-color: #3b82f6; color: #3b82f6; }
+  .chat-drawer { position: fixed; inset: 0; z-index: 50; display: none; }
+  .chat-drawer.open { display: block; }
+  .chat-backdrop { position: absolute; inset: 0; background: var(--overlay-bg); }
+  .chat-panel { position: absolute; top: 0; right: 0; bottom: 0; width: 440px; max-width: 92vw; background: var(--panel); border-left: 1px solid var(--panel-border); display: flex; flex-direction: column; box-shadow: -8px 0 24px rgba(0,0,0,0.25); }
+  .chat-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--panel-border); }
+  .chat-title { font-size: 13px; font-weight: 600; color: var(--txt-primary); }
+  .chat-head-btn { background: var(--surface-50); border: 1px solid var(--panel-border); border-radius: 6px; padding: 3px 10px; font-size: 11px; color: var(--txt-secondary); cursor: pointer; }
+  .chat-head-btn:hover { border-color: #3b82f6; color: var(--txt-primary); }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .chat-msg { font-size: 12.5px; line-height: 1.5; max-width: 92%; }
+  .chat-user { align-self: flex-end; background: #3b82f618; border: 1px solid #3b82f640; color: var(--txt-primary); border-radius: 8px; padding: 6px 10px; white-space: pre-wrap; }
+  .chat-assistant { align-self: flex-start; color: var(--txt-primary); width: 100%; }
+  .chat-assistant-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .chat-intent { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-100); color: var(--txt-secondary); border-radius: 3px; padding: 1px 6px; }
+  .chat-meta { font-size: 10px; color: var(--txt-tertiary); }
+  .chat-assistant-text { white-space: pre-wrap; }
+  .chat-thinking { color: var(--txt-tertiary); font-style: italic; }
+  .chat-error { color: #f87171; }
+  .chat-scenes { margin-top: 8px; }
+  .chat-scenes-label { font-size: 10px; color: var(--txt-tertiary); margin-bottom: 4px; }
+  .chat-scenes-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chat-scene { width: 84px; background: var(--surface-50); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0; cursor: pointer; overflow: hidden; text-align: left; }
+  .chat-scene:hover { border-color: #3b82f6; }
+  .chat-scene img { width: 100%; height: 48px; object-fit: cover; display: block; background: var(--preview-bg); }
+  .chat-scene-ph { width: 100%; height: 48px; display: flex; align-items: center; justify-content: center; background: var(--preview-bg); color: var(--txt-tertiary); font-size: 13px; }
+  .chat-scene-name { display: block; font-size: 9px; color: var(--txt-secondary); padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-input-row { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--panel-border); align-items: flex-end; }
+  .chat-input { flex: 1; resize: none; background: var(--surface); border: 1px solid var(--panel-border); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; color: var(--txt-primary); outline: none; font-family: inherit; max-height: 120px; }
+  .chat-input:focus { border-color: #3b82f6; }
+  .chat-send { background: #3b82f6; color: #fff; border: none; border-radius: 8px; padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .chat-send:disabled { opacity: 0.5; cursor: default; }
+  .chat-empty { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; color: var(--txt-tertiary); margin: auto 0; }
+  .chat-empty-title { font-size: 14px; font-weight: 600; color: var(--txt-secondary); }
+  .chat-empty-sub { font-size: 11px; margin-bottom: 6px; }
+  .chat-example { background: var(--surface-50); border: 1px solid var(--panel-border); border-radius: 6px; padding: 5px 10px; font-size: 11px; color: var(--txt-secondary); cursor: pointer; text-align: left; }
+  .chat-example:hover { border-color: #3b82f6; color: var(--txt-primary); }
 </style>
 </head>
 
@@ -197,6 +237,11 @@ window.onunhandledrejection = function(e) {
   <button class="export-btn ml-1.5 shrink-0" title="匯出全庫 metadata 為 DaVinci CSV（File → Import Metadata from CSV）" onclick="doExportDaVinciCsv()">
     <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
     DaVinci CSV
+  </button>
+
+  <button class="chat-open-btn ml-1.5 shrink-0" title="用自然語言問素材庫（compilation / refinement / similarity / analytics）" onclick="toggleChat(true)">
+    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 10h8M8 14h5m-9 6l3.2-2H17a3 3 0 003-3V7a3 3 0 00-3-3H7a3 3 0 00-3 3v9a3 3 0 003 3z"/></svg>
+    對話
   </button>
 
   <button class="theme-toggle ml-1.5 shrink-0" onclick="toggleTheme()" title="切換主題" id="theme-btn">
@@ -1637,6 +1682,138 @@ setUiScale(1);
     if (grid) grid.innerHTML = '<div class="col-span-4 text-center py-8" style="color:#ef4444"><div style="font-size:14px;font-weight:600;margin-bottom:8px">載入失敗</div><div style="font-size:12px">' + e.message + '</div><button style="margin-top:12px;padding:4px 16px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer" onclick="location.reload()">重新載入</button></div>';
   }
 })();
+</script>
+<!-- ═══ Chat drawer (interim MVP) ═══ -->
+<div id="chatDrawer" class="chat-drawer">
+  <div class="chat-backdrop" onclick="toggleChat(false)"></div>
+  <div class="chat-panel">
+    <div class="chat-head">
+      <span class="chat-title">對話 · Ask</span>
+      <div style="flex:1"></div>
+      <button class="chat-head-btn" onclick="chatNewConversation()" title="開新對話">新對話</button>
+      <button class="chat-head-btn" onclick="toggleChat(false)" title="關閉 (Esc)">✕</button>
+    </div>
+    <div class="chat-messages" id="chatMessages"></div>
+    <div class="chat-input-row">
+      <textarea id="chatInput" class="chat-input" rows="1" placeholder="問素材庫…（Enter 送出，Shift+Enter 換行）" onkeydown="chatKeydown(event)"></textarea>
+      <button id="chatSend" class="chat-send" onclick="sendChat()">送出</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Chat MVP (interim; replaced by claude-design Svelte chat screen) ──
+var chatState = { conversationId: null, busy: false };
+
+function toggleChat(force) {
+  var d = document.getElementById('chatDrawer');
+  var open = (force !== undefined) ? force : !d.classList.contains('open');
+  d.classList.toggle('open', open);
+  if (open) {
+    if (!document.getElementById('chatMessages').children.length) chatNewConversation();
+    setTimeout(function(){ var i = document.getElementById('chatInput'); if (i) i.focus(); }, 50);
+  }
+}
+
+function chatEmptyHtml() {
+  var examples = ['給我所有黃昏的鏡頭', '只要室內的', '找跟 scene 1 相似的', '我總共有幾段影片', '你能幫我做什麼'];
+  var btns = examples.map(function(e){ return '<button class="chat-example" onclick="chatUseExample(this)">' + esc(e) + '</button>'; }).join('');
+  return '<div class="chat-empty"><div class="chat-empty-title">問素材庫</div>'
+    + '<div class="chat-empty-sub">用自然語言找鏡頭、篩選、找相似、看統計</div>' + btns + '</div>';
+}
+
+function chatNewConversation() {
+  chatState.conversationId = null;
+  document.getElementById('chatMessages').innerHTML = chatEmptyHtml();
+}
+
+function chatUseExample(btn) {
+  var i = document.getElementById('chatInput');
+  i.value = btn.textContent; i.focus();
+}
+
+function chatAppend(html) {
+  var m = document.getElementById('chatMessages');
+  var empty = m.querySelector('.chat-empty'); if (empty) empty.remove();
+  m.insertAdjacentHTML('beforeend', html);
+  m.scrollTop = m.scrollHeight;
+}
+
+function chatAssistantHtml(d) {
+  var head = '';
+  if (d.intent) head += '<span class="chat-intent">' + esc(d.intent) + '</span>';
+  if (typeof d.latency_ms === 'number' && d.latency_ms) head += '<span class="chat-meta">' + (d.latency_ms / 1000).toFixed(1) + 's</span>';
+  if (d.tokens_used) head += '<span class="chat-meta">' + d.tokens_used + ' tok</span>';
+  return '<div class="chat-assistant-head">' + head + '</div>'
+    + '<div class="chat-assistant-text">' + esc(d.assistant_text || '') + '</div>'
+    + '<div class="chat-scenes"></div>';
+}
+
+async function chatRenderScenes(msgEl, sceneIds) {
+  var holder = msgEl.querySelector('.chat-scenes');
+  if (!holder) return;
+  var ids = sceneIds.slice(0, 24);
+  holder.innerHTML = '<div class="chat-scenes-label">' + ids.length + ' 個素材</div><div class="chat-scenes-strip"></div>';
+  var strip = holder.querySelector('.chat-scenes-strip');
+  var recs = await Promise.all(ids.map(function(id){
+    return fetch(API + '/api/media/' + id).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; });
+  }));
+  recs.forEach(function(rec, idx){
+    var id = ids[idx];
+    var thumb = (rec && rec.thumbnail_path) ? ('/thumbnails/' + rec.thumbnail_path.replace(/\\/g, '/').split('/').pop()) : null;
+    var name = (rec && rec.filename) ? rec.filename : ('#' + id);
+    var cell = document.createElement('button');
+    cell.className = 'chat-scene';
+    cell.title = name;
+    cell.onclick = function(){ selectMedia(id); toggleChat(false); };
+    cell.innerHTML = (thumb ? '<img src="' + esc(thumb) + '" loading="lazy" alt="">' : '<div class="chat-scene-ph">' + esc(name.slice(0, 2)) + '</div>')
+      + '<span class="chat-scene-name">' + esc(name) + '</span>';
+    strip.appendChild(cell);
+  });
+}
+
+async function sendChat() {
+  if (chatState.busy) return;
+  var input = document.getElementById('chatInput');
+  var prompt = (input.value || '').trim();
+  if (!prompt) return;
+  input.value = '';
+  chatAppend('<div class="chat-msg chat-user">' + esc(prompt) + '</div>');
+  chatState.busy = true;
+  document.getElementById('chatSend').disabled = true;
+  chatAppend('<div class="chat-msg chat-assistant" id="chatPending"><span class="chat-thinking">思考中…</span></div>');
+  try {
+    var body = { prompt: prompt };
+    if (chatState.conversationId) body.conversation_id = chatState.conversationId;
+    var r = await fetch(API + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    var d = await r.json();
+    var pend = document.getElementById('chatPending');
+    if (!r.ok) {
+      pend.innerHTML = '<span class="chat-error">' + esc((d && d.detail) ? d.detail : ('HTTP ' + r.status)) + '</span>';
+      pend.removeAttribute('id');
+    } else {
+      chatState.conversationId = d.conversation_id;
+      pend.removeAttribute('id');
+      pend.innerHTML = chatAssistantHtml(d);
+      if (d.scene_ids && d.scene_ids.length) chatRenderScenes(pend, d.scene_ids);
+    }
+  } catch (e) {
+    var p2 = document.getElementById('chatPending');
+    if (p2) { p2.innerHTML = '<span class="chat-error">連線失敗：' + esc(e.message) + '</span>'; p2.removeAttribute('id'); }
+  } finally {
+    chatState.busy = false;
+    document.getElementById('chatSend').disabled = false;
+    var m = document.getElementById('chatMessages'); m.scrollTop = m.scrollHeight;
+  }
+}
+
+function chatKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape' && document.getElementById('chatDrawer').classList.contains('open')) toggleChat(false);
+});
 </script>
 </body>
 </html>

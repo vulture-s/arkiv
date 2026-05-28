@@ -1,6 +1,7 @@
 import hashlib
 import ipaddress
 import json
+import os
 import secrets
 from datetime import datetime, timezone
 
@@ -27,6 +28,19 @@ SCOPES = frozenset((
     "chat_write",
     "admin",
 ))
+
+
+_LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
+
+
+def _trust_loopback() -> bool:
+    """Local browser on the same machine is trusted by default (single-machine
+    use, and per-machine local UIs in a fleet). Set ARKIV_TRUST_LOOPBACK=false
+    when arkiv sits behind a same-host reverse proxy or is otherwise exposed,
+    so even loopback requests must present a token."""
+    return os.getenv("ARKIV_TRUST_LOOPBACK", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
 
 
 def hash_token(raw):
@@ -66,6 +80,10 @@ def _check_ip_allowed(client_ip, allowed_ips_json):
 
 
 def verify_token(request: Request) -> dict:
+    client_host = request.client.host if request.client is not None else ""
+    if _trust_loopback() and client_host in _LOOPBACK_HOSTS:
+        return {"id": "loopback", "name": "loopback (local)", "scopes": SCOPES}
+
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(401, "Missing or malformed Authorization header (expected 'Bearer <token>')")
