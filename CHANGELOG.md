@@ -1,4 +1,9 @@
 # Changelog
+## v0.5.1 - 2026-05-28
+
+### Fixed
+- **Chat `similarity` intent crashed with HTTP 500** on real ChromaDB data. `vectordb.find_similar()` used `ref.get("embeddings") or []`, which raises `ValueError: truth value of an array ... is ambiguous` because ChromaDB returns embeddings as NumPy arrays. Replaced with explicit `None` / `len()` checks. Mocked tests did not cover this path; caught by live verification against a real index.
+
 ## v0.5.0 - 2026-05-28
 
 ### Added — Chat: RAG over your video library

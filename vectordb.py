@@ -246,8 +246,8 @@ def find_similar(
         include=["embeddings"],
         limit=1,
     )
-    embeddings = ref.get("embeddings") or []
-    if not embeddings:
+    embeddings = ref.get("embeddings")
+    if embeddings is None or len(embeddings) == 0:
         return []
 
     raw = _query_collection(
