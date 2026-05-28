@@ -1,23 +1,39 @@
-# OVERNIGHT RESUME — 2026-05-28 → mini relay
+# OVERNIGHT RESUME — 2026-05-28 → PC live verification
 
-PC is offline. One task queued for the overnight relay agent on mini.
+Mini coding leg **DONE** (M2 Max CC agent, 2026-05-29). The faster-whisper backend
+is implemented + unit-tested + committed to main, **NOT tagged**. One leg remains:
+**live CUDA ingest→embed→chat on PC**, then tag `v0.6.1`.
 
-## Task: faster-whisper transcription backend (fixes non-Mac ingest)
+## Task that was done: faster-whisper transcription backend (fixes non-Mac ingest)
 
-**Spec**: `docs/transcribe-fasterwhisper-handover.md` (read it fully first).
-**Base**: main `f40eb5a` (Bug A already fixed; `git pull` first).
+**Spec**: `docs/transcribe-fasterwhisper-handover.md`.
+**Shipped on**: main (see the `fix(transcribe): faster-whisper backend` commit).
 
-### TL;DR
-The user-flow smoke found PC/Linux/CUDA **ingest is broken at transcription** (whisperx 3.8.5 API drift + torchcodec DLL failure). Fix = route the non-Mac backend to **faster-whisper** (already installed 1.2.1, no torchcodec, clean API map). Add `_transcribe_faster_whisper` + a `warm_up` branch + dispatcher routing + a mocked unit test.
+### What was delivered (Mac side)
+- `transcribe.py`:
+  - `_non_mac_backend()` — resolves the non-Mac backend; defaults to `faster-whisper`, `ARKIV_TRANSCRIBE_BACKEND=whisperx` forces the legacy path.
+  - `warm_up()` non-Mac branch loads `faster_whisper.WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")` (lazy import, so the module still imports on a box without faster-whisper).
+  - `_transcribe_faster_whisper(wav, language)` — maps the whisper-guard layer (`beam_size` / `condition_on_previous_text` / `compression_ratio_threshold` / `log_prob_threshold` / `initial_prompt` / `word_timestamps`) onto `WhisperModel.transcribe()`, builds segment dicts **including the guard keys** (`no_speech_prob` / `avg_logprob` / `compression_ratio`) so `_postprocess`'s anti-hallucination guards work like the whisperx path, and maps word `probability → score`.
+  - `transcribe()` non-Mac dispatch runs arkiv `_vad_filter` first (mirrors the MLX path: `None` → empty contract, temp-file cleanup) then `_transcribe_faster_whisper`.
+  - `_transcribe_whisperx` left intact, reachable via the env override.
+- `tests/test_transcribe_faster_whisper.py` — 7 tests, mock `WhisperModel` via monkeypatched `_fw_model` (no real model load): contract shape, word score mapping, guard-option mapping, empty segments, no-words segment, dispatcher routing, VAD-no-speech.
+- `CHANGELOG.md` — `v0.6.1` "Fixed" entry. **No git tag.**
 
-### HARD constraints
-1. **No package version changes** (no pip install/upgrade/downgrade — faster-whisper 1.2.1 is already present).
-2. **File whitelist**: `transcribe.py`, `config.py` (only if needed), `tests/test_transcribe_faster_whisper.py`, `CHANGELOG.md`. Nothing else. Do NOT touch the vault.
-3. **⚠️ mini is a Mac (MLX path) — it CANNOT live-test the faster-whisper CUDA path.** Deliver code + UNIT tests (mock `WhisperModel`) + commit. **DO NOT tag / release.** State clearly in your result note that **live CUDA ingest→embed→chat verification is still pending on PC** (we've been bitten twice by mocked-on-Mac passing while live-on-PC broke).
+### Verification done (Mac M2 Max)
+- `pytest tests/test_transcribe_faster_whisper.py -v` → **7 passed**.
+- full suite → **190 passed / 3 skipped / 0 failed** (baseline was 183/3, +7 new). Zero regressions.
+- ⚠️ **Mocked only.** This Mac has no faster-whisper (it's a `platform_system!="Darwin"` dep) and no CUDA, so the real model path was never exercised. We've been bitten twice by mocked-on-Mac passing while live-on-PC broke (v0.5.1 NumPy crash, this whisperx drift) — do NOT trust the green tests as ship signal.
 
-### Done =
-- `pytest tests/test_transcribe_faster_whisper.py -v` green + full suite no new fails.
-- committed to main, CHANGELOG `v0.6.1` entry added, **NOT tagged**.
-- a short resume/result note for PC to pick up (what was done, what live verification remains).
+## PC leg (pending — do this when PC is back)
+1. `git pull` (faster-whisper 1.2.1 should already be installed on PC; if not, it's in requirements.txt for non-Darwin).
+2. Live run, isolated paths:
+   ```
+   ARKIV_DB_PATH=<temp> ARKIV_CHROMA_PATH=<temp> ARKIV_THUMBNAILS_DIR=<temp> \
+     python ingest.py --dir <2 clips>      # real transcripts produced, NO error
+   python embed.py                          # build index
+   # start server → chat compilation returns the clips
+   ```
+3. If clean: `git tag v0.6.1 && git push --tags` + GitHub Release. **Then delete this file.**
+4. If broken: capture the real error, fix in `transcribe.py`, re-verify. The likely risk areas are the exact `WhisperModel.transcribe()` kwarg names on the installed faster-whisper version and the `Segment`/`Word` attribute names — confirm against the installed package, not from memory.
 
-When the chain is complete, delete this file (`OVERNIGHT_RESUME.md`).
+When PC has verified + tagged, delete this file (`OVERNIGHT_RESUME.md`).

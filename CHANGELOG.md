@@ -1,4 +1,11 @@
 # Changelog
+## v0.6.1 - 2026-05-28
+
+### Fixed
+- **Non-Mac (CUDA) ingest no longer breaks at transcription.** whisperx 3.8.5 moved the per-call ASR options (`beam_size` / `condition_on_previous_text` / `compression_ratio_threshold` / `log_prob_threshold` / `initial_prompt`) into `load_model(asr_options=…)` and now pulls torchcodec, whose DLLs fail to load on the Windows/CUDA box. The non-Mac backend now routes to **faster-whisper** (already a declared non-Mac dependency, no torchcodec), which still accepts those options per call — a clean drop-in for the whisper-guard layer config. Set `ARKIV_TRANSCRIBE_BACKEND=whisperx` to force the legacy path. The Apple-Silicon MLX path is unchanged.
+
+> ⚠️ Verified on Mac with mocked `WhisperModel` unit tests only. **Live CUDA ingest→embed→chat on PC is still pending** before this is tagged/released — see `OVERNIGHT_RESUME.md`.
+
 ## v0.6.0 - 2026-05-28
 
 ### Added

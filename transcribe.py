@@ -32,6 +32,14 @@ LLM_POLISH = True
 # ── Platform Detection ───────────────────────────────────────────────────────
 _USE_MLX = platform.system() == "Darwin" and platform.machine() == "arm64"
 
+
+def _non_mac_backend() -> str:
+    """Non-Mac transcription backend. Defaults to faster-whisper because
+    whisperx 3.8.5 dropped the per-call ASR options and pulls torchcodec, whose
+    DLLs fail to load on the CUDA box. Set ARKIV_TRANSCRIBE_BACKEND=whisperx to
+    force the legacy path."""
+    return os.getenv("ARKIV_TRANSCRIBE_BACKEND", "faster-whisper").strip().lower()
+
 # ── Model Singletons ────────────────────────────────────────────────────────
 WHISPER_GUARD_ACTIVE_MODE = WHISPER_GUARD_DEFAULT_MODE
 WHISPER_GUARD_ACTIVE_LAYER = WHISPER_GUARD_LAYERS[WHISPER_GUARD_ACTIVE_MODE]
@@ -175,7 +183,7 @@ def warm_up():
             pass
         finally:
             Path(silence).unlink(missing_ok=True)
-    else:
+    elif _non_mac_backend() == "whisperx":
         import whisperx
         _whisperx_model = whisperx.load_model(
             WHISPER_MODEL,
@@ -183,6 +191,10 @@ def warm_up():
             compute_type="float16",
         )
         print("  [whisperx on cuda]", flush=True)
+    else:
+        from faster_whisper import WhisperModel
+        _fw_model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
+        print("  [faster-whisper on cuda]", flush=True)
 
     _whisper_loaded = True
     print("  [whisper model loaded]", flush=True)
@@ -212,8 +224,17 @@ def transcribe(media_path: str, language=None) -> tuple:
             finally:
                 if vad_wav != wav:
                     Path(vad_wav).unlink(missing_ok=True)
-        else:
+        elif _non_mac_backend() == "whisperx":
             return _transcribe_whisperx(wav, language)
+        else:
+            vad_wav = _vad_filter(wav)
+            if vad_wav is None:
+                return "", "", [], []
+            try:
+                return _transcribe_faster_whisper(vad_wav, language)
+            finally:
+                if vad_wav != wav:
+                    Path(vad_wav).unlink(missing_ok=True)
     finally:
         Path(wav).unlink(missing_ok=True)
 
@@ -247,6 +268,58 @@ def _transcribe_mlx(wav: str, language: str) -> tuple:
     lang = result.get("language", language)
     raw_segments = result.get("segments", [])
     return _postprocess(text, lang, raw_segments, language, words=[])
+
+def _transcribe_faster_whisper(wav: str, language: str) -> tuple:
+    """Transcribe using faster-whisper (non-Mac / CUDA).
+
+    faster-whisper's WhisperModel.transcribe() still accepts the whisper-guard
+    layer options per call (beam_size / condition_on_previous_text /
+    compression_ratio_threshold / log_prob_threshold / initial_prompt /
+    word_timestamps), so this is a clean drop-in for the whisperx path without
+    pulling torchcodec.
+    """
+    global _fw_model
+    if _fw_model is None:
+        warm_up()
+
+    initial_prompt = _build_initial_prompt()
+    layer = _current_whisper_guard_settings()
+    opts = {
+        "language": language,
+        "beam_size": layer["beam_size"],
+        "condition_on_previous_text": layer["condition_on_previous_text"],
+        "word_timestamps": True,
+    }
+    _optional_option(opts, "compression_ratio_threshold", layer["compression_ratio_threshold"])
+    _optional_option(opts, "log_prob_threshold", layer["whisperx"]["log_prob_threshold"])
+    if initial_prompt:
+        opts["initial_prompt"] = initial_prompt
+
+    segments, info = _fw_model.transcribe(wav, **opts)
+
+    parsed_segments = []
+    all_words = []
+    for seg in segments:  # generator — iterating it runs the actual inference
+        parsed_segments.append({
+            "text": (seg.text or "").strip(),
+            "start": seg.start,
+            "end": seg.end,
+            "no_speech_prob": getattr(seg, "no_speech_prob", 0),
+            "avg_logprob": getattr(seg, "avg_logprob", 0),
+            "compression_ratio": getattr(seg, "compression_ratio", 1),
+        })
+        for word in (seg.words or []):
+            if word.start is not None and word.end is not None:
+                all_words.append({
+                    "word": (word.word or "").strip(),
+                    "start": round(float(word.start), 3),
+                    "end": round(float(word.end), 3),
+                    "score": round(float(word.probability), 3),
+                })
+
+    text = " ".join(s["text"] for s in parsed_segments).strip()
+    lang = (info.language if info is not None else None) or language
+    return _postprocess(text, lang, parsed_segments, language, words=all_words)
 
 def _transcribe_whisperx(wav: str, language: str) -> tuple:
     """Transcribe using WhisperX (CUDA) with forced alignment."""
