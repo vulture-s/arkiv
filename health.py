@@ -230,6 +230,15 @@ def main():
         vision_model = config.VISION_MODEL.split(":")[0]
         has_vision = any(vision_model in m for m in models)
         check(config.VISION_MODEL, has_vision, "" if has_vision else f"(ollama pull {config.VISION_MODEL})", required=False)
+
+        chat_model = config.ARKIV_CHAT_MODEL.split(":")[0]
+        has_chat = any(chat_model in m for m in models)
+        check(config.ARKIV_CHAT_MODEL, has_chat, "(for chat)" if has_chat else f"(chat needs: ollama pull {config.ARKIV_CHAT_MODEL})", required=False)
+
+        intent_model = config.ARKIV_INTENT_MODEL.split(":")[0]
+        if intent_model != chat_model:
+            has_intent = any(intent_model in m for m in models)
+            check(config.ARKIV_INTENT_MODEL, has_intent, "(intent)" if has_intent else f"(intent needs: ollama pull {config.ARKIV_INTENT_MODEL})", required=False)
     except Exception:
         check("ollama server", False, "(not running)")
 

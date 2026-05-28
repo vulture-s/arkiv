@@ -1,4 +1,16 @@
 # Changelog
+## v0.5.2 - 2026-05-28
+
+### Changed
+- **Chat needs only one model now.** `ARKIV_INTENT_MODEL` defaults to `ARKIV_CHAT_MODEL` (`qwen2.5:14b`), so a single `ollama pull` covers both intent classification and answers. Previously it defaulted to `qwen2.5:7b-instruct` — undocumented and frequently not installed, which silently broke chat. Override only if a smaller intent model is actually present.
+
+### Added
+- **`health.py` now checks the chat model** and warns with an `ollama pull …` hint when the configured chat (or a distinct intent) model is missing — previously health was blind to chat models.
+- **README chat documentation (EN + zh-TW)** — model requirement, all five intents, `project_scope`, response shape, chat hardware floor, and an "embedding model is locked to your index" warning.
+
+### Fixed
+- **Missing chat model returns a clear message instead of HTTP 500.** `/api/chat` now catches the Ollama `HTTPError` and tells you to `ollama pull` the model.
+
 ## v0.5.1 - 2026-05-28
 
 ### Fixed

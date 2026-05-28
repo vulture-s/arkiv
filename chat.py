@@ -363,6 +363,18 @@ def dispatch(
             "intent": "general",
             "latency_ms": 0,
         }
+    except requests.exceptions.HTTPError:
+        return {
+            "assistant_text": (
+                "LLM 請求被拒，通常是模型未安裝。請在 Ollama 主機執行："
+                "ollama pull {0}".format(ARKIV_INTENT_MODEL)
+            ),
+            "scene_ids": [],
+            "tokens_used": 0,
+            "stage": "error",
+            "intent": "general",
+            "latency_ms": 0,
+        }
 
     intent = intent_result.get("intent")
     if intent not in KNOWN_INTENTS:
@@ -375,6 +387,18 @@ def dispatch(
             "assistant_text": "處理時 LLM 失聯（{0}），已記錄 intent={1}。".format(
                 type(exc).__name__,
                 intent,
+            ),
+            "scene_ids": [],
+            "tokens_used": intent_result.get("tokens_used", 0),
+            "stage": "error",
+            "intent": intent,
+            "latency_ms": intent_result.get("latency_ms", 0),
+        }
+    except requests.exceptions.HTTPError:
+        return {
+            "assistant_text": (
+                "LLM 請求被拒，通常是模型未安裝。請在 Ollama 主機執行："
+                "ollama pull {0}".format(ARKIV_CHAT_MODEL)
             ),
             "scene_ids": [],
             "tokens_used": intent_result.get("tokens_used", 0),

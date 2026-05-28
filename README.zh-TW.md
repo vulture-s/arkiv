@@ -105,14 +105,19 @@ curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
 
 ### Chat API — 素材庫 RAG 問答
 
-你可以用自然語言詢問素材庫：
+你可以用自然語言詢問素材庫。分類器會把每個 prompt 交給五個 handler 其中之一：
 
-- 「給我五月所有黃昏鏡頭」→ `compilation`
-- 「只要室內的」→ `refinement`
-- 「找跟 scene 42 類似的」→ `similarity`
-- 「這個月總共拍了幾小時？」→ `analytics`
+| Intent | 範例 | 做什麼 |
+|--------|------|--------|
+| `compilation` | 「給我五月所有黃昏鏡頭」 | 語意搜尋 → 排序後的 scene 清單 |
+| `refinement` | 「只要室內的」 | 在對話中對*上一輪結果*再篩選 |
+| `similarity` | 「找跟 scene 42 類似的」 | 對參考鏡頭做向量最近鄰 |
+| `analytics` | 「這個月總共拍了幾小時？」 | 對素材庫做統計查詢 |
+| `general` | 「你能幫我做什麼？」 | 純 LLM 問答，不查庫 |
 
-分類器會把 prompt 交給對應 handler，對話歷史會寫入資料庫，下一輪回應會帶入最近 10 則訊息。
+對話歷史（最近 10 則）會帶入每次後續回應，所以 `refinement` 是對上一輪傳回的結果做篩選。
+
+**模型需求**：chat 用 `ARKIV_CHAT_MODEL`（預設 `qwen2.5:14b`）同時處理*意圖分類與回答* —— 一個 `ollama pull qwen2.5:14b` 就夠。只有當較小模型（例如 `qwen2.5:7b-instruct`）確實已裝在 Ollama 主機上時，才設 `ARKIV_INTENT_MODEL`。模型缺失時 `/api/chat` 會回清楚的「請 ollama pull …」訊息而非 500。
 
 ```bash
 # 建立對話
@@ -120,13 +125,21 @@ curl -X POST http://localhost:8501/api/chat \
   -H "Authorization: Bearer $ARKIV_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"prompt": "給我所有黃昏鏡頭"}'
+# → {"conversation_id":"…", "assistant_text":"…", "scene_ids":[…], "intent":"compilation", …}
 
-# 延續同一個對話
+# 延續同一個對話 —— refinement 會對上一輪結果操作
 curl -X POST http://localhost:8501/api/chat \
   -H "Authorization: Bearer $ARKIV_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"prompt": "只要室內的", "conversation_id": "abc123"}'
+
+# 把對話限定在特定 project
+curl -X POST http://localhost:8501/api/chat -H "Authorization: Bearer $ARKIV_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "寬景鏡頭", "project_scope": ["client-acme"]}'
 ```
+
+用 `GET /api/chat/history/{conversation_id}` 讀回歷史、`GET /api/chat/conversations` 列出對話（都需要 `chat_read`）。
 
 ## 快速開始
 
@@ -267,12 +280,18 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | `ARKIV_CHROMA_PATH` | `./chroma_db` | ChromaDB 向量庫 |
 | `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | 縮圖輸出目錄 |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API 端點 |
-| `ARKIV_EMBED_MODEL` | `nomic-embed-text` | 嵌入模型 |
+| `ARKIV_EMBED_MODEL` | `nomic-embed-text` | 嵌入模型 —— **建索引後請勿更換**（見下方說明） |
 | `ARKIV_VISION_MODEL` | `qwen3-vl:8b` | 視覺模型（幀描述） |
+| `ARKIV_CHAT_MODEL` | `qwen2.5:14b` | Chat 模型 —— 回答與（預設）意圖分類 |
+| `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | 選用的較快意圖分類模型；必須已安裝 |
 | `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (其他) | Whisper 模型 |
 | `ARKIV_EXIFTOOL_PATH` | *（空 — 自動偵測）* | exiftool 路徑（選用） |
 | `ARKIV_HOST` | `0.0.0.0` | 伺服器綁定位址 |
 | `ARKIV_PORT` | `8501` | 伺服器埠號 |
+
+> **嵌入模型與索引綁定。** 向量庫是用單一嵌入模型（`nomic-embed-text`，768 維）建立的。索引建好後若更改 `ARKIV_EMBED_MODEL`，新查詢向量會跟既有向量不相容 —— 搜尋結果會靜默劣化。要換模型必須重建整個索引。
+>
+> **Chat 硬體門檻：** `qwen2.5:14b` 約需 9 GB，且與嵌入模型同時運行，請在 Ollama 主機預留約 12–16 GB 可用 RAM/VRAM。記憶體較緊的機器可設 `ARKIV_CHAT_MODEL=qwen2.5:7b`（約 4.7 GB）當較輕的預設。
 
 ## 技術架構
 
@@ -284,7 +303,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | 嵌入 | Ollama nomic-embed-text（768d, cosine） |
 | 轉錄 | mlx-whisper / faster-whisper (large-v3-turbo) |
 | VAD | Silero VAD（Whisper 前的靜音過濾） |
-| LLM 潤稿 | Ollama qwen2.5:14b（標點 + 錯字校正） |
+| LLM 潤稿 + Chat | Ollama qwen2.5:14b（轉錄潤稿 + 5-intent chat RAG） |
 | 視覺 | Ollama qwen3-vl:8b（品牌/物件辨識） |
 | 媒體 | FFmpeg（探測、縮圖、幀擷取） |
 | 詮釋資料 | ExifTool（12 欄位、sidecar-aware、跨平台自動偵測） |
@@ -337,7 +356,7 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 | Ollama server | 必要 | 必要 | 必要 | |
 | nomic-embed-text | 必要 | 必要 | 必要 | |
 | qwen3-vl:8b | 選用 | 選用 | 選用 | 幀描述用 |
-| qwen2.5:14b | 選用 | 選用 | 選用 | 轉錄潤稿用 |
+| qwen2.5:14b | 選用 | 選用 | 選用 | 轉錄潤稿 + chat（`/api/chat` 必需） |
 | ExifTool | 選用 | 選用 | 選用 | 豐富詮釋資料 |
 | faster-whisper | 必要 | 選用 | 必要 | CUDA/CPU whisper |
 | mlx-whisper | — | 必要 | — | 僅 Apple Silicon |

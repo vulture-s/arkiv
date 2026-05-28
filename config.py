@@ -89,7 +89,10 @@ OLLAMA_URL = _validate_http_url(
     os.getenv("ARKIV_OLLAMA_URL", "http://localhost:11434"), "ARKIV_OLLAMA_URL"
 )
 ARKIV_CHAT_MODEL = os.getenv("ARKIV_CHAT_MODEL", "qwen2.5:14b")
-ARKIV_INTENT_MODEL = os.getenv("ARKIV_INTENT_MODEL", "qwen2.5:7b-instruct")
+# Intent classification reuses the chat model by default so a single
+# `ollama pull` covers chat end-to-end. Override with a smaller/faster model
+# (e.g. qwen2.5:7b-instruct) only if it is actually installed on the host.
+ARKIV_INTENT_MODEL = os.getenv("ARKIV_INTENT_MODEL", ARKIV_CHAT_MODEL)
 OLLAMA_CHAT_MODEL = os.getenv(
     "ARKIV_OLLAMA_CHAT_MODEL",
     ARKIV_CHAT_MODEL,

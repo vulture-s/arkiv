@@ -105,14 +105,19 @@ Available scopes: `videos_read`, `videos_write`, `media_read`, `collections_read
 
 ### Chat API — RAG over your video library
 
-Ask natural-language questions about your archive:
+Ask natural-language questions about your archive. The classifier routes each prompt to one of five handlers:
 
-- "Give me all sunset shots from May" → `compilation`
-- "Only the indoor ones" → `refinement`
-- "Similar to scene 42" → `similarity`
-- "How many hours did I shoot this month?" → `analytics`
+| Intent | Example | What it does |
+|--------|---------|--------------|
+| `compilation` | "Give me all sunset shots from May" | Semantic search → ranked scene list |
+| `refinement` | "Only the indoor ones" | Filters the *previous* result, in-conversation |
+| `similarity` | "Similar to scene 42" | Vector nearest-neighbours to a reference clip |
+| `analytics` | "How many hours did I shoot this month?" | Aggregate query over the library |
+| `general` | "What can you help me with?" | Plain LLM chat, no search |
 
-The classifier routes prompts to specialized handlers, stores conversation history, and threads the last 10 messages into the next response.
+Conversation history (last 10 messages) is threaded into each follow-up, so `refinement` acts on what the previous turn returned.
+
+**Model requirement:** chat uses `ARKIV_CHAT_MODEL` (default `qwen2.5:14b`) for *both* intent classification and answers — a single `ollama pull qwen2.5:14b` covers it. Only set `ARKIV_INTENT_MODEL` to a smaller model (e.g. `qwen2.5:7b-instruct`) if that model is actually installed on the Ollama host. If the model is missing, `/api/chat` returns a clear "run ollama pull …" message instead of a 500.
 
 ```bash
 # Create a conversation
@@ -120,13 +125,21 @@ curl -X POST http://localhost:8501/api/chat \
   -H "Authorization: Bearer $ARKIV_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Give me all sunset shots"}'
+# → {"conversation_id":"…", "assistant_text":"…", "scene_ids":[…], "intent":"compilation", "tokens_used":…, "latency_ms":…}
 
-# Continue the same conversation
+# Continue the same conversation — refinement acts on the prior result
 curl -X POST http://localhost:8501/api/chat \
   -H "Authorization: Bearer $ARKIV_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Only indoor ones", "conversation_id": "abc123"}'
+
+# Scope a conversation to specific projects
+curl -X POST http://localhost:8501/api/chat -H "Authorization: Bearer $ARKIV_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "wide establishing shots", "project_scope": ["client-acme"]}'
 ```
+
+Read history with `GET /api/chat/history/{conversation_id}` and list conversations with `GET /api/chat/conversations` (both need `chat_read`).
 
 ## Quick Start
 
@@ -268,12 +281,18 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_CHROMA_PATH` | `./chroma_db` | ChromaDB vector store |
 | `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | Thumbnail output dir |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
-| `ARKIV_EMBED_MODEL` | `nomic-embed-text` | Embedding model |
+| `ARKIV_EMBED_MODEL` | `nomic-embed-text` | Embedding model — **do not change after indexing** (see note below) |
 | `ARKIV_VISION_MODEL` | `qwen3-vl:8b` | Vision model for frame descriptions |
+| `ARKIV_CHAT_MODEL` | `qwen2.5:14b` | Chat model — answers and (by default) intent classification |
+| `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | Optional faster model for intent classification only; must be installed |
 | `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (other) | Whisper model |
 | `ARKIV_EXIFTOOL_PATH` | *(empty — auto-detect)* | Path to exiftool binary (optional) |
 | `ARKIV_HOST` | `0.0.0.0` | Server bind address |
 | `ARKIV_PORT` | `8501` | Server port |
+
+> **Embedding model is locked to your index.** The vector store is built with one embedding model (`nomic-embed-text`, 768-dim). Changing `ARKIV_EMBED_MODEL` after you have indexed media makes new query vectors incompatible with stored ones — search results degrade silently. To switch models, re-index from scratch.
+>
+> **Hardware floor for chat:** `qwen2.5:14b` needs ~9 GB and runs alongside the embedding model. Plan for ~12–16 GB free RAM/VRAM on the Ollama host. On tighter machines, set `ARKIV_CHAT_MODEL=qwen2.5:7b` (~4.7 GB) for a lighter default.
 
 
 ## Tech Stack
@@ -286,7 +305,7 @@ Copy `.env.example` to `.env` and customize:
 | Embedding | Ollama nomic-embed-text (768d, cosine) |
 | Transcription | mlx-whisper / faster-whisper (large-v3-turbo) |
 | VAD | Silero VAD (silence filter before Whisper) |
-| LLM Polish | Ollama qwen2.5:14b (punctuation + typo correction) |
+| LLM Polish + Chat | Ollama qwen2.5:14b (transcript polish + 5-intent chat RAG) |
 | Vision | Ollama qwen3-vl:8b (brand/object recognition) |
 | Media | FFmpeg (probe, thumbnails, frame extraction) |
 | Metadata | ExifTool (12 fields, sidecar-aware, cross-platform auto-detect) |
@@ -339,7 +358,7 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 | Ollama server | Required | Required | Required | |
 | nomic-embed-text | Required | Required | Required | |
 | qwen3-vl:8b | Optional | Optional | Optional | For frame descriptions |
-| qwen2.5:14b | Optional | Optional | Optional | For transcript polish |
+| qwen2.5:14b | Optional | Optional | Optional | Transcript polish + chat (required for `/api/chat`) |
 | ExifTool | Optional | Optional | Optional | For rich metadata |
 | faster-whisper | Required | Optional | Required | CUDA/CPU whisper |
 | mlx-whisper | — | Required | — | Apple Silicon only |
