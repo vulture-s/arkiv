@@ -119,6 +119,8 @@ curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
 
 **模型需求**：chat 用 `ARKIV_CHAT_MODEL`（預設 `qwen2.5:14b`）同時處理*意圖分類與回答* —— 一個 `ollama pull qwen2.5:14b` 就夠。只有當較小模型（例如 `qwen2.5:7b-instruct`）確實已裝在 Ollama 主機上時，才設 `ARKIV_INTENT_MODEL`。模型缺失時 `/api/chat` 會回清楚的「請 ollama pull …」訊息而非 500。
 
+**前置條件 —— 先 ingest + 建索引**：chat 查的是*已建索引*的素材庫，不是獨立聊天機器人。先 ingest 素材（Step 1）+ 跑 `python embed.py` 建索引（Step 2）再用 chat。`compilation` / `refinement` / `similarity` 需要向量索引；`analytics` 只要 ingest 過；`general` 是唯一空庫也能用的 intent。空庫 / 未建索引時 chat 不會報錯，只會回「找到 0 個」。
+
 ```bash
 # 建立對話
 curl -X POST http://localhost:8501/api/chat \

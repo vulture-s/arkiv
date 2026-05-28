@@ -1,4 +1,15 @@
 # Changelog
+## v0.6.0 - 2026-05-28
+
+### Added
+- **Chat in the web UI.** A new "對話" button in the header opens an interim chat panel that calls `/api/chat`: conversation thread, intent badge, latency/token meta, and a scene-thumbnail strip whose clips open in the inspector. The canonical chat screen is being designed separately — this is a functional interim so the feature is usable today.
+
+### Fixed
+- **Web UI works in a plain browser again.** Since v0.4.1 every route required a Bearer token, but the browser frontend never sent one — so the web UI returned 401 on all data calls (and a fresh install was unusable in a browser). `auth.py` now trusts loopback (`127.0.0.1` / `::1`) as fully-scoped, so the local UI works with no token. Remote / fleet access still requires a token; set `ARKIV_TRUST_LOOPBACK=false` for reverse-proxied or network-exposed deployments.
+
+### Docs
+- README chat section now states the prerequisite: ingest **and** build the index (`python embed.py`) before chatting. `compilation` / `refinement` / `similarity` need the vector index; `analytics` needs ingested media; only `general` works on an empty library.
+
 ## v0.5.2 - 2026-05-28
 
 ### Changed

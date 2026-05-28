@@ -119,6 +119,8 @@ Conversation history (last 10 messages) is threaded into each follow-up, so `ref
 
 **Model requirement:** chat uses `ARKIV_CHAT_MODEL` (default `qwen2.5:14b`) for *both* intent classification and answers — a single `ollama pull qwen2.5:14b` covers it. Only set `ARKIV_INTENT_MODEL` to a smaller model (e.g. `qwen2.5:7b-instruct`) if that model is actually installed on the Ollama host. If the model is missing, `/api/chat` returns a clear "run ollama pull …" message instead of a 500.
 
+**Prerequisite — ingest + index first:** chat queries your *indexed* library, not a standalone chatbot. Ingest media (Step 1) and build the index with `python embed.py` (Step 2) before chatting. `compilation` / `refinement` / `similarity` need the vector index; `analytics` needs ingested media only; `general` is the only intent that works on an empty library. On an empty/unindexed library chat does not error — it just returns "0 results".
+
 ```bash
 # Create a conversation
 curl -X POST http://localhost:8501/api/chat \
