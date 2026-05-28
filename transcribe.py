@@ -100,7 +100,11 @@ def _current_whisper_guard_backend():
     return "mlx_whisper" if _USE_MLX else "whisperx"
 
 def _current_whisper_guard_settings():
-    return WHISPER_GUARD_ACTIVE_LAYER[_current_whisper_guard_backend()]
+    # Returns the full active layer. Both _transcribe_mlx and _transcribe_whisperx
+    # read top-level keys (beam_size, condition_on_previous_text, …) AND the
+    # backend sub-dict via layer["whisperx"]/layer["mlx_whisper"], so the full
+    # layer is required — indexing by backend here caused KeyError on whisperx.
+    return WHISPER_GUARD_ACTIVE_LAYER
 
 def _optional_option(opts, key, value):
     if value is not None:
