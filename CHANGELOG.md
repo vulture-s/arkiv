@@ -20,42 +20,10 @@
 ### Tests
 - Expanded `tests/test_chat.py` to 17 cases covering timeout handling, prompt trimming, classifier fallback, project scope propagation, and compilation-to-refinement flow.
 
-## Unreleased — Chat RAG B.4b Sub-Dispatch
-
-### New Features
-- **Chat handler expansion** — implemented `refinement`, `similarity`, `analytics`, and `general` handlers in `chat.py`, replacing the B.4b stubs while leaving B.4a classifier/dispatch/persistence helpers unchanged.
-- **Chat read APIs** — added authenticated GET `/api/chat/history/{conv_id}` and GET `/api/chat/conversations` endpoints with `chat_read` scope enforcement.
-
-### Tests
-- Expanded `tests/test_chat.py` from 4 to 12 cases covering refinement fallback/filtering, similarity reference IDs, analytics count, general no-vector path, and both new GET endpoints.
-- Verified `tests/test_chat.py -v` passes 12/12.
-- Full suite now reports 173 passed / 6 known platform-reference failures / 2 skipped on this Mac sandbox.
-
-### Notes
-- Similarity dynamically uses `vectordb.find_similar` when available and falls back to compilation otherwise; `vectordb.search(project_scope=...)` remains untouched for B.4c.
-- Analytics uses the current schema columns (`processed_at`, `duration_s`) rather than the handover pseudocode column names that do not exist in `db.py`.
-
-## Unreleased — Chat RAG B.4a Baseline
-
-### New Features
-- **Chat baseline** — added `chat.py` with the 5-intent classifier skeleton, compilation handler, conversation/message persistence helpers, and B.4b stubs for the remaining handlers.
-- **POST `/api/chat`** — authenticated chat write endpoint creates or continues conversations, persists user/assistant messages, and returns assistant text plus scene IDs.
-- **Chat storage/auth config** — `init_db()` now creates `chat_conversations` / `chat_messages`, auth scopes include `chat_read` / `chat_write`, and config exposes `ARKIV_CHAT_MODEL` / `ARKIV_INTENT_MODEL`.
-
-### Tests
-- Added `tests/test_chat.py` covering conversation creation, continuation, `chat_write` enforcement, and invalid conversation IDs.
-
-## v0.4.2 (2026-05-27) ??LLM Router Abstraction
-
-> **Refactor release.** Shared Ollama routing now lives in `llm.py` and is used by vision analysis, embedding, and transcript polish call sites without changing the public module-level API surface.
-
-### New Features
-- **`llm.py` router** ??centralized `chat` / `embed` / `vision` helpers with consistent request payloads, token counting, and provider metadata.
-- **Router coverage** ??`tests/test_llm_router.py` adds focused schema, json-mode, token clamping, and default-model checks.
-
-### Internals
-- `vision.py`, `vectordb.py`, and `transcribe.py` now route Ollama calls through the shared abstraction while keeping existing module names and fallback hooks intact.
-- `config.py` now exposes `OLLAMA_CHAT_MODEL`, `OLLAMA_EMBED_MODEL`, and `OLLAMA_VISION_MODEL` while preserving the legacy `EMBED_MODEL` / `VISION_MODEL` aliases.
+### Changed — LLM router abstraction
+- **`llm.py` router** — centralized `chat` / `embed` / `vision` helpers with consistent request payloads, token counting, and provider metadata. `vision.py`, `vectordb.py`, and `transcribe.py` route Ollama calls through it while keeping existing module names and fallback hooks intact.
+- **Model config** — `config.py` exposes `OLLAMA_CHAT_MODEL`, `OLLAMA_EMBED_MODEL`, and `OLLAMA_VISION_MODEL` (legacy `EMBED_MODEL` / `VISION_MODEL` aliases preserved).
+- **Router coverage** — `tests/test_llm_router.py` adds schema, json-mode, token-clamping, and default-model checks.
 
 ## v0.4.1 (2026-05-27) — API Scope Token Auth
 
