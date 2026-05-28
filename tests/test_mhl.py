@@ -7,14 +7,17 @@ import shutil
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+import pytest
+
 import mhl
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "mhl.py"
 MHL_NS = {"m": "urn:ASC:MHL:v2.0", "d": "urn:ASC:MHL:DIRECTORY:v2.0"}
-NATIVE_MHL = Path(r"C:\Users\user\AppData\Local\Temp\ascmhl-native\ascmhl\0001_ascmhl-native_2026-05-26_083540Z.mhl")
-NATIVE_CHAIN = Path(r"C:\Users\user\AppData\Local\Temp\ascmhl-native\ascmhl\ascmhl_chain.xml")
+_NATIVE_DIR = REPO_ROOT / "tests" / "fixtures" / "native-mhl"
+NATIVE_MHL = _NATIVE_DIR / "0001_ascmhl-native_2026-05-26_083540Z.mhl"
+NATIVE_CHAIN = _NATIVE_DIR / "ascmhl_chain.xml"
 
 
 def run_cli(args, cwd):
@@ -141,6 +144,10 @@ def test_verify_detects_tamper():
     assert verify_bad.returncode == 2, verify_bad.stdout + verify_bad.stderr
 
 
+@pytest.mark.skipif(
+    not NATIVE_CHAIN.exists(),
+    reason="native ASC MHL reference fixture absent (tests/fixtures is gitignored — generate locally to run)",
+)
 def test_native_c4_reference_matches_chain():
     native_chain = parse_xml(NATIVE_CHAIN)
     native_hashlist = native_chain.find("d:hashlist", MHL_NS)

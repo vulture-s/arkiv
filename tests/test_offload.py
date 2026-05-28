@@ -10,12 +10,14 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GIT = ["git", "-c", "safe.directory=C:/Users/user/.arkiv", "-C", str(ROOT)]
+GIT = ["git", "-c", f"safe.directory={ROOT}", "-C", str(ROOT)]
 
 
 def _bootstrap_mhl(tmp_path, monkeypatch):
+    # mhl.py was merged to main (feat/13.1-mhl-v2 branch deleted); fetch from HEAD
+    # so the bootstrap works on any clone, not just one with the stale feature branch.
     mhl_src = subprocess.run(
-        GIT + ["show", "feat/13.1-mhl-v2:mhl.py"],
+        GIT + ["show", "HEAD:mhl.py"],
         check=True,
         capture_output=True,
         text=True,
