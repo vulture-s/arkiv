@@ -4,6 +4,7 @@
   export let style = ''
 </script>
 
+<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div class="frame" class:hi {style} {...$$restProps} on:click on:mouseenter on:mouseleave>
   <slot />
 </div>
