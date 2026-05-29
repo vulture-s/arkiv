@@ -7,6 +7,7 @@
   import InspectorFull from './routes/InspectorFull.svelte'
   import Search from './routes/Search.svelte'
   import Ingest from './routes/Ingest.svelte'
+  import Settings from './routes/Settings.svelte'
 
   // Routes are added per overnight segment.
   const routes = {
@@ -17,6 +18,7 @@
     '/inspector': InspectorFull, // seg 4 — inspector full
     '/search': Search, // seg 5 — cross-project search
     '/ingest': Ingest, // seg 6 — ingest progress
+    '/settings': Settings, // seg 7 — settings modal
     // ...screens land here per segment
   }
 </script>
