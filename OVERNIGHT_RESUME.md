@@ -4,6 +4,17 @@ Mini coding leg **DONE** (M2 Max CC agent, 2026-05-29). The faster-whisper backe
 is implemented + unit-tested + committed to main, **NOT tagged**. One leg remains:
 **live CUDA ingest→embed→chat on PC**, then tag `v0.6.1`.
 
+> **Fresh-device bootstrap (read before the PC leg).** arkiv is a `requirements.txt`
+> + venv project — it has **no `pyproject.toml`**, so `uv sync` fails. Install with:
+> `python -m venv .venv && pip install -r requirements.txt -r requirements-dev.txt`
+> (PC also needs `pip install faster-whisper torch` for the CUDA path). If the system
+> Python is bleeding-edge (e.g. 3.14), pin a stable one (3.11–3.12) — chromadb/torch
+> have no wheels for the newest releases yet. Smoke baseline on a fresh clone is
+> **`pytest tests/test_mhl.py tests/test_offload.py` → 7 passed, 1 skipped** (the
+> `test_native_c4_reference_matches_chain` skip is by-design: its reference fixture
+> lives in the gitignored `tests/fixtures/`). The full per-device procedure is
+> codified in hevin-ai-os `references/sop/arkiv-device-deploy.md`.
+
 ## Task that was done: faster-whisper transcription backend (fixes non-Mac ingest)
 
 **Spec**: `docs/transcribe-fasterwhisper-handover.md`.
