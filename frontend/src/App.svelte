@@ -9,6 +9,7 @@
   import Ingest from './routes/Ingest.svelte'
   import Settings from './routes/Settings.svelte'
   import Flows from './routes/Flows.svelte'
+  import Edge from './routes/Edge.svelte'
 
   // Routes are added per overnight segment.
   const routes = {
@@ -21,7 +22,8 @@
     '/ingest': Ingest, // seg 6 — ingest progress
     '/settings': Settings, // seg 7 — settings modal
     '/flows': Flows, // seg 8 — round-3 flows
-    // ...screens land here per segment
+    '/edge': Edge, // seg 9 — round-4 edge
+    // (insta360 — excluded, gated on 8.3a POC)
   }
 </script>
 
