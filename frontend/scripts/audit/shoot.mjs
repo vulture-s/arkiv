@@ -56,7 +56,7 @@ try {
 await new Promise((r) => setTimeout(r, 400)) // let fonts/animation settle
 
 mkdirSync(dirname(outPng), { recursive: true })
-await page.screenshot({ path: outPng })
+await page.screenshot({ path: outPng, fullPage: true })
 await browser.close()
 
 if (consoleJson) {
