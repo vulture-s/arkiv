@@ -3,12 +3,14 @@
   import Home from './routes/Home.svelte'
   import Gallery from './routes/Gallery.svelte'
   import MainDark from './routes/MainDark.svelte'
+  import MainStates from './routes/MainStates.svelte'
 
   // Routes are added per overnight segment.
   const routes = {
     '/': Home,
     '/gallery': Gallery, // seg 1 — shared-primitive gallery
     '/main': MainDark, // seg 2 — hero (interactive)
+    '/states': MainStates, // seg 3 — state variants
     // ...screens land here per segment
   }
 </script>
