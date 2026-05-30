@@ -74,7 +74,11 @@ export const search = (q, params = {}, opts) =>
   req(`/api/search/all${qs({ q, ...params })}`, opts)
 
 // ---- asset URLs (no fetch — for <img>/<video src>) ----
-export const thumbUrl = (id) => `${BASE}/api/media/${id}/thumb`
+// Thumbnails are served by a static mount at /thumbnails/<basename>, NOT a
+// per-id route. /api/media items carry `thumbnail_path` (absolute fs path);
+// derive the served URL from its basename. Verified: /thumbnails/C3742.jpg → 200.
+export const thumbUrlFromPath = (thumbnailPath) =>
+  thumbnailPath ? `${BASE}/thumbnails/${thumbnailPath.split('/').pop()}` : null
 export const streamUrl = (id) => `${BASE}/api/stream/${id}`
 
 // ---- writes ----

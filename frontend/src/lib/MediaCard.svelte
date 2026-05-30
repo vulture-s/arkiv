@@ -8,12 +8,19 @@
   export let theme = 'dark'
   export let selected = false
   export let hover = false
+  // Optional real thumbnail URL (live data). Falls back to abstract Thumb.
+  export let thumbUrl = null
+  let imgFailed = false
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div class="card" class:selected class:hover on:click on:mouseenter on:mouseleave>
   <div class="thumbarea">
-    <Thumb seed={m.id} kind={m.kind} {theme} />
+    {#if thumbUrl && !imgFailed}
+      <img class="thumbimg" src={thumbUrl} alt={m.name} loading="lazy" on:error={() => (imgFailed = true)} />
+    {:else}
+      <Thumb seed={m.id} kind={m.kind} {theme} />
+    {/if}
     <div class="dur">{m.dur}</div>
     {#if selected}
       <CornerTick pos="tl" /><CornerTick pos="tr" /><CornerTick pos="bl" /><CornerTick pos="br" />
@@ -33,6 +40,7 @@
   .card.selected { box-shadow: inset 0 0 0 1px var(--invert); }
   .card.hover:not(.selected) { outline: 1px solid var(--rule-hi); outline-offset: -1px; }
   .thumbarea { position: relative; aspect-ratio: 16 / 9; background: var(--surface-2); overflow: hidden; }
+  .thumbimg { width: 100%; height: 100%; object-fit: cover; display: block; }
   .dur {
     position: absolute; bottom: 6px; right: 6px;
     font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.02em;

@@ -11,11 +11,13 @@
   import Flows from './routes/Flows.svelte'
   import Edge from './routes/Edge.svelte'
   import Live from './routes/Live.svelte'
+  import MainLive from './routes/MainLive.svelte'
 
   // Routes are added per overnight segment.
   const routes = {
     '/': Home,
     '/live': Live, // B1 — live API proof (reads running backend)
+    '/main-live': MainLive, // B1 — main grid wired to live data
     '/gallery': Gallery, // seg 1 — shared-primitive gallery
     '/main': MainDark, // seg 2 — hero (interactive)
     '/states': MainStates, // seg 3 — state variants

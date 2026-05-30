@@ -54,3 +54,4 @@ frontend/.audit/
 
 # Local overnight work-order (ephemeral, mini-only)
 OVERNIGHT_UI_BUILD.md
+.testdata/
