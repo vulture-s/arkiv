@@ -1,0 +1,24 @@
+{
+  "name": "arkiv-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^3.1.2",
+    "puppeteer-core": "^23.0.0",
+    "svelte": "^4.2.20",
+    "vite": "^5.4.21"
+  },
+  "dependencies": {
+    "@fontsource/archivo-black": "^5.2.0",
+    "@fontsource/inter": "^5.2.0",
+    "@fontsource/jetbrains-mono": "^5.2.0",
+    "@fontsource/noto-sans-tc": "^5.2.0",
+    "svelte-spa-router": "^4.0.2"
+  }
+}

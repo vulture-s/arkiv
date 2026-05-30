@@ -47,3 +47,10 @@ venv/
 *.db-journal
 pages/
 src-tauri/target/
+
+# Frontend (Svelte 4 + Vite) — deps + build + local audit artifacts
+frontend/node_modules/
+frontend/.audit/
+
+# Local overnight work-order (ephemeral, mini-only)
+OVERNIGHT_UI_BUILD.md

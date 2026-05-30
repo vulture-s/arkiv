@@ -1,0 +1,226 @@
+/* ============================================================
+   arkiv — design tokens (drop-in from design-2026-05-27/tokens.css)
+   Brutalist editorial. Pure B&W. No chromatic accents.
+   Dark = deep ink charcoal (not pure black). Light = warm paper.
+
+   NOTE: the mockup's Google Fonts @import is intentionally removed —
+   fonts are self-hosted via @fontsource (imported in main.js).
+   Token VALUES below are verbatim from the canonical baseline; do
+   not alter them (cyan stays #18b6dc, no gradients).
+   ============================================================ */
+
+/* ---- base reset ---- */
+html { height: 100%; }
+body { margin: 0; padding: 0; min-height: 100%; }
+#app { min-height: 100%; }
+
+:root {
+  /* ---------- Type stack ---------- */
+  --ak-display: 'Archivo Black', 'Helvetica Now Display Black', 'Neue Haas Grotesk Display Black', 'Inter', sans-serif;
+  --ak-sans: 'Inter', 'Noto Sans TC', system-ui, -apple-system, sans-serif;
+  --ak-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* ---------- Type scale ---------- */
+  --fs-hairline: 10px;
+  --fs-micro: 11px;
+  --fs-tiny: 12px;
+  --fs-body: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-display-sm: 28px;
+  --fs-display: 40px;
+  --fs-display-lg: 64px;
+
+  --lh-tight: 1.0;
+  --lh-snug: 1.15;
+  --lh-body: 1.45;
+
+  --tr-tight: -0.02em;
+  --tr-display: -0.04em;
+  --tr-uppercase: 0.08em;
+
+  /* ---------- Spacing (4px base) ---------- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+
+  /* ---------- Geometry ---------- */
+  --radius-0: 0px;
+  --radius-1: 2px;    /* hairline pill, inputs */
+  --hairline: 1px;
+  --grid-gutter: 1px;
+
+  /* Brand brushstroke cyan — sanctioned in 3 places only:
+     splash/about, hover-line <2px, ingest/progress indicators. */
+  --cyan: #18b6dc;
+  --cyan-quiet: #167a93;
+}
+
+/* ============================================================
+   DARK (primary) — deep ink, not pure black
+   ============================================================ */
+[data-theme='dark'] {
+  --bg:        #0a0a0c;
+  --surface:   #111114;
+  --surface-2: #17171a;
+  --surface-3: #1d1d20;
+  --rule:      #26262a;
+  --rule-hi:   #3a3a3f;
+  --ink:       #f3f2ee;
+  --ink-2:     #b6b5b0;
+  --quiet:     #6a6a6d;
+  --quiet-2:   #4a4a4e;
+  --invert:    #f3f2ee;  /* used for selected outline + GOOD rating fill */
+  --invert-ink:#0a0a0c;
+}
+
+/* ============================================================
+   LIGHT (secondary) — warm paper
+   ============================================================ */
+[data-theme='light'] {
+  --bg:        #f1efe9;
+  --surface:   #f7f5ef;
+  --surface-2: #ffffff;
+  --surface-3: #ebe9e3;
+  --rule:      #1c1a16;     /* light mode rules are dark (editorial) */
+  --rule-hi:   #0a0a0c;
+  --ink:       #0a0a0c;
+  --ink-2:     #3a3833;
+  --quiet:     #7c7a73;
+  --quiet-2:   #a8a6a0;
+  --invert:    #0a0a0c;
+  --invert-ink:#f3f2ee;
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+.ak-root {
+  font-family: var(--ak-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--ink);
+  background: var(--bg);
+  font-feature-settings: 'ss01', 'cv11', 'tnum';
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  position: relative;
+  isolation: isolate;
+}
+
+/* ============================================================
+   Film grain — subtle paper / photographic noise on every panel.
+   Pulled from one inline SVG (feTurbulence baseFrequency 0.9), no
+   network. Tiles 200×200. Layered via ::before with pointer-events:
+   none so it never blocks input. Dark uses screen blend at 4% to
+   raise grain into the highlights; light uses multiply at 5% to
+   bite into the paper.
+   ============================================================ */
+:root {
+  --grain-img:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+.ak-root::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image: var(--grain-img);
+  background-size: 200px 200px;
+  pointer-events: none;
+  z-index: 1000;
+  opacity: 0.045;
+  mix-blend-mode: screen;
+}
+[data-theme='light'].ak-root::before {
+  opacity: 0.07;
+  mix-blend-mode: multiply;
+}
+
+/* Make sure children paint above the grain layer */
+.ak-root > * { position: relative; z-index: 1; }
+
+.ak-mono { font-family: var(--ak-mono); font-feature-settings: 'tnum'; letter-spacing: 0; }
+.ak-display { font-family: var(--ak-display); font-weight: 900; letter-spacing: var(--tr-display); line-height: var(--lh-tight); }
+
+.ak-eyebrow {
+  font-family: var(--ak-mono);
+  font-size: var(--fs-hairline);
+  letter-spacing: var(--tr-uppercase);
+  text-transform: uppercase;
+  color: var(--quiet);
+}
+
+/* ============================================================
+   Rating system — type weight + border only.
+   No stars, no dots, no color.
+   ============================================================ */
+.ak-rate { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.06em; padding: 2px 5px; line-height: 1; display: inline-flex; align-items: center; }
+.ak-rate--good { background: var(--invert); color: var(--invert-ink); font-weight: 700; }
+.ak-rate--ng   { color: var(--quiet); font-weight: 400; text-decoration: line-through; text-decoration-thickness: 1px; }
+.ak-rate--rev  { border: 1px dashed var(--rule-hi); color: var(--ink-2); font-weight: 500; padding: 1px 4px; }
+.ak-rate--none { border: 1px solid var(--rule); color: var(--quiet); font-weight: 400; padding: 1px 4px; }
+
+/* ============================================================
+   1px frame motif — used sparingly
+   logo lockup, selected media, modal chrome, empty state
+   ============================================================ */
+.ak-frame { box-shadow: inset 0 0 0 1px var(--rule); }
+.ak-frame-hi { box-shadow: inset 0 0 0 1px var(--invert); }
+
+/* ============================================================
+   Misc
+   ============================================================ */
+.ak-rule { height: 1px; background: var(--rule); }
+.ak-rule-v { width: 1px; background: var(--rule); }
+
+button.ak-btn {
+  font-family: var(--ak-mono);
+  font-size: var(--fs-tiny);
+  text-transform: uppercase;
+  letter-spacing: var(--tr-uppercase);
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--rule-hi);
+  padding: 6px 10px;
+  cursor: pointer;
+  line-height: 1;
+}
+button.ak-btn:hover { background: var(--surface-2); border-color: var(--ink); }
+button.ak-btn--primary { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
+button.ak-btn--primary:hover { background: var(--ink-2); border-color: var(--ink-2); color: var(--invert-ink); }
+
+input.ak-input {
+  font-family: var(--ak-mono);
+  font-size: var(--fs-tiny);
+  background: transparent;
+  color: var(--ink);
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  padding: 6px 0;
+  outline: none;
+  width: 100%;
+}
+input.ak-input:focus { border-bottom-color: var(--ink); }
+input.ak-input::placeholder { color: var(--quiet); }
+
+/* Skeleton sweep — vertical hairline that crosses each placeholder */
+@keyframes ak-sweep {
+  0%   { transform: translateX(0); opacity: 0; }
+  10%  { opacity: 0.5; }
+  50%  { opacity: 1; }
+  90%  { opacity: 0.5; }
+  100% { transform: translateX(200%); opacity: 0; }
+}
+
+/* hide scrollbars inside screens (artboards) */
+.ak-root *::-webkit-scrollbar { display: none; }
+.ak-root * { scrollbar-width: none; }
