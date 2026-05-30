@@ -10,10 +10,12 @@
   import Settings from './routes/Settings.svelte'
   import Flows from './routes/Flows.svelte'
   import Edge from './routes/Edge.svelte'
+  import Live from './routes/Live.svelte'
 
   // Routes are added per overnight segment.
   const routes = {
     '/': Home,
+    '/live': Live, // B1 — live API proof (reads running backend)
     '/gallery': Gallery, // seg 1 — shared-primitive gallery
     '/main': MainDark, // seg 2 — hero (interactive)
     '/states': MainStates, // seg 3 — state variants

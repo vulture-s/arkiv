@@ -8,8 +8,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:8501',
-      '/thumbnails': 'http://localhost:8501',
+      // explicit IPv4 — `localhost` resolves to ::1 first on dual-stack macOS,
+      // but the backend binds 127.0.0.1, so localhost would ECONNREFUSED.
+      '/api': 'http://127.0.0.1:8501',
+      '/thumbnails': 'http://127.0.0.1:8501',
     },
   },
 })
