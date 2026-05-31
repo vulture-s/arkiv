@@ -65,8 +65,11 @@
     if (!query.trim()) return load()
     state = 'loading'
     try {
-      const r = await api.search(query)
-      items = (r.items || r.results || []).map(toCard)
+      // Same-DB search via /api/media?q= → {items, total, search:true}.
+      // NOT /api/search/all — that's cross-project federation over the
+      // ~/.arkiv-projects.json registry, which is empty here → 0 results.
+      const r = await api.getMedia({ q: query, limit: 60 })
+      items = (r.items || []).map(toCard)
       selectedId = items.length ? items[0].id : null
       state = 'ok'
     } catch (e) {
@@ -84,7 +87,8 @@
     return true
   })
   $: selected = items.find((m) => m.id === selectedId) || items[0] || null
-  // Inspector expects rich fields; map from _raw with safe fallbacks.
+
+  // Inspector base (from grid item; always available so panel renders instantly).
   $: inspectorMedia = selected
     ? {
         id: selected.id, name: selected.name, kind: selected.kind,
@@ -97,6 +101,42 @@
         rating: selected.rating,
       }
     : null
+
+  // Live detail: fetch /api/media/{id} on selection change for transcript + vision.
+  // Detail carries segments_json (transcript) + frame_tags_parsed (vision).
+  let detail = null
+  let detailId = null
+  async function fetchDetail(id) {
+    detailId = id
+    detail = null
+    try {
+      detail = await api.getMediaDetail(id)
+    } catch (e) {
+      detail = null
+    }
+  }
+  $: if (selected && selected.id !== detailId) fetchDetail(selected.id)
+
+  const secToTc = (s) => {
+    s = Math.round(s || 0)
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+  }
+  const parseJson = (v) => {
+    if (!v) return null
+    if (typeof v !== 'string') return v
+    try { return JSON.parse(v) } catch { return null }
+  }
+  $: detailLive = detail && detail.id === (selected && selected.id) ? detail : null
+  // transcript: segments_json = [{start,end,text}, ...]
+  $: inspTranscript = detailLive
+    ? (parseJson(detailLive.segments_json) || []).map((sg) => [secToTc(sg.start), sg.text, false])
+    : null
+  // vision: frame_tags_parsed = [{description, tags, ...}, ...]
+  $: inspFrames = detailLive
+    ? ((detailLive.frame_tags_parsed || []).map((f) => f.description).filter(Boolean) || null)
+    : null
+  $: inspThumb = selected ? selected.thumb : null
+  $: inspPath = detailLive ? detailLive.path : null
 </script>
 
 <div class="artboard" data-theme={theme}>
@@ -149,7 +189,14 @@
     </main>
 
     {#if inspectorMedia}
-      <Inspector media={inspectorMedia} {theme} />
+      <Inspector
+        media={inspectorMedia}
+        {theme}
+        thumbUrl={inspThumb}
+        pathLabel={inspPath}
+        transcriptLines={inspTranscript}
+        frameDescriptions={inspFrames}
+      />
     {/if}
   </div>
 </div>

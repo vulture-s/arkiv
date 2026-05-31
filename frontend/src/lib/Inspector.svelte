@@ -6,13 +6,21 @@
   import Waveform from './Waveform.svelte'
   export let media
   export let theme = 'dark'
+  // Live overrides — all default to mock behaviour so mock screens are unchanged.
+  export let thumbUrl = null // real <img> when set, else abstract Thumb
+  export let pathLabel = null // file path string; null → mock /vol/... path
+  export let transcriptLines = null // [[tc,text,hl],...]; null → mock lines
+  export let frameDescriptions = null // string[]; when set, render a Vision block
+  let imgFailed = false
 
-  const transcript = [
+  const MOCK_TRANSCRIPT = [
     ['00:05', '我們從上海一路騎到拉薩，第十七天。', false],
     ['00:12', '中間最難的是格爾木到沱沱河那段。', true],
     ['00:24', '氧氣比想像中還少，海拔 4800。', false],
     ['00:36', '車架被打到變形，但人沒事。', false],
   ]
+  $: lines = transcriptLines ?? MOCK_TRANSCRIPT
+  $: pathStr = pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`
   const rateBtns = [['good', 'Good'], ['rev', 'Review'], ['ng', 'N·G'], ['none', '—']]
 </script>
 
@@ -23,12 +31,16 @@
     </Eyebrow>
     <div class="fname">{media.name}</div>
     <Mono dim style="font-size:10.5px;margin-top:4px;letter-spacing:0.04em;">
-      /vol/nas01/bicycle-diaries/raw/{media.name}
+      {pathStr}
     </Mono>
   </div>
 
   <div class="preview">
-    <Thumb seed={media.id} kind={media.kind} {theme} />
+    {#if thumbUrl && !imgFailed}
+      <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
+    {:else}
+      <Thumb seed={media.id} kind={media.kind} {theme} />
+    {/if}
     <div class="scrim"></div>
     <div class="controls">
       <Mono style="font-size:11px;color:#f3f2ee;">00:00:42</Mono>
@@ -64,14 +76,35 @@
       <Mono dim style="font-size:9.5px;">whisper-large · 98.2%</Mono>
     </div>
     <div class="lines">
-      {#each transcript as [tc, text, hl]}
-        <div class="line">
-          <Mono dim style="font-size:10.5px;flex:0 0 36px;">{tc}</Mono>
-          <span class="ttext" class:hl>{text}</span>
-        </div>
-      {/each}
+      {#if lines.length === 0}
+        <Mono dim style="font-size:11px;">（無語音 · no speech detected）</Mono>
+      {:else}
+        {#each lines as [tc, text, hl]}
+          <div class="line">
+            <Mono dim style="font-size:10.5px;flex:0 0 36px;">{tc}</Mono>
+            <span class="ttext" class:hl>{text}</span>
+          </div>
+        {/each}
+      {/if}
     </div>
   </div>
+
+  {#if frameDescriptions}
+    <div class="block">
+      <div class="blockhead">
+        <Eyebrow>Vision · qwen3-vl</Eyebrow>
+        <Mono dim style="font-size:9.5px;">{frameDescriptions.length} frame(s)</Mono>
+      </div>
+      <div class="lines">
+        {#each frameDescriptions as desc, i}
+          <div class="line">
+            <Mono dim style="font-size:10.5px;flex:0 0 36px;">f{i + 1}</Mono>
+            <span class="ttext">{desc}</span>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   <div class="rate">
     <Eyebrow>Rate</Eyebrow>
@@ -102,6 +135,7 @@
     position: relative; aspect-ratio: 16 / 9; background: var(--surface-2);
     border-bottom: 1px solid var(--rule);
   }
+  .previmg { width: 100%; height: 100%; object-fit: cover; display: block; }
   .scrim {
     position: absolute; left: 0; right: 0; bottom: 0; height: 40%;
     background-image: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent); pointer-events: none;
