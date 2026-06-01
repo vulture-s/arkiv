@@ -19,17 +19,19 @@ from typing import Dict, Iterable, List
 # variants like 模糊/模糊畫面 without enumerating each. Keep this to genuine
 # image-quality defects, NOT content (e.g. 低光 is a legit lighting style, kept).
 _NOISE_SUBSTRINGS = (
+    # NOTE: substring match — keep terms SPECIFIC so they don't eat content tags.
+    # Bare "畫面" was removed: it would drop content like 店內畫面/街景畫面 (Codex
+    # review P2). "模糊畫面" is already covered by "模糊".
     "模糊",       # blurry, 模糊畫面
     "低解析",     # low-res, 低解析度
-    "不明",       # 不明物體 (unidentifiable object)
+    "不明物體",   # unidentifiable object (specific, not bare 不明)
     "屏幕",       # screen (artifact of filming a monitor)
-    "畫面",       # bare "畫面" / 模糊畫面 — describes the frame, not content
     "雜訊",       # noise
     "失焦",       # out of focus
     "過曝",       # overexposed
     "欠曝",       # underexposed
     "晃動",       # shaky
-    "黑畫面",     # black frame
+    "黑畫面",     # black frame (specific)
 )
 
 
