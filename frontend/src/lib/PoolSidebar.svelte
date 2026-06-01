@@ -3,20 +3,29 @@
   import Eyebrow from './Eyebrow.svelte'
   import Mono from './Mono.svelte'
   import { PROJECTS, TAGS } from './mockData.js'
-  const pools = [
+  // Live overrides — all default to mock so mock screens stay byte-identical.
+  export let liveProjects = null // [{id,name,count,active,health?}]
+  export let livePools = null // [[label, count], ...]
+  export let liveTags = null // [{name, count}]
+  export let onTag = null // (name) => void; live tag-click → filter
+
+  const MOCK_POOLS = [
     ['All media', 247],
     ['Needs review', 34],
     ['Orphans', 2],
     ['Recently ingested', 18],
     ['No transcript', 12],
   ]
+  $: projects = liveProjects ?? PROJECTS
+  $: pools = livePools ?? MOCK_POOLS
+  $: tags = liveTags ?? TAGS
 </script>
 
 <aside class="pool">
   <section>
-    <Eyebrow style="margin-bottom:10px;">Projects · 4</Eyebrow>
+    <Eyebrow style="margin-bottom:10px;">Projects · {projects.length}</Eyebrow>
     <div class="col">
-      {#each PROJECTS as p (p.id)}
+      {#each projects as p (p.id)}
         <div class="proj" class:active={p.active} style="opacity:{p.health ? 0.6 : 1};">
           <div class="projrow">
             <span class="projname" class:activename={p.active}>{p.name}</span>
@@ -45,8 +54,9 @@
   <section class="tagsec">
     <Eyebrow style="margin-bottom:10px;">Tags · auto</Eyebrow>
     <div class="tags">
-      {#each TAGS as t (t.name)}
-        <span class="tag">{t.name} <span class="tagcount">{t.count}</span></span>
+      {#each tags as t (t.name)}
+        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+        <span class="tag" class:clickable={onTag} on:click={() => onTag && onTag(t.name)}>{t.name} <span class="tagcount">{t.count}</span></span>
       {/each}
     </div>
   </section>
@@ -92,6 +102,7 @@
     border: 1px solid var(--rule); color: var(--ink-2); cursor: pointer; white-space: nowrap;
   }
   .tagcount { color: var(--quiet); }
+  .tag.clickable:hover { border-color: var(--ink); color: var(--ink); }
   .spacer { flex: 1; }
   .storage { border-top: 1px solid var(--rule); padding-top: 12px; }
   .strow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }

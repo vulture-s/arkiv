@@ -49,18 +49,38 @@
     _raw: it,
   })
 
+  let liveTags = null
+
   async function load() {
     state = 'loading'
     try {
-      const [s, m] = await Promise.all([api.getStats(), api.getMedia({ limit: 60 })])
+      const [s, m, t] = await Promise.all([api.getStats(), api.getMedia({ limit: 60 }), api.getTags()])
       stats = s
       items = (m.items || []).map(toCard)
+      liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
       if (items.length && selectedId == null) selectedId = items[0].id
       state = 'ok'
     } catch (e) {
       state = 'error'
       err = e.message + (e.body ? ' · ' + JSON.stringify(e.body) : '')
     }
+  }
+
+  // D — live sidebar derived data.
+  $: livePools = stats
+    ? [
+        ['All media', stats.total],
+        ['Needs review', stats.rating?.review ?? 0],
+        ['Rated good', stats.rating?.good ?? 0],
+        ['N·G', stats.rating?.ng ?? 0],
+        ['Unrated', stats.rating?.unrated ?? 0],
+      ]
+    : null
+  $: liveProjects = stats ? [{ id: 'msr', name: '明燒肉', count: stats.total, active: true }] : null
+  // tag click → search that tag
+  function onTagClick(name) {
+    query = name
+    runSearch()
   }
 
   async function runSearch() {
@@ -162,7 +182,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} onTag={onTagClick} />
 
     <main class="center">
       <div class="toolrow">
