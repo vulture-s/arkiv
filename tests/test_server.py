@@ -983,6 +983,19 @@ def test_timeline_fcpxml_clip_start_within_asset_range_for_nonzero_tc(fastapi_cl
     assert a_start <= c_start <= a_start + a_dur  # clip start within asset range
 
 
+def test_timeline_fcpxml_escapes_quotes_in_filenames(fastapi_client, sample_record):
+    """A filename with a double quote must not break the name="..." attribute —
+    xml_esc leaves quotes alone by default (Codex review P2)."""
+    import xml.dom.minidom as _minidom
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path='/tmp/cam "A".mp4', filename='cam "A".mp4', duration_s=5.0, fps=30.0))
+    resp = fastapi_client.get("/api/export/timeline/fcpxml", params={"ids": "1"})
+    assert resp.status_code == 200
+    assert "&quot;" in resp.text
+    dom = _minidom.parseString(resp.text)  # would raise if the quote broke the attr
+    assert dom.getElementsByTagName("asset-clip")[0].getAttribute("name") == 'cam "A".mp4'
+
+
 def test_timeline_preserves_order_and_allows_repeats(fastapi_client, sample_record):
     _insert_two_clips_with_segments(sample_record)
     resp = fastapi_client.get("/api/export/timeline/edl", params={"ids": "2,1,2"})
