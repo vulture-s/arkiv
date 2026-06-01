@@ -81,9 +81,12 @@ done
 # only Docker got this pass-with-note, so `pc` smoke-tests failed immediately
 # after a clean install — a bad first-run experience.)
 echo "── Data ──"
-COUNT=$(curl -s --max-time 5 "$BASE/api/stats" 2>/dev/null | $PYTHON -c "import sys,json; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo "")
-if [ -z "$COUNT" ]; then
-    check "Media files indexed" "false" "stats endpoint unreadable"
+# Require a NUMERIC total — a schema regression returning {} or {"total": null}
+# must read as "unreadable", not be silently accepted as an empty library. The
+# parser prints the int only when total is genuinely an int, else nothing.
+COUNT=$(curl -s --max-time 5 "$BASE/api/stats" 2>/dev/null | $PYTHON -c "import sys,json; t=json.load(sys.stdin).get('total'); print(t if isinstance(t,int) else '')" 2>/dev/null || echo "")
+if ! printf '%s' "$COUNT" | grep -Eq '^[0-9]+$'; then
+    check "Media files indexed" "false" "stats total missing/non-numeric"
 elif [ "$COUNT" = "0" ]; then
     check "Media files indexed" "true" "0 files (fresh install — ingest media to populate)"
 else
