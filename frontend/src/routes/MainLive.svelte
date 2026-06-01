@@ -156,7 +156,31 @@
     }
   }
 
-  onMount(load)
+  // Deep-link from the ranked search screen: #/main-live?sel=<id> selects that
+  // clip. If it's outside the first page, fetch it by id and prepend so the grid
+  // + inspector show it instead of silently falling back to the default (Codex
+  // review P2).
+  function readSelParam() {
+    const h = window.location.hash
+    const qi = h.indexOf('?')
+    if (qi === -1) return null
+    const v = new URLSearchParams(h.slice(qi + 1)).get('sel')
+    const id = v == null ? null : Number(v)
+    return Number.isFinite(id) ? id : null
+  }
+  async function selectFromParam() {
+    const sel = readSelParam()
+    if (sel == null) return
+    if (items.find((m) => m.id === sel)) { selectedId = sel; return }
+    try {
+      const d = await api.getMediaDetail(sel)
+      if (d && d.id != null) { items = [toCard(d), ...items]; selectedId = sel }
+    } catch (e) { /* unknown id → keep default selection */ }
+  }
+  onMount(async () => {
+    await load()
+    await selectFromParam()
+  })
 
   $: visible = items.filter((m) => {
     if (activeFilter === 'video' && m.kind !== 'video') return false

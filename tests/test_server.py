@@ -953,6 +953,36 @@ def test_timeline_fcpxml_asset_duration_matches_clip_in_timeline_timebase(fastap
         assert a.getAttribute("duration") == by_ref[a.getAttribute("id")]
 
 
+def test_timeline_fcpxml_clip_start_within_asset_range_for_nonzero_tc(fastapi_client, sample_record):
+    """A clip with non-zero camera TC must not place its asset-clip start outside
+    the asset's [start, start+duration] range (Codex review P2). We anchor the
+    asset at the camera TC so clip.start == asset.start (head of the readable
+    span), not hours past a 0s-anchored asset.
+    """
+    import re
+    import xml.dom.minidom as _minidom
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/tc.mp4", filename="tc.mp4", duration_s=10.0, fps=30.0,
+        start_tc="01:00:00:00",  # 3600s in
+    ))
+    resp = fastapi_client.get("/api/export/timeline/fcpxml", params={"ids": "1"})
+    assert resp.status_code == 200
+    dom = _minidom.parseString(resp.text)
+    asset = dom.getElementsByTagName("asset")[0]
+    clip = dom.getElementsByTagName("asset-clip")[0]
+
+    def _sec(rational):  # "108000/30s" → 3600.0
+        m = re.match(r"(\d+)/(\d+)s", rational)
+        return int(m.group(1)) / int(m.group(2)) if m else float(rational.rstrip("s"))
+
+    a_start = _sec(asset.getAttribute("start"))
+    a_dur = _sec(asset.getAttribute("duration"))
+    c_start = _sec(clip.getAttribute("start"))
+    assert a_start == 3600.0  # asset anchored at camera TC
+    assert a_start <= c_start <= a_start + a_dur  # clip start within asset range
+
+
 def test_timeline_preserves_order_and_allows_repeats(fastapi_client, sample_record):
     _insert_two_clips_with_segments(sample_record)
     resp = fastapi_client.get("/api/export/timeline/edl", params={"ids": "2,1,2"})
