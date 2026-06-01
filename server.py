@@ -513,8 +513,6 @@ def get_media_detail(
     if not rec:
         raise HTTPException(404, "找不到")
     _resolve_record(rec)
-    # Screen quality-defect tags (模糊/低解析度…) from the user-facing tag list.
-    rec["tags"] = tag_quality.filter_tag_records(db.get_tags(media_id))
     # Structured frame analysis data
     rec["frames"] = [_resolve_frame(frame) for frame in db.get_frames(media_id)]
     if rec.get("editability_score") is None:
@@ -528,6 +526,11 @@ def get_media_detail(
             rec["frame_tags_parsed"] = json.loads(rec["frame_tags"])
         except Exception:
             rec["frame_tags_parsed"] = []
+    # User-facing tags: screen quality-defect noise + keep only the top-N most
+    # confident (focus-weighted) tags, so a clip doesn't dump 10+ tags on the user.
+    top = set(tag_quality.rank_media_tags(rec.get("frame_tags_parsed") or []))
+    all_tags = tag_quality.filter_tag_records(db.get_tags(media_id))
+    rec["tags"] = [t for t in all_tags if t["name"] in top] if top else all_tags
     return rec
 
 
