@@ -243,8 +243,18 @@ def chat_endpoint(
         )
     else:
         conv_id = req.conversation_id
-        if not chat.conversation_exists(conv_id):
-            raise HTTPException(status_code=400, detail="Unknown conversation_id")
+        # Ownership on the WRITE path too: a non-owner who learns a conversation
+        # id must not be able to append a prompt/response to someone else's
+        # history (read-side filtering alone left this open). 404 (not 403/400)
+        # so a non-owner can't even confirm the id exists.
+        owner_sql, owner_params = _chat_owner_filter(_tok)
+        with db.get_conn() as conn:
+            owned = conn.execute(
+                "SELECT 1 FROM chat_conversations WHERE id = ?" + owner_sql,
+                (conv_id, *owner_params),
+            ).fetchone()
+        if not owned:
+            raise HTTPException(status_code=404, detail="conversation not found")
 
     # Persist a length-capped copy: the LLM only ever sees a trimmed prompt
     # (chat._trim_prompt), so storing the raw multi-MB original would bloat the
