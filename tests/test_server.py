@@ -1123,3 +1123,15 @@ def test_single_clip_srt_strips_cue_injection(fastapi_client, sample_record):
     assert resp.status_code == 200
     # the literal arrow must not survive inside the cue text
     assert "--> 00:09:00,000 spoof" not in resp.text
+
+
+def test_log_safe_strips_control_chars_and_truncates():
+    """client-log fields must not carry newlines/ANSI escapes (log injection) or
+    be unbounded (disk fill)."""
+    import importlib
+    server = importlib.import_module("server")
+    out = server._log_safe("hello\nFAKE LOG\x1b[31m evil\r\n", 100)
+    assert "\n" not in out and "\r" not in out and "\x1b" not in out
+    assert "hello" in out and "evil" in out
+    assert server._log_safe("x" * 5000, 16) == "x" * 16
+    assert server._log_safe("音樂 OK", 100) == "音樂 OK"  # CJK preserved
