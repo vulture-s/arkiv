@@ -801,6 +801,7 @@ def main():
     )
     parser.add_argument("--recursive", "-r", action="store_true", help="Recursively scan subdirectories")
     parser.add_argument("--db", default="", help="Path to SQLite DB (default: media.db next to ingest.py)")
+    parser.add_argument("--no-embed", action="store_true", help="Skip building the vector index after ingest (default: auto-embed so search/chat work immediately)")
     args = parser.parse_args()
 
     # --dir validation: required only when actually ingesting
@@ -1131,6 +1132,19 @@ def main():
 
     print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}")
     print(f"DB: {db.DB_PATH}")
+
+    # Auto-build the vector index so semantic search + chat work immediately.
+    # ingest writes SQLite records; embeddings live in ChromaDB and were a
+    # separate `embed.py` step — easy to forget, leaving search/chat returning
+    # nothing. Default ON; --no-embed to skip (e.g. batch-ingest then embed once).
+    if ok > 0 and not getattr(args, "no_embed", False):
+        try:
+            import embed
+            print(f"\n{'─'*60}")
+            embed.run_embed()
+        except Exception as exc:
+            print(f"\n[embed] ⚠ vector index build failed: {exc}")
+            print("[embed] run `python embed.py` manually; ingest itself succeeded.")
 
     if bench_log:
         print(f"\n{'='*60}")
