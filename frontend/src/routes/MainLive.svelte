@@ -166,11 +166,14 @@
     if (!selected) return
     const backendVal = RATING_MAP[uiRating] ?? null
     const id = selected.id
+    // preserve any existing rating_note (backend PATCH overwrites both fields →
+    // omitting note would silently delete it). Codex review P2.
+    const note = detailLive && detailLive.id === id ? detailLive.rating_note ?? null : null
     // optimistic: reflect immediately in grid + inspector (which both read item.rating)
     const prev = selected.rating
     items = items.map((m) => (m.id === id ? { ...m, rating: uiRating } : m))
     try {
-      await api.setRating(id, backendVal)
+      await api.setRating(id, backendVal, note)
     } catch (e) {
       // revert on failure
       items = items.map((m) => (m.id === id ? { ...m, rating: prev } : m))

@@ -82,7 +82,9 @@ export const thumbUrlFromPath = (thumbnailPath) =>
 export const streamUrl = (id) => `${BASE}/api/stream/${id}`
 
 // ---- writes ----
-export const setRating = (id, rating, opts) =>
-  req(`/api/media/${id}/rating`, { method: 'PATCH', body: { rating }, ...opts })
+// note: backend PATCH writes BOTH rating + rating_note, so an omitted note
+// clears any existing note. Always pass the current note through to preserve it.
+export const setRating = (id, rating, note = null, opts) =>
+  req(`/api/media/${id}/rating`, { method: 'PATCH', body: { rating, note }, ...opts })
 
 export { ApiError }
