@@ -20,6 +20,8 @@
 
   const suggestions = ['幫我把生肉切割的鏡頭剪成一段', '找店內空景的畫面', '哪些素材有餐廳']
 
+  // Prefetch the first page as a cheap cache; misses are resolved by id below
+  // (so scene_ids outside the first page still get a thumbnail — Codex review P2).
   async function loadMediaIndex() {
     try {
       const m = await api.getMedia({ limit: 200 })
@@ -30,15 +32,32 @@
         ])
       )
     } catch (e) {
-      /* non-fatal — scenes just won't show thumbs */
+      /* non-fatal — resolveScenes will fetch by id */
     }
   }
 
-  function resolveScenes(ids) {
-    return (ids || []).map((id) => {
-      const m = mediaById.get(String(id))
-      return { id, name: m?.filename || `#${id}`, thumb: m?.thumb || null }
-    })
+  // Resolve each scene id: index hit first, else fetch /api/media/{id} detail.
+  // Never permanently fails for ids outside the prefetched page.
+  async function resolveScenes(ids) {
+    return Promise.all(
+      (ids || []).map(async (id) => {
+        const key = String(id)
+        let m = mediaById.get(key)
+        if (!m) {
+          try {
+            const d = await api.getMediaDetail(id)
+            m = {
+              filename: d.filename || d.name,
+              thumb: d.thumbnail_path ? api.thumbUrlFromPath(d.thumbnail_path) : d.thumb,
+            }
+            mediaById.set(key, m) // cache for next time
+          } catch (e) {
+            m = null
+          }
+        }
+        return { id, name: m?.filename || `#${id}`, thumb: m?.thumb || null }
+      })
+    )
   }
 
   async function scrollDown() {
@@ -57,13 +76,14 @@
     try {
       const r = await api.chat(prompt, convId)
       convId = r.conversation_id || convId
+      const scenes = await resolveScenes(r.scene_ids)
       messages = [
         ...messages,
         {
           role: 'assistant',
           text: r.assistant_text || '',
           intent: r.intent,
-          scenes: resolveScenes(r.scene_ids),
+          scenes,
         },
       ]
     } catch (e) {

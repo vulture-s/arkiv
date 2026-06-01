@@ -63,7 +63,7 @@
       liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
       liveCollections = (c?.collections || []).map((col) => ({
         key: col.key, title: col.title, count: col.count,
-        ids: (col.items || []).map((i) => i.id),
+        items: col.items || [], // full member items (id/filename/thumb/duration_s/score)
       }))
       if (items.length && selectedId == null) selectedId = items[0].id
       state = 'ok'
@@ -73,15 +73,25 @@
     }
   }
 
-  // E1 — click a Smart Collection → filter grid to its member ids. Reloads the
-  // full library first (so it works after a search), then narrows by id set.
+  // E1 — click a Smart Collection → show its members directly. /api/collections
+  // already returns every member with id/filename/thumb/duration_s (classified
+  // over the FULL library server-side), so build cards straight from those —
+  // no /api/media re-fetch, no first-N cap (Codex review P2).
+  const fmtDurS = (s) => fmtDur(s)
   let activeCollection = null
-  async function onCollectionClick(col) {
+  function onCollectionClick(col) {
     query = ''
     activeCollection = col.key
-    const full = await api.getMedia({ limit: 200 })
-    const idSet = new Set(col.ids)
-    items = (full.items || []).map(toCard).filter((m) => idSet.has(m.id))
+    items = (col.items || []).map((it) => ({
+      id: it.id,
+      name: it.filename || `#${it.id}`,
+      kind: 'video',
+      rating: 'none',
+      dur: fmtDurS(it.duration_s),
+      size: '—',
+      thumb: it.thumb || null, // already a root-relative /thumbnails/<name> path
+      _raw: it,
+    }))
     selectedId = items.length ? items[0].id : null
   }
 
