@@ -1081,3 +1081,45 @@ def test_timeline_srt_falls_back_to_transcript_for_segmentless_clip(fastapi_clie
     assert "只有逐字稿沒有時間軸" in body  # the segmentless clip is NOT dropped
     # its single line spans the whole second clip, offset past the first (10s)
     assert "00:00:10,000 --> 00:00:20,000" in body
+
+
+# ── Track A hardening: single-clip export parity with the batch path ──────────
+
+def test_single_clip_fcpxml_escapes_quotes_in_filename(fastapi_client, sample_record):
+    """Single-clip FCPXML must quote-escape name=/src= like the batch path —
+    a filename with a double quote otherwise breaks the XML attribute."""
+    import xml.dom.minidom as _minidom
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path='/tmp/q "A".mp4', filename='q "A".mp4', duration_s=5.0, fps=30.0))
+    resp = fastapi_client.get("/api/media/1/export/fcpxml")
+    assert resp.status_code == 200
+    assert "&quot;" in resp.text
+    dom = _minidom.parseString(resp.text)  # raises if the quote broke the attr
+    assert dom.getElementsByTagName("asset-clip")[0].getAttribute("name") == 'q "A".mp4'
+
+
+def test_single_clip_srt_tolerates_segment_missing_keys(fastapi_client, sample_record):
+    """A legacy segment dict missing start/end/text must not 500 the SRT export."""
+    import json as _json
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/legacy.mp4", filename="legacy.mp4", duration_s=10.0, fps=30.0,
+        segments_json=_json.dumps([{"text": "有文字沒時間"}, {"start": 1.0, "end": 2.0, "text": "正常"}]),
+    ))
+    resp = fastapi_client.get("/api/media/1/export/srt")
+    assert resp.status_code == 200  # no KeyError 500
+    assert "正常" in resp.text
+
+
+def test_single_clip_srt_strips_cue_injection(fastapi_client, sample_record):
+    """Transcript text containing '-->' must not inject a fake cue boundary."""
+    import json as _json
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/inj.mp4", filename="inj.mp4", duration_s=10.0, fps=30.0,
+        segments_json=_json.dumps([{"start": 0.0, "end": 5.0, "text": "00:00:01,000 --> 00:09:00,000 spoof"}]),
+    ))
+    resp = fastapi_client.get("/api/media/1/export/srt")
+    assert resp.status_code == 200
+    # the literal arrow must not survive inside the cue text
+    assert "--> 00:09:00,000 spoof" not in resp.text
