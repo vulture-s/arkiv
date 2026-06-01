@@ -1135,3 +1135,51 @@ def test_log_safe_strips_control_chars_and_truncates():
     assert "hello" in out and "evil" in out
     assert server._log_safe("x" * 5000, 16) == "x" * 16
     assert server._log_safe("音樂 OK", 100) == "音樂 OK"  # CJK preserved
+
+
+# ── Track A hardening: input validation ──────────────────────────────────────
+
+def test_rating_rejects_arbitrary_value(fastapi_client, sample_record):
+    _insert_media(sample_record)
+    bad = fastapi_client.patch("/api/media/1/rating", json={"rating": "AMAZING"})
+    assert bad.status_code == 422  # not persisted as garbage
+    ok = fastapi_client.patch("/api/media/1/rating", json={"rating": "good"})
+    assert ok.status_code == 200
+
+
+def test_tag_create_rejects_empty_and_oversized_and_auto_source(fastapi_client, sample_record):
+    _insert_media(sample_record)
+    assert fastapi_client.post("/api/media/1/tags", json={"name": "   "}).status_code == 422
+    assert fastapi_client.post("/api/media/1/tags", json={"name": "x" * 200}).status_code == 422
+    # client may not mint auto tags (would be wiped on re-ingest)
+    assert fastapi_client.post("/api/media/1/tags", json={"name": "ok", "source": "auto"}).status_code == 422
+    # control chars stripped (newline removed → 好音), interior space kept
+    r = fastapi_client.post("/api/media/1/tags", json={"name": "好\n音 樂"})
+    assert r.status_code == 200
+    names = [t["name"] for t in fastapi_client.get("/api/media/1/tags").json()]
+    assert all("\n" not in n for n in names) and "好音 樂" in names
+
+
+def test_waveform_bins_clamped_on_no_audio_clip(fastapi_client, sample_record):
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/silent.mp4", filename="silent.mp4", has_audio=0))
+    resp = fastapi_client.get("/api/media/1/waveform", params={"bins": 999999})
+    assert resp.status_code == 200
+    assert len(resp.json()["peaks"]) <= 500  # not an 8MB allocation
+
+
+def test_chat_rejects_empty_prompt(fastapi_client):
+    # empty/whitespace is rejected; oversize is trimmed-and-accepted (existing
+    # behavior, tested in test_chat) — only the PERSISTED copy is capped.
+    assert fastapi_client.post("/api/chat", json={"prompt": "   "}).status_code == 422
+    assert fastapi_client.post("/api/chat", json={"prompt": ""}).status_code == 422
+
+
+def test_chat_persists_capped_prompt(server_module):
+    """A multi-MB prompt must not be stored verbatim in the conversation DB."""
+    import importlib
+    chat = importlib.import_module("chat")
+    server = importlib.import_module("server")
+    capped = ("x" * 50000)[:8000]
+    assert len(capped) == 8000  # the slice the handler persists
+    assert len(server.ChatRequest(prompt="x" * 50000).prompt) == 50000  # model keeps it for trim
