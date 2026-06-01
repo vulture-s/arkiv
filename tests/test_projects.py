@@ -46,3 +46,28 @@ def test_discover_projects_unions_registry_and_env_roots(tmp_path, monkeypatch):
     names = {project.name for project in discovered}
     assert names == {"registry-root", "env-root"}
     assert any(project.source == "env" for project in discovered)
+
+
+def test_list_projects_returns_clean_500_on_corrupt_registry(fastapi_client, tmp_path, monkeypatch):
+    """A corrupt ~/.arkiv-projects.json must yield a clean 500, not an uncaught
+    stack trace, on the read endpoints."""
+    import projects as project_registry
+    bad = tmp_path / "arkiv-projects.json"
+    bad.write_text("{ this is not valid json", encoding="utf-8")
+    monkeypatch.setattr(project_registry, "_default_registry_path", lambda: bad)
+    resp = fastapi_client.get("/api/projects")
+    assert resp.status_code == 500
+    assert "registry" in resp.json()["detail"].lower()
+    # sync too
+    assert fastapi_client.post("/api/projects/sync").status_code == 500
+
+
+def test_save_registry_uses_unique_tmp_file(tmp_path, monkeypatch):
+    """Concurrent saves must not share one '<file>.tmp' (corruption vector)."""
+    import projects as project_registry
+    reg = tmp_path / "arkiv-projects.json"
+    monkeypatch.setattr(project_registry, "_default_registry_path", lambda: reg)
+    project_registry.save_registry({"version": 1, "projects": []})
+    # the shared, fixed-name tmp must not survive a save (unique + cleaned up)
+    assert not (tmp_path / "arkiv-projects.json.tmp").exists()
+    assert reg.exists() and "projects" in reg.read_text(encoding="utf-8")
