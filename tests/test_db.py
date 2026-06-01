@@ -131,6 +131,23 @@ def test_delete_auto_tags_clears_machine_tags_but_keeps_manual(tmp_db, sample_re
     assert remaining == ["保留"]  # only the manual tag survives
 
 
+def test_manual_add_promotes_auto_tag_so_it_survives_refresh(tmp_db, sample_record):
+    """A tag first created by vision (auto) then confirmed by the user (manual)
+    must be promoted to source='manual' so a re-ingest's auto clear keeps it —
+    relying on the original source alone lost user-confirmed tags (Codex P2)."""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/promote.mp4"))
+    media_id = _get_row_by_path(db, "/tmp/promote.mp4")["id"]
+
+    db.add_tag(media_id, "生魚", source="auto")     # vision created it
+    db.add_tag(media_id, "生魚", source="manual")   # user confirms it by hand
+    # an auto re-add must NOT downgrade it back
+    db.add_tag(media_id, "生魚", source="auto")
+
+    db.delete_auto_tags(media_id)
+    assert [t["name"] for t in db.get_tags(media_id)] == ["生魚"]  # survived
+
+
 def test_get_media_filtered_applies_sort_and_combined_filters(tmp_db, sample_record):
     db = importlib.import_module("db")
     db.upsert(
