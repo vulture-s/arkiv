@@ -29,6 +29,7 @@ import db
 import federation
 import projects as project_registry
 import smart_collections
+import tag_quality
 
 
 # ── WebSocket connection manager ────────────────────────────────────────────
@@ -512,7 +513,8 @@ def get_media_detail(
     if not rec:
         raise HTTPException(404, "找不到")
     _resolve_record(rec)
-    rec["tags"] = db.get_tags(media_id)
+    # Screen quality-defect tags (模糊/低解析度…) from the user-facing tag list.
+    rec["tags"] = tag_quality.filter_tag_records(db.get_tags(media_id))
     # Structured frame analysis data
     rec["frames"] = [_resolve_frame(frame) for frame in db.get_frames(media_id)]
     if rec.get("editability_score") is None:
@@ -676,8 +678,9 @@ def get_stats(
 def get_all_tags(
     _tok: dict = Depends(require_scopes("videos_read")),
 ):
-    """All unique tag names for autocomplete."""
-    return db.get_all_tag_names()
+    """All unique tag names with counts. Quality-defect tags (模糊/低解析度…)
+    are screened out — see tag_quality. Pass include_noise=1 to bypass."""
+    return tag_quality.filter_tag_records(db.get_all_tag_names())
 
 
 def _thumb_url(thumbnail_path):
