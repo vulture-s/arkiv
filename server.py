@@ -670,7 +670,10 @@ def get_stats(
     """Aggregate stats for dashboard."""
     stats = db.get_stats()
     stats["rating"] = db.get_rating_stats()
-    stats["top_tags"] = db.get_top_tags(10)
+    # Screen quality-defect tags here too (Codex review P2) — index.html and any
+    # stats-driven cloud read top_tags. Over-fetch then filter so we still get 10
+    # real tags even if some of the top entries were noise.
+    stats["top_tags"] = tag_quality.filter_tag_records(db.get_top_tags(40))[:10]
     return stats
 
 
