@@ -35,12 +35,14 @@
   }
   const fmtSize = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`)
 
+  // backend rating value (good/ng/review/null) → UI value (good/ng/rev/none).
+  const ratingToUi = (r) => (r === 'review' ? 'rev' : r || 'none')
   // API media item → MediaCard's expected shape.
   const toCard = (it) => ({
     id: it.id,
     name: it.filename || `#${it.id}`,
     kind: it.has_audio && (it.width === 0 || !it.width) ? 'audio' : 'video',
-    rating: it.rating || 'none', // backend null → unrated → '—'
+    rating: ratingToUi(it.rating),
     dur: fmtDur(it.duration_s),
     size: fmtSize(it.size_mb),
     thumb: api.thumbUrlFromPath(it.thumbnail_path),
@@ -137,6 +139,24 @@
     : null
   $: inspThumb = selected ? selected.thumb : null
   $: inspPath = detailLive ? detailLive.path : null
+
+  // C — rating write. UI value → backend value (db.set_rating: good/ng/review/None).
+  const RATING_MAP = { good: 'good', rev: 'review', ng: 'ng', none: null }
+  async function rate(uiRating) {
+    if (!selected) return
+    const backendVal = RATING_MAP[uiRating] ?? null
+    const id = selected.id
+    // optimistic: reflect immediately in grid + inspector (which both read item.rating)
+    const prev = selected.rating
+    items = items.map((m) => (m.id === id ? { ...m, rating: uiRating } : m))
+    try {
+      await api.setRating(id, backendVal)
+    } catch (e) {
+      // revert on failure
+      items = items.map((m) => (m.id === id ? { ...m, rating: prev } : m))
+      err = `rating 寫入失敗: ${e.message}`
+    }
+  }
 </script>
 
 <div class="artboard" data-theme={theme}>
@@ -196,6 +216,7 @@
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
         frameDescriptions={inspFrames}
+        onRate={rate}
       />
     {/if}
   </div>

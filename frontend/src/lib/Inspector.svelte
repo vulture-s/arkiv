@@ -11,6 +11,7 @@
   export let pathLabel = null // file path string; null → mock /vol/... path
   export let transcriptLines = null // [[tc,text,hl],...]; null → mock lines
   export let frameDescriptions = null // string[]; when set, render a Vision block
+  export let onRate = null // (uiRating) => void; when set, rate buttons are live
   let imgFailed = false
 
   const MOCK_TRANSCRIPT = [
@@ -110,7 +111,12 @@
     <Eyebrow>Rate</Eyebrow>
     <div class="ratebtns">
       {#each rateBtns as [r, label]}
-        <button class="ratebtn" class:active={media.rating === r} class:rev={r === 'rev'}>{label}</button>
+        <button
+          class="ratebtn"
+          class:active={media.rating === r}
+          class:rev={r === 'rev'}
+          on:click={() => onRate && onRate(r)}
+        >{label}</button>
       {/each}
     </div>
     <div class="exports">
