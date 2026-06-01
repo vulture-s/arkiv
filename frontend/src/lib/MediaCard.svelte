@@ -1,5 +1,6 @@
 <!-- Grid card. Forwards click/hover events to parent (selection lives upstream). -->
 <script>
+  import { createEventDispatcher } from 'svelte'
   import Thumb from './Thumb.svelte'
   import Rating from './Rating.svelte'
   import Mono from './Mono.svelte'
@@ -10,6 +11,10 @@
   export let hover = false
   // Optional real thumbnail URL (live data). Falls back to abstract Thumb.
   export let thumbUrl = null
+  // Multi-select for batch export. Off by default so mock screens are unchanged.
+  export let selectable = false
+  export let checked = false
+  const dispatch = createEventDispatcher()
   let imgFailed = false
 </script>
 
@@ -22,6 +27,15 @@
       <Thumb seed={m.id} kind={m.kind} {theme} />
     {/if}
     <div class="dur">{m.dur}</div>
+    {#if selectable}
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+      <div
+        class="pick"
+        class:on={checked}
+        title="加入匯出選取"
+        on:click|stopPropagation={() => dispatch('toggle', m.id)}
+      >{checked ? '✓' : ''}</div>
+    {/if}
     {#if selected}
       <CornerTick pos="tl" /><CornerTick pos="tr" /><CornerTick pos="bl" /><CornerTick pos="br" />
     {/if}
@@ -46,6 +60,14 @@
     font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.02em;
     color: #f3f2ee; background: rgba(10, 10, 12, 0.78); padding: 2px 5px; line-height: 1;
   }
+  .pick {
+    position: absolute; top: 6px; left: 6px; width: 18px; height: 18px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--ak-mono); font-size: 11px; line-height: 1; cursor: pointer;
+    background: rgba(10, 10, 12, 0.7); color: #f3f2ee;
+    border: 1px solid rgba(243, 242, 238, 0.5);
+  }
+  .pick.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); font-weight: 700; }
   .meta { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 4px; }
   .name {
     font-family: var(--ak-mono); font-size: 11.5px; color: var(--ink);

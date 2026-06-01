@@ -52,6 +52,16 @@
   let liveTags = null
   let liveCollections = null
 
+  // Multi-select for batch timeline export. Click order = sequence order on the
+  // exported timeline (what the user picks first lands first in Resolve).
+  let picked = [] // array of media ids, in pick order
+  $: pickedSet = new Set(picked)
+  function togglePick(id) {
+    picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]
+  }
+  const clearPicks = () => (picked = [])
+  const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
+
   async function load() {
     state = 'loading'
     try {
@@ -186,6 +196,26 @@
   $: inspFrames = detailLive
     ? ((detailLive.frame_tags_parsed || []).map((f) => f.description).filter(Boolean) || null)
     : null
+  // scene timeline: richer per-frame vision metadata. Frames are sampled evenly
+  // across the clip, so approximate each frame's timecode from the clip duration.
+  $: inspScenes = detailLive
+    ? (() => {
+        const frames = detailLive.frame_tags_parsed || []
+        if (!frames.length) return null
+        const dur = (selected && selected._raw && selected._raw.duration_s) || 0
+        const denom = frames.length > 1 ? frames.length - 1 : 1
+        return frames.map((f, i) => ({
+          tc: dur ? secToTc((i / denom) * dur) : `f${i + 1}`,
+          description: f.description || '',
+          content_type: f.content_type || null,
+          atmosphere: f.atmosphere || null,
+          energy: f.energy || null,
+          edit_position: f.edit_position || null,
+          edit_reason: f.edit_reason || null,
+          focus_score: f.focus_score ?? null,
+        }))
+      })()
+    : null
   $: inspThumb = selected ? selected.thumb : null
   $: inspPath = detailLive ? detailLive.path : null
 
@@ -230,9 +260,26 @@
           bind:value={query}
           on:keydown={(e) => e.key === 'Enter' && runSearch()}
         />
+        <a
+          class="ak-btn ranked"
+          href={query.trim() ? `#/search-live?q=${encodeURIComponent(query.trim())}` : '#/search-live'}
+          title="排名檢視（score + 摘要）"
+        >排名 →</a>
         <FilterRow bind:activeFilter bind:activeRating />
         <ViewToggle bind:view />
       </div>
+
+      {#if picked.length}
+        <div class="exportbar">
+          <Mono style="font-size:11px;letter-spacing:0.04em;">已選 {picked.length} 支 → 合成一條時間軸</Mono>
+          <div class="expbtns">
+            {#each EXPORT_FMTS as fmt}
+              <a class="ak-btn expbtn" href={api.exportTimelineUrl(picked, fmt)} download>{fmt.toUpperCase()}</a>
+            {/each}
+            <button class="ak-btn expbtn clear" on:click={clearPicks}>清除</button>
+          </div>
+        </div>
+      {/if}
 
       <div class="gridwrap">
         {#if state === 'loading'}
@@ -250,6 +297,9 @@
                 thumbUrl={m.thumb}
                 selected={m.id === selectedId}
                 hover={m.id === hoverId}
+                selectable={true}
+                checked={pickedSet.has(m.id)}
+                on:toggle={(e) => togglePick(e.detail)}
                 on:click={() => (selectedId = m.id)}
                 on:mouseenter={() => (hoverId = m.id)}
                 on:mouseleave={() => (hoverId = null)}
@@ -268,6 +318,8 @@
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
         frameDescriptions={inspFrames}
+        frameScenes={inspScenes}
+        exportUrlFor={selected ? (fmt) => api.exportUrl(selected.id, fmt) : null}
         onRate={rate}
       />
     {/if}
@@ -282,7 +334,15 @@
   .proj { min-width: 0; }
   .projtitle { font-size: 28px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
   .livesearch { flex: 1; max-width: 360px; font-size: 12px; }
+  .ranked { font-size: 10px; padding: 6px 10px; text-decoration: none; white-space: nowrap; }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
   .mediagrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; padding: 22px; background: var(--rule); }
   .msg { padding: 40px 22px; display: flex; flex-direction: column; gap: 8px; }
+  .exportbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 9px 22px; border-bottom: 1px solid var(--rule); background: var(--surface-2);
+  }
+  .expbtns { display: flex; gap: 6px; }
+  .expbtn { font-size: 10px; padding: 5px 10px; text-decoration: none; }
+  .expbtn.clear { opacity: 0.7; }
 </style>
