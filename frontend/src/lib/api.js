@@ -77,8 +77,9 @@ export const search = (q, params = {}, opts) =>
 // Thumbnails are served by a static mount at /thumbnails/<basename>, NOT a
 // per-id route. /api/media items carry `thumbnail_path` (absolute fs path);
 // derive the served URL from its basename. Verified: /thumbnails/C3742.jpg → 200.
+// Split on both / and \ so Windows paths (C:\…\thumbnails\foo.jpg) extract the basename.
 export const thumbUrlFromPath = (thumbnailPath) =>
-  thumbnailPath ? `${BASE}/thumbnails/${thumbnailPath.split('/').pop()}` : null
+  thumbnailPath ? `${BASE}/thumbnails/${thumbnailPath.split(/[/\\]/).pop()}` : null
 export const streamUrl = (id) => `${BASE}/api/stream/${id}`
 
 // ---- writes ----
