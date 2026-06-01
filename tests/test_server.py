@@ -876,3 +876,77 @@ def test_ingest_endpoint_rejects_path_outside_allowed_roots(fastapi_client, monk
     out_of_bounds.mkdir()
     resp = fastapi_client.post("/api/ingest", json={"path": str(out_of_bounds), "limit": 1})
     assert resp.status_code == 403
+
+
+def _insert_two_clips_with_segments(sample_record):
+    """Two clips with segments + durations for batch-timeline tests."""
+    import json as _json
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/tl-a.mp4", filename="tl-a.mp4", duration_s=30.0, fps=30.0,
+        start_tc="01:00:00:00",
+        segments_json=_json.dumps([{"start": 0.0, "end": 5.0, "text": "甲段台詞"}], ensure_ascii=False),
+    ))
+    db.upsert(sample_record(
+        path="/tmp/tl-b.mp4", filename="tl-b.mp4", duration_s=20.0, fps=30.0,
+        start_tc="01:00:00:00",
+        segments_json=_json.dumps([{"start": 0.0, "end": 4.0, "text": "乙段台詞"}], ensure_ascii=False),
+    ))
+    return db
+
+
+def test_timeline_edl_sequences_clips_with_continuous_record_tc(fastapi_client, sample_record):
+    _insert_two_clips_with_segments(sample_record)
+    resp = fastapi_client.get("/api/export/timeline/edl", params={"ids": "1,2"})
+    assert resp.status_code == 200
+    body = resp.text
+    # two events, numbered sequentially
+    assert "001  " in body and "002  " in body
+    assert "FROM CLIP NAME: tl-a.mp4" in body
+    assert "FROM CLIP NAME: tl-b.mp4" in body
+    # record TC is continuous: clip A occupies 01:00:00:00→01:00:30:00,
+    # so clip B's record-in must be 01:00:30:00 (no gap, no overlap)
+    assert "01:00:30:00" in body
+    assert resp.headers["content-disposition"].endswith('arkiv-timeline.edl"')
+
+
+def test_timeline_srt_offsets_later_clips_by_cumulative_duration(fastapi_client, sample_record):
+    _insert_two_clips_with_segments(sample_record)
+    resp = fastapi_client.get("/api/export/timeline/srt", params={"ids": "1,2"})
+    assert resp.status_code == 200
+    body = resp.text
+    assert "甲段台詞" in body and "乙段台詞" in body
+    # clip A's segment stays near 0; clip B's segment is pushed past clip A's
+    # 30s duration → starts at 00:00:30,000
+    assert "00:00:00,000 --> 00:00:05,000" in body
+    assert "00:00:30,000 --> 00:00:34,000" in body
+
+
+def test_timeline_fcpxml_is_well_formed_with_one_clip_per_asset(fastapi_client, sample_record):
+    import xml.dom.minidom as _minidom
+    _insert_two_clips_with_segments(sample_record)
+    resp = fastapi_client.get("/api/export/timeline/fcpxml", params={"ids": "1,2"})
+    assert resp.status_code == 200
+    dom = _minidom.parseString(resp.text)  # raises if malformed
+    assert len(dom.getElementsByTagName("asset")) == 2
+    assert len(dom.getElementsByTagName("asset-clip")) == 2
+
+
+def test_timeline_preserves_order_and_allows_repeats(fastapi_client, sample_record):
+    _insert_two_clips_with_segments(sample_record)
+    resp = fastapi_client.get("/api/export/timeline/edl", params={"ids": "2,1,2"})
+    assert resp.status_code == 200
+    lines = [l for l in resp.text.splitlines() if "FROM CLIP NAME" in l]
+    assert lines == [
+        "* FROM CLIP NAME: tl-b.mp4",
+        "* FROM CLIP NAME: tl-a.mp4",
+        "* FROM CLIP NAME: tl-b.mp4",
+    ]
+
+
+def test_timeline_rejects_bad_format_empty_ids_and_all_missing(fastapi_client, sample_record):
+    _insert_two_clips_with_segments(sample_record)
+    assert fastapi_client.get("/api/export/timeline/mov", params={"ids": "1"}).status_code == 400
+    assert fastapi_client.get("/api/export/timeline/edl", params={"ids": ""}).status_code == 400
+    assert fastapi_client.get("/api/export/timeline/edl", params={"ids": "abc"}).status_code == 400
+    assert fastapi_client.get("/api/export/timeline/edl", params={"ids": "999,998"}).status_code == 404
