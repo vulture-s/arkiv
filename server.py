@@ -1431,11 +1431,22 @@ def _edl_comment(text: str) -> str:
 
 def _subtitle_ts(seconds: float, sep: str = ",") -> str:
     """Subtitle timecode (SRT/VTT): HH:MM:SS,mmm (sep ',' for SRT, '.' for VTT)."""
+    seconds = max(0.0, seconds)  # negative TC would render garbage frames
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
     ms = int((seconds % 1) * 1000)
     return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
+
+
+def _subtitle_text(text: str) -> str:
+    """Sanitize a subtitle cue body: collapse newlines/blank lines (which would
+    start a new cue) onto one line and neutralize a literal `-->` so transcript
+    text can't inject a fake cue boundary/timecode."""
+    if not text:
+        return ""
+    one_line = " ".join(text.split())  # collapses any \n / \r / blank runs
+    return one_line.replace("-->", "->")
 
 
 def _edl_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:
@@ -1559,16 +1570,22 @@ def export_media(
     if fmt == "srt":
         srt = ""
         if _segments:
-            # Segment-aligned timestamps (precise)
-            for i, seg in enumerate(_segments, 1):
-                srt += f"{i}\n{_ts(seg['start'])} --> {_ts(seg['end'])}\n{seg['text']}\n\n"
+            # Segment-aligned timestamps (precise). .get() tolerates legacy
+            # segment dicts missing keys; _subtitle_text blocks cue injection.
+            i = 1
+            for seg in _segments:
+                text = _subtitle_text(seg.get("text") or "")
+                if not text:
+                    continue
+                srt += f"{i}\n{_ts(seg.get('start', 0) or 0)} --> {_ts(seg.get('end', 0) or 0)}\n{text}\n\n"
+                i += 1
         else:
             # Fallback: evenly distributed
             lines = [l.strip() for l in transcript.split("\n") if l.strip()]
             for i, line in enumerate(lines, 1):
                 t_start = (i - 1) * (duration / max(len(lines), 1))
                 t_end = i * (duration / max(len(lines), 1))
-                srt += f"{i}\n{_ts(t_start)} --> {_ts(t_end)}\n{line}\n\n"
+                srt += f"{i}\n{_ts(t_start)} --> {_ts(t_end)}\n{_subtitle_text(line)}\n\n"
         return HTMLResponse(
             content=srt,
             media_type="text/plain; charset=utf-8",
@@ -1578,14 +1595,17 @@ def export_media(
     if fmt == "vtt":
         vtt = "WEBVTT\n\n"
         if _segments:
-            for i, seg in enumerate(_segments, 1):
-                vtt += f"{_ts(seg['start'], '.')} --> {_ts(seg['end'], '.')}\n{seg['text']}\n\n"
+            for seg in _segments:
+                text = _subtitle_text(seg.get("text") or "")
+                if not text:
+                    continue
+                vtt += f"{_ts(seg.get('start', 0) or 0, '.')} --> {_ts(seg.get('end', 0) or 0, '.')}\n{text}\n\n"
         else:
             lines = [l.strip() for l in transcript.split("\n") if l.strip()]
             for i, line in enumerate(lines, 1):
                 t_start = (i - 1) * (duration / max(len(lines), 1))
                 t_end = i * (duration / max(len(lines), 1))
-                vtt += f"{_ts(t_start, '.')} --> {_ts(t_end, '.')}\n{line}\n\n"
+                vtt += f"{_ts(t_start, '.')} --> {_ts(t_end, '.')}\n{_subtitle_text(line)}\n\n"
         return HTMLResponse(
             content=vtt,
             media_type="text/plain; charset=utf-8",
@@ -1687,13 +1707,17 @@ def export_media(
 
         from xml.sax.saxutils import escape as xml_esc
         import pathlib
+        # Attribute escaping must also cover the double quote (xml_esc leaves it
+        # alone by default), or a filename like `cam "A".mp4` breaks name="..." /
+        # src="..." — same protection the batch timeline path uses.
+        _attr = lambda s: xml_esc(s, {'"': "&quot;"})
 
         # Build file URI with proper file:/// prefix
         raw_path = _resolve_media_path(rec.get("path", ""))
         file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
         if not str(file_uri).startswith("/"):
             file_uri = pathlib.PurePosixPath("/" + str(file_uri))
-        file_uri_str = xml_esc(f"file://{file_uri}")
+        file_uri_str = _attr(f"file://{file_uri}")
 
         # Build marker elements from frame analysis (filter to trim window, rebase to clip start)
         markers_xml = ""
@@ -1719,14 +1743,14 @@ def export_media(
 <fcpxml version="1.8">
     <resources>
         <format id="r1" frameDuration="{_num}/{_den}s" width="{rec.get('width') or 1920}" height="{rec.get('height') or 1080}" />
-        <asset id="r2" name="{xml_esc(stem)}" src="{file_uri_str}" start="0s" duration="{asset_dur_frames * int(_num)}/{_den}s" format="r1" hasAudio="1" hasVideo="1" />
+        <asset id="r2" name="{_attr(stem)}" src="{file_uri_str}" start="0s" duration="{asset_dur_frames * int(_num)}/{_den}s" format="r1" hasAudio="1" hasVideo="1" />
     </resources>
     <library>
         <event name="arkiv Export">
-            <project name="{xml_esc(stem)}">
+            <project name="{_attr(stem)}">
                 <sequence format="r1" tcStart="0s" tcFormat="{tc_fmt}" duration="{clip_dur_frames * int(_num)}/{_den}s">
                     <spine>
-                        <asset-clip ref="r2" name="{xml_esc(filename)}" offset="0s" duration="{clip_dur_frames * int(_num)}/{_den}s" start="{clip_start_frames * int(_num)}/{_den}s" tcFormat="{tc_fmt}">
+                        <asset-clip ref="r2" name="{_attr(filename)}" offset="0s" duration="{clip_dur_frames * int(_num)}/{_den}s" start="{clip_start_frames * int(_num)}/{_den}s" tcFormat="{tc_fmt}">
 {markers_xml}                        </asset-clip>
                     </spine>
                 </sequence>
@@ -1878,7 +1902,7 @@ def export_timeline(
                 for seg in segs:
                     s = offset + (seg.get("start", 0) or 0)
                     e = offset + (seg.get("end", 0) or 0)
-                    text = (seg.get("text") or "").strip()
+                    text = _subtitle_text(seg.get("text") or "")
                     if not text:
                         continue
                     srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{text}\n\n"
@@ -1893,7 +1917,7 @@ def export_timeline(
                 for li, line in enumerate(lines):
                     s = offset + li * (dur / n)
                     e = offset + (li + 1) * (dur / n)
-                    srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{line}\n\n"
+                    srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{_subtitle_text(line)}\n\n"
                     idx += 1
             offset += dur
         return HTMLResponse(
