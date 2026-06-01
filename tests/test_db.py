@@ -115,6 +115,22 @@ def test_get_record_stats_rating_and_tags_flow(tmp_db, sample_record):
     assert stats["langs"] == {"zh": 1}
 
 
+def test_delete_auto_tags_clears_machine_tags_but_keeps_manual(tmp_db, sample_record):
+    """Re-ingest must drop stale auto tags (e.g. a fixed vision mislabel) while
+    preserving user-added manual tags."""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/retag.mp4"))
+    media_id = _get_row_by_path(db, "/tmp/retag.mp4")["id"]
+
+    db.add_tag(media_id, "三文魚", source="auto")  # wrong machine tag
+    db.add_tag(media_id, "生魚", source="auto")
+    db.add_tag(media_id, "保留", source="manual")  # user-added
+
+    db.delete_auto_tags(media_id)
+    remaining = [t["name"] for t in db.get_tags(media_id)]
+    assert remaining == ["保留"]  # only the manual tag survives
+
+
 def test_get_media_filtered_applies_sort_and_combined_filters(tmp_db, sample_record):
     db = importlib.import_module("db")
     db.upsert(

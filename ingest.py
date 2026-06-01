@@ -920,6 +920,15 @@ def main():
             if record:
                 frames = record.pop("_frames", [])
                 db.upsert(record)
+                # On refresh, clear this clip's old auto tags BEFORE re-adding —
+                # otherwise stale machine tags (e.g. a fixed vision mislabel)
+                # survive as a union with the new set. Phase 1 runs first, so a
+                # single clear here covers both the BMD tags below and the vision
+                # tags written in Phase 2. Manual tags are preserved.
+                if existing:
+                    mid = _get_media_id_for_path(f)
+                    if mid:
+                        db.delete_auto_tags(mid)
                 auto_tags = record.get("_auto_tags") or []
                 if auto_tags:
                     mid = _get_media_id_for_path(f)
