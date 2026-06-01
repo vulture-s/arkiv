@@ -96,6 +96,35 @@ export const exportUrl = (id, fmt) => `${BASE}/api/media/${id}/export/${fmt}`
 export const exportTimelineUrl = (ids, fmt) =>
   `${BASE}/api/export/timeline/${fmt}?ids=${ids.join(',')}`
 
+// Authenticated file download. A plain <a href> can't carry the Bearer token,
+// so when a token is set (non-loopback backend without a proxy that injects it)
+// the export endpoints would 401 (Codex review P2). Fetch with auth → blob →
+// save. Works in every mode: loopback (token-free), proxy (proxy injects), and
+// direct backend + setToken (this path adds the header).
+export async function downloadFile(path, filename) {
+  const headers = {}
+  if (_token) headers['Authorization'] = `Bearer ${_token}`
+  const res = await fetch(`${BASE}${path}`, { headers })
+  if (!res.ok) {
+    let detail = null
+    try { detail = await res.json() } catch { /* non-json */ }
+    throw new ApiError(res.status, path, detail)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+// Path-only builders (no BASE) for downloadFile, which prepends BASE itself.
+export const exportPath = (id, fmt) => `/api/media/${id}/export/${fmt}`
+export const exportTimelinePath = (ids, fmt) =>
+  `/api/export/timeline/${fmt}?ids=${ids.join(',')}`
+
 // ---- writes ----
 // note: backend PATCH writes BOTH rating + rating_note, so an omitted note
 // clears any existing note. Always pass the current note through to preserve it.

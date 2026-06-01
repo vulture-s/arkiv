@@ -1876,9 +1876,16 @@ def export_timeline(
         stem = filename.rsplit(".", 1)[0]
         dur = rec.get("duration_s", 0) or 0
         clip_fps = rec.get("fps") or tl_fps
+        # Every asset references format r1 (the timeline rate), so ALL durations
+        # and offsets must be expressed in the timeline timebase — otherwise a
+        # mixed-rate clip's frame count would be serialized against the wrong
+        # frameDuration and decode to the wrong seconds (Codex review P2). The
+        # start TC string is parsed with the clip's own fps (correct), then
+        # converted to timeline frames. asset duration == clip duration so the
+        # asset is never shorter than the span the asset-clip reads.
         dur_frames = round(dur * tl_fps)
-        asset_dur_frames = round(dur * clip_fps)
-        src_off_frames = round(_start_tc_seconds(rec, clip_fps) * clip_fps)
+        asset_dur_frames = dur_frames
+        src_off_frames = round(_start_tc_seconds(rec, clip_fps) * tl_fps)
 
         raw_path = _resolve_media_path(rec.get("path", ""))
         file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))

@@ -21,6 +21,16 @@
   // Honest phrasing — chat finds candidate clips, it does NOT cut a final video.
   const suggestions = ['找生肉切割的鏡頭', '找店內空景的畫面', '哪些素材有餐廳']
   const EXPORTS = ['edl', 'fcpxml', 'srt']
+  // Authenticated download — a plain <a href> can't carry the Bearer token, so
+  // exports would 401 on a tokened backend (Codex review P2 pattern).
+  async function exportScene(sc, fmt) {
+    const stem = (sc.name || `media_${sc.id}`).replace(/\.[^.]+$/, '')
+    try {
+      await api.downloadFile(api.exportPath(sc.id, fmt), `${stem}.${fmt}`)
+    } catch (e) {
+      console.error('export failed', e)
+    }
+  }
 
   // Prefetch the first page as a cheap cache; misses are resolved by id below
   // (so scene_ids outside the first page still get a thumbnail — Codex review P2).
@@ -149,7 +159,7 @@
                   <Mono dim style="font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">{sc.name}</Mono>
                   <div class="exports">
                     {#each EXPORTS as fmt}
-                      <a class="exp" href={api.exportUrl(sc.id, fmt)} target="_blank" rel="noreferrer">{fmt.toUpperCase()}</a>
+                      <button class="exp" on:click={() => exportScene(sc, fmt)}>{fmt.toUpperCase()}</button>
                     {/each}
                   </div>
                 </div>
@@ -202,6 +212,7 @@
     font-family: var(--ak-mono); font-size: 8.5px; letter-spacing: 0.06em;
     color: var(--quiet); text-decoration: none; padding: 1px 4px;
     border: 1px solid var(--rule); line-height: 1.3;
+    background: transparent; cursor: pointer; appearance: none;
   }
   .exp:hover { color: var(--ink); border-color: var(--ink); }
   .composer { border-top: 1px solid var(--rule); padding: 16px 18%; display: flex; gap: 10px; align-items: center; }
