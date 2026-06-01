@@ -123,7 +123,7 @@
           <div class="rows">
             {#each results as r, i (r.id)}
               {@const p = hl(r.excerpt, query.trim())}
-              <a class="rrow" class:first={i === 0} href="#/main-live">
+              <a class="rrow" class:first={i === 0} href={`#/main-live?sel=${r.id}`}>
                 <div class="rthumb">
                   {#if r.thumb}
                     <img class="rthumbimg" src={r.thumb} alt={r.name} loading="lazy" />

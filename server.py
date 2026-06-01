@@ -1893,9 +1893,14 @@ def export_timeline(
             file_uri = pathlib.PurePosixPath("/" + str(file_uri))
         file_uri_str = xml_esc(f"file://{file_uri}")
 
+        # asset.start = the media's own start timecode (camera TC). The asset
+        # therefore spans [src_off, src_off + duration], so the asset-clip's
+        # start=src_off below sits at the head of that range rather than hours
+        # past the end of a 0s-anchored asset (Codex review P2).
         assets_xml += (
             f'        <asset id="{ref}" name="{xml_esc(stem)}" src="{file_uri_str}" '
-            f'start="0s" duration="{asset_dur_frames * int(_num)}/{_den}s" '
+            f'start="{src_off_frames * int(_num)}/{_den}s" '
+            f'duration="{asset_dur_frames * int(_num)}/{_den}s" '
             f'format="r1" hasAudio="1" hasVideo="1" />\n'
         )
         spine_xml += (
