@@ -118,7 +118,10 @@ export async function downloadFile(path, filename) {
   document.body.appendChild(a)
   a.click()
   a.remove()
-  URL.revokeObjectURL(url)
+  // Defer revoke: in WKWebView (Tauri) the download starts asynchronously, so
+  // revoking immediately can invalidate the blob before WebKit reads it →
+  // empty/failed saves (Codex review P2). A short delay lets the click settle.
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
 }
 // Path-only builders (no BASE) for downloadFile, which prepends BASE itself.
 export const exportPath = (id, fmt) => `/api/media/${id}/export/${fmt}`

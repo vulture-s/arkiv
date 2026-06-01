@@ -920,18 +920,12 @@ def main():
             if record:
                 frames = record.pop("_frames", [])
                 db.upsert(record)
-                # On refresh, clear this clip's old auto tags BEFORE re-adding —
-                # otherwise stale machine tags (e.g. a fixed vision mislabel)
-                # survive as a union with the new set. Phase 1 runs first, so a
-                # single clear here covers both the BMD tags below and the vision
-                # tags written in Phase 2. Manual tags are preserved.
-                # ONLY clear when vision will actually re-run: a --skip-vision
-                # refresh never repopulates vision tags, so clearing would
-                # silently drop searchable metadata (Codex review P2).
-                if existing and not args.skip_vision:
-                    mid = _get_media_id_for_path(f)
-                    if mid:
-                        db.delete_auto_tags(mid)
+                # NB: a refresh's stale-auto-tag clear lives in Phase 2, inside
+                # the same transaction as the fresh vision-tag write — so a clip
+                # whose vision FAILS keeps its prior tags rather than being left
+                # bald (Codex review P2). The BMD tags added here are re-applied
+                # there too. For video clips this Phase-1 add is redundant with
+                # Phase 2, but it's the ONLY tag write for audio/no-vision clips.
                 auto_tags = record.get("_auto_tags") or []
                 if auto_tags:
                     mid = _get_media_id_for_path(f)
@@ -1075,10 +1069,17 @@ def main():
                 print(f" [{v_elapsed:.1f}s] [OK]")
                 vision_ok += 1
                 consecutive_vision_fail = 0  # reset streak on success
-                # Write auto tags from vision
+                # Write auto tags from vision. Clear + rewrite happen in ONE
+                # transaction reached only on vision success: a refresh that
+                # fails vision never clears, so old searchable tags survive
+                # (Codex review P2). BMD tags (added in Phase 1) are cleared by
+                # this too, so re-apply them here.
                 with db.get_conn() as conn:
                     mid = _get_media_id_for_path(Path(fpath))
                     if mid:
+                        db.delete_auto_tags(mid, _conn=conn)
+                        for tag_name in (record.get("_auto_tags") or []):
+                            db.add_tag(mid, tag_name, source="auto", _conn=conn)
                         for fd in video_frames:
                             for tag_name in fd.get("tags", "").split(","):
                                 tag_name = tag_name.strip()
