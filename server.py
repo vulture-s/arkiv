@@ -361,7 +361,12 @@ def search_all(
 def list_projects(
     _tok: dict = Depends(require_scopes("projects_read")),
 ):
-    projects = [project.to_dict() for project in project_registry.list_registry_projects()]
+    # A corrupt ~/.arkiv-projects.json must not 500 with a raw stack trace on
+    # every read — return a clean error the UI can show.
+    try:
+        projects = [project.to_dict() for project in project_registry.list_registry_projects()]
+    except project_registry.RegistryError as exc:
+        raise HTTPException(status_code=500, detail="project registry unreadable: {0}".format(exc))
     return {"projects": projects, "total": len(projects)}
 
 
@@ -393,7 +398,10 @@ def remove_project(
 def sync_projects(
     _tok: dict = Depends(require_scopes("projects_write")),
 ):
-    projects = [project.to_dict() for project in project_registry.sync_projects()]
+    try:
+        projects = [project.to_dict() for project in project_registry.sync_projects()]
+    except project_registry.RegistryError as exc:
+        raise HTTPException(status_code=500, detail="project registry unreadable: {0}".format(exc))
     return {"projects": projects, "total": len(projects)}
 
 

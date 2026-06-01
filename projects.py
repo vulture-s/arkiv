@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,10 @@ from health import HealthStatus, project_health
 
 
 REGISTRY_VERSION = 1
+
+# Serializes registry read-modify-write so two concurrent add/remove/sync calls
+# (FastAPI runs sync handlers in a threadpool) can't lose-update each other.
+_REGISTRY_LOCK = threading.Lock()
 
 
 class RegistryError(Exception):
@@ -116,11 +121,22 @@ def save_registry(data: Dict[str, Any]) -> None:
         "version": int(data.get("version", REGISTRY_VERSION)),
         "projects": data.get("projects", []),
     }
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-        handle.write("\n")
-    tmp_path.replace(path)
+    # Unique tmp name per writer — a shared "<file>.tmp" let two concurrent saves
+    # interleave bytes into the same temp file and publish a truncated/garbled
+    # registry via replace(). os.replace() is atomic so the final file is always
+    # one writer's complete payload.
+    tmp_path = path.with_suffix(path.suffix + f".{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        tmp_path.replace(path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def list_registry_projects() -> List[ProjectMeta]:
@@ -171,60 +187,63 @@ def add_project(name: str, path: str, tags: Optional[List[str]] = None) -> Proje
     if not project_path.exists():
         raise RegistryError("project path not found: {0}".format(path))
 
-    registry = load_registry()
-    projects = [ProjectMeta.from_mapping(raw) for raw in registry.get("projects", [])]
-    existing_name = _find_by_name(projects, name)
-    if existing_name is not None:
-        projects = [p for p in projects if p.name != name]
-    else:
-        existing_path_key = _normalize_key(project_path)
-        if any(p.key() == existing_path_key for p in projects):
-            raise RegistryError("project path already registered: {0}".format(path))
+    with _REGISTRY_LOCK:
+        registry = load_registry()
+        projects = [ProjectMeta.from_mapping(raw) for raw in registry.get("projects", [])]
+        existing_name = _find_by_name(projects, name)
+        if existing_name is not None:
+            projects = [p for p in projects if p.name != name]
+        else:
+            existing_path_key = _normalize_key(project_path)
+            if any(p.key() == existing_path_key for p in projects):
+                raise RegistryError("project path already registered: {0}".format(path))
 
-    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    project = ProjectMeta(
-        name=name,
-        path=project_path,
-        added_at=existing_name.added_at if existing_name and existing_name.added_at else now,
-        last_indexed_at=existing_name.last_indexed_at if existing_name else None,
-        tags=[tag for tag in (tags or []) if tag],
-        source="registry",
-    )
-    projects.append(project)
-    registry["projects"] = [item.to_dict() for item in sorted(projects, key=lambda item: item.name.lower())]
-    save_registry(registry)
-    return project
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        project = ProjectMeta(
+            name=name,
+            path=project_path,
+            added_at=existing_name.added_at if existing_name and existing_name.added_at else now,
+            last_indexed_at=existing_name.last_indexed_at if existing_name else None,
+            tags=[tag for tag in (tags or []) if tag],
+            source="registry",
+        )
+        projects.append(project)
+        registry["projects"] = [item.to_dict() for item in sorted(projects, key=lambda item: item.name.lower())]
+        save_registry(registry)
+        return project
 
 
 def remove_project(name: str) -> ProjectMeta:
-    registry = load_registry()
-    projects = [ProjectMeta.from_mapping(raw) for raw in registry.get("projects", [])]
-    removed = None
-    kept = []
-    for project in projects:
-        if project.name == name:
-            removed = project
-            continue
-        kept.append(project)
-    if removed is None:
-        raise RegistryError("project not found: {0}".format(name))
-    registry["projects"] = [item.to_dict() for item in kept]
-    save_registry(registry)
-    return removed
+    with _REGISTRY_LOCK:
+        registry = load_registry()
+        projects = [ProjectMeta.from_mapping(raw) for raw in registry.get("projects", [])]
+        removed = None
+        kept = []
+        for project in projects:
+            if project.name == name:
+                removed = project
+                continue
+            kept.append(project)
+        if removed is None:
+            raise RegistryError("project not found: {0}".format(name))
+        registry["projects"] = [item.to_dict() for item in kept]
+        save_registry(registry)
+        return removed
 
 
 def sync_projects() -> List[ProjectMeta]:
-    registry = load_registry()
-    projects = [ProjectMeta.from_mapping(raw) for raw in registry.get("projects", [])]
-    updated = []
-    for project in projects:
-        db_path = project.path / ".arkiv" / "project.db"
-        if db_path.exists():
-            project.last_indexed_at = _iso_from_mtime(db_path)
-        updated.append(project)
-    registry["projects"] = [item.to_dict() for item in updated]
-    save_registry(registry)
-    return updated
+    with _REGISTRY_LOCK:
+        registry = load_registry()
+        projects = [ProjectMeta.from_mapping(raw) for raw in registry.get("projects", [])]
+        updated = []
+        for project in projects:
+            db_path = project.path / ".arkiv" / "project.db"
+            if db_path.exists():
+                project.last_indexed_at = _iso_from_mtime(db_path)
+            updated.append(project)
+        registry["projects"] = [item.to_dict() for item in updated]
+        save_registry(registry)
+        return updated
 
 
 def health_projects() -> List[Dict[str, Any]]:
