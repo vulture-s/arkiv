@@ -12,6 +12,13 @@ from contextlib import contextmanager
 
 @contextmanager
 def get_conn():
+    # Ensure the DB's parent dir exists. On a fresh clone the .arkiv/ data dir
+    # doesn't exist yet, and server.py calls init_db() at import → sqlite would
+    # raise "unable to open database file". Covers every DB-opening path
+    # (server / ingest / embed / tests), not just server startup.
+    parent = Path(DB_PATH).expanduser().parent
+    if parent and not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
