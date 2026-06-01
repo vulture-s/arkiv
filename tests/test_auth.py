@@ -450,3 +450,18 @@ def test_multi_scope_token_all_required_present(auth_app):
         )
         assert admin.status_code == 403
         assert "admin" in admin.json()["detail"].lower()
+
+
+def test_stream_accepts_token_via_query_param(server_module):
+    """A <video src> can't send an Authorization header, so /api/stream accepts
+    ?token=<raw>. Same scope check applies."""
+    good_raw, _ = _make_token("q-good", ["videos_read"])
+    wrong_raw, _ = _make_token("q-wrong", ["chat_read"])
+    with TestClient(server_module.app) as client:
+        # no token at all → 401
+        assert client.get("/api/stream/1").status_code == 401
+        # wrong scope via query → 403
+        assert client.get("/api/stream/1", params={"token": wrong_raw}).status_code == 403
+        # right scope via query → auth passes (404 because media doesn't exist,
+        # crucially NOT 401/403)
+        assert client.get("/api/stream/1", params={"token": good_raw}).status_code == 404

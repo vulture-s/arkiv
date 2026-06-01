@@ -85,12 +85,17 @@ def verify_token(request: Request) -> dict:
         return {"id": "loopback", "name": "loopback (local)", "scopes": SCOPES}
 
     auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(401, "Missing or malformed Authorization header (expected 'Bearer <token>')")
-
-    raw = auth_header[len("Bearer "):].strip()
+    if auth_header.startswith("Bearer "):
+        raw = auth_header[len("Bearer "):].strip()
+    else:
+        # Fallback: token in a `token` query param. Media URLs consumed as
+        # <video src>/<img src> cannot attach an Authorization header, so the
+        # stream endpoint (and any asset URL) accepts ?token=<raw>. The same
+        # hash / expiry / IP-allowlist / scope checks apply; the token's IP
+        # allowlist still bounds exposure even though the value rides in a URL.
+        raw = (request.query_params.get("token") or "").strip()
     if not raw:
-        raise HTTPException(401, "Empty Bearer token")
+        raise HTTPException(401, "Missing token (expected 'Authorization: Bearer <token>' or ?token=<token>)")
 
     token_hash = hash_token(raw)
     with get_conn() as conn:
