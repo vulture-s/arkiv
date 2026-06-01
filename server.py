@@ -1863,6 +1863,9 @@ def export_timeline(
     # fmt == "fcpxml"
     from xml.sax.saxutils import escape as xml_esc
     import pathlib
+    # Attribute escaping must also cover the double quote, or a filename like
+    # `cam "A".mp4` breaks the name="..." attribute → malformed XML (Codex P2).
+    _attr = lambda s: xml_esc(s, {'"': "&quot;"})
     _num, _den = _fcpxml_rational(tl_fps)
     tc_fmt = "DF" if tl_is_df else "NDF"
 
@@ -1891,20 +1894,20 @@ def export_timeline(
         file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
         if not str(file_uri).startswith("/"):
             file_uri = pathlib.PurePosixPath("/" + str(file_uri))
-        file_uri_str = xml_esc(f"file://{file_uri}")
+        file_uri_str = _attr(f"file://{file_uri}")
 
         # asset.start = the media's own start timecode (camera TC). The asset
         # therefore spans [src_off, src_off + duration], so the asset-clip's
         # start=src_off below sits at the head of that range rather than hours
         # past the end of a 0s-anchored asset (Codex review P2).
         assets_xml += (
-            f'        <asset id="{ref}" name="{xml_esc(stem)}" src="{file_uri_str}" '
+            f'        <asset id="{ref}" name="{_attr(stem)}" src="{file_uri_str}" '
             f'start="{src_off_frames * int(_num)}/{_den}s" '
             f'duration="{asset_dur_frames * int(_num)}/{_den}s" '
             f'format="r1" hasAudio="1" hasVideo="1" />\n'
         )
         spine_xml += (
-            f'                    <asset-clip ref="{ref}" name="{xml_esc(filename)}" '
+            f'                    <asset-clip ref="{ref}" name="{_attr(filename)}" '
             f'offset="{offset_frames * int(_num)}/{_den}s" '
             f'duration="{dur_frames * int(_num)}/{_den}s" '
             f'start="{src_off_frames * int(_num)}/{_den}s" tcFormat="{tc_fmt}" />\n'
