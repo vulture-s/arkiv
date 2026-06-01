@@ -333,3 +333,36 @@ def test_chat_full_flow_compilation_to_refinement(fastapi_client, tmp_db, sample
     assert first.json()["scene_ids"] == ids
     assert second.json()["intent"] == "refinement"
     assert second.json()["scene_ids"] == ids[:1]
+
+
+def test_chat_conversation_isolation_between_tokens(server_module):
+    """A chat token must not read another token's conversation history/list —
+    the ownership column was recorded but never enforced on read (IDOR)."""
+    import admin, auth
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+
+    def _tok(name):
+        t = admin.create_token(name=name, scopes=["chat_write", "chat_read"])
+        return t["raw_token"]
+    raw_a, raw_b = _tok("user-a"), _tok("user-b")
+
+    with TestClient(server_module.app) as client:
+        with patch("chat.classify_intent") as cls, patch("chat.llm_chat") as lc, patch("chat.vector_search"):
+            cls.return_value = _intent("general")
+            lc.return_value = {"text": "ok", "tokens_used": 1, "latency_ms": 1}
+            r = client.post("/api/chat", json={"prompt": "A's secret"},
+                            headers={"Authorization": f"Bearer {raw_a}"})
+            assert r.status_code == 200
+            conv_a = r.json()["conversation_id"]
+
+        # B must NOT see A's conversation in the list...
+        lst = client.get("/api/chat/conversations", headers={"Authorization": f"Bearer {raw_b}"})
+        assert lst.status_code == 200
+        assert all(c["id"] != conv_a for c in lst.json()["conversations"])
+        # ...nor read its history (404, not the content)
+        hist = client.get(f"/api/chat/history/{conv_a}", headers={"Authorization": f"Bearer {raw_b}"})
+        assert hist.status_code == 404
+        # A can still read its own
+        own = client.get(f"/api/chat/history/{conv_a}", headers={"Authorization": f"Bearer {raw_a}"})
+        assert own.status_code == 200

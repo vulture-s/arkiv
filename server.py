@@ -216,6 +216,18 @@ def _bootstrap_admin_token():
 
 # ── API Routes ───────────────────────────────────────────────────────────────
 
+def _chat_owner_filter(tok: dict):
+    """SQL fragment + params restricting chat_conversations to those a token may
+    read. Loopback / admin (the local owner) see all → no filter. Any other token
+    sees only its own conversations plus legacy ones with no recorded owner.
+    Returns ('', ()) for the unrestricted case."""
+    tok_id = (tok or {}).get("id")
+    scopes = (tok or {}).get("scopes") or ()
+    if tok_id == "loopback" or "admin" in scopes:
+        return "", ()
+    return " AND (user_token_id = ? OR user_token_id IS NULL)", (tok_id,)
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat_endpoint(
     request: Request,
@@ -266,15 +278,21 @@ def get_chat_history(
     limit: int = 50,
     _tok: dict = Depends(require_scopes("chat_read")),
 ) -> dict:
-    del request, _tok
+    del request
     limit = max(1, min(500, limit))
+    # Conversation ownership: a remote token may only read its OWN conversations
+    # (or legacy ones with no owner). The ownership column was recorded on create
+    # but never enforced on read, so any chat_read token could read every other
+    # token's history. Loopback / admin (the local owner) see everything.
+    owner_sql, owner_params = _chat_owner_filter(_tok)
     with db.get_conn() as conn:
         conv = conn.execute(
             "SELECT id, title, project_scope_json, created_at, updated_at "
-            "FROM chat_conversations WHERE id = ?",
-            (conv_id,),
+            "FROM chat_conversations WHERE id = ?" + owner_sql,
+            (conv_id, *owner_params),
         ).fetchone()
         if not conv:
+            # 404 (not 403) so a non-owner can't even confirm the id exists
             raise HTTPException(status_code=404, detail="conversation not found")
 
         rows = conn.execute(
@@ -296,13 +314,15 @@ def list_chat_conversations(
     limit: int = 50,
     _tok: dict = Depends(require_scopes("chat_read")),
 ) -> dict:
-    del request, _tok
+    del request
     limit = max(1, min(500, limit))
+    owner_sql, owner_params = _chat_owner_filter(_tok)
+    where = (" WHERE 1=1" + owner_sql) if owner_sql else ""
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT id, title, project_scope_json, created_at, updated_at "
-            "FROM chat_conversations ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
+            "FROM chat_conversations" + where + " ORDER BY updated_at DESC LIMIT ?",
+            (*owner_params, limit),
         ).fetchall()
     return {"conversations": [dict(row) for row in rows]}
 
