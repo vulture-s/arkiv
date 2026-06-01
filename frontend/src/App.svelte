@@ -14,6 +14,7 @@
   import MainLive from './routes/MainLive.svelte'
   import IngestLive from './routes/IngestLive.svelte'
   import ChatLive from './routes/ChatLive.svelte'
+  import SearchLive from './routes/SearchLive.svelte'
 
   // Routes are added per overnight segment.
   const routes = {
@@ -22,6 +23,7 @@
     '/main-live': MainLive, // B1 — main grid wired to live data
     '/ingest-live': IngestLive, // B1+ — ingest progress wired to live ws
     '/chat-live': ChatLive, // E2 — chat wired to live /api/chat
+    '/search-live': SearchLive, // search wired to live /api/media?q=
     '/gallery': Gallery, // seg 1 — shared-primitive gallery
     '/main': MainDark, // seg 2 — hero (interactive)
     '/states': MainStates, // seg 3 — state variants

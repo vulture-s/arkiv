@@ -91,6 +91,10 @@ export const thumbUrlFromPath = (thumbnailPath) =>
 export const streamUrl = (id) => `${BASE}/api/stream/${id}`
 // EDL/FCPXML/SRT/VTT/CSV export download URL for a clip (optional in/out trim).
 export const exportUrl = (id, fmt) => `${BASE}/api/media/${id}/export/${fmt}`
+// Batch timeline export: lay several clips end-to-end on one timeline.
+// ids = array of media ids (order preserved). fmt ∈ edl|srt|fcpxml.
+export const exportTimelineUrl = (ids, fmt) =>
+  `${BASE}/api/export/timeline/${fmt}?ids=${ids.join(',')}`
 
 // ---- writes ----
 // note: backend PATCH writes BOTH rating + rating_note, so an omitted note

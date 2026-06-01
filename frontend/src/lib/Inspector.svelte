@@ -11,8 +11,16 @@
   export let pathLabel = null // file path string; null → mock /vol/... path
   export let transcriptLines = null // [[tc,text,hl],...]; null → mock lines
   export let frameDescriptions = null // string[]; when set, render a Vision block
+  // Richer per-frame vision metadata for the scene timeline. When set, supersedes
+  // frameDescriptions. [{tc?, description, content_type, atmosphere, energy,
+  // edit_position, edit_reason, focus_score}]. null → mock screens unchanged.
+  export let frameScenes = null
   export let onRate = null // (uiRating) => void; when set, rate buttons are live
+  // (fmt) => download URL for this clip. When set, export buttons become live
+  // <a> links; null → mock screens keep the inert buttons.
+  export let exportUrlFor = null
   let imgFailed = false
+  const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
 
   const MOCK_TRANSCRIPT = [
     ['00:05', '我們從上海一路騎到拉薩，第十七天。', false],
@@ -90,7 +98,34 @@
     </div>
   </div>
 
-  {#if frameDescriptions}
+  {#if frameScenes && frameScenes.length}
+    <div class="block">
+      <div class="blockhead">
+        <Eyebrow>場景時間軸 · qwen3-vl</Eyebrow>
+        <Mono dim style="font-size:9.5px;">{frameScenes.length} 場景</Mono>
+      </div>
+      <div class="scenes">
+        {#each frameScenes as sc, i}
+          <div class="scene">
+            <div class="scenetime">
+              <Mono dim style="font-size:10px;">{sc.tc || `f${i + 1}`}</Mono>
+              <span class="dot" class:hi={(sc.focus_score ?? 0) >= 4} class:lo={(sc.focus_score ?? 3) <= 2} title="focus {sc.focus_score ?? '—'}"></span>
+            </div>
+            <div class="scenebody">
+              <div class="chips">
+                {#if sc.content_type && sc.content_type !== 'Undefined'}<span class="chip">{sc.content_type}</span>{/if}
+                {#if sc.edit_position}<span class="chip pos">{sc.edit_position}</span>{/if}
+                {#if sc.atmosphere}<span class="chip dim">{sc.atmosphere}</span>{/if}
+                {#if sc.energy}<span class="chip dim">能量 {sc.energy}</span>{/if}
+              </div>
+              {#if sc.description}<div class="scenedesc">{sc.description}</div>{/if}
+              {#if sc.edit_reason}<div class="scenereason">▸ {sc.edit_reason}</div>{/if}
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {:else if frameDescriptions}
     <div class="block">
       <div class="blockhead">
         <Eyebrow>Vision · qwen3-vl</Eyebrow>
@@ -120,9 +155,15 @@
       {/each}
     </div>
     <div class="exports">
-      <button class="ak-btn exp">EDL</button>
-      <button class="ak-btn exp">FCPXML</button>
-      <button class="ak-btn exp">SRT</button>
+      {#if exportUrlFor}
+        {#each EXPORT_FMTS as fmt}
+          <a class="ak-btn exp" href={exportUrlFor(fmt)} download>{fmt.toUpperCase()}</a>
+        {/each}
+      {:else}
+        <button class="ak-btn exp">EDL</button>
+        <button class="ak-btn exp">FCPXML</button>
+        <button class="ak-btn exp">SRT</button>
+      {/if}
     </div>
   </div>
 </aside>
@@ -169,4 +210,22 @@
   .ratebtn.active { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); font-weight: 700; }
   .exports { display: flex; gap: 6px; margin-top: 6px; }
   .exp { flex: 1; }
+  /* scene timeline */
+  .scenes { display: flex; flex-direction: column; }
+  .scene { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--rule); }
+  .scene:first-child { border-top: none; }
+  .scenetime { flex: 0 0 40px; display: flex; align-items: center; gap: 5px; padding-top: 1px; }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ink-2); flex: 0 0 auto; }
+  .dot.hi { background: var(--invert); }
+  .dot.lo { background: var(--quiet); }
+  .scenebody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip {
+    font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.04em;
+    padding: 2px 5px; border: 1px solid var(--rule); color: var(--ink-2); white-space: nowrap;
+  }
+  .chip.pos { border-color: var(--rule-hi); color: var(--ink); }
+  .chip.dim { color: var(--quiet); }
+  .scenedesc { font-size: 11.5px; line-height: 1.45; color: var(--ink); }
+  .scenereason { font-size: 10.5px; line-height: 1.4; color: var(--quiet); font-style: italic; }
 </style>
