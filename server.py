@@ -1429,6 +1429,15 @@ def _edl_comment(text: str) -> str:
     return "".join(c for c in text if 0x20 <= ord(c) < 0x7F or ord(c) >= 0x80)
 
 
+def _log_safe(text: str, limit: int) -> str:
+    """Strip control chars (newlines, ANSI/terminal escapes) and truncate, so a
+    value printed to the server terminal/log can't forge lines or fill disk."""
+    if not text:
+        return ""
+    cleaned = "".join(c for c in text if c == " " or (0x20 <= ord(c) < 0x7F) or ord(c) >= 0x80)
+    return cleaned[:limit]
+
+
 def _subtitle_ts(seconds: float, sep: str = ",") -> str:
     """Subtitle timecode (SRT/VTT): HH:MM:SS,mmm (sep ',' for SRT, '.' for VTT)."""
     seconds = max(0.0, seconds)  # negative TC would render garbage frames
@@ -2135,11 +2144,21 @@ async def _run_ingest_with_ws(target: Path, limit: int):
 
 
 @app.post("/api/ingest/ws")
-async def ingest_media_ws(body: IngestRequest):
-    """Trigger ingest with WebSocket progress broadcasting."""
-    target = Path(body.path).expanduser()
-    if not target.exists():
-        raise HTTPException(400, f"找不到路徑：{body.path}")
+async def ingest_media_ws(
+    body: IngestRequest,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
+    """Trigger ingest with WebSocket progress broadcasting.
+
+    Mirrors the /api/ingest twin's gates: ingest_write scope + resolve() +
+    _assert_ingest_path_safe. Previously this endpoint had NEITHER, so any client
+    could drive the ingest pipeline over an arbitrary directory (Codex-class
+    finding from the overnight audit).
+    """
+    target = Path(body.path).expanduser().resolve()
+    if not target.is_dir():
+        raise HTTPException(400, f"路徑不是有效的目錄：{body.path}")
+    _assert_ingest_path_safe(target)
     asyncio.create_task(_run_ingest_with_ws(target, body.limit))
     return {"ok": True, "message": "已開始匯入 — 連線 /ws/ingest 取得進度"}
 
@@ -2188,7 +2207,7 @@ def serve_tailwind_static():
 import mimetypes
 
 @app.get("/api/stream/{media_id}")
-def stream_media(media_id: int):
+def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read"))):
     """Stream a media file with range request support for seeking.
     Serves H.264 proxy if available (for browser-incompatible codecs like ProRes/HEVC).
     """
@@ -2245,7 +2264,7 @@ def stream_media(media_id: int):
 # PROXY_CODECS lives in codec.py — single source of truth.
 
 @app.get("/api/proxy/status")
-def proxy_status():
+def proxy_status(_tok: dict = Depends(require_scopes("videos_read"))):
     """Check proxy status for all media files."""
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
@@ -2260,7 +2279,7 @@ def proxy_status():
 
 
 @app.post("/api/proxy/build")
-def proxy_build(background_tasks: BackgroundTasks):
+def proxy_build(background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
     """Queue proxy generation for all HEVC/ProRes files without proxy."""
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
@@ -2277,7 +2296,7 @@ def proxy_build(background_tasks: BackgroundTasks):
 
 
 @app.post("/api/proxy/build/{media_id}")
-def proxy_build_one(media_id: int, background_tasks: BackgroundTasks):
+def proxy_build_one(media_id: int, background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
     """Per-id proxy build — surface 自 7.7g 409 「生成 proxy」按鈕，使用者點到
     哪個 HEVC 就只建那個，避免 build all 整庫拖時間。"""
     proxy_dir = config.PROXIES_DIR
@@ -2320,8 +2339,16 @@ def _load_index() -> str:
     return "<h1>arkiv</h1><p>index.html not found</p>"
 
 @app.post("/api/open-file")
-async def open_file(request: __import__('starlette.requests', fromlist=['Request']).Request):
-    """Open file in OS default app or reveal in file manager. Only allows known media files from DB."""
+async def open_file(
+    request: __import__('starlette.requests', fromlist=['Request']).Request,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
+    """Open file in OS default app or reveal in file manager. Only allows known media files from DB.
+
+    Requires videos_write: launching an OS app / revealing a file is a privileged
+    side effect on the host. Loopback is token-free (full scope); a remote
+    read-only browse token is correctly refused.
+    """
     import subprocess, platform
     body = await request.json()
     file_path = body.get("path", "")
@@ -2352,10 +2379,17 @@ async def open_file(request: __import__('starlette.requests', fromlist=['Request
 
 @app.post("/api/client-log")
 async def client_log(request: __import__('starlette.requests', fromlist=['Request']).Request):
-    """Receive client-side logs (errors, info) and print to server terminal."""
+    """Receive client-side logs (errors, info) and print to server terminal.
+
+    Stays unauthenticated (the WebView logs diagnostics, sometimes before a token
+    is wired), but the attacker-controlled fields are sanitized + truncated:
+    control chars (newlines / ANSI terminal escapes) are stripped so a remote
+    caller can't forge log lines or corrupt the operator's terminal, and lengths
+    are capped so it can't be used to fill a redirected logfile.
+    """
     body = await request.json()
-    level = body.get("level", "info").upper()
-    msg = body.get("msg", "")
+    level = _log_safe(str(body.get("level", "info")).upper(), 16)
+    msg = _log_safe(str(body.get("msg", "")), 2000)
     print(f"[WebView {level}] {msg}", flush=True)
     return {"ok": True}
 

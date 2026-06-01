@@ -271,6 +271,9 @@ def test_bootstrap_noop_when_env_empty(server_module, monkeypatch, capsys):
         ("get", "/api/export/metadata-csv", "media_read", "videos_read", None),
         ("post", "/api/admin/tokens", "admin", "videos_read", _admin_create_body),
         ("post", "/api/ingest/scan", "ingest_write", "videos_read", _ingest_scan_body),
+        # overnight audit: endpoints that previously had NO auth at all
+        ("get", "/api/proxy/status", "videos_read", "chat_read", None),
+        ("post", "/api/proxy/build", "ingest_write", "videos_read", None),
     ],
 )
 def test_route_scope_enforcement_samples(server_module, method, path, good_scope, wrong_scope, body_factory):
@@ -287,6 +290,25 @@ def test_route_scope_enforcement_samples(server_module, method, path, good_scope
 
         allowed = _request(client, method, path, token=good_raw, body=body)
         assert allowed.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "method,path,wrong_scope,body",
+    [
+        # These previously had NO auth dependency at all (overnight audit). They
+        # don't return a clean 200 on an empty DB (404/400), so we assert the
+        # security property only: no token → 401, wrong scope → 403.
+        ("get", "/api/stream/1", "chat_read", None),
+        ("post", "/api/open-file", "videos_read", {"path": "/etc/hosts"}),
+        ("post", "/api/proxy/build/1", "videos_read", None),
+        ("post", "/api/ingest/ws", "videos_read", {"path": "/tmp", "limit": 1}),
+    ],
+)
+def test_previously_unauthed_endpoints_now_enforce_scope(server_module, method, path, wrong_scope, body):
+    wrong_raw, _ = _make_token("wrong-{0}".format(wrong_scope), [wrong_scope])
+    with TestClient(server_module.app) as client:
+        assert _request(client, method, path, body=body).status_code == 401
+        assert _request(client, method, path, token=wrong_raw, body=body).status_code == 403
 
 
 def test_cli_create_inserts_token(tmp_db):
