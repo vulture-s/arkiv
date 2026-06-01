@@ -89,6 +89,8 @@ export const search = (q, params = {}, opts) =>
 export const thumbUrlFromPath = (thumbnailPath) =>
   thumbnailPath ? `${BASE}/thumbnails/${thumbnailPath.split(/[/\\]/).pop()}` : null
 export const streamUrl = (id) => `${BASE}/api/stream/${id}`
+// EDL/FCPXML/SRT/VTT/CSV export download URL for a clip (optional in/out trim).
+export const exportUrl = (id, fmt) => `${BASE}/api/media/${id}/export/${fmt}`
 
 // ---- writes ----
 // note: backend PATCH writes BOTH rating + rating_note, so an omitted note

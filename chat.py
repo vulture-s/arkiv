@@ -85,8 +85,12 @@ def handle_compilation(
         project_scope=project_scope,
     )
     summary_prompt = (
-        "用戶問：{0}\n搜到 {1} 個 scene。"
-        "用一段繁中說明找到什麼。如果結果不夠，提示用戶 refine。"
+        "用戶問：{0}\n從素材庫搜到 {1} 段符合的素材。"
+        "用一段繁中說明『找到了哪些素材』。這是搜尋結果，不是剪好的成片——"
+        "arkiv 不會自動剪輯。措辭要誠實：說『找到 N 段符合的鏡頭，"
+        "可以選來導出 EDL / FCPXML / SRT 拿去 Resolve 剪』，"
+        "絕對不要說『我幫你剪成一段』或暗示已經剪好。"
+        "如果結果不夠精準，提示用戶 refine 查詢。"
     ).format(prompt, len(results))
     summary = llm_chat(summary_prompt, model=ARKIV_CHAT_MODEL, conversation=history)
     return {
