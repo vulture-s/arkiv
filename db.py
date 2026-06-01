@@ -444,6 +444,22 @@ def remove_tag(media_id: int, name: str):
         )
 
 
+def delete_auto_tags(media_id: int, _conn=None):
+    """Drop a clip's machine-generated tags (source='auto'), preserving any
+    manual ones. Used on re-ingest so stale/incorrect auto tags (e.g. a fixed
+    vision mislabel) don't linger as a union with the freshly generated set."""
+    def _do(c):
+        c.execute(
+            "DELETE FROM tags WHERE media_id = ? AND source = 'auto'",
+            (media_id,),
+        )
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
+
+
 def get_all_tag_names() -> List[Dict]:
     """All unique tag names with usage count, for autocomplete."""
     with get_conn() as conn:
