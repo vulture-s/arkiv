@@ -212,9 +212,14 @@
     detailId = id
     detail = null
     try {
-      detail = await api.getMediaDetail(id)
+      const d = await api.getMediaDetail(id)
+      // Ignore a stale response: if the selection moved on (e.g. deep-link
+      // selecting a clip while the default's fetch was still in flight) the
+      // current detailId no longer matches, and assigning would leave the
+      // inspector showing nothing for the now-selected clip (Codex review P2).
+      if (detailId === id) detail = d
     } catch (e) {
-      detail = null
+      if (detailId === id) detail = null
     }
   }
   $: if (selected && selected.id !== detailId) fetchDetail(selected.id)

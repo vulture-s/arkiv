@@ -1025,6 +1025,21 @@ def test_timeline_rejects_when_any_requested_id_is_missing(fastapi_client, sampl
     assert "999" in resp.json()["detail"]
 
 
+def test_timeline_edl_strips_control_chars_from_clip_comment(fastapi_client, sample_record):
+    """A filename with CR/LF must not inject extra EDL lines via the FROM CLIP
+    NAME comment (Codex review P2). Unix allows newlines in filenames."""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/evil.mp4", filename="shot\r\nFCM: DROP FRAME", duration_s=5.0, fps=30.0,
+    ))
+    resp = fastapi_client.get("/api/export/timeline/edl", params={"ids": "1"})
+    assert resp.status_code == 200
+    comment_lines = [l for l in resp.text.splitlines() if l.startswith("* FROM CLIP NAME")]
+    assert len(comment_lines) == 1
+    # the injected "FCM:" must not appear as its own line
+    assert comment_lines[0] == "* FROM CLIP NAME: shotFCM: DROP FRAME"
+
+
 def test_timeline_srt_falls_back_to_transcript_for_segmentless_clip(fastapi_client, sample_record):
     """A clip with transcript but no segments_json still contributes subtitles —
     evenly distributed and offset onto the timeline (Codex review P2)."""
