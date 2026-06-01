@@ -28,6 +28,7 @@ import config
 import db
 import federation
 import projects as project_registry
+import smart_collections
 
 
 # ── WebSocket connection manager ────────────────────────────────────────────
@@ -677,6 +678,49 @@ def get_all_tags(
 ):
     """All unique tag names for autocomplete."""
     return db.get_all_tag_names()
+
+
+def _thumb_url(thumbnail_path):
+    """Absolute fs thumbnail_path → served /thumbnails/<basename> URL (or None)."""
+    if not thumbnail_path:
+        return None
+    base = str(thumbnail_path).replace("\\", "/").rsplit("/", 1)[-1]
+    return "/thumbnails/{0}".format(base)
+
+
+@app.get("/api/collections")
+def list_collections(
+    _tok: dict = Depends(require_scopes("collections_read")),
+):
+    """Smart Collections — classify every media item against the Tier-1
+    definitions (smart_collections.DEFAULT_COLLECTIONS) and group the results.
+
+    Rule-driven (not ML clustering): see smart_collections.py. Returns one entry
+    per collection that has >=1 member, each with its member media (id/filename/
+    thumb/duration/score), sorted by score desc. Membership is non-exclusive.
+    """
+    defs = smart_collections.DEFAULT_COLLECTIONS
+    buckets = {c.key: {"key": c.key, "title": c.title, "category": c.category, "items": []} for c in defs}
+
+    for rec in db.get_all_records():
+        for hit in smart_collections.classify(rec, defs):
+            buckets[hit["key"]]["items"].append({
+                "id": rec["id"],
+                "filename": rec.get("filename"),
+                "thumb": _thumb_url(rec.get("thumbnail_path")),
+                "duration_s": rec.get("duration_s"),
+                "score": hit["score"],
+            })
+
+    out = []
+    for b in buckets.values():
+        if not b["items"]:
+            continue
+        b["items"].sort(key=lambda r: r["score"], reverse=True)
+        b["count"] = len(b["items"])
+        out.append(b)
+    out.sort(key=lambda c: c["count"], reverse=True)
+    return {"collections": out, "total": len(out)}
 
 
 @app.get("/api/duration-by-lang")

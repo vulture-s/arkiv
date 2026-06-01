@@ -50,20 +50,49 @@
   })
 
   let liveTags = null
+  let liveCollections = null
 
   async function load() {
     state = 'loading'
     try {
-      const [s, m, t] = await Promise.all([api.getStats(), api.getMedia({ limit: 60 }), api.getTags()])
+      const [s, m, t, c] = await Promise.all([
+        api.getStats(), api.getMedia({ limit: 60 }), api.getTags(), api.getCollections(),
+      ])
       stats = s
       items = (m.items || []).map(toCard)
       liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
+      liveCollections = (c?.collections || []).map((col) => ({
+        key: col.key, title: col.title, count: col.count,
+        items: col.items || [], // full member items (id/filename/thumb/duration_s/score)
+      }))
       if (items.length && selectedId == null) selectedId = items[0].id
       state = 'ok'
     } catch (e) {
       state = 'error'
       err = e.message + (e.body ? ' · ' + JSON.stringify(e.body) : '')
     }
+  }
+
+  // E1 — click a Smart Collection → show its members directly. /api/collections
+  // already returns every member with id/filename/thumb/duration_s (classified
+  // over the FULL library server-side), so build cards straight from those —
+  // no /api/media re-fetch, no first-N cap (Codex review P2).
+  const fmtDurS = (s) => fmtDur(s)
+  let activeCollection = null
+  function onCollectionClick(col) {
+    query = ''
+    activeCollection = col.key
+    items = (col.items || []).map((it) => ({
+      id: it.id,
+      name: it.filename || `#${it.id}`,
+      kind: 'video',
+      rating: 'none',
+      dur: fmtDurS(it.duration_s),
+      size: '—',
+      thumb: it.thumb || null, // already a root-relative /thumbnails/<name> path
+      _raw: it,
+    }))
+    selectedId = items.length ? items[0].id : null
   }
 
   // D — live sidebar derived data.
@@ -185,7 +214,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} onTag={onTagClick} />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} onTag={onTagClick} onCollection={onCollectionClick} />
 
     <main class="center">
       <div class="toolrow">
