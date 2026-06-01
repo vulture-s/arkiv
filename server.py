@@ -1408,6 +1408,67 @@ def _edl_reel(rec, stem):
     return value[:8].ljust(8)
 
 
+def _subtitle_ts(seconds: float, sep: str = ",") -> str:
+    """Subtitle timecode (SRT/VTT): HH:MM:SS,mmm (sep ',' for SRT, '.' for VTT)."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
+
+
+def _edl_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:
+    """EDL timecode: HH:MM:SS:FF (NDF) or HH:MM:SS;FF (DF)."""
+    if fps <= 0:
+        fps = 30.0
+    int_fps = round(fps)
+    total_frames = round(seconds * fps)
+
+    if drop_frame and int_fps in (30, 60):
+        # Drop-frame: skip frame 0,1 (30p) or 0,1,2,3 (60p) each minute except every 10th
+        d = 2 if int_fps == 30 else 4
+        frames_per_min = int_fps * 60 - d
+        frames_per_10min = frames_per_min * 10 + d
+
+        tens = total_frames // frames_per_10min
+        rem = total_frames % frames_per_10min
+
+        if rem < int_fps * 60:
+            adjusted = total_frames + d * 9 * tens
+        else:
+            adjusted = total_frames + d * 9 * tens + d * ((rem - int_fps * 60) // frames_per_min + 1)
+
+        ff = adjusted % int_fps
+        ss = (adjusted // int_fps) % 60
+        mm = (adjusted // (int_fps * 60)) % 60
+        hh = adjusted // (int_fps * 3600)
+    else:
+        ff = total_frames % int_fps
+        remaining = total_frames // int_fps
+        ss = remaining % 60
+        remaining //= 60
+        mm = remaining % 60
+        hh = remaining // 60
+
+    sep = ";" if drop_frame else ":"
+    return f"{hh:02d}:{mm:02d}:{ss:02d}{sep}{ff:02d}"
+
+
+def _start_tc_seconds(rec: dict, clip_fps: float) -> float:
+    """Parse a record's camera body start timecode (HH:MM:SS:FF) into seconds."""
+    start_tc_str = rec.get("start_tc") or ""
+    if not start_tc_str:
+        return 0.0
+    _tc = start_tc_str.replace(";", ":").split(":")
+    if len(_tc) == 4:
+        try:
+            _h, _m, _s, _f = int(_tc[0]), int(_tc[1]), int(_tc[2]), int(_tc[3])
+            return _h * 3600 + _m * 60 + _s + _f / clip_fps
+        except (ValueError, ZeroDivisionError):
+            return 0.0
+    return 0.0
+
+
 @app.get("/api/media/{media_id}/export/{fmt}")
 def export_media(
     media_id: int,
@@ -1432,50 +1493,9 @@ def export_media(
     has_trim = trim_in > 0.05 or trim_out < full_duration - 0.05
     duration = trim_out - trim_in
 
-    def _ts(seconds: float, sep: str = ",") -> str:
-        """Subtitle timecode (SRT/VTT): HH:MM:SS,mmm"""
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = int(seconds % 60)
-        ms = int((seconds % 1) * 1000)
-        return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
-
-    def _edl_tc(seconds: float, fps: float, drop_frame: bool = False) -> str:
-        """EDL timecode: HH:MM:SS:FF (NDF) or HH:MM:SS;FF (DF)"""
-        if fps <= 0:
-            fps = 30.0
-        # Round to nearest frame
-        int_fps = round(fps)
-        total_frames = round(seconds * fps)
-
-        if drop_frame and int_fps in (30, 60):
-            # Drop-frame: skip frame 0,1 (30p) or 0,1,2,3 (60p) each minute except every 10th
-            d = 2 if int_fps == 30 else 4
-            frames_per_min = int_fps * 60 - d
-            frames_per_10min = frames_per_min * 10 + d
-
-            tens = total_frames // frames_per_10min
-            rem = total_frames % frames_per_10min
-
-            if rem < int_fps * 60:
-                adjusted = total_frames + d * 9 * tens
-            else:
-                adjusted = total_frames + d * 9 * tens + d * ((rem - int_fps * 60) // frames_per_min + 1)
-
-            ff = adjusted % int_fps
-            ss = (adjusted // int_fps) % 60
-            mm = (adjusted // (int_fps * 60)) % 60
-            hh = adjusted // (int_fps * 3600)
-        else:
-            ff = total_frames % int_fps
-            remaining = total_frames // int_fps
-            ss = remaining % 60
-            remaining //= 60
-            mm = remaining % 60
-            hh = remaining // 60
-
-        sep = ";" if drop_frame else ":"
-        return f"{hh:02d}:{mm:02d}:{ss:02d}{sep}{ff:02d}"
+    # TC helpers are module-level (shared with the batch-timeline endpoint).
+    _ts = _subtitle_ts
+    _edl_tc = _edl_timecode
 
     # Try to use segment-aligned timestamps if available
     import json as _json
@@ -1729,6 +1749,181 @@ def export_to_file(
     with dest.open("w", encoding="utf-8", newline="") as fh:
         fh.write(content)
     return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
+
+
+def _fcpxml_rational(fps: float):
+    """FCPXML frameDuration numerator/denominator for a frame rate (exact for NTSC)."""
+    _fps_map = {
+        23.98: ("1001", "24000"), 23.976: ("1001", "24000"),
+        29.97: ("1001", "30000"), 59.94: ("1001", "60000"),
+    }
+    rounded = round(fps, 2)
+    if rounded in _fps_map:
+        return _fps_map[rounded]
+    return "1", str(round(fps))
+
+
+@app.get("/api/export/timeline/{fmt}")
+def export_timeline(
+    fmt: str,
+    ids: str,
+    _tok: dict = Depends(require_scopes("media_read")),
+):
+    """Lay several clips end-to-end on ONE timeline and export it.
+
+    Unlike /api/media/{id}/export/{fmt} (single clip), this sequences the given
+    clips in the order supplied so a filmmaker can multi-select in the grid and
+    drop a single EDL / FCPXML / SRT into Resolve.
+
+    ids: comma-separated media ids, e.g. ?ids=3,1,7 — order is preserved, and a
+    repeated id places the same clip twice. Mixed frame rates: the timeline uses
+    the FIRST clip's rate for record/sequence timecode (EDL source TC stays in
+    each clip's own rate); same-camera footage (the common case) is exact.
+    """
+    fmt = (fmt or "").lower()
+    if fmt not in ("edl", "srt", "fcpxml"):
+        raise HTTPException(400, f"批次匯出僅支援 edl / srt / fcpxml，收到：{fmt}")
+
+    try:
+        id_list = [int(x) for x in ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(400, "ids 必須是逗號分隔的整數，例如 ids=3,1,7")
+    if not id_list:
+        raise HTTPException(400, "ids 不可為空")
+    if len(id_list) > 500:
+        raise HTTPException(400, "一次最多 500 支")
+
+    recs = []
+    for mid in id_list:
+        rec = db.get_record_by_id(mid)
+        if rec:
+            recs.append(rec)
+    if not recs:
+        raise HTTPException(404, "找不到任何指定的素材")
+
+    tl_fps = recs[0].get("fps") or 30.0
+    tl_is_df = round(tl_fps, 2) in (29.97, 59.94)
+
+    if fmt == "edl":
+        fcm = "DROP FRAME" if tl_is_df else "NON-DROP FRAME"
+        edl = f"TITLE: arkiv timeline\nFCM: {fcm}\n\n"
+        rec_pos = 3600.0  # timeline starts at 01:00:00:00 by convention
+        for i, rec in enumerate(recs, 1):
+            filename = rec.get("filename", f"media_{rec.get('id')}")
+            stem = filename.rsplit(".", 1)[0]
+            dur = rec.get("duration_s", 0) or 0
+            clip_fps = rec.get("fps") or tl_fps
+            clip_is_df = round(clip_fps, 2) in (29.97, 59.94)
+            src_off = _start_tc_seconds(rec, clip_fps)
+            src_start = _edl_timecode(src_off, clip_fps, clip_is_df)
+            src_end = _edl_timecode(src_off + dur, clip_fps, clip_is_df)
+            rec_start = _edl_timecode(rec_pos, tl_fps, tl_is_df)
+            rec_end = _edl_timecode(rec_pos + dur, tl_fps, tl_is_df)
+            reel = _edl_reel(rec, stem)
+            edl += f"{i:03d}  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
+            edl += f"* FROM CLIP NAME: {filename}\n"
+            if rec.get("start_tc"):
+                edl += f"* SOURCE START TC: {rec['start_tc']}\n"
+            edl += "\n"
+            rec_pos += dur
+        return HTMLResponse(
+            content=edl,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="arkiv-timeline.edl"'},
+        )
+
+    if fmt == "srt":
+        import json as _json
+        srt = ""
+        idx = 1
+        offset = 0.0  # cumulative timeline position in seconds
+        for rec in recs:
+            dur = rec.get("duration_s", 0) or 0
+            segs = []
+            if rec.get("segments_json"):
+                try:
+                    segs = _json.loads(rec["segments_json"])
+                except Exception:
+                    segs = []
+            for seg in segs:
+                s = offset + (seg.get("start", 0) or 0)
+                e = offset + (seg.get("end", 0) or 0)
+                text = (seg.get("text") or "").strip()
+                if not text:
+                    continue
+                srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{text}\n\n"
+                idx += 1
+            offset += dur
+        return HTMLResponse(
+            content=srt,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="arkiv-timeline.srt"'},
+        )
+
+    # fmt == "fcpxml"
+    from xml.sax.saxutils import escape as xml_esc
+    import pathlib
+    _num, _den = _fcpxml_rational(tl_fps)
+    tc_fmt = "DF" if tl_is_df else "NDF"
+
+    assets_xml = ""
+    spine_xml = ""
+    offset_frames = 0
+    total_frames = 0
+    for i, rec in enumerate(recs):
+        ref = f"r{i + 2}"  # r1 is the format
+        filename = rec.get("filename", f"media_{rec.get('id')}")
+        stem = filename.rsplit(".", 1)[0]
+        dur = rec.get("duration_s", 0) or 0
+        clip_fps = rec.get("fps") or tl_fps
+        dur_frames = round(dur * tl_fps)
+        asset_dur_frames = round(dur * clip_fps)
+        src_off_frames = round(_start_tc_seconds(rec, clip_fps) * clip_fps)
+
+        raw_path = _resolve_media_path(rec.get("path", ""))
+        file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
+        if not str(file_uri).startswith("/"):
+            file_uri = pathlib.PurePosixPath("/" + str(file_uri))
+        file_uri_str = xml_esc(f"file://{file_uri}")
+
+        assets_xml += (
+            f'        <asset id="{ref}" name="{xml_esc(stem)}" src="{file_uri_str}" '
+            f'start="0s" duration="{asset_dur_frames * int(_num)}/{_den}s" '
+            f'format="r1" hasAudio="1" hasVideo="1" />\n'
+        )
+        spine_xml += (
+            f'                    <asset-clip ref="{ref}" name="{xml_esc(filename)}" '
+            f'offset="{offset_frames * int(_num)}/{_den}s" '
+            f'duration="{dur_frames * int(_num)}/{_den}s" '
+            f'start="{src_off_frames * int(_num)}/{_den}s" tcFormat="{tc_fmt}" />\n'
+        )
+        offset_frames += dur_frames
+        total_frames += dur_frames
+
+    w = recs[0].get("width") or 1920
+    h = recs[0].get("height") or 1080
+    fcpxml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.8">
+    <resources>
+        <format id="r1" frameDuration="{_num}/{_den}s" width="{w}" height="{h}" />
+{assets_xml}    </resources>
+    <library>
+        <event name="arkiv Export">
+            <project name="arkiv timeline">
+                <sequence format="r1" tcStart="0s" tcFormat="{tc_fmt}" duration="{total_frames * int(_num)}/{_den}s">
+                    <spine>
+{spine_xml}                    </spine>
+                </sequence>
+            </project>
+        </event>
+    </library>
+</fcpxml>"""
+    return HTMLResponse(
+        content=fcpxml,
+        media_type="application/xml; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="arkiv-timeline.fcpxml"'},
+    )
 
 
 # ── Admin Tokens ─────────────────────────────────────────────────────────────
