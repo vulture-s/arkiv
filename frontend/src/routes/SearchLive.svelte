@@ -19,7 +19,9 @@
   let results = []
   let total = 0
   let elapsedMs = 0
-  let projectName = '明燒肉'
+  // Derived from the project registry when available; neutral label otherwise,
+  // so results outside the demo project aren't mislabeled (Codex review P3).
+  let projectName = '目前專案'
 
   const fmtDur = (s) => {
     s = Math.round(s || 0)
@@ -61,7 +63,13 @@
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
+    // label the result group from the active project registry, if any
+    try {
+      const r = await api.getProjects()
+      const name = r?.projects?.[0]?.name
+      if (name) projectName = name
+    } catch (e) { /* no registry → keep neutral label */ }
     // seed from ?q= in the hash, e.g. #/search-live?q=餐廳
     const h = window.location.hash
     const qi = h.indexOf('?')
