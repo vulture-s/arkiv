@@ -35,30 +35,52 @@
   }
   const fmtSize = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`)
 
+  // backend rating value (good/ng/review/null) → UI value (good/ng/rev/none).
+  const ratingToUi = (r) => (r === 'review' ? 'rev' : r || 'none')
   // API media item → MediaCard's expected shape.
   const toCard = (it) => ({
     id: it.id,
     name: it.filename || `#${it.id}`,
     kind: it.has_audio && (it.width === 0 || !it.width) ? 'audio' : 'video',
-    rating: it.rating || 'none', // backend null → unrated → '—'
+    rating: ratingToUi(it.rating),
     dur: fmtDur(it.duration_s),
     size: fmtSize(it.size_mb),
     thumb: api.thumbUrlFromPath(it.thumbnail_path),
     _raw: it,
   })
 
+  let liveTags = null
+
   async function load() {
     state = 'loading'
     try {
-      const [s, m] = await Promise.all([api.getStats(), api.getMedia({ limit: 60 })])
+      const [s, m, t] = await Promise.all([api.getStats(), api.getMedia({ limit: 60 }), api.getTags()])
       stats = s
       items = (m.items || []).map(toCard)
+      liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
       if (items.length && selectedId == null) selectedId = items[0].id
       state = 'ok'
     } catch (e) {
       state = 'error'
       err = e.message + (e.body ? ' · ' + JSON.stringify(e.body) : '')
     }
+  }
+
+  // D — live sidebar derived data.
+  $: livePools = stats
+    ? [
+        ['All media', stats.total],
+        ['Needs review', stats.rating?.review ?? 0],
+        ['Rated good', stats.rating?.good ?? 0],
+        ['N·G', stats.rating?.ng ?? 0],
+        ['Unrated', stats.rating?.unrated ?? 0],
+      ]
+    : null
+  $: liveProjects = stats ? [{ id: 'msr', name: '明燒肉', count: stats.total, active: true }] : null
+  // tag click → search that tag
+  function onTagClick(name) {
+    query = name
+    runSearch()
   }
 
   async function runSearch() {
@@ -137,12 +159,33 @@
     : null
   $: inspThumb = selected ? selected.thumb : null
   $: inspPath = detailLive ? detailLive.path : null
+
+  // C — rating write. UI value → backend value (db.set_rating: good/ng/review/None).
+  const RATING_MAP = { good: 'good', rev: 'review', ng: 'ng', none: null }
+  async function rate(uiRating) {
+    if (!selected) return
+    const backendVal = RATING_MAP[uiRating] ?? null
+    const id = selected.id
+    // preserve any existing rating_note (backend PATCH overwrites both fields →
+    // omitting note would silently delete it). Codex review P2.
+    const note = detailLive && detailLive.id === id ? detailLive.rating_note ?? null : null
+    // optimistic: reflect immediately in grid + inspector (which both read item.rating)
+    const prev = selected.rating
+    items = items.map((m) => (m.id === id ? { ...m, rating: uiRating } : m))
+    try {
+      await api.setRating(id, backendVal, note)
+    } catch (e) {
+      // revert on failure
+      items = items.map((m) => (m.id === id ? { ...m, rating: prev } : m))
+      err = `rating 寫入失敗: ${e.message}`
+    }
+  }
 </script>
 
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} onTag={onTagClick} />
 
     <main class="center">
       <div class="toolrow">
@@ -196,6 +239,7 @@
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
         frameDescriptions={inspFrames}
+        onRate={rate}
       />
     {/if}
   </div>
