@@ -105,12 +105,17 @@ def test_chat_requires_chat_write_scope(fastapi_client_with_readonly_token):
     assert response.status_code == 403
 
 
-def test_chat_invalid_conversation_id_returns_400(fastapi_client):
+def test_chat_unusable_conversation_id_returns_404(fastapi_client):
+    # An unusable conversation_id — nonexistent OR not owned by the caller — now
+    # returns a uniform 404 (was 400 for nonexistent). The uniform code is
+    # deliberate: a non-owner must not be able to tell "doesn't exist" from
+    # "exists but isn't yours" (existence oracle), which the ownership check
+    # would otherwise leak.
     response = fastapi_client.post(
         "/api/chat",
         json={"prompt": "x", "conversation_id": "missing-conv"},
     )
-    assert response.status_code == 400
+    assert response.status_code == 404
 
 
 def test_chat_refinement_filters_prior_results(fastapi_client, tmp_db, sample_record):
@@ -363,6 +368,10 @@ def test_chat_conversation_isolation_between_tokens(server_module):
         # ...nor read its history (404, not the content)
         hist = client.get(f"/api/chat/history/{conv_a}", headers={"Authorization": f"Bearer {raw_b}"})
         assert hist.status_code == 404
+        # ...nor APPEND to it via POST with its id (write-side ownership)
+        append = client.post("/api/chat", json={"prompt": "inject", "conversation_id": conv_a},
+                             headers={"Authorization": f"Bearer {raw_b}"})
+        assert append.status_code == 404
         # A can still read its own
         own = client.get(f"/api/chat/history/{conv_a}", headers={"Authorization": f"Bearer {raw_a}"})
         assert own.status_code == 200
