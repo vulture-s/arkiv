@@ -58,10 +58,16 @@ if [ "$SRC" = "$INSTALL_DIR" ]; then
     # Already running from install dir (git clone directly to ~/.arkiv)
     echo "Setting up arkiv at $INSTALL_DIR..."
 elif [ -f "$SRC/server.py" ]; then
-    # Running from a different local directory — copy files
+    # Running from a different local directory — copy files.
+    # Copy ALL top-level Python modules with a glob, not a hand-maintained list:
+    # the old explicit list went stale (it predated auth.py / chat.py / admin.py /
+    # federation.py / projects.py / smart_collections.py / tag_quality.py / …,
+    # all imported by server.py) so this path produced an install that crashed on
+    # first run with ImportError. A glob can't drift.
     echo "Setting up arkiv at $INSTALL_DIR (from $SRC)..."
     mkdir -p "$INSTALL_DIR"
-    for f in server.py db.py config.py health.py index.html ingest.py transcribe.py embed.py frames.py vision.py vectordb.py requirements.txt .env.example smoke-test.sh install.sh uninstall.sh arkiv.command LICENSE README.md watch.py; do
+    cp "$SRC"/*.py "$INSTALL_DIR"/
+    for f in index.html requirements.txt .env.example smoke-test.sh install.sh uninstall.sh arkiv.command LICENSE README.md; do
         [ -f "$SRC/$f" ] && cp "$SRC/$f" "$INSTALL_DIR/"
     done
 else

@@ -75,13 +75,19 @@ for ep in "/api/media?limit=1" "/api/stats" "/api/tags" "/api/duration-by-lang" 
     check "GET $ep" "$([ "$HTTP" = "200" ] && echo true || echo false)" "HTTP $HTTP"
 done
 
-# 4. Media count
+# 4. Media count — an empty library is a VALID state for a fresh install, not a
+# failure (a brand-new user hasn't ingested anything yet). We only need the stats
+# endpoint to answer with a parseable count; 0 is reported as a note. (Previously
+# only Docker got this pass-with-note, so `pc` smoke-tests failed immediately
+# after a clean install — a bad first-run experience.)
 echo "── Data ──"
-COUNT=$(curl -s --max-time 5 "$BASE/api/stats" 2>/dev/null | $PYTHON -c "import sys,json; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo "0")
-if [ "$PLATFORM" = "docker" ] && [ "$COUNT" = "0" ]; then
-    check "Media files indexed" "true" "0 files (fresh Docker — ingest media to populate)"
+COUNT=$(curl -s --max-time 5 "$BASE/api/stats" 2>/dev/null | $PYTHON -c "import sys,json; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo "")
+if [ -z "$COUNT" ]; then
+    check "Media files indexed" "false" "stats endpoint unreadable"
+elif [ "$COUNT" = "0" ]; then
+    check "Media files indexed" "true" "0 files (fresh install — ingest media to populate)"
 else
-    check "Media files indexed" "$([ "$COUNT" -gt "0" ] && echo true || echo false)" "$COUNT files"
+    check "Media files indexed" "true" "$COUNT files"
 fi
 
 # 5. Search
