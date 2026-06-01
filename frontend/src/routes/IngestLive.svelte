@@ -6,6 +6,7 @@
      is an honest subset: real queue + real progress, no faked sub-stages. -->
 <script>
   import { onMount, onDestroy } from 'svelte'
+  import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
@@ -73,15 +74,10 @@
     files = {}
     complete = null
     try {
-      const res = await fetch(`${BASE}/api/ingest/ws`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: path.trim(), limit: Number(limit) || 0 }),
-      })
-      if (!res.ok) {
-        const b = await res.text()
-        throw new Error(`${res.status} ${b}`)
-      }
+      // Through the authenticated API layer (adds the Bearer token when set) —
+      // /api/ingest/ws requires ingest_write; a raw fetch would 401 on a tokened
+      // remote backend.
+      await api.ingestWs(path.trim(), Number(limit) || 0)
       pushLog(`triggered ingest: ${path} (limit ${limit})`)
     } catch (e) {
       err = e.message
