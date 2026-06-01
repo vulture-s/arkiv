@@ -8,6 +8,8 @@
   export let livePools = null // [[label, count], ...]
   export let liveTags = null // [{name, count}]
   export let onTag = null // (name) => void; live tag-click → filter
+  export let liveCollections = null // [{key,title,count,items}]; null → section hidden
+  export let onCollection = null // (collection) => void; click → filter to members
 
   const MOCK_POOLS = [
     ['All media', 247],
@@ -50,6 +52,21 @@
       {/each}
     </div>
   </section>
+
+  {#if liveCollections && liveCollections.length}
+    <section>
+      <Eyebrow style="margin-bottom:10px;">Smart Collections · auto</Eyebrow>
+      <div class="col">
+        {#each liveCollections as c (c.key)}
+          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <div class="poolrow collrow" on:click={() => onCollection && onCollection(c)}>
+            <span class="ellip">{c.title}</span>
+            <Mono dim style="font-size:10px;flex:0 0 auto;">{c.count}</Mono>
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
 
   <section class="tagsec">
     <Eyebrow style="margin-bottom:10px;">Tags · auto</Eyebrow>
@@ -95,6 +112,7 @@
     padding: 4px 10px; font-size: 12.5px; color: var(--ink-2); cursor: pointer;
   }
   .ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .collrow:hover { color: var(--ink); }
   .tagsec { min-height: 0; }
   .tags { display: flex; flex-wrap: wrap; gap: 4px; }
   .tag {

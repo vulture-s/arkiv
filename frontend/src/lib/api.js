@@ -61,6 +61,8 @@ export const getStats = (opts) => req('/api/stats', opts)
 export const getProjects = (opts) => req('/api/projects', opts)
 export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
 export const getTags = (opts) => req('/api/tags', opts)
+// /api/collections → {collections:[{key,title,category,count,items:[{id,filename,thumb,score}]}], total}
+export const getCollections = (opts) => req('/api/collections', opts)
 
 // /api/media?limit&offset&projects&tag&rating  → {items, total, search}
 export const getMedia = (params = {}, opts) => req(`/api/media${qs(params)}`, opts)

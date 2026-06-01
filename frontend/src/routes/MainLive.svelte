@@ -50,20 +50,39 @@
   })
 
   let liveTags = null
+  let liveCollections = null
 
   async function load() {
     state = 'loading'
     try {
-      const [s, m, t] = await Promise.all([api.getStats(), api.getMedia({ limit: 60 }), api.getTags()])
+      const [s, m, t, c] = await Promise.all([
+        api.getStats(), api.getMedia({ limit: 60 }), api.getTags(), api.getCollections(),
+      ])
       stats = s
       items = (m.items || []).map(toCard)
       liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
+      liveCollections = (c?.collections || []).map((col) => ({
+        key: col.key, title: col.title, count: col.count,
+        ids: (col.items || []).map((i) => i.id),
+      }))
       if (items.length && selectedId == null) selectedId = items[0].id
       state = 'ok'
     } catch (e) {
       state = 'error'
       err = e.message + (e.body ? ' · ' + JSON.stringify(e.body) : '')
     }
+  }
+
+  // E1 — click a Smart Collection → filter grid to its member ids. Reloads the
+  // full library first (so it works after a search), then narrows by id set.
+  let activeCollection = null
+  async function onCollectionClick(col) {
+    query = ''
+    activeCollection = col.key
+    const full = await api.getMedia({ limit: 200 })
+    const idSet = new Set(col.ids)
+    items = (full.items || []).map(toCard).filter((m) => idSet.has(m.id))
+    selectedId = items.length ? items[0].id : null
   }
 
   // D — live sidebar derived data.
@@ -185,7 +204,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} onTag={onTagClick} />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} onTag={onTagClick} onCollection={onCollectionClick} />
 
     <main class="center">
       <div class="toolrow">
