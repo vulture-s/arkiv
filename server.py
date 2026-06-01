@@ -12,13 +12,13 @@ import json
 import os
 import urllib.request
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Literal, Optional, Set
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 import admin
 import chat
@@ -107,13 +107,30 @@ def _resolve_media_path(path: str) -> str:
 # ── Models ───────────────────────────────────────────────────────────────────
 
 class RatingUpdate(BaseModel):
-    rating: Optional[str] = None
+    # Constrain to the stored vocabulary (or None to clear) — an arbitrary string
+    # used to be persisted verbatim, corrupting rating stats and sort buckets.
+    rating: Optional[Literal["good", "ng", "review"]] = None
     note: Optional[str] = None
 
 
 class TagCreate(BaseModel):
     name: str
-    source: str = "manual"
+    # Public callers may not mint 'auto' tags — those are owned by the vision
+    # pipeline and wiped on re-ingest, so a client-supplied source='auto' tag
+    # would silently vanish. Force 'manual'.
+    source: Literal["manual"] = "manual"
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v: str) -> str:
+        # strip control chars (newlines etc.), collapse whitespace, reject empty,
+        # cap length — an empty/whitespace/control-char/huge tag used to be stored.
+        cleaned = " ".join("".join(c for c in (v or "") if c == " " or ord(c) >= 0x20 and c not in "\x7f").split())
+        if not cleaned:
+            raise ValueError("tag name must not be empty")
+        if len(cleaned) > 100:
+            raise ValueError("tag name too long (max 100)")
+        return cleaned
  
  
 class ProjectCreate(BaseModel):
@@ -134,6 +151,23 @@ class ChatRequest(BaseModel):
     prompt: str
     conversation_id: Optional[str] = None
     project_scope: Optional[List[str]] = None
+
+    @field_validator("prompt")
+    @classmethod
+    def _check_prompt(cls, v: str) -> str:
+        # reject empty/whitespace. Oversize prompts are NOT rejected — existing
+        # behavior trims them for the LLM (chat._trim_prompt) and that's tested;
+        # the storage-cap for the persisted copy lives in the handler instead.
+        if not v or not v.strip():
+            raise ValueError("prompt must not be empty")
+        return v
+
+    @field_validator("project_scope")
+    @classmethod
+    def _cap_scope(cls, v):
+        if v is not None and len(v) > 200:
+            raise ValueError("project_scope too large (max 200)")
+        return v
 
 
 class ChatResponse(BaseModel):
@@ -200,7 +234,10 @@ def chat_endpoint(
         if not chat.conversation_exists(conv_id):
             raise HTTPException(status_code=400, detail="Unknown conversation_id")
 
-    chat.persist_message(conv_id, role="user", content=req.prompt)
+    # Persist a length-capped copy: the LLM only ever sees a trimmed prompt
+    # (chat._trim_prompt), so storing the raw multi-MB original would bloat the
+    # conversation DB unboundedly for no benefit.
+    chat.persist_message(conv_id, role="user", content=req.prompt[:8000])
     result = chat.dispatch(req.prompt, conv_id, project_scope=req.project_scope)
     chat.persist_message(
         conv_id,
@@ -230,6 +267,7 @@ def get_chat_history(
     _tok: dict = Depends(require_scopes("chat_read")),
 ) -> dict:
     del request, _tok
+    limit = max(1, min(500, limit))
     with db.get_conn() as conn:
         conv = conn.execute(
             "SELECT id, title, project_scope_json, created_at, updated_at "
@@ -259,6 +297,7 @@ def list_chat_conversations(
     _tok: dict = Depends(require_scopes("chat_read")),
 ) -> dict:
     del request, _tok
+    limit = max(1, min(500, limit))
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT id, title, project_scope_json, created_at, updated_at "
@@ -416,6 +455,10 @@ def list_media(
     _tok: dict = Depends(require_scopes("videos_read")),
 ):
     """List media with filters, sorting, and pagination."""
+    # Clamp pagination: a negative limit becomes SQLite LIMIT -1 (unbounded full
+    # dump) and a huge limit blows up the vector-search n_results.
+    limit = max(1, min(500, limit))
+    offset = max(0, offset)
     if q:
         enriched = []
         # Try semantic search first (requires vectordb with embeddings)
@@ -545,9 +588,11 @@ def get_media_waveform(
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
-    if not rec.get("has_audio"):
-        return {"media_id": media_id, "bins": bins, "peaks": [0.0] * max(8, bins)}
+    # Clamp BEFORE the no-audio early return — otherwise ?bins=999999 on a
+    # no-audio clip allocates a ~8MB [0.0]*999999 list (DoS).
     bins = max(8, min(500, bins))
+    if not rec.get("has_audio"):
+        return {"media_id": media_id, "bins": bins, "peaks": [0.0] * bins}
     cache_dir = ROOT / "waveforms"
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / f"{media_id}_{bins}.json"
