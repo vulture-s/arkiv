@@ -1014,3 +1014,34 @@ def test_timeline_rejects_bad_format_empty_ids_and_all_missing(fastapi_client, s
     assert fastapi_client.get("/api/export/timeline/edl", params={"ids": ""}).status_code == 400
     assert fastapi_client.get("/api/export/timeline/edl", params={"ids": "abc"}).status_code == 400
     assert fastapi_client.get("/api/export/timeline/edl", params={"ids": "999,998"}).status_code == 404
+
+
+def test_timeline_rejects_when_any_requested_id_is_missing(fastapi_client, sample_record):
+    """A mix of valid + missing ids must fail loud, not silently ship a short
+    timeline missing a requested shot (Codex review P2)."""
+    _insert_two_clips_with_segments(sample_record)  # ids 1,2 exist
+    resp = fastapi_client.get("/api/export/timeline/edl", params={"ids": "1,999,2"})
+    assert resp.status_code == 404
+    assert "999" in resp.json()["detail"]
+
+
+def test_timeline_srt_falls_back_to_transcript_for_segmentless_clip(fastapi_client, sample_record):
+    """A clip with transcript but no segments_json still contributes subtitles —
+    evenly distributed and offset onto the timeline (Codex review P2)."""
+    import json as _json
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/seg.mp4", filename="seg.mp4", duration_s=10.0, fps=30.0,
+        segments_json=_json.dumps([{"start": 0.0, "end": 5.0, "text": "有時間軸"}], ensure_ascii=False),
+    ))
+    db.upsert(sample_record(
+        path="/tmp/noseg.mp4", filename="noseg.mp4", duration_s=10.0, fps=30.0,
+        transcript="只有逐字稿沒有時間軸", segments_json=None,
+    ))
+    resp = fastapi_client.get("/api/export/timeline/srt", params={"ids": "1,2"})
+    assert resp.status_code == 200
+    body = resp.text
+    assert "有時間軸" in body
+    assert "只有逐字稿沒有時間軸" in body  # the segmentless clip is NOT dropped
+    # its single line spans the whole second clip, offset past the first (10s)
+    assert "00:00:10,000 --> 00:00:20,000" in body
