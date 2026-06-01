@@ -1794,12 +1794,18 @@ def export_timeline(
         raise HTTPException(400, "一次最多 500 支")
 
     recs = []
+    missing = []
     for mid in id_list:
         rec = db.get_record_by_id(mid)
         if rec:
             recs.append(rec)
-    if not recs:
-        raise HTTPException(404, "找不到任何指定的素材")
+        else:
+            missing.append(mid)
+    # Fail loud on ANY missing id rather than silently shipping a short timeline.
+    # A clip deleted/moved between selection and export would otherwise produce a
+    # timeline missing a shot with no warning (Codex review P2).
+    if missing:
+        raise HTTPException(404, f"找不到素材：{','.join(str(m) for m in missing)}")
 
     tl_fps = recs[0].get("fps") or 30.0
     tl_is_df = round(tl_fps, 2) in (29.97, 59.94)
@@ -1845,14 +1851,27 @@ def export_timeline(
                     segs = _json.loads(rec["segments_json"])
                 except Exception:
                     segs = []
-            for seg in segs:
-                s = offset + (seg.get("start", 0) or 0)
-                e = offset + (seg.get("end", 0) or 0)
-                text = (seg.get("text") or "").strip()
-                if not text:
-                    continue
-                srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{text}\n\n"
-                idx += 1
+            if segs:
+                for seg in segs:
+                    s = offset + (seg.get("start", 0) or 0)
+                    e = offset + (seg.get("end", 0) or 0)
+                    text = (seg.get("text") or "").strip()
+                    if not text:
+                        continue
+                    srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{text}\n\n"
+                    idx += 1
+            else:
+                # No segment timestamps (legacy rows / segmentless transcription):
+                # mirror the single-clip /export/srt fallback and distribute the
+                # transcript lines evenly across the clip, offset onto the timeline
+                # (Codex review P2 — otherwise transcript-only clips vanish).
+                lines = [l.strip() for l in (rec.get("transcript") or "").split("\n") if l.strip()]
+                n = max(len(lines), 1)
+                for li, line in enumerate(lines):
+                    s = offset + li * (dur / n)
+                    e = offset + (li + 1) * (dur / n)
+                    srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{line}\n\n"
+                    idx += 1
             offset += dur
         return HTMLResponse(
             content=srt,
