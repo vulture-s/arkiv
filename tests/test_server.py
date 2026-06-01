@@ -932,6 +932,27 @@ def test_timeline_fcpxml_is_well_formed_with_one_clip_per_asset(fastapi_client, 
     assert len(dom.getElementsByTagName("asset-clip")) == 2
 
 
+def test_timeline_fcpxml_asset_duration_matches_clip_in_timeline_timebase(fastapi_client, sample_record):
+    """Mixed frame rates: an asset must never be shorter than the span its
+    asset-clip reads, or the import truncates (Codex review P2). All durations
+    are serialized in the timeline timebase, so asset.duration == clip.duration.
+    """
+    import xml.dom.minidom as _minidom
+    db = importlib.import_module("db")
+    # first clip 30fps (sets the timeline rate), second clip 24fps, both 10s
+    db.upsert(sample_record(path="/tmp/r30.mp4", filename="r30.mp4", duration_s=10.0, fps=30.0))
+    db.upsert(sample_record(path="/tmp/r24.mp4", filename="r24.mp4", duration_s=10.0, fps=24.0))
+    resp = fastapi_client.get("/api/export/timeline/fcpxml", params={"ids": "1,2"})
+    assert resp.status_code == 200
+    dom = _minidom.parseString(resp.text)
+    assets = dom.getElementsByTagName("asset")
+    clips = dom.getElementsByTagName("asset-clip")
+    # the 24fps asset's duration must equal its clip's duration (both 10s = 300/30)
+    by_ref = {c.getAttribute("ref"): c.getAttribute("duration") for c in clips}
+    for a in assets:
+        assert a.getAttribute("duration") == by_ref[a.getAttribute("id")]
+
+
 def test_timeline_preserves_order_and_allows_repeats(fastapi_client, sample_record):
     _insert_two_clips_with_segments(sample_record)
     resp = fastapi_client.get("/api/export/timeline/edl", params={"ids": "2,1,2"})

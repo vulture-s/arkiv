@@ -16,9 +16,9 @@
   // edit_position, edit_reason, focus_score}]. null → mock screens unchanged.
   export let frameScenes = null
   export let onRate = null // (uiRating) => void; when set, rate buttons are live
-  // (fmt) => download URL for this clip. When set, export buttons become live
-  // <a> links; null → mock screens keep the inert buttons.
-  export let exportUrlFor = null
+  // (fmt) => void; triggers an authenticated download for this clip. When set,
+  // the export buttons become live; null → mock screens keep the inert buttons.
+  export let onExport = null
   let imgFailed = false
   const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
 
@@ -155,9 +155,9 @@
       {/each}
     </div>
     <div class="exports">
-      {#if exportUrlFor}
+      {#if onExport}
         {#each EXPORT_FMTS as fmt}
-          <a class="ak-btn exp" href={exportUrlFor(fmt)} download>{fmt.toUpperCase()}</a>
+          <button class="ak-btn exp" on:click={() => onExport(fmt)}>{fmt.toUpperCase()}</button>
         {/each}
       {:else}
         <button class="ak-btn exp">EDL</button>

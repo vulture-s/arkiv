@@ -61,6 +61,23 @@
   }
   const clearPicks = () => (picked = [])
   const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
+  async function exportTimeline(fmt) {
+    if (!picked.length) return
+    try {
+      await api.downloadFile(api.exportTimelinePath(picked, fmt), `arkiv-timeline.${fmt}`)
+    } catch (e) {
+      err = `匯出失敗: ${e.message}`
+    }
+  }
+  // single-clip export from the inspector (auth-safe download).
+  async function exportClip(id, fmt, name) {
+    const stem = (name || `media_${id}`).replace(/\.[^.]+$/, '')
+    try {
+      await api.downloadFile(api.exportPath(id, fmt), `${stem}.${fmt}`)
+    } catch (e) {
+      err = `匯出失敗: ${e.message}`
+    }
+  }
 
   async function load() {
     state = 'loading'
@@ -274,7 +291,7 @@
           <Mono style="font-size:11px;letter-spacing:0.04em;">已選 {picked.length} 支 → 合成一條時間軸</Mono>
           <div class="expbtns">
             {#each EXPORT_FMTS as fmt}
-              <a class="ak-btn expbtn" href={api.exportTimelineUrl(picked, fmt)} download>{fmt.toUpperCase()}</a>
+              <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}>{fmt.toUpperCase()}</button>
             {/each}
             <button class="ak-btn expbtn clear" on:click={clearPicks}>清除</button>
           </div>
@@ -319,7 +336,7 @@
         transcriptLines={inspTranscript}
         frameDescriptions={inspFrames}
         frameScenes={inspScenes}
-        exportUrlFor={selected ? (fmt) => api.exportUrl(selected.id, fmt) : null}
+        onExport={selected ? (fmt) => exportClip(selected.id, fmt, selected.name) : null}
         onRate={rate}
       />
     {/if}
