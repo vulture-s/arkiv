@@ -1408,6 +1408,15 @@ def _edl_reel(rec, stem):
     return value[:8].ljust(8)
 
 
+def _edl_comment(text: str) -> str:
+    """Sanitize a string for an EDL comment line. Strips ASCII control chars
+    (incl. CR/LF) so a filename like "shot\\nFCM: ..." can't inject extra EDL
+    lines, while keeping printable ASCII and non-ASCII (CJK filenames)."""
+    if not text:
+        return ""
+    return "".join(c for c in text if 0x20 <= ord(c) < 0x7F or ord(c) >= 0x80)
+
+
 def _subtitle_ts(seconds: float, sep: str = ",") -> str:
     """Subtitle timecode (SRT/VTT): HH:MM:SS,mmm (sep ',' for SRT, '.' for VTT)."""
     h = int(seconds // 3600)
@@ -1599,12 +1608,12 @@ def export_media(
         rec_start = _edl_tc(rec_base, clip_fps, is_df)
         rec_end = _edl_tc(rec_base + duration, clip_fps, is_df)
 
-        edl = f"TITLE: {stem}\nFCM: {fcm}\n\n"
+        edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n\n"
         reel = _edl_reel(rec, stem)
         edl += f"001  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
-        edl += f"* FROM CLIP NAME: {filename}\n"
+        edl += f"* FROM CLIP NAME: {_edl_comment(filename)}\n"
         if start_tc_str:
-            edl += f"* SOURCE START TC: {start_tc_str}\n"
+            edl += f"* SOURCE START TC: {_edl_comment(start_tc_str)}\n"
         edl += "\n"
 
         if fmt == "edl-markers":
@@ -1827,9 +1836,9 @@ def export_timeline(
             rec_end = _edl_timecode(rec_pos + dur, tl_fps, tl_is_df)
             reel = _edl_reel(rec, stem)
             edl += f"{i:03d}  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
-            edl += f"* FROM CLIP NAME: {filename}\n"
+            edl += f"* FROM CLIP NAME: {_edl_comment(filename)}\n"
             if rec.get("start_tc"):
-                edl += f"* SOURCE START TC: {rec['start_tc']}\n"
+                edl += f"* SOURCE START TC: {_edl_comment(rec['start_tc'])}\n"
             edl += "\n"
             rec_pos += dur
         return HTMLResponse(
