@@ -70,6 +70,13 @@ export const getCollections = (opts) => req('/api/collections', opts)
 export const chat = (prompt, conversationId = null, opts) =>
   req('/api/chat', { method: 'POST', body: { prompt, conversation_id: conversationId }, ...opts })
 
+// POST /api/ingest/ws {path, limit} — trigger ingest with WS progress.
+// Requires ingest_write (token-free on loopback; the dev proxy injects the
+// header). Goes through req() so a setToken() token is attached in direct
+// remote deployments — a raw fetch here would 401 once the endpoint required auth.
+export const ingestWs = (path, limit = 0, opts) =>
+  req('/api/ingest/ws', { method: 'POST', body: { path, limit }, ...opts })
+
 // /api/media?limit&offset&projects&tag&rating  → {items, total, search}
 export const getMedia = (params = {}, opts) => req(`/api/media${qs(params)}`, opts)
 export const getMediaDetail = (id, opts) => req(`/api/media/${id}`, opts)
