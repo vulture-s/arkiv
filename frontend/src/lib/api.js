@@ -64,6 +64,12 @@ export const getTags = (opts) => req('/api/tags', opts)
 // /api/collections → {collections:[{key,title,category,count,items:[{id,filename,thumb,score}]}], total}
 export const getCollections = (opts) => req('/api/collections', opts)
 
+// POST /api/chat {prompt, conversation_id?, project_scope?} →
+//   {conversation_id, assistant_text, scene_ids[], intent, tokens_used, latency_ms}
+// Requires chat_write scope (token-free on loopback).
+export const chat = (prompt, conversationId = null, opts) =>
+  req('/api/chat', { method: 'POST', body: { prompt, conversation_id: conversationId }, ...opts })
+
 // /api/media?limit&offset&projects&tag&rating  → {items, total, search}
 export const getMedia = (params = {}, opts) => req(`/api/media${qs(params)}`, opts)
 export const getMediaDetail = (id, opts) => req(`/api/media/${id}`, opts)
