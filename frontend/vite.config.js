@@ -12,6 +12,7 @@ export default defineConfig({
       // but the backend binds 127.0.0.1, so localhost would ECONNREFUSED.
       '/api': 'http://127.0.0.1:8501',
       '/thumbnails': 'http://127.0.0.1:8501',
+      '/ws': { target: 'ws://127.0.0.1:8501', ws: true },
     },
   },
 })
