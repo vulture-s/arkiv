@@ -925,7 +925,10 @@ def main():
                 # survive as a union with the new set. Phase 1 runs first, so a
                 # single clear here covers both the BMD tags below and the vision
                 # tags written in Phase 2. Manual tags are preserved.
-                if existing:
+                # ONLY clear when vision will actually re-run: a --skip-vision
+                # refresh never repopulates vision tags, so clearing would
+                # silently drop searchable metadata (Codex review P2).
+                if existing and not args.skip_vision:
                     mid = _get_media_id_for_path(f)
                     if mid:
                         db.delete_auto_tags(mid)

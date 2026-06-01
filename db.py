@@ -423,10 +423,17 @@ def get_tags(media_id: int) -> List[Dict]:
 
 
 def add_tag(media_id: int, name: str, source: str = "manual", _conn=None):
-    """Add a tag (idempotent via UNIQUE constraint)."""
+    """Add a tag (idempotent via UNIQUE(media_id, name)).
+
+    A manual add PROMOTES an existing auto row to source='manual' so that a later
+    re-ingest's auto-tag clear (delete_auto_tags) won't remove a tag the user has
+    confirmed by hand. An auto add never downgrades a manual row. (Codex review
+    P2 — relying on the original source alone lost user-confirmed tags.)"""
     def _do(c):
         c.execute(
-            "INSERT OR IGNORE INTO tags (media_id, name, source) VALUES (?, ?, ?)",
+            "INSERT INTO tags (media_id, name, source) VALUES (?, ?, ?) "
+            "ON CONFLICT(media_id, name) DO UPDATE SET source='manual' "
+            "WHERE excluded.source='manual'",
             (media_id, name.strip().lower(), source),
         )
     if _conn is not None:
