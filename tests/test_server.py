@@ -1040,6 +1040,27 @@ def test_timeline_edl_strips_control_chars_from_clip_comment(fastapi_client, sam
     assert comment_lines[0] == "* FROM CLIP NAME: shotFCM: DROP FRAME"
 
 
+def test_timeline_serializes_audio_only_clips_correctly(fastapi_client, sample_record):
+    """An audio-only clip (selectable in the grid) must not be exported as video:
+    EDL uses the audio channel, FCPXML sets hasVideo=0 (Codex review P2)."""
+    import xml.dom.minidom as _minidom
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/voice.wav", filename="voice.wav", ext=".wav",
+        duration_s=8.0, fps=0.0, width=0, height=0, has_audio=1,
+    ))
+    edl = fastapi_client.get("/api/export/timeline/edl", params={"ids": "1"})
+    assert edl.status_code == 200
+    event = next(l for l in edl.text.splitlines() if l.startswith("001  "))
+    assert " A     C " in event  # audio channel, not V
+
+    fcp = fastapi_client.get("/api/export/timeline/fcpxml", params={"ids": "1"})
+    assert fcp.status_code == 200
+    asset = _minidom.parseString(fcp.text).getElementsByTagName("asset")[0]
+    assert asset.getAttribute("hasVideo") == "0"
+    assert asset.getAttribute("hasAudio") == "1"
+
+
 def test_timeline_srt_falls_back_to_transcript_for_segmentless_clip(fastapi_client, sample_record):
     """A clip with transcript but no segments_json still contributes subtitles —
     evenly distributed and offset onto the timeline (Codex review P2)."""

@@ -1408,6 +1408,18 @@ def _edl_reel(rec, stem):
     return value[:8].ljust(8)
 
 
+def _media_streams(rec: dict):
+    """(has_video, has_audio) for a record, from its probed streams. A clip with
+    width/height is video; has_audio flags an audio track. Used so timeline
+    exports describe audio-only clips correctly instead of claiming video."""
+    has_video = bool(rec.get("width") or rec.get("height"))
+    has_audio = bool(rec.get("has_audio"))
+    # Degenerate row with neither flag → assume video so we still emit something.
+    if not has_video and not has_audio:
+        has_video = True
+    return has_video, has_audio
+
+
 def _edl_comment(text: str) -> str:
     """Sanitize a string for an EDL comment line. Strips ASCII control chars
     (incl. CR/LF) so a filename like "shot\\nFCM: ..." can't inject extra EDL
@@ -1835,7 +1847,9 @@ def export_timeline(
             rec_start = _edl_timecode(rec_pos, tl_fps, tl_is_df)
             rec_end = _edl_timecode(rec_pos + dur, tl_fps, tl_is_df)
             reel = _edl_reel(rec, stem)
-            edl += f"{i:03d}  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
+            has_vid, _ = _media_streams(rec)
+            chan = "V" if has_vid else "A"  # audio-only clip → audio channel
+            edl += f"{i:03d}  {reel} {chan}     C        {src_start} {src_end} {rec_start} {rec_end}\n"
             edl += f"* FROM CLIP NAME: {_edl_comment(filename)}\n"
             if rec.get("start_tc"):
                 edl += f"* SOURCE START TC: {_edl_comment(rec['start_tc'])}\n"
@@ -1928,11 +1942,12 @@ def export_timeline(
         # therefore spans [src_off, src_off + duration], so the asset-clip's
         # start=src_off below sits at the head of that range rather than hours
         # past the end of a 0s-anchored asset (Codex review P2).
+        has_vid, has_aud = _media_streams(rec)
         assets_xml += (
             f'        <asset id="{ref}" name="{_attr(stem)}" src="{file_uri_str}" '
             f'start="{src_off_frames * int(_num)}/{_den}s" '
             f'duration="{asset_dur_frames * int(_num)}/{_den}s" '
-            f'format="r1" hasAudio="1" hasVideo="1" />\n'
+            f'format="r1" hasAudio="{1 if has_aud else 0}" hasVideo="{1 if has_vid else 0}" />\n'
         )
         spine_xml += (
             f'                    <asset-clip ref="{ref}" name="{_attr(filename)}" '
