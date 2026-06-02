@@ -301,6 +301,21 @@ FILTER_WORDS = os.getenv("ARKIV_FILTER_WORDS", "")
 HOST = os.getenv("ARKIV_HOST", "0.0.0.0")
 PORT = int(os.getenv("ARKIV_PORT", "8501"))
 
+# --- Phase 11.5 resource-aware pipeline ---
+# Backpressure trigger: ingest waits when memory pressure exceeds this fraction
+# (GPU VRAM % on nvidia, unified-memory % on Apple Silicon). Clamped to (0, 1].
+try:
+    GPU_MEM_THRESHOLD = float(os.getenv("ARKIV_GPU_MEM_THRESHOLD", "0.8"))
+except ValueError:
+    GPU_MEM_THRESHOLD = 0.8
+if not (0.0 < GPU_MEM_THRESHOLD <= 1.0):
+    GPU_MEM_THRESHOLD = 0.8
+# A/B-tuned in Phase 11.5d (live GPU). Default 1 = no Ollama-side parallelism.
+try:
+    OLLAMA_NUM_PARALLEL = max(1, int(os.getenv("OLLAMA_NUM_PARALLEL", "1")))
+except ValueError:
+    OLLAMA_NUM_PARALLEL = 1
+
 def discover_projects():
     from projects import discover_projects as _discover_projects
 
