@@ -112,9 +112,18 @@ def verify_token(request: Request) -> dict:
         # hash / expiry / IP-allowlist / scope checks apply; the token's IP
         # allowlist still bounds exposure even though the value rides in a URL.
         raw = (request.query_params.get("token") or "").strip()
+    client_ip = request.client.host if (request.client is not None and request.client.host) else ""
+    user_agent = request.headers.get("user-agent", "")
+    return resolve_raw_token(raw, client_ip, user_agent)
+
+
+def resolve_raw_token(raw: str, client_ip: str, user_agent: str = "") -> dict:
+    """Validate a raw token string → token dict (id/name/scopes). Hash lookup +
+    expiry + per-token IP allowlist + scopes, and records last-used. Raises
+    HTTPException(401/403). Shared by the HTTP path (verify_token) and the
+    WebSocket path (which can't use a Request-typed Depends)."""
     if not raw:
         raise HTTPException(401, "Missing token (expected 'Authorization: Bearer <token>' or ?token=<token>)")
-
     token_hash = hash_token(raw)
     with get_conn() as conn:
         row = conn.execute(
@@ -135,9 +144,6 @@ def verify_token(request: Request) -> dict:
             if expiry < datetime.now(timezone.utc):
                 raise HTTPException(401, "Token expired")
 
-        client_ip = ""
-        if request.client is not None and request.client.host:
-            client_ip = request.client.host
         if not _check_ip_allowed(client_ip, row["allowed_ips_json"]):
             raise HTTPException(403, "Client IP not in token's allowlist")
 
@@ -148,10 +154,9 @@ def verify_token(request: Request) -> dict:
         scopes = frozenset(scope_row["scope"] for scope_row in scope_rows)
 
         try:
-            user_agent = request.headers.get("user-agent", "")[:200]
             conn.execute(
                 "UPDATE access_tokens SET last_used_at = ?, last_used_ip = ?, last_used_user_agent = ? WHERE id = ?",
-                (datetime.now(timezone.utc).isoformat(), client_ip, user_agent, row["id"]),
+                (datetime.now(timezone.utc).isoformat(), client_ip, (user_agent or "")[:200], row["id"]),
             )
         except Exception:
             pass
