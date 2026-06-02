@@ -538,6 +538,10 @@ def test_ws_ingest_requires_auth_and_scope(server_module):
     with client.websocket_connect(f"/ws/ingest?token={good_raw}",
                                   headers={"origin": "http://localhost:5173"}) as ws:
         assert ws is not None
+    # same-origin (Origin authority == Host) → connects on ANY deployment host
+    with client.websocket_connect(f"/ws/ingest?token={good_raw}",
+                                  headers={"origin": "http://testserver", "host": "testserver"}) as ws:
+        assert ws is not None
 
 
 def test_ws_ingest_loopback_trusted_without_token(server_module):

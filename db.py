@@ -20,11 +20,16 @@ def get_conn():
     parent = Path(DB_PATH).expanduser().parent
     if parent and not parent.exists():
         parent.mkdir(parents=True, exist_ok=True)
+        # Only tighten a dir WE just created — never an existing (possibly shared)
+        # parent, which could strip access from unrelated files.
+        try:
+            os.chmod(parent, 0o700)
+        except OSError:
+            pass
     conn = sqlite3.connect(DB_PATH, timeout=30)
-    # The DB holds token hashes — keep it owner-only, not world-readable on a
-    # shared/multi-user host. Best-effort (chmod is a no-op / may fail on Windows).
+    # Our own token-hash DB file — keep it owner-only on shared hosts.
+    # Best-effort (no-op / may fail on Windows).
     try:
-        os.chmod(parent, 0o700)
         os.chmod(DB_PATH, 0o600)
     except OSError:
         pass

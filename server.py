@@ -2189,9 +2189,17 @@ def _ws_authorized(ws: WebSocket, scope: str) -> bool:
       malicious page can't open ws:// to a loopback-trusted instance.
     - same loopback-trust rule as HTTP (loopback peer + no forwarding header), else
     - a `?token=` with the required scope (a browser ws can't set headers)."""
+    # CSWSH guard. A browser always sends Origin; accept it if it's same-origin
+    # (its authority == the request Host — the normal case for ANY deployment
+    # host/port, incl. remote + HTTPS reverse proxy) or in the static dev/Tauri
+    # allowlist. A cross-site page (different authority) is rejected. Non-browser
+    # clients (no Origin) fall through to token auth.
     origin = ws.headers.get("origin")
-    if origin is not None and origin not in _ALLOWED_ORIGINS:
-        return False
+    if origin is not None:
+        origin_authority = origin.split("://", 1)[-1]
+        host_header = ws.headers.get("host", "")
+        if origin_authority != host_header and origin not in _ALLOWED_ORIGINS:
+            return False
     host = ws.client.host if ws.client is not None else ""
     if auth._trust_loopback() and host in auth._LOOPBACK_HOSTS and not auth._looks_proxied(ws):
         return True
