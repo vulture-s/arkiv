@@ -13,6 +13,11 @@ nanoid>=2.0.0
 pillow>=9.0
 soundfile>=0.12
 
+# Resource-aware pipeline (Phase 11.5) — soft dependency: arkiv runs without it
+# (probe degrades the memory fields to None), but installing it enables
+# backpressure and the `arkiv status` memory readout.
+psutil>=5.9
+
 # Speech pre-processing
 silero-vad>=6.0
 
