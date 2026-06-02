@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -67,6 +68,52 @@ def _unload_ollama_model(model: str):
         print(f"  Unloaded {model} from VRAM")
     except Exception as e:
         print(f"  Warning: could not unload {model}: {e}")
+
+
+def _ensure_vision_ready(max_wait_s=None, _probe=None, _sleep=None):
+    """Phase 11.5b: probe-driven gate before a vision batch.
+
+    Systematizes the previously-ad-hoc warm-up: (1) bounded exponential
+    backoff while memory pressure exceeds ARKIV_GPU_MEM_THRESHOLD, then
+    (2) warm the vision model up if the probe says it isn't resident.
+
+    SENSOR, NOT GATE: a degraded probe (no Ollama / no psutil) yields a
+    PROCEED decision, so this never blocks ingest on a missing signal; and
+    after max_wait it proceeds anyway with a warning. _probe/_sleep are
+    injectable for tests. Returns the final probe dict.
+    """
+    import resource_probe as rp
+    import time as _t
+
+    probe = _probe or rp.probe
+    sleep = _sleep or _t.sleep
+    try:
+        import jobs
+        active = jobs.active_count()
+    except Exception:
+        active = None
+    if max_wait_s is None:
+        try:
+            max_wait_s = float(os.getenv("ARKIV_BACKPRESSURE_MAX_WAIT", "120"))
+        except ValueError:
+            max_wait_s = 120.0
+
+    result = probe(active_jobs=active)
+    print(f"  [probe] {rp.summary_line(result)}")
+    decision, reason = rp.decide(result)
+    waited, delay = 0.0, 2.0
+    while decision == "WAIT" and waited < max_wait_s:
+        print(f"  [backpressure] {reason} (waited {waited:.0f}s/{max_wait_s:.0f}s)")
+        sleep(delay)
+        waited += delay
+        delay = min(delay * 2, 30.0)
+        result = probe(active_jobs=active)
+        decision, reason = rp.decide(result)
+    if decision == "WAIT":
+        print(f"  [backpressure] still busy after {max_wait_s:.0f}s — proceeding anyway (sensor, not gate)")
+    if not rp.is_model_loaded(result, config.VISION_MODEL):
+        _warm_up_vision_model()
+    return result
 
 
 def _normalize_bmd_tag(value):
@@ -525,6 +572,25 @@ def _run_queue_cmd(args):
         sys.exit(1)
 
 
+def _run_status_cmd(args):
+    """Phase 11.5e: `arkiv status` — resource probe + queue depth + ETA hint."""
+    import resource_probe as rp
+    import jobs
+
+    active = jobs.active_count()
+    result = rp.probe(active_jobs=active)
+    qc = jobs.counts()
+
+    if getattr(args, "json", False):
+        print(json.dumps({"resource": result, "queue": qc}, ensure_ascii=False))
+        return
+
+    print(rp.summary_line(result))
+    print("queue: " + "  ".join("{0}={1}".format(k, v) for k, v in qc.items()))
+    decision, reason = rp.decide(result)
+    print("next vision phase would: {0} ({1})".format(decision, reason))
+
+
 def _run_vision_only(args):
     """Resume vision: only process frames with empty descriptions."""
     import time as _time
@@ -556,7 +622,7 @@ def _run_vision_only(args):
     print(f"Found {len(rows)} frames across {len(media_frames)} files\n")
 
     _unload_ollama_model("qwen2.5:14b")
-    _warm_up_vision_model()
+    _ensure_vision_ready()
 
     ok, halted = 0, False
     for vi, (mid, frames_list) in enumerate(media_frames.items(), 1):
@@ -835,13 +901,15 @@ def main():
     parser.add_argument("--no-embed", action="store_true", help="Skip building the vector index after ingest (default: auto-embed so search/chat work immediately)")
     parser.add_argument("--queue", choices=["status", "cancel", "retry"], help="Phase 11.5c job queue: status | cancel --job-id N | retry --job-id N")
     parser.add_argument("--job-id", type=int, default=0, help="Job id for --queue cancel/retry")
+    parser.add_argument("--status", action="store_true", help="Phase 11.5e: print resource + queue status (--json for machine-readable)")
+    parser.add_argument("--json", action="store_true", help="With --status: emit JSON instead of human-readable")
     args = parser.parse_args()
 
     # --dir validation: required only when actually ingesting
     maintenance_mode = (
         args.migrate_storage or args.migrate_relative
         or args.regenerate_proxies or args.vision_only
-        or bool(args.queue)
+        or bool(args.queue) or args.status
     )
     if not maintenance_mode and not args.dir:
         parser.error("--dir is required unless using --migrate-storage / --migrate-relative / --regenerate-proxies / --vision-only")
@@ -858,7 +926,7 @@ def main():
 
     # Phase 8.0e: pre-flight storage check before any pipeline work.
     # Skip for maintenance modes (they're the tools that fix broken state).
-    if not (args.migrate_relative or args.regenerate_proxies or args.queue):
+    if not (args.migrate_relative or args.regenerate_proxies or args.queue or args.status):
         import health
         ok_pf, errors_pf = health.preflight_paths()
         if not ok_pf:
@@ -872,6 +940,10 @@ def main():
 
     if args.queue:
         _run_queue_cmd(args)
+        return
+
+    if args.status:
+        _run_status_cmd(args)
         return
 
     if args.migrate_relative:
@@ -1021,7 +1093,7 @@ def main():
         print(f"\n{'─'*60}")
         print(f"Phase 2: Vision — {len(phase1_results)} files, unloading LLM to free VRAM...")
         _unload_ollama_model("qwen2.5:14b")
-        _warm_up_vision_model()
+        _ensure_vision_ready()
 
         vision_ok, vision_fail = 0, 0
         consecutive_vision_fail = 0  # halt-on-N-consecutive (Phase 6 / R6)
