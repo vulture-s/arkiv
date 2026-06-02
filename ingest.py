@@ -494,6 +494,37 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None)
     return record
 
 
+def _run_queue_cmd(args):
+    """Phase 11.5c: `--queue status|cancel|retry`."""
+    import jobs
+
+    if args.queue == "status":
+        c = jobs.counts()
+        print("Job queue: " + "  ".join("{0}={1}".format(k, v) for k, v in c.items()))
+        active = jobs.list_jobs()
+        if not active:
+            print("  (no jobs)")
+            return
+        print("  {0:>5}  {1:<10} {2:<10} {3:<9} {4}".format("id", "type", "status", "priority", "target"))
+        for j in active:
+            print("  {0:>5}  {1:<10} {2:<10} {3:<9} {4}".format(
+                j["id"], j["type"], j["status"], j["priority"], j.get("target") or ""
+            ))
+        return
+
+    # cancel / retry need a job id
+    if not args.job_id:
+        print("--queue {0} requires --job-id N".format(args.queue))
+        sys.exit(2)
+    fn = jobs.cancel if args.queue == "cancel" else jobs.retry
+    ok = fn(args.job_id)
+    if ok:
+        print("Job {0} {1}{2}.".format(args.job_id, args.queue, "ed" if args.queue == "cancel" else "→pending"))
+    else:
+        print("Job {0}: cannot {1} (absent or wrong state).".format(args.job_id, args.queue))
+        sys.exit(1)
+
+
 def _run_vision_only(args):
     """Resume vision: only process frames with empty descriptions."""
     import time as _time
@@ -802,12 +833,15 @@ def main():
     parser.add_argument("--recursive", "-r", action="store_true", help="Recursively scan subdirectories")
     parser.add_argument("--db", default="", help="Path to SQLite DB (default: media.db next to ingest.py)")
     parser.add_argument("--no-embed", action="store_true", help="Skip building the vector index after ingest (default: auto-embed so search/chat work immediately)")
+    parser.add_argument("--queue", choices=["status", "cancel", "retry"], help="Phase 11.5c job queue: status | cancel --job-id N | retry --job-id N")
+    parser.add_argument("--job-id", type=int, default=0, help="Job id for --queue cancel/retry")
     args = parser.parse_args()
 
     # --dir validation: required only when actually ingesting
     maintenance_mode = (
         args.migrate_storage or args.migrate_relative
         or args.regenerate_proxies or args.vision_only
+        or bool(args.queue)
     )
     if not maintenance_mode and not args.dir:
         parser.error("--dir is required unless using --migrate-storage / --migrate-relative / --regenerate-proxies / --vision-only")
@@ -824,7 +858,7 @@ def main():
 
     # Phase 8.0e: pre-flight storage check before any pipeline work.
     # Skip for maintenance modes (they're the tools that fix broken state).
-    if not (args.migrate_relative or args.regenerate_proxies):
+    if not (args.migrate_relative or args.regenerate_proxies or args.queue):
         import health
         ok_pf, errors_pf = health.preflight_paths()
         if not ok_pf:
@@ -835,6 +869,10 @@ def main():
             sys.exit(4)
 
     db.init_db()
+
+    if args.queue:
+        _run_queue_cmd(args)
+        return
 
     if args.migrate_relative:
         db.migrate_to_relative()

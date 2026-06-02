@@ -243,6 +243,25 @@ def init_db():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages(conversation_id, created_at)"
         )
+        # Phase 11.5c: SQLite-backed ingest job queue (no Redis/Celery — per
+        # roadmap 11.5c). priority is derived from type; lower runs first.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id          INTEGER PRIMARY KEY,
+                type        TEXT NOT NULL,
+                target      TEXT,
+                priority    INTEGER NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                started_at  TEXT,
+                finished_at TEXT,
+                error       TEXT
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_status_priority "
+            "ON jobs(status, priority, created_at)"
+        )
 
 
 def migrate_to_relative():
