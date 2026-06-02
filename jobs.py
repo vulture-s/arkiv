@@ -57,28 +57,61 @@ def next_pending() -> Optional[Dict]:
         return dict(row) if row else None
 
 
-def mark_running(job_id: int) -> None:
+def claim_next() -> Optional[Dict]:
+    """Atomically dequeue the next pending job → running.
+
+    Concurrency-safe: the UPDATE is guarded on `status='pending'`, so if a second
+    worker claimed the same row first, this one's UPDATE matches 0 rows and we
+    return None (caller retries). Prefer this over next_pending()+mark_running()
+    when more than one consumer can run.
+    """
     with db.get_conn() as conn:
-        conn.execute(
-            "UPDATE jobs SET status=?, started_at=datetime('now') WHERE id=?",
-            (RUNNING, job_id),
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE status=? ORDER BY priority ASC, created_at ASC, id ASC LIMIT 1",
+            (PENDING,),
+        ).fetchone()
+        if row is None:
+            return None
+        cur = conn.execute(
+            "UPDATE jobs SET status=?, started_at=datetime('now') WHERE id=? AND status=?",
+            (RUNNING, row["id"], PENDING),
         )
+        if cur.rowcount != 1:
+            return None  # lost the race to another claimer
+        return dict(row, status=RUNNING)
 
 
-def mark_done(job_id: int) -> None:
+def mark_running(job_id: int) -> bool:
+    """pending → running. Returns False if the job wasn't pending (already
+    claimed / cancelled / terminal) — never revives a finished job."""
     with db.get_conn() as conn:
-        conn.execute(
-            "UPDATE jobs SET status=?, finished_at=datetime('now'), error=NULL WHERE id=?",
-            (DONE, job_id),
+        cur = conn.execute(
+            "UPDATE jobs SET status=?, started_at=datetime('now') WHERE id=? AND status=?",
+            (RUNNING, job_id, PENDING),
         )
+        return cur.rowcount == 1
 
 
-def mark_failed(job_id: int, error: str = "") -> None:
+def mark_done(job_id: int) -> bool:
+    """pending/running → done. Won't overwrite a cancelled/terminal job."""
     with db.get_conn() as conn:
-        conn.execute(
-            "UPDATE jobs SET status=?, finished_at=datetime('now'), error=? WHERE id=?",
-            (FAILED, (error or "")[:2000], job_id),
+        cur = conn.execute(
+            "UPDATE jobs SET status=?, finished_at=datetime('now'), error=NULL "
+            "WHERE id=? AND status IN (?, ?)",
+            (DONE, job_id, PENDING, RUNNING),
         )
+        return cur.rowcount == 1
+
+
+def mark_failed(job_id: int, error: str = "") -> bool:
+    """pending/running → failed. Won't overwrite a cancelled/terminal job."""
+    with db.get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status=?, finished_at=datetime('now'), error=? "
+            "WHERE id=? AND status IN (?, ?)",
+            (FAILED, (error or "")[:2000], job_id, PENDING, RUNNING),
+        )
+        return cur.rowcount == 1
 
 
 def cancel(job_id: int) -> bool:

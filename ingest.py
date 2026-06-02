@@ -85,7 +85,7 @@ def _ensure_vision_ready(max_wait_s=None, _probe=None, _sleep=None):
     import resource_probe as rp
     import time as _t
 
-    probe = _probe or rp.probe
+    raw_probe = _probe or rp.probe
     sleep = _sleep or _t.sleep
     try:
         import jobs
@@ -98,14 +98,26 @@ def _ensure_vision_ready(max_wait_s=None, _probe=None, _sleep=None):
         except ValueError:
             max_wait_s = 120.0
 
+    # Belt-and-suspenders for the red line: even though rp.probe never raises,
+    # an injected probe (or a future change) might — a probe failure must never
+    # block the vision phase, so treat it as a degraded (PROCEED) reading.
+    def probe(active_jobs=None):
+        try:
+            return raw_probe(active_jobs=active_jobs)
+        except Exception as e:  # noqa: BLE001
+            r = rp._degraded_result("probe raised: {0}".format(e))
+            r["active_jobs"] = active_jobs
+            return r
+
     result = probe(active_jobs=active)
     print(f"  [probe] {rp.summary_line(result)}")
     decision, reason = rp.decide(result)
     waited, delay = 0.0, 2.0
     while decision == "WAIT" and waited < max_wait_s:
+        this_sleep = min(delay, max_wait_s - waited)  # strictly bounded by max_wait
         print(f"  [backpressure] {reason} (waited {waited:.0f}s/{max_wait_s:.0f}s)")
-        sleep(delay)
-        waited += delay
+        sleep(this_sleep)
+        waited += this_sleep
         delay = min(delay * 2, 30.0)
         result = probe(active_jobs=active)
         decision, reason = rp.decide(result)

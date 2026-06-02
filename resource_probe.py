@@ -129,7 +129,11 @@ def probe(active_jobs: Optional[int] = None) -> Dict:
         return r
 
     errors: List[str] = []
-    backend = _detect_backend()
+    try:
+        backend = _detect_backend()
+    except Exception as e:  # noqa: BLE001 — backend detection must never escape
+        backend = "unknown"
+        errors.append("backend detection failed: {0}".format(e))
 
     # --- loaded models + ollama VRAM (both backends) ---
     models_loaded: List[str] = []
@@ -154,8 +158,12 @@ def probe(active_jobs: Optional[int] = None) -> Dict:
             errors.append("nvidia-smi unavailable: {0}".format(e))
 
     # --- system memory (psutil) ---
-    sys_used_mb, sys_total_mb, sys_pct = _probe_memory()
-    if sys_pct is None:
+    try:
+        sys_used_mb, sys_total_mb, sys_pct = _probe_memory()
+    except Exception as e:  # noqa: BLE001 — psutil reading must never escape
+        sys_used_mb = sys_total_mb = sys_pct = None
+        errors.append("psutil read failed: {0}".format(e))
+    if sys_pct is None and not any("psutil" in m for m in errors):
         errors.append("psutil unavailable — system memory unknown")
 
     degraded = bool(errors)
@@ -211,9 +219,14 @@ def decide(result: Dict, threshold: Optional[float] = None) -> Tuple[str, str]:
     """
     if threshold is None:
         threshold = config.GPU_MEM_THRESHOLD
+    # RED LINE: if ANY source failed, the picture is incomplete/untrustworthy —
+    # never WAIT on a partial reading (blocking is the dangerous action). This
+    # also avoids treating system RAM as a VRAM proxy when nvidia-smi failed.
+    if result.get("degraded"):
+        return "PROCEED", "probe degraded — proceeding (sensor, not gate)"
     p = pressure_metric(result)
     if p is None:
-        return "PROCEED", "no memory-pressure signal (degraded) — proceeding"
+        return "PROCEED", "no memory-pressure signal — proceeding"
     if p > threshold:
         return "WAIT", "memory at {0:.0%} > threshold {1:.0%} — GPU busy, waiting".format(p, threshold)
     return "PROCEED", "memory at {0:.0%} <= threshold {1:.0%}".format(p, threshold)
