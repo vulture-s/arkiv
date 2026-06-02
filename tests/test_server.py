@@ -1183,3 +1183,17 @@ def test_chat_persists_capped_prompt(server_module):
     capped = ("x" * 50000)[:8000]
     assert len(capped) == 8000  # the slice the handler persists
     assert len(server.ChatRequest(prompt="x" * 50000).prompt) == 50000  # model keeps it for trim
+
+
+def test_access_log_redacts_token_query_param():
+    """uvicorn access-log filter must scrub ?token= so the raw token never lands
+    in stdout / a redirected logfile."""
+    import importlib, logging
+    server = importlib.import_module("server")
+    f = server._RedactTokenFilter()
+    rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0,
+                            '%s - "%s %s HTTP/%s" %d',
+                            ("127.0.0.1:1", "GET", "/api/stream/3?token=SECRETVALUE123", "1.1", 200), None)
+    assert f.filter(rec) is True
+    assert "SECRETVALUE123" not in (rec.args[2])
+    assert "token=REDACTED" in rec.args[2]

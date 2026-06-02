@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -20,6 +21,13 @@ def get_conn():
     if parent and not parent.exists():
         parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30)
+    # The DB holds token hashes — keep it owner-only, not world-readable on a
+    # shared/multi-user host. Best-effort (chmod is a no-op / may fail on Windows).
+    try:
+        os.chmod(parent, 0o700)
+        os.chmod(DB_PATH, 0o600)
+    except OSError:
+        pass
     conn.row_factory = sqlite3.Row
     try:
         yield conn
