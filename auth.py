@@ -43,6 +43,19 @@ def _trust_loopback() -> bool:
     )
 
 
+# A genuine same-machine request carries none of these. A reverse proxy /
+# `tailscale serve` / host-net forwarder connects to the backend FROM 127.0.0.1
+# but adds a forwarding header — so their presence means the real client is
+# remote and loopback trust must NOT apply (else any proxied remote request
+# would be handed full admin). This also neutralizes a spoofed
+# `X-Forwarded-For: 127.0.0.1` from a remote attacker.
+_PROXY_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded")
+
+
+def _looks_proxied(request: Request) -> bool:
+    return any(h in request.headers for h in _PROXY_HEADERS)
+
+
 def hash_token(raw):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -81,7 +94,12 @@ def _check_ip_allowed(client_ip, allowed_ips_json):
 
 def verify_token(request: Request) -> dict:
     client_host = request.client.host if request.client is not None else ""
-    if _trust_loopback() and client_host in _LOOPBACK_HOSTS:
+    # Loopback trust requires BOTH a loopback peer AND no forwarding header — a
+    # reverse proxy / tailscale-serve forwards from 127.0.0.1 but adds one, so
+    # this stops a proxied remote request from being handed full admin (and a
+    # spoofed X-Forwarded-For from a remote peer, whose own host isn't loopback,
+    # never reaches here anyway).
+    if _trust_loopback() and client_host in _LOOPBACK_HOSTS and not _looks_proxied(request):
         return {"id": "loopback", "name": "loopback (local)", "scopes": SCOPES}
 
     auth_header = request.headers.get("Authorization", "")

@@ -118,6 +118,16 @@ def bootstrap_admin_token_if_empty() -> Optional[str]:
     if not ARKIV_ADMIN_BOOTSTRAP_TOKEN:
         return None
 
+    # This seeds a FULL-ADMIN token allowed from ANY IP (["*"]). A weak,
+    # operator-chosen value (e.g. "admin") would therefore be a remotely
+    # brute-forceable admin credential. Refuse to seed anything below ~128 bits
+    # of typical entropy — fail loud at startup instead of silently accepting it.
+    if len(ARKIV_ADMIN_BOOTSTRAP_TOKEN) < 24:
+        raise ValueError(
+            "ARKIV_ADMIN_BOOTSTRAP_TOKEN is too weak (min 24 chars). "
+            "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+
     token_id = new_token_id()
     with get_conn() as conn:
         conn.execute(

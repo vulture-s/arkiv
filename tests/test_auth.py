@@ -465,3 +465,46 @@ def test_stream_accepts_token_via_query_param(server_module):
         # right scope via query → auth passes (404 because media doesn't exist,
         # crucially NOT 401/403)
         assert client.get("/api/stream/1", params={"token": good_raw}).status_code == 404
+
+
+def test_loopback_trusted_only_when_not_proxied(auth_app):
+    """Loopback trust (token-free admin) applies to a genuine local request but
+    NOT when a forwarding header is present — a reverse proxy / tailscale-serve
+    forwards from 127.0.0.1 and would otherwise be handed full admin."""
+    app, _ = auth_app
+    local = TestClient(app, client=("127.0.0.1", 12345))
+    # genuine local request, no proxy header → trusted, no token needed
+    assert local.get("/test/read").status_code == 200
+    # same loopback peer but a forwarding header → NOT trusted → 401 (no token)
+    for hdr in ("X-Forwarded-For", "X-Real-IP", "Forwarded"):
+        r = local.get("/test/read", headers={hdr: "203.0.113.9"})
+        assert r.status_code == 401, f"{hdr} should disable loopback trust"
+
+
+def test_loopback_trust_respects_env_off(auth_app, monkeypatch):
+    app, _ = auth_app
+    monkeypatch.setenv("ARKIV_TRUST_LOOPBACK", "false")
+    local = TestClient(app, client=("127.0.0.1", 12345))
+    assert local.get("/test/read").status_code == 401  # token required even local
+
+
+def test_bootstrap_rejects_weak_token(server_module, monkeypatch):
+    import admin, config
+    monkeypatch.setattr(config, "ARKIV_ADMIN_BOOTSTRAP_TOKEN", "admin", raising=False)
+    import pytest
+    with pytest.raises(ValueError, match="too weak"):
+        admin.bootstrap_admin_token_if_empty()
+
+
+def test_bootstrap_accepts_strong_token(server_module, monkeypatch):
+    import admin, auth, config, db
+    strong = "Zx9" + "k" * 40
+    monkeypatch.setattr(config, "ARKIV_ADMIN_BOOTSTRAP_TOKEN", strong, raising=False)
+    # ensure empty token table
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM access_token_scopes")
+        conn.execute("DELETE FROM access_tokens")
+    assert admin.bootstrap_admin_token_if_empty() == strong
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT token_hash FROM access_tokens").fetchone()
+    assert row["token_hash"] == auth.hash_token(strong)
