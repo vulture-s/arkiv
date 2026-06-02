@@ -1,6 +1,6 @@
 from __future__ import annotations
 """
-Vector DB module — ChromaDB + Ollama nomic-embed-text
+Vector DB module — ChromaDB + Ollama bge-m3 (multilingual, default)
 """
 import json
 import re

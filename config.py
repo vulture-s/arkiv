@@ -99,7 +99,7 @@ OLLAMA_CHAT_MODEL = os.getenv(
 )
 OLLAMA_EMBED_MODEL = os.getenv(
     "ARKIV_OLLAMA_EMBED_MODEL",
-    os.getenv("ARKIV_EMBED_MODEL", "nomic-embed-text:latest"),
+    os.getenv("ARKIV_EMBED_MODEL", "bge-m3"),
 )
 OLLAMA_VISION_MODEL = os.getenv(
     "ARKIV_OLLAMA_VISION_MODEL",
@@ -308,4 +308,4 @@ def discover_projects():
 
 
 COLLECTION_NAME = "media_assets"
-EMBED_DIM = 768
+EMBED_DIM = 1024  # bge-m3 default; informational only — ChromaDB infers dim from first vector

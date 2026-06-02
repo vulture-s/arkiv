@@ -2481,6 +2481,30 @@ def _build_proxies(items: list):
             print(f"[proxy] Failed {item['id']}: {e}")
 
 
+@app.post("/api/embed/rebuild")
+def embed_rebuild(background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
+    """Drop + rebuild the ChromaDB semantic index from all media.
+    Wired to 進階設定 → 搜尋引擎 → 「重建向量索引」button."""
+    with db.get_conn() as conn:
+        total = conn.execute("SELECT count(*) FROM media").fetchone()[0]
+    if not total:
+        return {"message": "尚無素材可建立索引", "queued": 0}
+    background_tasks.add_task(_rebuild_embeddings)
+    return {"message": f"開始重建向量索引（{total} 筆素材，背景執行）", "queued": total}
+
+
+def _rebuild_embeddings():
+    """Background task: full embedding rebuild via subprocess. Runs embed.py in a
+    child process to isolate its sys.exit() guard and use sys.executable per the
+    platform Python-concurrency rule (not in-process — sys.exit would kill server)."""
+    import subprocess
+    import sys
+    try:
+        subprocess.run([sys.executable, str(ROOT / "embed.py"), "--rebuild"], check=False)
+    except Exception as e:
+        print(f"[embed] rebuild failed: {e}")
+
+
 # ── Serve Frontend ───────────────────────────────────────────────────────────
 
 # Dev mode: always read fresh index.html (no cache)

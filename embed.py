@@ -52,7 +52,7 @@ def run_embed(rebuild: bool = False):
         try:
             n = vdb.upsert_record(col, rec)
             total_chunks += n
-            print(f" → {n} chunk(s) ✓")
+            print(f" -> {n} chunk(s) OK")
         except Exception as e:
             print(f" [ERROR: {e}]")
 
