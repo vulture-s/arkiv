@@ -5,6 +5,14 @@
 - **Default embedding model is now `bge-m3` (1024-dim), up from `nomic-embed-text` (768-dim).** bge-m3 is multilingual (100+ languages, 8192-token context) and substantially stronger on Chinese retrieval while staying on par with nomic for English — a better default for mixed-language media libraries. **Breaking for existing indexes:** the dimension change means stored vectors are incompatible; run a full re-index (`python embed.py --rebuild` or 進階設定 → 重建向量索引) after upgrading. Override with `ARKIV_EMBED_MODEL` to keep the old model.
 
 ### Added
+- **Resource-aware ingest pipeline (Phase 11.5).** Ingest now probes machine state before a vision batch and backs off when memory is saturated — directly addressing the 427-clip stress test that lost 20 frames to a cold-start timeout and hit a 28 GB unified-memory crunch.
+  - `resource_probe.py` reports loaded Ollama models (`/api/ps`), GPU VRAM (nvidia-smi on PC), unified memory (psutil on Apple Silicon), and active-job count. It is a **sensor, not a gate**: any source failing degrades that field to `None` and never raises — a broken probe can't block ingest. `ARKIV_PROBE_DISABLE=true` makes it a full no-op.
+  - **Backpressure**: before each vision batch, ingest waits (bounded exponential backoff, `ARKIV_BACKPRESSURE_MAX_WAIT`) while memory pressure exceeds `ARKIV_GPU_MEM_THRESHOLD` (default 0.8), then warms the vision model only if it isn't already resident. Systematizes the previously ad-hoc warm-up.
+  - **`python ingest.py --queue status|cancel|retry [--job-id N]`** — a SQLite-backed job queue (no Redis/Celery) with type-derived priority.
+  - **`python ingest.py --status [--json]`** — one-shot resource + queue snapshot and the decision the next vision phase would take.
+  - New env vars: `ARKIV_GPU_MEM_THRESHOLD`, `ARKIV_BACKPRESSURE_MAX_WAIT`, `ARKIV_PROBE_DISABLE`, `OLLAMA_NUM_PARALLEL`. `psutil` added as a soft dependency.
+
+  > ⚠️ Mock-tested + verified live on Apple Silicon (probe reads real Ollama/memory). The **11.5d throughput A/B** (`OLLAMA_NUM_PARALLEL=1` vs `2`) and the **427-clip cold-start-elimination** acceptance still need a real GPU run — see `docs/phase-11.5-acceptance.md`.
 - **`POST /api/embed/rebuild`** (scope: `ingest_write`) — drops and rebuilds the ChromaDB semantic index from all media in a background subprocess. Backs the existing 進階設定 → 搜尋引擎 「重建向量索引」 button, which previously called a non-existent route (404).
 
 ### Fixed
