@@ -67,6 +67,27 @@ ingest_ws = IngestBroadcaster()
 # ── Init ─────────────────────────────────────────────────────────────────────
 db.init_db()
 
+# Redact `?token=` from uvicorn access logs. /api/stream accepts the token as a
+# query param (a <video src> can't send a header), and uvicorn's default access
+# log records the full request line incl. query string → the raw token would be
+# written to stdout / any redirected logfile. This filter scrubs it everywhere
+# the access logger formats a request path.
+import logging as _logging
+import re as _re
+_TOKEN_QS = _re.compile(r"(token=)[^&\s\"']+")
+class _RedactTokenFilter(_logging.Filter):
+    def filter(self, record):
+        try:
+            if record.args:
+                record.args = tuple(
+                    _TOKEN_QS.sub(r"\1REDACTED", a) if isinstance(a, str) else a
+                    for a in record.args
+                )
+        except Exception:
+            pass
+        return True
+_logging.getLogger("uvicorn.access").addFilter(_RedactTokenFilter())
+
 app = FastAPI(title="Media Asset Manager API")
 _ALLOWED_ORIGINS = [
     "http://localhost:8501",
