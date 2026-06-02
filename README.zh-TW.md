@@ -24,7 +24,7 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
                           │
                    ┌──────┴───────┐
                    │  embed.py    │◄──► ChromaDB
-                   │  (Ollama)    │     (nomic-embed-text)
+                   │  (Ollama)    │     (bge-m3)
                    └──────────────┘
 
   ═══════════════ 匯入管線（兩階段）═══════════════
@@ -164,7 +164,7 @@ cd arkiv
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install mlx-whisper          # Apple Silicon (Metal GPU)
-ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
 python health.py
 ```
 
@@ -178,7 +178,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA CUDA GPU
 # pip install faster-whisper      # CPU 後備
-ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
 python health.py
 ```
 
@@ -193,7 +193,7 @@ python -m venv .venv
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA CUDA GPU
 # pip install faster-whisper      # CPU 後備
-ollama pull nomic-embed-text; ollama pull qwen3-vl:8b; ollama pull qwen2.5:14b
+ollama pull bge-m3; ollama pull qwen3-vl:8b; ollama pull qwen2.5:14b
 $env:PYTHONUTF8=1; python health.py
 ```
 
@@ -282,7 +282,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | `ARKIV_CHROMA_PATH` | `./chroma_db` | ChromaDB 向量庫 |
 | `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | 縮圖輸出目錄 |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API 端點 |
-| `ARKIV_EMBED_MODEL` | `nomic-embed-text` | 嵌入模型 —— **建索引後請勿更換**（見下方說明） |
+| `ARKIV_EMBED_MODEL` | `bge-m3` | 嵌入模型 —— **建索引後請勿更換**（見下方說明） |
 | `ARKIV_VISION_MODEL` | `qwen3-vl:8b` | 視覺模型（幀描述） |
 | `ARKIV_CHAT_MODEL` | `qwen2.5:14b` | Chat 模型 —— 回答與（預設）意圖分類 |
 | `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | 選用的較快意圖分類模型；必須已安裝 |
@@ -291,7 +291,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | `ARKIV_HOST` | `0.0.0.0` | 伺服器綁定位址 |
 | `ARKIV_PORT` | `8501` | 伺服器埠號 |
 
-> **嵌入模型與索引綁定。** 向量庫是用單一嵌入模型（`nomic-embed-text`，768 維）建立的。索引建好後若更改 `ARKIV_EMBED_MODEL`，新查詢向量會跟既有向量不相容 —— 搜尋結果會靜默劣化。要換模型必須重建整個索引。
+> **嵌入模型與索引綁定。** 向量庫是用單一嵌入模型（`bge-m3`，1024 維）建立的。索引建好後若更改 `ARKIV_EMBED_MODEL`，新查詢向量會跟既有向量不相容 —— 搜尋結果會靜默劣化。要換模型必須重建整個索引。
 >
 > **Chat 硬體門檻：** `qwen2.5:14b` 約需 9 GB，且與嵌入模型同時運行，請在 Ollama 主機預留約 12–16 GB 可用 RAM/VRAM。記憶體較緊的機器可設 `ARKIV_CHAT_MODEL=qwen2.5:7b`（約 4.7 GB）當較輕的預設。
 
@@ -302,7 +302,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | 前端 | Tailwind CSS + 原生 JS |
 | 後端 | FastAPI + Uvicorn |
 | 資料庫 | SQLite（詮釋資料）+ ChromaDB（向量） |
-| 嵌入 | Ollama nomic-embed-text（768d, cosine） |
+| 嵌入 | Ollama bge-m3（1024d, cosine） |
 | 轉錄 | mlx-whisper / faster-whisper (large-v3-turbo) |
 | VAD | Silero VAD（Whisper 前的靜音過濾） |
 | LLM 潤稿 + Chat | Ollama qwen2.5:14b（轉錄潤稿 + 5-intent chat RAG） |
@@ -356,7 +356,7 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 | Python >= 3.9 | 必要 | 必要 | 必要 | |
 | FFmpeg / ffprobe | 必要 | 必要 | 必要 | |
 | Ollama server | 必要 | 必要 | 必要 | |
-| nomic-embed-text | 必要 | 必要 | 必要 | |
+| bge-m3 | 必要 | 必要 | 必要 | |
 | qwen3-vl:8b | 選用 | 選用 | 選用 | 幀描述用 |
 | qwen2.5:14b | 選用 | 選用 | 選用 | 轉錄潤稿 + chat（`/api/chat` 必需） |
 | ExifTool | 選用 | 選用 | 選用 | 豐富詮釋資料 |

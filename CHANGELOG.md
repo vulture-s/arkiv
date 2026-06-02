@@ -1,4 +1,15 @@
 # Changelog
+## Unreleased
+
+### Changed
+- **Default embedding model is now `bge-m3` (1024-dim), up from `nomic-embed-text` (768-dim).** bge-m3 is multilingual (100+ languages, 8192-token context) and substantially stronger on Chinese retrieval while staying on par with nomic for English — a better default for mixed-language media libraries. **Breaking for existing indexes:** the dimension change means stored vectors are incompatible; run a full re-index (`python embed.py --rebuild` or 進階設定 → 重建向量索引) after upgrading. Override with `ARKIV_EMBED_MODEL` to keep the old model.
+
+### Added
+- **`POST /api/embed/rebuild`** (scope: `ingest_write`) — drops and rebuilds the ChromaDB semantic index from all media in a background subprocess. Backs the existing 進階設定 → 搜尋引擎 「重建向量索引」 button, which previously called a non-existent route (404).
+
+### Fixed
+- **Windows zh-TW console no longer reports false errors during embedding.** `embed.py`'s per-file success marker used `✓` (U+2713), which raised `UnicodeEncodeError` on cp950 consoles and made every successfully-embedded file print as `[ERROR: ...]` — masking real failures. Replaced with an ASCII marker.
+
 ## v0.6.1 - 2026-05-28
 
 ### Fixed

@@ -24,7 +24,7 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
                           │
                    ┌──────┴───────┐
                    │  embed.py    │◄──► ChromaDB
-                   │  (Ollama)    │     (nomic-embed-text)
+                   │  (Ollama)    │     (bge-m3)
                    └──────────────┘
 
   ═══════════════ Ingest Pipeline (2-Phase) ═══════════════
@@ -164,7 +164,7 @@ cd arkiv
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install mlx-whisper          # Apple Silicon (Metal GPU)
-ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
 python health.py
 ```
 
@@ -178,7 +178,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA CUDA GPU
 # pip install faster-whisper      # CPU fallback
-ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
 python health.py
 ```
 
@@ -193,7 +193,7 @@ python -m venv .venv
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA CUDA GPU
 # pip install faster-whisper      # CPU fallback
-ollama pull nomic-embed-text; ollama pull qwen3-vl:8b; ollama pull qwen2.5:14b
+ollama pull bge-m3; ollama pull qwen3-vl:8b; ollama pull qwen2.5:14b
 $env:PYTHONUTF8=1; python health.py
 ```
 
@@ -283,7 +283,7 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_CHROMA_PATH` | `./chroma_db` | ChromaDB vector store |
 | `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | Thumbnail output dir |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
-| `ARKIV_EMBED_MODEL` | `nomic-embed-text` | Embedding model — **do not change after indexing** (see note below) |
+| `ARKIV_EMBED_MODEL` | `bge-m3` | Embedding model — **do not change after indexing** (see note below) |
 | `ARKIV_VISION_MODEL` | `qwen3-vl:8b` | Vision model for frame descriptions |
 | `ARKIV_CHAT_MODEL` | `qwen2.5:14b` | Chat model — answers and (by default) intent classification |
 | `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | Optional faster model for intent classification only; must be installed |
@@ -292,7 +292,7 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_HOST` | `0.0.0.0` | Server bind address |
 | `ARKIV_PORT` | `8501` | Server port |
 
-> **Embedding model is locked to your index.** The vector store is built with one embedding model (`nomic-embed-text`, 768-dim). Changing `ARKIV_EMBED_MODEL` after you have indexed media makes new query vectors incompatible with stored ones — search results degrade silently. To switch models, re-index from scratch.
+> **Embedding model is locked to your index.** The vector store is built with one embedding model (`bge-m3`, 1024-dim). Changing `ARKIV_EMBED_MODEL` after you have indexed media makes new query vectors incompatible with stored ones — search results degrade silently. To switch models, re-index from scratch.
 >
 > **Hardware floor for chat:** `qwen2.5:14b` needs ~9 GB and runs alongside the embedding model. Plan for ~12–16 GB free RAM/VRAM on the Ollama host. On tighter machines, set `ARKIV_CHAT_MODEL=qwen2.5:7b` (~4.7 GB) for a lighter default.
 
@@ -304,7 +304,7 @@ Copy `.env.example` to `.env` and customize:
 | Frontend | Tailwind CSS + vanilla JS |
 | Backend | FastAPI + Uvicorn |
 | Database | SQLite (metadata) + ChromaDB (vectors) |
-| Embedding | Ollama nomic-embed-text (768d, cosine) |
+| Embedding | Ollama bge-m3 (1024d, cosine) |
 | Transcription | mlx-whisper / faster-whisper (large-v3-turbo) |
 | VAD | Silero VAD (silence filter before Whisper) |
 | LLM Polish + Chat | Ollama qwen2.5:14b (transcript polish + 5-intent chat RAG) |
@@ -358,7 +358,7 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 | Python >= 3.9 | Required | Required | Required | |
 | FFmpeg / ffprobe | Required | Required | Required | |
 | Ollama server | Required | Required | Required | |
-| nomic-embed-text | Required | Required | Required | |
+| bge-m3 | Required | Required | Required | |
 | qwen3-vl:8b | Optional | Optional | Optional | For frame descriptions |
 | qwen2.5:14b | Optional | Optional | Optional | Transcript polish + chat (required for `/api/chat`) |
 | ExifTool | Optional | Optional | Optional | For rich metadata |
