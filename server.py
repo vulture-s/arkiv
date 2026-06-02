@@ -92,6 +92,8 @@ app = FastAPI(title="Media Asset Manager API")
 _ALLOWED_ORIGINS = [
     "http://localhost:8501",
     "http://127.0.0.1:8501",
+    "http://localhost:5173",     # Vite dev server (frontend dev + ws proxy)
+    "http://127.0.0.1:5173",
     "https://tauri.localhost",   # Tauri webview
 ]
 app.add_middleware(
