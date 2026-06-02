@@ -508,3 +508,37 @@ def test_bootstrap_accepts_strong_token(server_module, monkeypatch):
     with db.get_conn() as conn:
         row = conn.execute("SELECT token_hash FROM access_tokens").fetchone()
     assert row["token_hash"] == auth.hash_token(strong)
+
+
+def test_ws_ingest_requires_auth_and_scope(server_module):
+    """The /ws/ingest WebSocket must reject unauthenticated / wrong-scope /
+    cross-origin handshakes (require_scopes does not apply to WS routes)."""
+    from starlette.websockets import WebSocketDisconnect as WSD
+    good_raw, _ = _make_token("ws-good", ["ingest_write"])
+    wrong_raw, _ = _make_token("ws-wrong", ["videos_read"])
+    client = TestClient(server_module.app)  # host=testclient (not loopback)
+
+    # no token → closed
+    with pytest.raises(WSD):
+        with client.websocket_connect("/ws/ingest"):
+            pass
+    # wrong scope → closed
+    with pytest.raises(WSD):
+        with client.websocket_connect(f"/ws/ingest?token={wrong_raw}"):
+            pass
+    # cross-site Origin → closed even with a good token (CSWSH guard)
+    with pytest.raises(WSD):
+        with client.websocket_connect(f"/ws/ingest?token={good_raw}",
+                                      headers={"origin": "http://evil.example"}):
+            pass
+    # correct scope, no/allowed origin → connects
+    with client.websocket_connect(f"/ws/ingest?token={good_raw}") as ws:
+        assert ws is not None
+
+
+def test_ws_ingest_loopback_trusted_without_token(server_module):
+    """A genuine loopback handshake (no forwarding header) connects token-free,
+    matching the HTTP loopback rule."""
+    client = TestClient(server_module.app, client=("127.0.0.1", 5555))
+    with client.websocket_connect("/ws/ingest") as ws:
+        assert ws is not None

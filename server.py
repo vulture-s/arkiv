@@ -23,6 +23,7 @@ from pydantic import BaseModel, field_validator
 import admin
 import chat
 import codec
+import auth
 from auth import require_scopes
 import config
 import db
@@ -33,14 +34,21 @@ import tag_quality
 
 
 # ── WebSocket connection manager ────────────────────────────────────────────
+_MAX_WS_CONNECTIONS = 32  # cap concurrent progress listeners (DoS guard)
+
+
 class IngestBroadcaster:
     """Manages WebSocket connections for ingest progress updates."""
     def __init__(self):
         self.connections: Set[WebSocket] = set()
 
-    async def connect(self, ws: WebSocket):
+    async def connect(self, ws: WebSocket) -> bool:
+        if len(self.connections) >= _MAX_WS_CONNECTIONS:
+            await ws.close(code=1013)  # try again later
+            return False
         await ws.accept()
         self.connections.add(ws)
+        return True
 
     def disconnect(self, ws: WebSocket):
         self.connections.discard(ws)
@@ -60,13 +68,14 @@ ingest_ws = IngestBroadcaster()
 db.init_db()
 
 app = FastAPI(title="Media Asset Manager API")
+_ALLOWED_ORIGINS = [
+    "http://localhost:8501",
+    "http://127.0.0.1:8501",
+    "https://tauri.localhost",   # Tauri webview
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8501",
-        "http://127.0.0.1:8501",
-        "https://tauri.localhost",   # Tauri webview
-    ],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -2150,10 +2159,39 @@ def admin_revoke_token(
 
 # ── WebSocket: Ingest Progress ───────────────────────────────────────────
 
+def _ws_authorized(ws: WebSocket, scope: str) -> bool:
+    """Authorize a WebSocket handshake. `require_scopes` (a Request-typed Depends)
+    does NOT apply to @app.websocket routes, so this is enforced manually:
+    - Origin check (CSWSH): a browser always sends Origin; reject cross-site so a
+      malicious page can't open ws:// to a loopback-trusted instance.
+    - same loopback-trust rule as HTTP (loopback peer + no forwarding header), else
+    - a `?token=` with the required scope (a browser ws can't set headers)."""
+    origin = ws.headers.get("origin")
+    if origin is not None and origin not in _ALLOWED_ORIGINS:
+        return False
+    host = ws.client.host if ws.client is not None else ""
+    if auth._trust_loopback() and host in auth._LOOPBACK_HOSTS and not auth._looks_proxied(ws):
+        return True
+    try:
+        tok = auth.resolve_raw_token((ws.query_params.get("token") or "").strip(), host)
+    except Exception:
+        return False
+    return scope in tok.get("scopes", ())
+
+
 @app.websocket("/ws/ingest")
 async def ws_ingest(ws: WebSocket):
-    """WebSocket endpoint for real-time ingest progress updates."""
-    await ingest_ws.connect(ws)
+    """WebSocket endpoint for real-time ingest progress updates.
+
+    Previously accepted ANY client (the HTTP scope-gate doesn't reach websocket
+    routes) → any LAN/tailnet client, or a malicious browser page (CSWSH), could
+    connect and stream every ingest's filenames. Now gated: Origin + ingest_write.
+    """
+    if not _ws_authorized(ws, "ingest_write"):
+        await ws.close(code=1008)  # policy violation
+        return
+    if not await ingest_ws.connect(ws):  # may refuse over the connection cap
+        return
     try:
         while True:
             await ws.receive_text()  # keep alive, client can send pings
