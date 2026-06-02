@@ -26,9 +26,13 @@
   let err = ''
 
   const wsUrl = () => {
-    if (BASE) return BASE.replace(/^http/, 'ws') + '/ws/ingest'
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    return `${proto}://${location.host}/ws/ingest`
+    // /ws/ingest requires ingest_write; a WebSocket can't send an Authorization
+    // header, so carry the token as ?token= when one is set (direct remote
+    // deployment). No-op on loopback / behind the dev proxy.
+    const base = BASE
+      ? BASE.replace(/^http/, 'ws') + '/ws/ingest'
+      : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/ingest`
+    return api.appendToken(base)
   }
 
   function pushLog(text) {

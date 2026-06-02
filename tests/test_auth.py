@@ -531,8 +531,12 @@ def test_ws_ingest_requires_auth_and_scope(server_module):
         with client.websocket_connect(f"/ws/ingest?token={good_raw}",
                                       headers={"origin": "http://evil.example"}):
             pass
-    # correct scope, no/allowed origin → connects
+    # correct scope, no origin → connects
     with client.websocket_connect(f"/ws/ingest?token={good_raw}") as ws:
+        assert ws is not None
+    # correct scope + allowed Vite dev origin → connects (dev proxy case)
+    with client.websocket_connect(f"/ws/ingest?token={good_raw}",
+                                  headers={"origin": "http://localhost:5173"}) as ws:
         assert ws is not None
 
 

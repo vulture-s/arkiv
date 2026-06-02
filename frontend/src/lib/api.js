@@ -95,12 +95,14 @@ export const search = (q, params = {}, opts) =>
 // Split on both / and \ so Windows paths (C:\…\thumbnails\foo.jpg) extract the basename.
 export const thumbUrlFromPath = (thumbnailPath) =>
   thumbnailPath ? `${BASE}/thumbnails/${thumbnailPath.split(/[/\\]/).pop()}` : null
+// Append ?token= to a URL when a token is set — for WebSocket / media-asset URLs
+// that can't send an Authorization header. No-op on loopback / behind the dev
+// proxy (token unset there).
+export const appendToken = (url) =>
+  _token ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(_token)}` : url
 // /api/stream now requires videos_read. A <video src> can't send an Authorization
 // header, so when a token is set (direct remote deployment) carry it as ?token=.
-// On loopback (token-free) and behind the dev proxy (injects the header) _token is
-// null and the URL stays clean.
-export const streamUrl = (id) =>
-  _token ? `${BASE}/api/stream/${id}?token=${encodeURIComponent(_token)}` : `${BASE}/api/stream/${id}`
+export const streamUrl = (id) => appendToken(`${BASE}/api/stream/${id}`)
 // EDL/FCPXML/SRT/VTT/CSV export download URL for a clip (optional in/out trim).
 export const exportUrl = (id, fmt) => `${BASE}/api/media/${id}/export/${fmt}`
 // Batch timeline export: lay several clips end-to-end on one timeline.
