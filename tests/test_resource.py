@@ -130,6 +130,35 @@ def test_probe_psutil_missing_degrades(monkeypatch):
     assert any("psutil" in e for e in r["errors"])
 
 
+def test_probe_psutil_raises_degrades(monkeypatch):
+    # psutil present but virtual_memory() raises (Codex CRITICAL-2): must
+    # degrade, not propagate.
+    boom = types.SimpleNamespace()
+    def _raise():
+        raise RuntimeError("psutil exploded")
+    boom.virtual_memory = _raise
+    monkeypatch.setattr(rp, "_detect_backend", lambda: "apple")
+    monkeypatch.setattr(rp.urllib.request, "urlopen", _fake_urlopen({"models": []}))
+    monkeypatch.setattr(rp, "_psutil", boom)
+
+    r = rp.probe()  # must not raise
+    assert r["degraded"] is True
+    assert r["system_mem_pct"] is None
+
+
+def test_probe_backend_detection_raises_degrades(monkeypatch):
+    # _detect_backend raising must not propagate (Codex CRITICAL-2).
+    def _boom():
+        raise OSError("which failed")
+    monkeypatch.setattr(rp, "_detect_backend", _boom)
+    monkeypatch.setattr(rp.urllib.request, "urlopen", _fake_urlopen({"models": []}))
+    monkeypatch.setattr(rp, "_psutil", _fake_psutil())
+
+    r = rp.probe()
+    assert r["degraded"] is True
+    assert r["backend"] == "unknown"
+
+
 def test_probe_nvidia_smi_fails_degrades(monkeypatch):
     def _boom(timeout=3.0):
         raise FileNotFoundError("nvidia-smi")
@@ -186,12 +215,28 @@ def test_decide_proceed_when_under_threshold():
     assert decision == "PROCEED"
 
 
-def test_decide_proceed_when_degraded_red_line():
-    # No signal must never block ingest.
+def test_decide_proceed_when_no_signal():
+    # No pressure signal at all must never block ingest.
     r = {"backend": "unknown", "gpu_mem_pct": None, "system_mem_pct": None}
     decision, reason = rp.decide(r, threshold=0.8)
     assert decision == "PROCEED"
+
+
+def test_decide_degraded_with_high_pressure_proceeds():
+    # RED LINE (Codex CRITICAL-1): a degraded probe must PROCEED even when a
+    # stale/partial pressure reading is high — never WAIT on an untrustworthy
+    # picture (e.g. Ollama down but psutil reads 95%, or nvidia-smi failed).
+    r = {"degraded": True, "backend": "apple", "gpu_mem_pct": None, "system_mem_pct": 0.99}
+    decision, reason = rp.decide(r, threshold=0.8)
+    assert decision == "PROCEED"
     assert "degraded" in reason
+
+
+def test_decide_not_degraded_high_pressure_waits():
+    # Sanity: a clean (non-degraded) high reading still WAITs.
+    r = {"degraded": False, "backend": "apple", "gpu_mem_pct": None, "system_mem_pct": 0.95}
+    decision, _ = rp.decide(r, threshold=0.8)
+    assert decision == "WAIT"
 
 
 def test_decide_uses_config_default_threshold(monkeypatch):

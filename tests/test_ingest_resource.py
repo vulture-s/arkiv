@@ -69,9 +69,11 @@ def test_backs_off_then_proceeds(ingest_mod):
 def test_proceeds_after_max_wait_even_if_busy(ingest_mod):
     sleeps = []
     probe = _probe_seq({"backend": "apple", "system_mem_pct": 0.99, "models_known": True, "models_loaded": ["qwen3-vl:8b"]})
-    # max_wait small -> bounded number of backoffs, then proceed anyway
+    # max_wait small -> total backoff is STRICTLY bounded by max_wait (Codex
+    # SHOULD-FIX: clamp each sleep to the remaining budget, no overshoot).
     ingest_mod._ensure_vision_ready(max_wait_s=5, _probe=probe, _sleep=sleeps.append)
-    assert sum(sleeps) >= 5  # gave up after exceeding the budget
+    assert sum(sleeps) <= 5  # never overshoots the budget
+    assert sum(sleeps) == 5  # and uses it fully before giving up
     assert len(sleeps) <= 4  # didn't spin forever
 
 
@@ -95,6 +97,19 @@ def test_skips_warmup_when_model_loaded(ingest_mod):
     probe = _probe_seq({"backend": "apple", "system_mem_pct": 0.3, "models_known": True, "models_loaded": ["qwen3-vl:8b"]})
     ingest_mod._ensure_vision_ready(_probe=probe, _sleep=lambda s: None)
     assert ingest_mod._test_calls["warmup"] == 0
+
+
+def test_probe_that_raises_does_not_block_ingest(ingest_mod):
+    # Codex CRITICAL-3: even if the probe itself raises, the vision boundary
+    # treats it as degraded (PROCEED) and never propagates.
+    sleeps = []
+
+    def _boom(active_jobs=None):
+        raise RuntimeError("probe blew up")
+
+    ingest_mod._ensure_vision_ready(_probe=_boom, _sleep=sleeps.append)  # must not raise
+    assert sleeps == []  # degraded -> no wait
+    assert ingest_mod._test_calls["warmup"] == 1  # unknown -> defensive warm-up
 
 
 def test_probe_disable_env_makes_it_proceed(ingest_mod, monkeypatch):

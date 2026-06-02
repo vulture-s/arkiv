@@ -178,3 +178,70 @@ def test_list_jobs_orders_running_then_pending(jq):
     # running first regardless of priority number
     assert rows[0]["id"] == r
     assert rows[1]["id"] == p
+
+
+# --------------------------------------------------------------------------
+# atomic claim + transition guards (Codex SHOULD-FIX)
+# --------------------------------------------------------------------------
+def test_claim_next_dequeues_and_marks_running(jq):
+    jq.enqueue("whisper")
+    t = jq.enqueue("transcode")  # higher precedence
+    claimed = jq.claim_next()
+    assert claimed["id"] == t and claimed["status"] == jq.RUNNING
+    assert jq.list_jobs(status=jq.RUNNING)[0]["id"] == t
+
+
+def test_claim_next_empty_returns_none(jq):
+    assert jq.claim_next() is None
+    jq.enqueue("vision")
+    jq.claim_next()
+    # nothing pending left
+    assert jq.claim_next() is None
+
+
+def test_mark_running_guards_non_pending(jq):
+    jid = jq.enqueue("vision")
+    assert jq.mark_running(jid) is True
+    # already running -> can't re-mark
+    assert jq.mark_running(jid) is False
+    jq.mark_done(jid)
+    # done -> never revived to running
+    assert jq.mark_running(jid) is False
+    assert jq.list_jobs()[0]["status"] == jq.DONE
+
+
+def test_mark_done_cannot_overwrite_cancelled(jq):
+    jid = jq.enqueue("vision")
+    jq.cancel(jid)
+    assert jq.mark_done(jid) is False
+    assert jq.list_jobs()[0]["status"] == jq.CANCELLED
+
+
+def test_mark_failed_cannot_overwrite_cancelled(jq):
+    jid = jq.enqueue("vision")
+    jq.cancel(jid)
+    assert jq.mark_failed(jid, "x") is False
+    assert jq.list_jobs()[0]["status"] == jq.CANCELLED
+
+
+def test_concurrent_claim_only_one_wins(jq):
+    import threading
+
+    jq.enqueue("vision")  # exactly ONE pending job
+    results = []
+    lock = threading.Lock()
+
+    def worker():
+        got = jq.claim_next()
+        with lock:
+            results.append(got)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    winners = [r for r in results if r is not None]
+    assert len(winners) == 1  # exactly one worker claimed the single job
+    assert jq.counts()[jq.RUNNING] == 1
