@@ -25,7 +25,11 @@ import transcribe as tr
 import vision as vis
 
 SUPPORTED = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
-VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts"}
+# B3: .mkv/.avi/.webm are in SUPPORTED (so they ingest into the DB) but were
+# absent here, so is_video was False for them → they silently skipped
+# thumbnail/frames/vision. ffmpeg/ffprobe handle these containers, so treat
+# them as video too. Keep VIDEO_EXT ⊆ SUPPORTED.
+VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts", ".mkv", ".avi", ".webm"}
 # Codecs needing browser-playable proxy — single source of truth in codec.py.
 PROXY_CODECS = codec.PROXY_CODECS
 logger = logging.getLogger(__name__)
@@ -736,6 +740,7 @@ def _regenerate_proxies():
         return
 
     print(f"Regenerating {len(existing)} proxies...")
+    size_before = _dir_size_bytes(proxy_dir)  # B6: report net size change
     ok, failed = 0, 0
     for idx, proxy_path in enumerate(existing, 1):
         # Proxy filename is "{media_id}_{hash}.mp4" since the path-hash fix;
@@ -770,7 +775,63 @@ def _regenerate_proxies():
         else:
             print(" [FAIL]")
             failed += 1
-    print(f"\nRegenerated: {ok}  Failed: {failed}")
+    delta = _dir_size_bytes(proxy_dir) - size_before
+    print(f"\nRegenerated: {ok}  Failed: {failed}  (size delta: {_fmt_size_delta(delta)})")
+
+
+def _dir_size_bytes(path) -> int:
+    """Total size of files directly in `path` (non-recursive is fine — proxy/
+    thumbnail dirs are flat). Missing dir → 0."""
+    p = Path(path)
+    if not p.exists():
+        return 0
+    return sum(f.stat().st_size for f in p.glob("*") if f.is_file())
+
+
+def _fmt_size_delta(delta_bytes: int) -> str:
+    sign = "+" if delta_bytes >= 0 else "-"
+    return f"{sign}{abs(delta_bytes) / 1_000_000:.1f} MB"
+
+
+def _regenerate_thumbnails():
+    """B4: rebuild the poster thumbnail for every video record (mirror of
+    --regenerate-proxies). Re-runs extract_thumbnail and updates
+    media.thumbnail_path. Frame thumbnails (which carry vision descriptions) are
+    intentionally left untouched — use --vision-only / --refresh for those."""
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT id, path, filename FROM media").fetchall()
+        records = [dict(r) for r in rows]
+    videos = [r for r in records if Path(r["path"]).suffix.lower() in VIDEO_EXT]
+    if not videos:
+        print("No video records to regenerate thumbnails for.")
+        return
+
+    print(f"Regenerating thumbnails for {len(videos)} video records...")
+    size_before = _dir_size_bytes(config.THUMBNAILS_DIR)
+    ok, failed = 0, 0
+    for idx, rec in enumerate(videos, 1):
+        src = db.resolve_path(rec["path"])
+        if not Path(src).exists():
+            print(f"  [{idx}/{len(videos)}] id={rec['id']}: source missing, skipping")
+            failed += 1
+            continue
+        meta = probe(src)
+        dur = meta.get("duration_s", 0) if meta else 0
+        print(f"  [{idx}/{len(videos)}] id={rec['id']} {rec['filename']}", end="", flush=True)
+        thumb = frm.extract_thumbnail(src, dur) if dur > 0 else None
+        if thumb:
+            with db.get_conn() as conn:
+                conn.execute(
+                    "UPDATE media SET thumbnail_path=? WHERE id=?",
+                    (db.to_relative(thumb), rec["id"]),
+                )
+            print(" [OK]")
+            ok += 1
+        else:
+            print(" [FAIL]")
+            failed += 1
+    delta = _dir_size_bytes(config.THUMBNAILS_DIR) - size_before
+    print(f"\nRegenerated: {ok}  Failed: {failed}  (size delta: {_fmt_size_delta(delta)})")
 
 
 def _migrate_storage():
@@ -904,6 +965,11 @@ def main():
         help="刪除並重建所有 HEVC/ProRes proxy（套用最新編碼設定）",
     )
     parser.add_argument(
+        "--regenerate-thumbnails",
+        action="store_true",
+        help="B4: 重建所有影片記錄的封面縮圖（不動 frame vision）",
+    )
+    parser.add_argument(
         "--migrate-storage",
         action="store_true",
         help="Phase 8.0c: 搬 legacy BASE_DIR/{media.db, thumbnails/, chroma_db/, proxies/} → BASE_DIR/.arkiv/",
@@ -920,7 +986,7 @@ def main():
     # --dir validation: required only when actually ingesting
     maintenance_mode = (
         args.migrate_storage or args.migrate_relative
-        or args.regenerate_proxies or args.vision_only
+        or args.regenerate_proxies or args.regenerate_thumbnails or args.vision_only
         or bool(args.queue) or args.status
     )
     if not maintenance_mode and not args.dir:
@@ -938,7 +1004,7 @@ def main():
 
     # Phase 8.0e: pre-flight storage check before any pipeline work.
     # Skip for maintenance modes (they're the tools that fix broken state).
-    if not (args.migrate_relative or args.regenerate_proxies or args.queue or args.status):
+    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status):
         import health
         ok_pf, errors_pf = health.preflight_paths()
         if not ok_pf:
@@ -964,6 +1030,10 @@ def main():
 
     if args.regenerate_proxies:
         _regenerate_proxies()
+        return
+
+    if args.regenerate_thumbnails:
+        _regenerate_thumbnails()
         return
 
     # ── Vision-only mode: patch missing vision descriptions ──────────────

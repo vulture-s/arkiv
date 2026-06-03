@@ -327,6 +327,27 @@ def main():
     except Exception as e:
         check("disk space", False, f"({e})")
 
+    # ── Cache dirs (B5) ─────────────────────────────────────────────────
+    # Surface how much the derived-artifact dirs hold so an operator can spot a
+    # runaway proxy/thumbnail cache. Informational (never fails).
+    print("\n-- Cache dirs --")
+    try:
+        import config
+        for label, d in [
+            ("thumbnails", config.THUMBNAILS_DIR),
+            ("proxies", config.PROXIES_DIR),
+            ("chroma_db", config.CHROMA_PATH),
+        ]:
+            p = Path(d)
+            if p.exists():
+                files = [f for f in p.rglob("*") if f.is_file()]
+                size_mb = sum(f.stat().st_size for f in files) / 1_000_000
+                check(label, True, f"({len(files)} files, {size_mb:.1f} MB)", required=False)
+            else:
+                check(label, True, "(not created yet)", required=False)
+    except Exception as e:
+        check("cache dirs", False, f"({e})", required=False)
+
     # ── Database ────────────────────────────────────────────────────────
     print("\n-- Database --")
     try:
