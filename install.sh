@@ -67,6 +67,15 @@ elif [ -f "$SRC/server.py" ]; then
     echo "Setting up arkiv at $INSTALL_DIR (from $SRC)..."
     mkdir -p "$INSTALL_DIR"
     cp "$SRC"/*.py "$INSTALL_DIR"/
+    # First-party package dirs (those with __init__.py, e.g. whisper_guard/) —
+    # same glob principle as *.py so a new package can't drift behind a stale
+    # list. Skip tests/ and the venv.
+    for pkg in "$SRC"/*/__init__.py; do
+        [ -f "$pkg" ] || continue
+        d="$(dirname "$pkg")"
+        case "$(basename "$d")" in tests|.venv) continue ;; esac
+        cp -R "$d" "$INSTALL_DIR"/
+    done
     for f in index.html requirements.txt .env.example smoke-test.sh install.sh uninstall.sh arkiv.command LICENSE README.md; do
         [ -f "$SRC/$f" ] && cp "$SRC/$f" "$INSTALL_DIR/"
     done
