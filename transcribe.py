@@ -13,6 +13,8 @@ import soundfile as sf
 from silero_vad import load_silero_vad, get_speech_timestamps
 import torch
 
+import whisper_guard
+
 from config import (
     WHISPER_MODEL,
     CUSTOM_VOCABULARY,
@@ -453,22 +455,12 @@ def _postprocess(text: str, lang: str, segments: list, language: str, words: lis
     return filtered_text, lang, timed_segments, words or []
 
 
-def _is_repetitive(text: str, window: int = 6, threshold: float = 0.35) -> bool:
-    if len(text) < window * 3:
-        return False
-    chunks = [text[i:i+window] for i in range(0, len(text) - window, window)]
-    unique = len(set(chunks))
-    return unique / len(chunks) < threshold
-
-
-def _has_char_loops(text: str, min_pattern: int = 2, min_repeats: int = 3) -> bool:
-    import re
-    return bool(re.search(r'(.{2,4})\1{2,}', text))
-
-
-def _remove_char_loops(text: str) -> str:
-    import re
-    return re.sub(r'(.{2,4})\1{2,}', r'\1', text)
+# Text-level hallucination filters were extracted to the standalone
+# whisper_guard package (Phase 10). These private aliases keep the rest of the
+# module — and the guard unit tests — calling them unchanged.
+_is_repetitive = whisper_guard.is_repetitive
+_has_char_loops = whisper_guard.has_char_loops
+_remove_char_loops = whisper_guard.remove_char_loops
 
 
 _ollama_warm = False

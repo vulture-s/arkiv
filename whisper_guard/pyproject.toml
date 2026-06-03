@@ -1,0 +1,31 @@
+# Packaging metadata for the standalone whisper-guard release.
+# NOTE: this directory is currently vendored inside the arkiv repo and imported
+# in-tree. To publish: copy this `whisper_guard/` directory into its own repo
+# (vulture-s/whisper-guard) alongside README.md + tests, then `python -m build`
+# and upload to PyPI. arkiv can then depend on `whisper-guard` instead of the
+# vendored copy. (Publish + repo creation are owner steps — need the account.)
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "whisper-guard"
+version = "0.1.0"
+description = "Pure text-level hallucination filters for Whisper transcripts (repetition + char-loop)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "vulture-s" }]
+keywords = ["whisper", "speech-to-text", "transcription", "hallucination", "subtitles"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = []  # stdlib only — that's the point
+
+[project.urls]
+Homepage = "https://github.com/vulture-s/whisper-guard"
+
+[tool.hatch.build.targets.wheel]
+packages = ["whisper_guard"]
