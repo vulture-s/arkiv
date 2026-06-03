@@ -1197,3 +1197,38 @@ def test_access_log_redacts_token_query_param():
     assert f.filter(rec) is True
     assert "SECRETVALUE123" not in (rec.args[2])
     assert "token=REDACTED" in rec.args[2]
+
+
+# ── Phase 16.2: API responses must not leak absolute fs paths ──────────────
+def test_media_detail_keeps_relative_path_not_absolutized(fastapi_client, sample_record):
+    """A relative DB path (production shape) must come back relative — not
+    joined to PROJECT_ROOT — so the operator's directory tree isn't leaked."""
+    import importlib
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="專案A/clip.mp4", filename="clip.mp4"))
+    mid = db.get_record_by_id(1)["id"]
+    r = fastapi_client.get(f"/api/media/{mid}")
+    assert r.status_code == 200
+    assert r.json()["path"] == "專案A/clip.mp4"  # relative, untouched
+
+
+def test_media_list_does_not_absolutize_relative_path(fastapi_client, sample_record):
+    import importlib
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="專案A/clip.mp4", filename="clip.mp4"))
+    r = fastapi_client.get("/api/media", params={"limit": 50})
+    paths = [it.get("path") for it in r.json()["items"]]
+    assert "專案A/clip.mp4" in paths
+    assert not any(p and p.startswith("/") and "專案A" in p for p in paths)
+
+
+def test_open_file_round_trips_relative_path_through_is_processed(fastapi_client, sample_record):
+    """open-file must still recognize the relative path the API now hands out:
+    is_processed matches relative, so we get past the 403 gate (404 here only
+    because the file doesn't physically exist in the test)."""
+    import importlib
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="專案A/clip.mp4", filename="clip.mp4"))
+    r = fastapi_client.post("/api/open-file", json={"path": "專案A/clip.mp4"})
+    assert r.status_code != 403  # is_processed matched the relative path
+    assert r.status_code == 404  # …only fails because the file isn't on disk

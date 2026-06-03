@@ -115,16 +115,19 @@ app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnail
 
 
 def _resolve_record(rec: dict) -> dict:
-    if rec.get("path"):
-        rec["path"] = _resolve_media_path(rec["path"])
-    if rec.get("thumbnail_path"):
-        rec["thumbnail_path"] = _resolve_media_path(rec["thumbnail_path"])
+    # Phase 16.2: API responses keep DB-relative paths instead of absolutizing
+    # them. Returning the absolute fs path leaked the operator's directory tree
+    # (e.g. /Volumes/home/影片專案/…) to any read-scope / loopback client. The
+    # path is consumed only as a display label and as the round-trip key to
+    # /api/open-file (which re-resolves server-side and matches relative via
+    # db.is_processed) — so relative is sufficient and non-leaking. Thumbnails
+    # are served by basename through the /thumbnails mount, so relative works
+    # there too. Legacy rows still storing an absolute path pass through
+    # unchanged until the relative migration reaches them.
     return rec
 
 
 def _resolve_frame(frame: dict) -> dict:
-    if frame.get("thumbnail_path"):
-        frame["thumbnail_path"] = _resolve_media_path(frame["thumbnail_path"])
     return frame
 
 

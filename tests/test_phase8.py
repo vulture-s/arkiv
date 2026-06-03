@@ -64,6 +64,12 @@ def test_migrate_to_relative(tmp_db, tmp_path, monkeypatch, sample_record):
 
 
 def test_resolve_record_in_api(fastapi_client, tmp_path, monkeypatch, sample_record):
+    # Phase 16.2: API responses must NOT absolutize stored relative paths — that
+    # leaked the operator's directory tree. This assertion is intentionally
+    # inverted from the pre-16.2 version (which checked the absolutized form) to
+    # lock the secure behavior. The relative path round-trips through
+    # /api/open-file, which re-resolves server-side, so nothing downstream needs
+    # the absolute form.
     config = importlib.import_module("config")
     db = importlib.import_module("db")
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
@@ -71,8 +77,10 @@ def test_resolve_record_in_api(fastapi_client, tmp_path, monkeypatch, sample_rec
     response = fastapi_client.get("/api/media")
     assert response.status_code == 200
     item = response.json()["items"][0]
-    assert item["path"] == str(tmp_path / "media" / "clip.mp4")
-    assert item["thumbnail_path"] == str(tmp_path / "thumbnails" / "clip.jpg")
+    assert item["path"] == "media/clip.mp4"               # relative, not absolutized
+    assert item["thumbnail_path"] == "thumbnails/clip.jpg"
+    assert str(tmp_path) not in item["path"]              # PROJECT_ROOT not leaked
+    assert str(tmp_path) not in (item["thumbnail_path"] or "")
 
 
 def test_adaptive_frame_count_short():
