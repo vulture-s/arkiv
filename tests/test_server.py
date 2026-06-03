@@ -38,7 +38,9 @@ def test_list_media_supports_empty_paginated_and_filtered_results(fastapi_client
     assert response.status_code == 200
     assert data["total"] == 2
     assert len(data["items"]) == 1
-    assert data["items"][0]["path"] == "/tmp/interview-zh.mp4"
+    # Phase 16.2: an absolute stored path (outside PROJECT_ROOT) is reduced to
+    # its basename in responses so the fs tree isn't leaked.
+    assert data["items"][0]["path"] == "interview-zh.mp4"
 
     response = fastapi_client.get("/api/media", params={"lang": "zh"})
     data = response.json()
@@ -51,7 +53,8 @@ def test_media_detail_returns_200_and_404(fastapi_client, sample_record):
     response = fastapi_client.get("/api/media/1")
     assert response.status_code == 200
     data = response.json()
-    assert data["path"] == "/tmp/interview-zh.mp4"
+    # Phase 16.2: absolute stored path → basename in responses (no fs leak).
+    assert data["path"] == "interview-zh.mp4"
     # Production vision schema fields (audit Round-2 Scope C fix — was legacy
     # `keywords` key, see conftest.sample_record for the full shape).
     parsed = data["frame_tags_parsed"][0]
@@ -1232,3 +1235,26 @@ def test_open_file_round_trips_relative_path_through_is_processed(fastapi_client
     r = fastapi_client.post("/api/open-file", json={"path": "專案A/clip.mp4"})
     assert r.status_code != 403  # is_processed matched the relative path
     assert r.status_code == 404  # …only fails because the file isn't on disk
+
+
+def test_legacy_absolute_path_is_basenamed_not_leaked(fastapi_client, sample_record):
+    """Codex CRITICAL: a legacy row storing an ABSOLUTE path (outside
+    PROJECT_ROOT) must not leak that path through read APIs — it's reduced to
+    its basename."""
+    import importlib
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/Users/secret/footage/clip.mp4",
+                            filename="clip.mp4",
+                            thumbnail_path="/Users/secret/.arkiv/thumbnails/clip.jpg"))
+    r = fastapi_client.get("/api/media/1")
+    data = r.json()
+    assert data["path"] == "clip.mp4"
+    assert "/Users/secret" not in data["path"]
+    assert "/Users/secret" not in (data.get("thumbnail_path") or "")
+
+
+def test_cache_info_does_not_return_absolute_paths(fastapi_client):
+    r = fastapi_client.get("/api/cache/info")
+    assert r.status_code == 200
+    for name, info in r.json()["caches"].items():
+        assert "path" not in info, f"cache '{name}' must not expose its absolute path"
