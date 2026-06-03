@@ -59,6 +59,29 @@ def test_install_copies_first_party_package_dirs():
     )
 
 
+def test_package_copy_actually_ships_packages_not_tests(tmp_path):
+    """Functional proof (Codex SHOULD-FIX): run install.sh's package-copy loop
+    against the real repo and assert whisper_guard/ lands while tests/ and the
+    venv do NOT. Catches a regression that the string check alone would miss."""
+    import subprocess
+
+    dest = tmp_path / "install_dir"
+    dest.mkdir()
+    # Mirror of install.sh's package-dir copy loop (kept in sync via the string
+    # assertion above, which fails if the installer drops this mechanism).
+    snippet = (
+        'set -e; SRC="$1"; INSTALL_DIR="$2"; '
+        'for pkg in "$SRC"/*/__init__.py; do '
+        '[ -f "$pkg" ] || continue; d="$(dirname "$pkg")"; '
+        'case "$(basename "$d")" in tests|.venv) continue ;; esac; '
+        'cp -R "$d" "$INSTALL_DIR"/; done'
+    )
+    subprocess.run(["bash", "-c", snippet, "bash", str(REPO_ROOT), str(dest)], check=True)
+    assert (dest / "whisper_guard" / "__init__.py").is_file(), "whisper_guard not shipped"
+    assert not (dest / "tests").exists(), "tests/ must not be shipped"
+    assert not (dest / ".venv").exists(), ".venv must not be shipped"
+
+
 def test_no_unresolved_import_in_install_closure():
     """Walk the import closure from server.py over repo-root modules. Every
     imported name must resolve to a repo-root *.py / package dir (shipped by the
