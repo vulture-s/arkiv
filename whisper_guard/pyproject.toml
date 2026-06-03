@@ -1,9 +1,11 @@
-# Packaging metadata for the standalone whisper-guard release.
-# NOTE: this directory is currently vendored inside the arkiv repo and imported
-# in-tree. To publish: copy this `whisper_guard/` directory into its own repo
-# (vulture-s/whisper-guard) alongside README.md + tests, then `python -m build`
-# and upload to PyPI. arkiv can then depend on `whisper-guard` instead of the
-# vendored copy. (Publish + repo creation are owner steps — need the account.)
+# Packaging metadata TEMPLATE for the standalone whisper-guard release.
+# This package is currently vendored inside arkiv and imported in-tree — do NOT
+# build from inside this directory (packages=["whisper_guard"] resolves only
+# when pyproject.toml sits ONE LEVEL ABOVE the whisper_guard/ package dir).
+# To publish: create vulture-s/whisper-guard whose ROOT holds this pyproject.toml
+# + README.md, with the whisper_guard/ package dir beside them; then
+# `python -m build` + upload to PyPI, and point arkiv at the dependency instead
+# of the vendored copy. (Repo creation + publish are owner steps — need the account.)
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

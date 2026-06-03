@@ -38,6 +38,10 @@ def is_repetitive(text: str, window: int = 6, threshold: float = 0.35) -> bool:
     Slices the text into `window`-sized chunks and measures their uniqueness;
     below `threshold` unique it's almost certainly a looped hallucination rather
     than natural language. Short text (< 3 windows) is never flagged.
+
+    `window` is expected positive (default 6). A non-positive/empty-chunk window
+    returns False rather than raising — a deliberate hardening over the original
+    transcribe.py version, which could ZeroDivisionError on a degenerate window.
     """
     if len(text) < window * 3:
         return False
@@ -49,7 +53,12 @@ def is_repetitive(text: str, window: int = 6, threshold: float = 0.35) -> bool:
 
 
 def has_char_loops(text: str, min_pattern: int = 2, min_repeats: int = 3) -> bool:
-    """True when a 2-4 char pattern repeats 3+ times consecutively."""
+    """True when a 2-4 char pattern repeats 3+ times consecutively.
+
+    `min_pattern` / `min_repeats` are compatibility placeholders carried over
+    from the original signature; the detector uses a fixed 2-4 char / 3+ repeat
+    regex. They are accepted but not yet wired into the pattern.
+    """
     return bool(_CHAR_LOOP_RE.search(text))
 
 
