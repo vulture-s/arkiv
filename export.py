@@ -116,6 +116,32 @@ def export_txt(media_id: int) -> str:
     return (rec.get("transcript") or "").strip()
 
 
+def export_srt(media_id: int, max_units: float = 14.0) -> str:
+    """Laid-out SRT for one clip, using the Phase 12.5 subtitle engine.
+
+    Uses segment-aligned timestamps (segments_json) when present; falls back to
+    a single full-duration cue from the transcript otherwise.
+    """
+    import subtitle
+
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise KeyError("media id {0} not found".format(media_id))
+    segments = []
+    seg_json = rec.get("segments_json")
+    if seg_json:
+        try:
+            segments = json.loads(seg_json)
+        except (ValueError, TypeError):
+            segments = []
+    if not segments:
+        transcript = (rec.get("transcript") or "").strip()
+        if not transcript:
+            return ""
+        segments = [{"start": 0.0, "end": rec.get("duration_s") or 0.0, "text": transcript}]
+    return subtitle.segments_to_srt(segments, max_units=max_units)
+
+
 def _emit(content: str, out: Optional[str]) -> None:
     if out:
         Path(out).expanduser().write_text(content, encoding="utf-8")
@@ -143,6 +169,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_txt.add_argument("media_id", type=int)
     p_txt.add_argument("--out", default=None, help="Output file (default: stdout)")
 
+    p_srt = sub.add_parser("srt", help="A single clip's laid-out SRT (Phase 12.5 engine)")
+    p_srt.add_argument("media_id", type=int)
+    p_srt.add_argument("--max-cjk", type=float, default=14.0, help="Max CJK units per line (default 14)")
+    p_srt.add_argument("--out", default=None, help="Output file (default: stdout)")
+
     args = parser.parse_args(argv)
     if args.db:
         db.DB_PATH = Path(args.db)
@@ -154,6 +185,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.cmd == "txt":
         try:
             _emit(export_txt(args.media_id), args.out)
+        except KeyError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+    elif args.cmd == "srt":
+        try:
+            _emit(export_srt(args.media_id, args.max_cjk), args.out)
         except KeyError as e:
             print(str(e), file=sys.stderr)
             return 1
