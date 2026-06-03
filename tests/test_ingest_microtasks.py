@@ -1,0 +1,83 @@
+"""Microtasks B3/B4/B6 — ingest CLI polish."""
+import importlib
+
+import pytest
+
+import db
+
+
+@pytest.fixture
+def ingest_mod(tmp_db):
+    ingest = importlib.import_module("ingest")
+    return importlib.reload(ingest)
+
+
+# --------------------------------------------------------------------------
+# B3: .mkv/.avi/.webm are treated as video (so they get thumbnail/frames/vision)
+# --------------------------------------------------------------------------
+def test_b3_video_ext_includes_mkv_avi_webm(ingest_mod):
+    for ext in (".mkv", ".avi", ".webm"):
+        assert ext in ingest_mod.VIDEO_EXT, f"{ext} should be a video ext"
+
+
+def test_b3_video_ext_subset_of_supported(ingest_mod):
+    assert ingest_mod.VIDEO_EXT <= ingest_mod.SUPPORTED
+
+
+# --------------------------------------------------------------------------
+# B6: size helpers
+# --------------------------------------------------------------------------
+def test_b6_dir_size_bytes(ingest_mod, tmp_path):
+    assert ingest_mod._dir_size_bytes(tmp_path / "missing") == 0
+    d = tmp_path / "sizedir"  # isolated — tmp_path also holds the tmp_db test.db
+    d.mkdir()
+    (d / "a.mp4").write_bytes(b"x" * 100)
+    (d / "b.mp4").write_bytes(b"y" * 50)
+    assert ingest_mod._dir_size_bytes(d) == 150
+
+
+def test_b6_fmt_size_delta(ingest_mod):
+    assert ingest_mod._fmt_size_delta(2_500_000) == "+2.5 MB"
+    assert ingest_mod._fmt_size_delta(-3_000_000) == "-3.0 MB"
+    assert ingest_mod._fmt_size_delta(0) == "+0.0 MB"
+
+
+# --------------------------------------------------------------------------
+# B4: --regenerate-thumbnails rebuilds poster for video records only
+# --------------------------------------------------------------------------
+def test_b4_regenerate_thumbnails_video_only(ingest_mod, sample_record, tmp_path, monkeypatch):
+    vid = tmp_path / "a.mp4"; vid.write_text("x")
+    aud = tmp_path / "b.mp3"; aud.write_text("x")
+    db.upsert(sample_record(path=str(vid), filename="a.mp4", ext=".mp4", thumbnail_path=None))
+    db.upsert(sample_record(path=str(aud), filename="b.mp3", ext=".mp3", thumbnail_path=None))
+
+    monkeypatch.setattr(ingest_mod, "probe", lambda p: {"duration_s": 10.0, "fps": 30})
+    fake_thumb = tmp_path / "thumb_a.jpg"; fake_thumb.write_text("t")
+    calls = []
+    def _fake_extract(src, dur):
+        calls.append(src)
+        return str(fake_thumb)
+    monkeypatch.setattr(ingest_mod.frm, "extract_thumbnail", _fake_extract)
+
+    ingest_mod._regenerate_thumbnails()
+
+    # only the video source was processed
+    assert len(calls) == 1 and calls[0].endswith("a.mp4")
+    assert db.get_record_by_id(1)["thumbnail_path"]       # video updated
+    assert not db.get_record_by_id(2)["thumbnail_path"]   # audio left alone
+
+
+def test_b4_regenerate_thumbnails_skips_missing_source(ingest_mod, sample_record, monkeypatch):
+    # path points nowhere -> skipped, no crash
+    db.upsert(sample_record(path="/nonexistent/x.mp4", filename="x.mp4", ext=".mp4"))
+    called = []
+    monkeypatch.setattr(ingest_mod.frm, "extract_thumbnail", lambda *a: called.append(1))
+    ingest_mod._regenerate_thumbnails()  # must not raise
+    assert called == []
+
+
+def test_b4_no_videos_is_noop(ingest_mod, sample_record, monkeypatch):
+    db.upsert(sample_record(path="/m/only.mp3", filename="only.mp3", ext=".mp3"))
+    monkeypatch.setattr(ingest_mod.frm, "extract_thumbnail",
+                        lambda *a: pytest.fail("should not be called"))
+    ingest_mod._regenerate_thumbnails()  # prints "No video records..." and returns
