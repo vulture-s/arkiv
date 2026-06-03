@@ -1,88 +1,54 @@
-"""Phase 10 — whisper_guard package public-API tests.
+"""arkiv ↔ whisper_guard integration contract.
 
-These exercise the extracted package directly (not via transcribe), so they
-double as the package's own regression suite when it's split into its own repo.
+whisper_guard was de-vendored (Phase 12) and is now the external PyPI package
+whisper-guard>=0.3, which ships its OWN regression suite. So arkiv no longer
+re-tests the package internals here — it only pins the contract arkiv depends
+on: the three private wrappers transcribe binds (_is_repetitive / _has_char_loops
+/ _remove_char_loops) and the v0.3 public API surface. Parity with the old v0.1
+free functions was verified at migration time.
 """
-import whisper_guard as wg
-from whisper_guard import HallucinationGuard
+import importlib
+
+import whisper_guard
 
 
 # --------------------------------------------------------------------------
-# is_repetitive
+# v0.3 public API is present (catches a wrong/old install)
 # --------------------------------------------------------------------------
-def test_is_repetitive_detects_loop():
+def test_package_exposes_v03_api():
+    assert hasattr(whisper_guard, "WhisperGuard")
+    assert hasattr(whisper_guard, "GuardConfig")
+    assert hasattr(whisper_guard, "filter_hallucinations")
+
+
+# --------------------------------------------------------------------------
+# arkiv's transcribe wrappers behave as the pipeline expects
+# --------------------------------------------------------------------------
+def _transcribe():
+    return importlib.import_module("transcribe")
+
+
+def test_is_repetitive_wrapper_returns_bool():
+    tr = _transcribe()
     # needs >= window*3 (18) chars to be eligible
-    assert wg.is_repetitive("字幕由" * 8) is True
+    assert tr._is_repetitive("字幕由" * 8) is True
+    assert tr._is_repetitive("今天天氣很好，我們一起去公園散步聊天。") is False
+    assert tr._is_repetitive("好") is False
+    assert tr._is_repetitive("") is False
 
 
-def test_is_repetitive_keeps_normal_sentence():
-    assert wg.is_repetitive("今天天氣很好，我們一起去公園散步聊天。") is False
+def test_has_char_loops_wrapper_returns_bool():
+    tr = _transcribe()
+    assert tr._has_char_loops("哈哈哈哈哈哈") is True
+    assert tr._has_char_loops("字幕由字幕由字幕由") is True
+    assert tr._has_char_loops("內容自然，沒有循環。") is False
 
 
-def test_is_repetitive_short_text_never_flagged():
-    assert wg.is_repetitive("好") is False
-    assert wg.is_repetitive("短句") is False
-
-
-def test_is_repetitive_empty():
-    assert wg.is_repetitive("") is False
-
-
-# --------------------------------------------------------------------------
-# char loops
-# --------------------------------------------------------------------------
-def test_has_char_loops_true():
-    assert wg.has_char_loops("哈哈哈哈哈哈") is True
-    assert wg.has_char_loops("字幕由字幕由字幕由") is True
-
-
-def test_has_char_loops_false():
-    assert wg.has_char_loops("內容自然，沒有循環。") is False
-
-
-def test_remove_char_loops_collapses():
-    assert wg.remove_char_loops("字幕由字幕由字幕由") == "字幕由"
-    # collapse leaves the matched 2-4 char unit (greedy picks the 2-char unit here)
-    assert wg.remove_char_loops("哈哈哈哈哈哈") == "哈哈"
-
-
-def test_remove_char_loops_noop_on_clean():
-    assert wg.remove_char_loops("正常文字") == "正常文字"
-
-
-# --------------------------------------------------------------------------
-# HallucinationGuard convenience class
-# --------------------------------------------------------------------------
-def test_guard_is_hallucination():
-    g = HallucinationGuard()
-    assert g.is_hallucination("好好好好好好好好好好") is True
-    assert g.is_hallucination("字幕由字幕由字幕由") is True
-    assert g.is_hallucination("一段完全正常的中文句子，沒問題。") is False
-
-
-def test_guard_clean():
-    g = HallucinationGuard()
-    assert g.clean("字幕由字幕由字幕由") == "字幕由"
-    assert g.clean("乾淨文字") == "乾淨文字"
-
-
-def test_is_repetitive_threshold_param():
-    # 3 chunks, 2 unique -> ratio 0.667; trips at 0.9 but not at default 0.35.
-    text = "abcdefabcdefghijklmnopqr"
-    assert wg.is_repetitive(text, threshold=0.35) is False
-    assert wg.is_repetitive(text, threshold=0.9) is True
-
-
-def test_version_exposed():
-    assert isinstance(wg.__version__, str)
-
-
-# --------------------------------------------------------------------------
-# extraction parity: transcribe's private aliases ARE the package functions
-# --------------------------------------------------------------------------
-def test_transcribe_aliases_are_package_functions():
-    import importlib
-    transcribe = importlib.import_module("transcribe")
-    assert transcribe._is_repetitive is wg.is_repetitive
-    assert transcribe._has_char_loops is wg.has_char_loops
-    assert transcribe._remove_char_loops is wg.remove_char_loops
+def test_remove_char_loops_wrapper_returns_str():
+    tr = _transcribe()
+    # v0.3 remove_char_loops returns (text, count); the wrapper must unwrap to str
+    out = tr._remove_char_loops("字幕由字幕由字幕由")
+    assert isinstance(out, str)
+    assert out == "字幕由"
+    assert tr._remove_char_loops("哈哈哈哈哈哈") == "哈哈"
+    assert tr._remove_char_loops("正常文字") == "正常文字"
