@@ -75,6 +75,22 @@ def test_legacy_token_opportunistically_migrates_to_hmac(mods, monkeypatch):
     assert "videos_read" in auth.resolve_raw_token(raw, "", "")["scopes"]
 
 
+def test_rejected_request_does_not_migrate(mods, monkeypatch):
+    # Codex SHOULD-FIX: a token that fails validation (expired) must NOT be
+    # rehashed — migration happens only after the token fully validates.
+    config, auth, admin = mods
+    monkeypatch.setattr(config, "ARKIV_TOKEN_HMAC_KEY", "")
+    tok = admin.create_token(name="legacy", scopes=["videos_read"], expires_in_days=1)
+    raw = tok["raw_token"]
+    # force-expire the row
+    with db.get_conn() as c:
+        c.execute("UPDATE access_tokens SET expires_at='2000-01-01T00:00:00+00:00' WHERE id=?", (tok["id"],))
+    monkeypatch.setattr(config, "ARKIV_TOKEN_HMAC_KEY", "server-secret-123456")
+    with pytest.raises(HTTPException):
+        auth.resolve_raw_token(raw, "", "")
+    assert _row(tok["id"])["hash_algo"] == "sha256"  # not migrated despite key
+
+
 def test_no_migration_when_key_absent(mods, monkeypatch):
     config, auth, admin = mods
     monkeypatch.setattr(config, "ARKIV_TOKEN_HMAC_KEY", "")

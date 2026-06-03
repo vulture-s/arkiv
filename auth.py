@@ -158,28 +158,16 @@ def resolve_raw_token(raw: str, client_ip: str, user_agent: str = "") -> dict:
     placeholders = ",".join("?" for _ in cand_hashes)
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, name, expires_at, allowed_ips_json, hash_algo "
+            "SELECT id, name, expires_at, allowed_ips_json, token_hash "
             "FROM access_tokens WHERE token_hash IN ({0})".format(placeholders),
             cand_hashes,
         ).fetchone()
         if not row:
             raise HTTPException(401, "Invalid token")
 
-        # Opportunistic migration: a legacy sha256 token that verifies while a
-        # server key is configured is rehashed to HMAC on this use, so the fleet
-        # drains to the stronger scheme over time. Never block auth on it.
-        try:
-            row_algo = row["hash_algo"] if "hash_algo" in row.keys() else "sha256"
-        except Exception:
-            row_algo = "sha256"
-        if config.ARKIV_TOKEN_HMAC_KEY and (row_algo or "sha256") == "sha256":
-            try:
-                conn.execute(
-                    "UPDATE access_tokens SET token_hash = ?, hash_algo = ? WHERE id = ?",
-                    (_hmac_token(raw), "hmac-sha256", row["id"]),
-                )
-            except Exception:
-                pass
+        # Which algo actually matched (derived from the matching hash, not the
+        # stored hash_algo column — robust to a corrupt column value).
+        matched_algo = next((algo for h, algo in candidates if h == row["token_hash"]), None)
 
         expires_at = row["expires_at"]
         if expires_at:
@@ -194,6 +182,21 @@ def resolve_raw_token(raw: str, client_ip: str, user_agent: str = "") -> dict:
 
         if not _check_ip_allowed(client_ip, row["allowed_ips_json"]):
             raise HTTPException(403, "Client IP not in token's allowlist")
+
+        # Opportunistic migration — ONLY after the token fully validates (Codex
+        # SHOULD-FIX: don't mutate on a request that ends up rejected). A legacy
+        # sha256 token used while a server key is set is rehashed to HMAC via a
+        # compare-and-set, so a racing request can't double-migrate. Never blocks
+        # auth.
+        if config.ARKIV_TOKEN_HMAC_KEY and matched_algo == "sha256":
+            try:
+                conn.execute(
+                    "UPDATE access_tokens SET token_hash = ?, hash_algo = ? "
+                    "WHERE id = ? AND token_hash = ? AND hash_algo = 'sha256'",
+                    (_hmac_token(raw), "hmac-sha256", row["id"], row["token_hash"]),
+                )
+            except Exception:
+                pass
 
         scope_rows = conn.execute(
             "SELECT scope FROM access_token_scopes WHERE token_id = ?",
