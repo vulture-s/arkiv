@@ -1284,3 +1284,22 @@ def test_search_all_strips_absolute_and_project_paths(fastapi_client, monkeypatc
     assert "/Volumes" not in item["path"]
     assert item["project_path"] == "恬馨"
     assert "/Volumes" not in item["project_path"]
+
+
+def test_search_all_basenames_absolute_relative_path_edge(fastapi_client, monkeypatch):
+    """Edge: federation may hand back an absolute relative_path (empty stored
+    path). The boundary must still basename it, never emit the absolute path."""
+    import server
+    fake = {
+        "items": [{
+            "media_id": "1", "filename": "clip.mp4",
+            "relative_path": "/Volumes/home/proj/clip.mp4",  # absolute despite the name
+            "path": "/Volumes/home/proj/clip.mp4",
+            "project_path": "/Volumes/home/proj",
+        }],
+        "projects_queried": 1, "projects_failed": 0,
+    }
+    monkeypatch.setattr(server.federation, "search_all_projects", lambda *a, **k: fake)
+    item = fastapi_client.get("/api/search/all", params={"q": "x"}).json()["items"][0]
+    assert item["path"] == "clip.mp4"
+    assert "/Volumes" not in item["path"]

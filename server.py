@@ -419,10 +419,13 @@ def search_all(
     # project_path is reduced to its folder basename.
     for item in payload.get("items", []) or []:
         item.pop("absolute_path", None)
-        if item.get("relative_path") is not None:
-            item["path"] = item["relative_path"]
-        elif item.get("path"):
-            item["path"] = os.path.basename(item["path"])
+        # Route through _display_path so even a relative_path that is itself
+        # absolute (federation's empty-stored-path edge) is basenamed, never
+        # copied through as an absolute path.
+        chosen = item.get("relative_path")
+        if chosen is None:
+            chosen = item.get("path") or ""
+        item["path"] = _display_path(chosen)
         if item.get("project_path"):
             item["project_path"] = os.path.basename(str(item["project_path"]).rstrip("/"))
 
