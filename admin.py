@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from auth import SCOPES, hash_token, new_raw_token, new_token_id
+from auth import SCOPES, preferred_hash, new_raw_token, new_token_id
 from db import get_conn
 
 
@@ -45,11 +45,12 @@ def create_token(
         expires_at = (datetime.now(timezone.utc) + timedelta(days=expires_in_days)).isoformat()
     allowed_ips_json = json.dumps(allowed_ips or ["*"])
 
+    token_hash, hash_algo = preferred_hash(raw)
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO access_tokens (id, name, description, token_hash, expires_at, allowed_ips_json) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (token_id, name, description, hash_token(raw), expires_at, allowed_ips_json),
+            "INSERT INTO access_tokens (id, name, description, token_hash, hash_algo, expires_at, allowed_ips_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (token_id, name, description, token_hash, hash_algo, expires_at, allowed_ips_json),
         )
         for scope in scopes:
             conn.execute(
@@ -129,15 +130,17 @@ def bootstrap_admin_token_if_empty() -> Optional[str]:
         )
 
     token_id = new_token_id()
+    boot_hash, boot_algo = preferred_hash(ARKIV_ADMIN_BOOTSTRAP_TOKEN)
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO access_tokens (id, name, description, token_hash, allowed_ips_json) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO access_tokens (id, name, description, token_hash, hash_algo, allowed_ips_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 token_id,
                 "bootstrap",
                 "Admin token from ARKIV_ADMIN_BOOTSTRAP_TOKEN env (delete after creating per-machine tokens)",
-                hash_token(ARKIV_ADMIN_BOOTSTRAP_TOKEN),
+                boot_hash,
+                boot_algo,
                 '["*"]',
             ),
         )

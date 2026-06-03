@@ -7,7 +7,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 
-from auth import SCOPES, hash_token, new_raw_token, new_token_id
+from auth import SCOPES, preferred_hash, new_raw_token, new_token_id
 from db import get_conn, init_db
 
 
@@ -78,15 +78,17 @@ def cmd_create(args):
     token_id = new_token_id()
     expires_at = _expires_at(args.expires_in)
 
+    token_hash, hash_algo = preferred_hash(raw_token)
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO access_tokens (id, name, description, token_hash, expires_at, allowed_ips_json) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO access_tokens (id, name, description, token_hash, hash_algo, expires_at, allowed_ips_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 token_id,
                 args.name,
                 args.description,
-                hash_token(raw_token),
+                token_hash,
+                hash_algo,
                 expires_at,
                 json.dumps(allowed_ips),
             ),

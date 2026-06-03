@@ -1,7 +1,10 @@
-# Phase 16.1 — Token hash salt/HMAC (decision required, not yet implemented)
+# Phase 16.1 — Token hash salt/HMAC
 
-**Status:** deferred pending an owner decision. 16.2 (relative paths in API
-responses) shipped; 16.1 is the other half of security round 3.
+**Status: IMPLEMENTED 2026-06-03** — Option A (env-var HMAC key + dual-read), the
+recommendation below, chosen by the operator. `ARKIV_TOKEN_HMAC_KEY` (when set)
+stores tokens as HMAC-SHA256; existing sha256 tokens keep working via dual-read
+and upgrade in place on next use. No flag-day. The rest of this doc is the
+original decision record.
 
 ## Current state
 

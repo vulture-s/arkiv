@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, Request
 
+import config
 from db import get_conn
 
 try:
@@ -57,7 +58,33 @@ def _looks_proxied(request: Request) -> bool:
 
 
 def hash_token(raw):
+    """Legacy unsalted SHA-256. Kept for the dual-read transition (Phase 16.1)
+    and as the fallback when no server HMAC key is configured."""
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _hmac_token(raw):
+    import hmac as _hmac
+    return _hmac.new(
+        config.ARKIV_TOKEN_HMAC_KEY.encode("utf-8"), raw.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+
+
+def preferred_hash(raw):
+    """(hash, algo) for a NEWLY minted token: HMAC-SHA256 when a server key is
+    set (ARKIV_TOKEN_HMAC_KEY), else legacy sha256."""
+    if config.ARKIV_TOKEN_HMAC_KEY:
+        return _hmac_token(raw), "hmac-sha256"
+    return hash_token(raw), "sha256"
+
+
+def _candidate_hashes(raw):
+    """Every (hash, algo) a stored token for `raw` could be under — the dual-read
+    set. token_hash is unique so at most one matches; order is irrelevant."""
+    cands = [(hash_token(raw), "sha256")]
+    if config.ARKIV_TOKEN_HMAC_KEY:
+        cands.append((_hmac_token(raw), "hmac-sha256"))
+    return cands
 
 
 def new_token_id():
@@ -124,14 +151,35 @@ def resolve_raw_token(raw: str, client_ip: str, user_agent: str = "") -> dict:
     WebSocket path (which can't use a Request-typed Depends)."""
     if not raw:
         raise HTTPException(401, "Missing token (expected 'Authorization: Bearer <token>' or ?token=<token>)")
-    token_hash = hash_token(raw)
+    # Phase 16.1 dual-read: look the token up under every hash it could be
+    # stored as (legacy sha256 and, when a server key is set, HMAC-SHA256).
+    candidates = _candidate_hashes(raw)
+    cand_hashes = [h for h, _ in candidates]
+    placeholders = ",".join("?" for _ in cand_hashes)
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, name, expires_at, allowed_ips_json FROM access_tokens WHERE token_hash = ?",
-            (token_hash,),
+            "SELECT id, name, expires_at, allowed_ips_json, hash_algo "
+            "FROM access_tokens WHERE token_hash IN ({0})".format(placeholders),
+            cand_hashes,
         ).fetchone()
         if not row:
             raise HTTPException(401, "Invalid token")
+
+        # Opportunistic migration: a legacy sha256 token that verifies while a
+        # server key is configured is rehashed to HMAC on this use, so the fleet
+        # drains to the stronger scheme over time. Never block auth on it.
+        try:
+            row_algo = row["hash_algo"] if "hash_algo" in row.keys() else "sha256"
+        except Exception:
+            row_algo = "sha256"
+        if config.ARKIV_TOKEN_HMAC_KEY and (row_algo or "sha256") == "sha256":
+            try:
+                conn.execute(
+                    "UPDATE access_tokens SET token_hash = ?, hash_algo = ? WHERE id = ?",
+                    (_hmac_token(raw), "hmac-sha256", row["id"]),
+                )
+            except Exception:
+                pass
 
         expires_at = row["expires_at"]
         if expires_at:
