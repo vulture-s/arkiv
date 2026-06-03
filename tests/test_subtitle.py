@@ -82,10 +82,13 @@ def test_wrap_oversized_atom_gets_own_line():
     assert "supercalifragilisticexpialidocious" in lines
 
 
-def test_wrap_max_lines_merges_overflow():
+def test_wrap_width_is_hard_invariant():
+    # Codex SHOULD-FIX: every line must be <= max_units (no merge-overflow that
+    # violates the cap). Only an unbreakable atom may exceed it.
     text = "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸"  # 20 CJK
-    lines = sub.wrap(text, max_units=5, max_lines=2)
-    assert len(lines) == 2
+    for mu in (3, 5, 8, 14):
+        for ln in sub.wrap(text, max_units=mu):
+            assert sub.display_units(ln) <= mu
 
 
 # --------------------------------------------------------------------------
@@ -98,8 +101,14 @@ def test_ts_format():
 
 def test_ts_rounding_spill():
     # 0.9999s rounds ms to 1000 -> must carry into seconds, not emit ,1000
-    out = sub._ts(0.9999)
-    assert out == "00:00:01,000"
+    assert sub._ts(0.9999) == "00:00:01,000"
+
+
+def test_ts_rounding_carries_to_minutes_and_hours():
+    # Codex CRITICAL: spill must carry s->m->h, never emit 00:00:60,000.
+    assert sub._ts(59.9999) == "00:01:00,000"
+    assert sub._ts(3599.9999) == "01:00:00,000"
+    assert sub._ts(3599.4) == "00:59:59,400"
 
 
 def test_segments_to_srt_basic():
@@ -118,12 +127,20 @@ def test_segments_to_srt_skips_empty():
     assert srt.count("-->") == 1  # only the non-empty cue
 
 
-def test_segments_to_srt_wraps_long_segment():
-    segs = [{"start": 0, "end": 5, "text": "一二三四五六七八九十一二三四五六七八九十"}]
-    srt = sub.segments_to_srt(segs, max_units=14)
-    # the cue body has 2 lines
-    body = srt.split("\n", 2)[2]
-    assert body.count("\n") >= 2  # at least two text lines + trailing
+def test_segments_to_srt_splits_long_segment_into_timed_cues():
+    # 40 CJK at max_units=14, max_lines=2 -> 3 lines -> 2 cues, time split.
+    segs = [{"start": 0.0, "end": 6.0,
+             "text": "一二三四五六七八九十一二三四五六七八九十甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未"}]
+    srt = sub.segments_to_srt(segs, max_units=14, max_lines=2)
+    cue_count = srt.count("-->")
+    assert cue_count >= 2  # split into multiple timed cues
+    # cues are contiguous and within [0,6]: first starts at 0, last ends at 6
+    assert "00:00:00,000 -->" in srt
+    assert "--> 00:00:06,000" in srt
+    # every text line stays within the width cap
+    for block in srt.strip().split("\n\n"):
+        for line in block.splitlines()[2:]:
+            assert sub.display_units(line) <= 14
 
 
 def test_segments_to_srt_bilingual():
@@ -160,3 +177,21 @@ def test_export_srt_falls_back_to_transcript(ex, sample_record):
 def test_export_srt_missing_raises(ex):
     with pytest.raises(KeyError):
         ex.export_srt(99999)
+
+
+def test_export_srt_non_list_segments_falls_back(ex, sample_record):
+    # Codex SHOULD-FIX: a dict (not a list) in segments_json must not crash —
+    # fall back to the transcript path.
+    db.upsert(sample_record(path="/m/bad.mp4", segments_json='{"not":"a list"}',
+                            transcript="壞分段也要能出字幕", duration_s=2.0))
+    out = ex.export_srt(1)
+    assert "壞分段也要能出字幕" in out
+    assert "00:00:00,000 --> 00:00:02,000" in out
+
+
+def test_export_srt_segments_with_non_dict_items_filtered(ex, sample_record):
+    db.upsert(sample_record(path="/m/mix.mp4",
+                            segments_json='[{"start":0,"end":1,"text":"好"}, "garbage", 42]',
+                            transcript="fallback", duration_s=5.0))
+    out = ex.export_srt(1)
+    assert "好" in out  # the one valid dict segment is used, junk filtered

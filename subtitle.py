@@ -42,9 +42,10 @@ def _atoms(text: str) -> List[str]:
     """Split into non-breakable atoms.
 
     An atom is a single CJK char, OR a maximal run of non-CJK non-space chars
-    (a "word" — kept whole), OR a whitespace run. Binding rule: a numeric word
-    immediately followed by a single CJK char keeps them together so a measure
-    word (`14字`, `3個`) never starts a line on its own.
+    (a "word" — kept whole), OR a whitespace run. Digit+CJK binding: a numeric
+    word immediately followed by a single CJK char keeps them together so a
+    measure word (`14字`, `3個`) never starts a line on its own. (This binds the
+    digit run to whatever CJK char follows — usually but not strictly a 量詞.)
     """
     atoms: List[str] = []
     i, n = 0, len(text)
@@ -73,13 +74,15 @@ def _atoms(text: str) -> List[str]:
     return atoms
 
 
-def wrap(text: str, max_units: float = 14.0, max_lines: Optional[int] = None) -> List[str]:
+def wrap(text: str, max_units: float = 14.0) -> List[str]:
     """Wrap `text` into lines each <= max_units, breaking at natural points.
 
     Prefers to break right after CJK punctuation; falls back to whitespace; and
     if a single atom already exceeds the budget it gets its own line rather than
-    being split. max_lines (None = unlimited) caps the number of returned lines —
-    extra content is merged into the last line.
+    being split. Width is a HARD invariant — every returned line is <= max_units
+    (except an unbreakable atom that is itself wider). Line count is unbounded;
+    callers that need a per-cue line cap (e.g. segments_to_srt) group/time-split
+    rather than merging lines, which would break the width cap.
     """
     text = " ".join(text.split())  # collapse whitespace runs to single spaces
     if not text:
@@ -127,24 +130,20 @@ def wrap(text: str, max_units: float = 14.0, max_lines: Optional[int] = None) ->
     if cur:
         flush()
 
-    lines = [ln for ln in lines if ln]
-    if max_lines is not None and len(lines) > max_lines:
-        head = lines[: max_lines - 1]
-        tail = " ".join(lines[max_lines - 1:])
-        lines = head + [tail]
-    return lines
+    return [ln for ln in lines if ln]
 
 
 def _ts(seconds: float, sep: str = ",") -> str:
-    """SRT/VTT timecode HH:MM:SS,mmm."""
-    seconds = max(0.0, seconds)
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int(round((seconds % 1) * 1000))
-    if ms == 1000:  # rounding spill
-        ms = 0
-        s += 1
+    """SRT/VTT timecode HH:MM:SS,mmm.
+
+    Rounds to whole milliseconds via a single total-ms conversion so a value
+    like 59.9999 carries all the way up (00:01:00,000), never emitting an
+    out-of-range 00:00:60,000 (Codex CRITICAL).
+    """
+    total_ms = int(round(max(0.0, seconds) * 1000))
+    h, rem = divmod(total_ms, 3_600_000)
+    m, rem = divmod(rem, 60_000)
+    s, ms = divmod(rem, 1000)
     return "{0:02d}:{1:02d}:{2:02d}{3}{4:03d}".format(h, m, s, sep, ms)
 
 
@@ -161,9 +160,11 @@ def segments_to_srt(
 ) -> str:
     """Render Whisper segments to laid-out SRT.
 
-    Each segment becomes one cue; its text is wrapped to <= max_lines lines. If
-    translate_key is given and a segment carries that field, the translation is
-    wrapped and appended below the original (bilingual: original on top).
+    Each segment's text is wrapped to width-safe lines. A monolingual segment
+    that needs more than `max_lines` lines is split into multiple cues, its
+    time span divided proportionally — so a long segment never produces an
+    over-wide line nor a wall-of-text cue. A bilingual segment (translate_key
+    present) stays a single cue: original lines on top, translation below.
     """
     out: List[str] = []
     idx = 1
@@ -171,11 +172,25 @@ def segments_to_srt(
         text = (seg.get("text") or "").strip()
         if not text:
             continue
-        lines = wrap(text, max_units=max_units, max_lines=max_lines)
-        if translate_key:
-            tr = (seg.get(translate_key) or "").strip()
-            if tr:
-                lines = lines + wrap(tr, max_units=max_units, max_lines=max_lines)
-        out.append(format_cue(idx, seg.get("start", 0.0) or 0.0, seg.get("end", 0.0) or 0.0, lines))
-        idx += 1
+        start = float(seg.get("start", 0.0) or 0.0)
+        end = float(seg.get("end", 0.0) or 0.0)
+
+        if translate_key and (seg.get(translate_key) or "").strip():
+            lines = wrap(text, max_units) + wrap((seg.get(translate_key) or "").strip(), max_units)
+            out.append(format_cue(idx, start, end, lines))
+            idx += 1
+            continue
+
+        lines = wrap(text, max_units)
+        if not lines:
+            continue
+        cap = max(1, max_lines)
+        chunks = [lines[i:i + cap] for i in range(0, len(lines), cap)]
+        n = len(chunks)
+        span = max(0.0, end - start)
+        for ci, chunk in enumerate(chunks):
+            c_start = start + span * ci / n
+            c_end = start + span * (ci + 1) / n
+            out.append(format_cue(idx, c_start, c_end, chunk))
+            idx += 1
     return "\n".join(out)
