@@ -1258,3 +1258,29 @@ def test_cache_info_does_not_return_absolute_paths(fastapi_client):
     assert r.status_code == 200
     for name, info in r.json()["caches"].items():
         assert "path" not in info, f"cache '{name}' must not expose its absolute path"
+
+
+def test_search_all_strips_absolute_and_project_paths(fastapi_client, monkeypatch):
+    """Codex: /api/search/all must not leak absolute media/project paths to a
+    videos_read client. absolute_path dropped, path → relative, project_path →
+    basename."""
+    import server
+    fake = {
+        "items": [{
+            "media_id": "1", "filename": "clip.mp4",
+            "relative_path": "A001/clip.mp4",
+            "absolute_path": "/Volumes/home/影片專案/恬馨/A001/clip.mp4",
+            "path": "/Volumes/home/影片專案/恬馨/A001/clip.mp4",
+            "project_path": "/Volumes/home/影片專案/恬馨",
+        }],
+        "projects_queried": 1, "projects_failed": 0,
+    }
+    monkeypatch.setattr(server.federation, "search_all_projects", lambda *a, **k: fake)
+    r = fastapi_client.get("/api/search/all", params={"q": "test"})
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert "absolute_path" not in item
+    assert item["path"] == "A001/clip.mp4"
+    assert "/Volumes" not in item["path"]
+    assert item["project_path"] == "恬馨"
+    assert "/Volumes" not in item["project_path"]
