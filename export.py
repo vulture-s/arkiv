@@ -131,9 +131,13 @@ def export_srt(media_id: int, max_units: float = 14.0) -> str:
     seg_json = rec.get("segments_json")
     if seg_json:
         try:
-            segments = json.loads(seg_json)
+            parsed = json.loads(seg_json)
         except (ValueError, TypeError):
-            segments = []
+            parsed = None
+        # Only a list of segment dicts is usable; anything else falls back to
+        # the transcript path rather than crashing in segments_to_srt (Codex).
+        if isinstance(parsed, list):
+            segments = [s for s in parsed if isinstance(s, dict)]
     if not segments:
         transcript = (rec.get("transcript") or "").strip()
         if not transcript:
