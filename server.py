@@ -413,6 +413,19 @@ def search_all(
     except project_registry.RegistryError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
+    # Phase 16.2: federation results carry absolute media + project paths; strip
+    # them at the API boundary so a videos_read client can't map the operator's
+    # cross-project directory layout. relative_path is the non-leaking form;
+    # project_path is reduced to its folder basename.
+    for item in payload.get("items", []) or []:
+        item.pop("absolute_path", None)
+        if item.get("relative_path") is not None:
+            item["path"] = item["relative_path"]
+        elif item.get("path"):
+            item["path"] = os.path.basename(item["path"])
+        if item.get("project_path"):
+            item["project_path"] = os.path.basename(str(item["project_path"]).rstrip("/"))
+
     status_code = 200
     if payload.get("projects_queried") and payload.get("projects_failed", 0) >= payload.get("projects_queried", 0):
         status_code = 207
