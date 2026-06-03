@@ -193,6 +193,7 @@ def init_db():
                 name TEXT NOT NULL,
                 description TEXT,
                 token_hash TEXT UNIQUE NOT NULL,
+                hash_algo TEXT NOT NULL DEFAULT 'sha256',
                 expires_at TEXT,
                 allowed_ips_json TEXT NOT NULL DEFAULT '["*"]',
                 last_used_at TEXT,
@@ -201,6 +202,11 @@ def init_db():
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        # Phase 16.1: hash_algo on pre-existing token tables (sha256 legacy).
+        try:
+            conn.execute("ALTER TABLE access_tokens ADD COLUMN hash_algo TEXT NOT NULL DEFAULT 'sha256'")
+        except Exception:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS access_token_scopes (
                 token_id TEXT NOT NULL,

@@ -74,6 +74,11 @@ PROXIES_DIR = _validate_writable_path(
 
 # Auth bootstrap (auth-tokens-1b handover).
 ARKIV_ADMIN_BOOTSTRAP_TOKEN = os.getenv("ARKIV_ADMIN_BOOTSTRAP_TOKEN", "").strip()
+# Phase 16.1: when set, access tokens are stored as HMAC-SHA256(key, token)
+# instead of bare SHA-256. Dual-read keeps existing sha256 tokens valid and
+# upgrades them on next use. Keep this key safe — losing it invalidates every
+# HMAC token (re-mint required), the same failure mode as losing the DB.
+ARKIV_TOKEN_HMAC_KEY = os.getenv("ARKIV_TOKEN_HMAC_KEY", "").strip()
 
 
 def proxy_path_for(media_id: int, abs_source_path: str) -> Path:
