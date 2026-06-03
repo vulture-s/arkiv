@@ -1,6 +1,9 @@
 # Changelog
 ## Unreleased
 
+### Security
+- **API responses no longer leak absolute filesystem paths (Phase 16.2).** Read-scope endpoints (`/api/media`, `/api/media/{id}`, `/api/media?q=`, `/api/search/all`, `/api/cache/info`) previously returned absolute paths that exposed the operator's directory tree. They now return PROJECT_ROOT-relative paths (basename for legacy absolute rows), and `/api/cache/info` no longer returns cache directory paths. open-file round-trips the relative path. (FCPXML `file://` URIs and user-supplied export destinations intentionally remain absolute — see `docs/phase-16.2-path-leak-triage.md`.)
+
 ### Changed
 - **Default embedding model is now `bge-m3` (1024-dim), up from `nomic-embed-text` (768-dim).** bge-m3 is multilingual (100+ languages, 8192-token context) and substantially stronger on Chinese retrieval while staying on par with nomic for English — a better default for mixed-language media libraries. **Breaking for existing indexes:** the dimension change means stored vectors are incompatible; run a full re-index (`python embed.py --rebuild` or 進階設定 → 重建向量索引) after upgrading. Override with `ARKIV_EMBED_MODEL` to keep the old model.
 
