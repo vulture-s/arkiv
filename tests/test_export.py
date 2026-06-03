@@ -44,12 +44,22 @@ def test_corpus_lang_filter(ex, sample_record):
 
 
 def test_corpus_is_plain_text_no_json_residue(ex, sample_record):
-    # Acceptance anchor: `corpus` output must NOT parse as JSON.
-    _seed(sample_record)
+    # Acceptance anchor: `corpus` carries transcript text only — none of the
+    # exporter's JSON structure (frame_tags / metadata) leaks into it. Note a
+    # transcript may legitimately CONTAIN brace/JSON-looking spoken text; that
+    # is preserved verbatim and is not "residue" (Codex SHOULD-FIX).
+    db.upsert(sample_record(path="/m/j.mp4", lang="zh",
+                            transcript='他說 {"title":"片名"}\n下一行還在同一段。'))
     corpus = ex.build_corpus(lang="zh")
+    # JSON-looking spoken text survives untouched...
+    assert '{"title":"片名"}' in corpus
+    assert "下一行還在同一段。" in corpus
+    # ...but the exporter never dumps its own metadata structure into corpus.
+    for leaked in ("frame_tags", "frame_descriptions", '"metadata"', '"filename"'):
+        assert leaked not in corpus
+    # the corpus as a whole is plain text, not a JSON document
     with pytest.raises(ValueError):
         json.loads(corpus)
-    assert "{" not in corpus and "frame_tags" not in corpus
 
 
 def test_corpus_skips_empty_transcripts(ex, sample_record):
