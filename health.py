@@ -331,13 +331,14 @@ def main():
     # Surface how much the derived-artifact dirs hold so an operator can spot a
     # runaway proxy/thumbnail cache. Informational (never fails).
     print("\n-- Cache dirs --")
-    try:
-        import config
-        for label, d in [
-            ("thumbnails", config.THUMBNAILS_DIR),
-            ("proxies", config.PROXIES_DIR),
-            ("chroma_db", config.CHROMA_PATH),
-        ]:
+    import config
+    for label, d in [
+        ("thumbnails", config.THUMBNAILS_DIR),
+        ("proxies", config.PROXIES_DIR),
+        ("chroma_db", config.CHROMA_PATH),
+    ]:
+        # Per-dir guard so one unreadable cache can't suppress the others.
+        try:
             p = Path(d)
             if p.exists():
                 files = [f for f in p.rglob("*") if f.is_file()]
@@ -345,8 +346,8 @@ def main():
                 check(label, True, f"({len(files)} files, {size_mb:.1f} MB)", required=False)
             else:
                 check(label, True, "(not created yet)", required=False)
-    except Exception as e:
-        check("cache dirs", False, f"({e})", required=False)
+        except Exception as e:
+            check(label, False, f"({e})", required=False)
 
     # ── Database ────────────────────────────────────────────────────────
     print("\n-- Database --")

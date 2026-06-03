@@ -54,15 +54,17 @@ def test_b4_regenerate_thumbnails_video_only(ingest_mod, sample_record, tmp_path
     monkeypatch.setattr(ingest_mod, "probe", lambda p: {"duration_s": 10.0, "fps": 30})
     fake_thumb = tmp_path / "thumb_a.jpg"; fake_thumb.write_text("t")
     calls = []
-    def _fake_extract(src, dur):
-        calls.append(src)
+    def _fake_extract(src, dur, force=False):
+        calls.append((src, force))
         return str(fake_thumb)
     monkeypatch.setattr(ingest_mod.frm, "extract_thumbnail", _fake_extract)
 
     ingest_mod._regenerate_thumbnails()
 
-    # only the video source was processed
-    assert len(calls) == 1 and calls[0].endswith("a.mp4")
+    # only the video source was processed, AND force=True so it truly rebuilds
+    # (Codex SHOULD-FIX: without force, extract_thumbnail reuses the old poster).
+    assert len(calls) == 1 and calls[0][0].endswith("a.mp4")
+    assert calls[0][1] is True, "must force=True or regeneration is a no-op"
     assert db.get_record_by_id(1)["thumbnail_path"]       # video updated
     assert not db.get_record_by_id(2)["thumbnail_path"]   # audio left alone
 
@@ -74,6 +76,20 @@ def test_b4_regenerate_thumbnails_skips_missing_source(ingest_mod, sample_record
     monkeypatch.setattr(ingest_mod.frm, "extract_thumbnail", lambda *a: called.append(1))
     ingest_mod._regenerate_thumbnails()  # must not raise
     assert called == []
+
+
+def test_b4_extract_thumbnail_force_bypasses_cache(monkeypatch, tmp_path):
+    import frames as frm
+    monkeypatch.setattr(frm, "THUMBNAILS_DIR", tmp_path)
+    monkeypatch.setattr(frm, "_ensure_thumbnails_dir", lambda: None)
+    (tmp_path / "clip.jpg").write_text("old")  # pre-existing poster
+    ran = []
+    monkeypatch.setattr(frm, "_run_ffmpeg", lambda cmd, out: ran.append(1) or True)
+
+    frm.extract_thumbnail("/x/clip.mp4", 10.0, force=False)
+    assert ran == []  # reuse — no rebuild
+    frm.extract_thumbnail("/x/clip.mp4", 10.0, force=True)
+    assert ran == [1]  # force actually re-runs ffmpeg
 
 
 def test_b4_no_videos_is_noop(ingest_mod, sample_record, monkeypatch):
