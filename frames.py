@@ -42,15 +42,19 @@ def _run_ffmpeg(cmd, out_path: Optional[Path] = None) -> bool:
     return True
 
 
-def extract_thumbnail(video_path: str, duration_s: float) -> Optional[str]:
+def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -> Optional[str]:
     """
     Extract one representative frame (50% position) and save permanently
     to thumbnails/{stem}.jpg. Returns saved path or None on failure.
+
+    By default an existing non-empty poster is reused (cheap re-ingest). Pass
+    force=True to actually rebuild it (used by `ingest.py --regenerate-thumbnails`
+    after the thumbnail-rendering logic changes).
     """
     _ensure_thumbnails_dir()
     stem = Path(video_path).stem
     out = THUMBNAILS_DIR / f"{stem}.jpg"
-    if out.exists() and out.stat().st_size > 0:
+    if not force and out.exists() and out.stat().st_size > 0:
         return str(out)
 
     t = max(duration_s * 0.5, 1.0)

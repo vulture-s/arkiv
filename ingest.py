@@ -818,7 +818,7 @@ def _regenerate_thumbnails():
         meta = probe(src)
         dur = meta.get("duration_s", 0) if meta else 0
         print(f"  [{idx}/{len(videos)}] id={rec['id']} {rec['filename']}", end="", flush=True)
-        thumb = frm.extract_thumbnail(src, dur) if dur > 0 else None
+        thumb = frm.extract_thumbnail(src, dur, force=True) if dur > 0 else None
         if thumb:
             with db.get_conn() as conn:
                 conn.execute(
