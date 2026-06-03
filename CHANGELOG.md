@@ -2,6 +2,7 @@
 ## Unreleased
 
 ### Security
+- **Optional HMAC token hashing (Phase 16.1).** Set `ARKIV_TOKEN_HMAC_KEY` to store access tokens as HMAC-SHA256 instead of bare SHA-256. Non-breaking: existing tokens keep working (dual-read) and upgrade to HMAC in place on next use. Losing the key invalidates HMAC tokens (re-mint), the same failure mode as losing the DB.
 - **API responses no longer leak absolute filesystem paths (Phase 16.2).** Read-scope endpoints (`/api/media`, `/api/media/{id}`, `/api/media?q=`, `/api/search/all`, `/api/cache/info`) previously returned absolute paths that exposed the operator's directory tree. They now return PROJECT_ROOT-relative paths (basename for legacy absolute rows), and `/api/cache/info` no longer returns cache directory paths. open-file round-trips the relative path. (FCPXML `file://` URIs and user-supplied export destinations intentionally remain absolute — see `docs/phase-16.2-path-leak-triage.md`.)
 
 ### Changed
