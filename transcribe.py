@@ -455,12 +455,20 @@ def _postprocess(text: str, lang: str, segments: list, language: str, words: lis
     return filtered_text, lang, timed_segments, words or []
 
 
-# Text-level hallucination filters were extracted to the standalone
-# whisper_guard package (Phase 10). These private aliases keep the rest of the
-# module — and the guard unit tests — calling them unchanged.
-_is_repetitive = whisper_guard.is_repetitive
-_has_char_loops = whisper_guard.has_char_loops
-_remove_char_loops = whisper_guard.remove_char_loops
+# Text-level hallucination filters live in the standalone whisper_guard package
+# (Phase 10, published to PyPI as whisper-guard>=0.3). v0.3 refactored the v0.1
+# free functions into WhisperGuard methods, so we bind a default-config instance
+# here. Behaviour is identical to the old free functions (verified by parity
+# test); remove_char_loops now returns (text, count) — we keep the str-returning
+# wrapper the callers (_remove_char_loops below) expect.
+_wg = whisper_guard.WhisperGuard()
+_is_repetitive = _wg.is_repetitive
+_has_char_loops = _wg.has_char_loops
+
+
+def _remove_char_loops(text):
+    cleaned, _ = _wg.remove_char_loops(text)
+    return cleaned
 
 
 _ollama_warm = False

@@ -49,10 +49,12 @@ def test_install_copies_python_modules_via_glob_not_a_stale_list():
 
 
 def test_install_copies_first_party_package_dirs():
-    """A first-party package dir (e.g. whisper_guard/) is imported by transcribe
-    but is NOT a top-level *.py, so the *.py glob alone wouldn't ship it.
-    install.sh must also copy package dirs via a */__init__.py glob (drift-proof,
-    not a hand list) — else a copy-install ModuleNotFoundErrors on import."""
+    """Any first-party package dir (one with __init__.py, e.g. a future extracted
+    module) is imported by name but is NOT a top-level *.py, so the *.py glob
+    alone wouldn't ship it. install.sh must also copy package dirs via a
+    */__init__.py glob (drift-proof, not a hand list) — else a copy-install
+    ModuleNotFoundErrors on import. (whisper_guard was the original such package;
+    it's since de-vendored to PyPI, but the drift-proof mechanism must remain.)"""
     install = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
     assert "/__init__.py" in install, (
         "install.sh must copy first-party package dirs via a */__init__.py glob"
@@ -61,9 +63,21 @@ def test_install_copies_first_party_package_dirs():
 
 def test_package_copy_actually_ships_packages_not_tests(tmp_path):
     """Functional proof (Codex SHOULD-FIX): run install.sh's package-copy loop
-    against the real repo and assert whisper_guard/ lands while tests/ and the
-    venv do NOT. Catches a regression that the string check alone would miss."""
+    against a synthetic source tree and assert a first-party package dir lands
+    while tests/ and .venv do NOT. Uses a synthetic SRC (not the real repo) so
+    the test holds regardless of which first-party packages currently exist —
+    arkiv has none vendored today, but the installer mechanism must still work
+    the day one is added. Catches a regression the string check alone would miss."""
     import subprocess
+
+    # Build a synthetic source tree mirroring repo layout
+    src = tmp_path / "src"
+    (src / "demo_pkg").mkdir(parents=True)
+    (src / "demo_pkg" / "__init__.py").write_text("# shippable first-party package\n")
+    (src / "tests").mkdir()
+    (src / "tests" / "__init__.py").write_text("# must NOT ship\n")
+    (src / ".venv").mkdir()
+    (src / ".venv" / "__init__.py").write_text("# must NOT ship\n")
 
     dest = tmp_path / "install_dir"
     dest.mkdir()
@@ -76,8 +90,8 @@ def test_package_copy_actually_ships_packages_not_tests(tmp_path):
         'case "$(basename "$d")" in tests|.venv) continue ;; esac; '
         'cp -R "$d" "$INSTALL_DIR"/; done'
     )
-    subprocess.run(["bash", "-c", snippet, "bash", str(REPO_ROOT), str(dest)], check=True)
-    assert (dest / "whisper_guard" / "__init__.py").is_file(), "whisper_guard not shipped"
+    subprocess.run(["bash", "-c", snippet, "bash", str(src), str(dest)], check=True)
+    assert (dest / "demo_pkg" / "__init__.py").is_file(), "first-party package not shipped"
     assert not (dest / "tests").exists(), "tests/ must not be shipped"
     assert not (dest / ".venv").exists(), ".venv must not be shipped"
 
