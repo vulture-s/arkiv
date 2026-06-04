@@ -156,6 +156,69 @@ def test_bmd_shutter_angle_parse_fail_logs_warning(monkeypatch, caplog):
     assert any("Blackmagic-designCameraShutterAngle parse failed" in record.message for record in caplog.records)
 
 
+def test_bmd_white_balance_negative_tint():
+    """Cooling tints are negative in BMD metadata and must survive intact."""
+    import ingest
+    assert ingest._white_balance_string(5600, -10) == "5600K T-10"
+
+
+def test_bmd_white_balance_rounds_floats():
+    import ingest
+    assert ingest._white_balance_string(5603.6, 9.4) == "5604K T9"
+
+
+def test_bmd_white_balance_non_numeric_returns_none(caplog):
+    import ingest
+    with caplog.at_level("WARNING"):
+        assert ingest._white_balance_string("auto", None) is None
+    assert any(
+        "Blackmagic-designCameraWhiteBalance parse failed" in r.message for r in caplog.records
+    )
+
+
+def test_bmd_shutter_angle_non_positive_returns_none():
+    """Zero/negative angle or fps is invalid — must not divide, returns None."""
+    import ingest
+    assert ingest._shutter_angle_to_speed(0, 24) is None
+    assert ingest._shutter_angle_to_speed(-90, 24) is None
+    assert ingest._shutter_angle_to_speed(180, 0) is None
+
+
+def test_bmd_shutter_angle_near_360_and_over():
+    """Near-360 rounds to base shutter; >360° (shutter drag) is still valid."""
+    import ingest
+    assert ingest._shutter_angle_to_speed(359.0, 24) == "1/24"   # 24.07 → 24
+    assert ingest._shutter_angle_to_speed(720.0, 24) == "1/12"   # drag, no upper guard
+
+
+def test_bmd_standard_exposure_fields_win_over_bmd(monkeypatch):
+    """When a body writes standard ISO/FNumber/ShutterSpeed, those win and the
+    BMD-design fallbacks are ignored — the precedence the parser promises."""
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    fake_stdout = json.dumps([{
+        "SourceFile": "mix.mov",
+        "ISO": 200, "FNumber": 4.0, "ShutterSpeed": "1/100",
+        # BMD fallbacks present but should be shadowed by the standard fields
+        "Blackmagic-designCameraIso": 640,
+        "Blackmagic-designCameraAperture": 2.8,
+        "Blackmagic-designCameraShutterAngle": 172.8,
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    result = ingest.exiftool_extract("mix.mov", fps=24)
+    assert result["iso"] == 200
+    assert result["aperture"] == 4.0
+    assert result["shutter_speed"] == "1/100"
+
+
 def test_bmd_metadata_roundtrips_white_balance_column(tmp_db, sample_record):
     import importlib
 
