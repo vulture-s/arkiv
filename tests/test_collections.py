@@ -132,3 +132,51 @@ def test_exclude_tags_rejects():
     col = sc.Collection(key="t", title="t", category="c", tags=["生肉"], exclude_tags=["模糊"])
     blurry_meat = {"duration_s": 5, "has_audio": 1, "tags": ["生肉", "模糊"], "frames": []}
     assert sc.score_collection(blurry_meat, col) == 0.0
+
+
+# ── media-level aggregate columns (not just per-frame) ───────────────────────
+def test_signal_reads_media_level_aggregate_columns():
+    # A row with no frames but top-level content_type/atmosphere/energy columns
+    # (the shape db.get_all_records() returns) must still surface those signals.
+    raw = {"duration_s": 5, "has_audio": 1, "tags": ["吧檯"],
+           "content_type": "Establishing", "atmosphere": "昏暗", "energy": "中"}
+    sig = sc.media_signal(raw)
+    assert "Establishing" in sig["content_types"]
+    assert "昏暗" in sig["atmospheres"]
+    assert "中" in sig["energies"]
+
+
+def test_aggregate_content_type_booster_applies():
+    col = sc.Collection(
+        key="t", title="t", category="c", tags=["吧檯"],
+        boosters=(sc.Booster(boost=0.2, content_types=["Establishing"]),),
+    )
+    base = {"duration_s": 5, "has_audio": 1, "tags": ["吧檯"]}
+    boosted = dict(base, content_type="Establishing")
+    assert sc.score_collection(boosted, col) > sc.score_collection(base, col)
+
+
+# ── location signal (geo integration) ────────────────────────────────────────
+def test_signal_derives_location_from_gps():
+    raw = {"duration_s": 5, "has_audio": 1, "tags": ["吧檯"],
+           "gps_lat": 24.1477, "gps_lon": 120.6736}
+    assert sc.media_signal(raw)["location"] == "24.15N,120.67E"
+
+
+def test_signal_location_none_without_gps():
+    assert sc.media_signal({"duration_s": 5, "tags": ["吧檯"]})["location"] is None
+
+
+def test_signal_null_island_gps_is_no_location():
+    raw = {"duration_s": 5, "tags": ["吧檯"], "gps_lat": 0.0, "gps_lon": 0.0}
+    assert sc.media_signal(raw)["location"] is None
+
+
+def test_location_booster_gates_on_label():
+    col = sc.Collection(
+        key="t", title="t", category="c", tags=["吧檯"],
+        boosters=(sc.Booster(boost=0.3, locations=["24.15N,120.67E"]),),
+    )
+    here = {"duration_s": 5, "has_audio": 1, "tags": ["吧檯"], "gps_lat": 24.1477, "gps_lon": 120.6736}
+    elsewhere = {"duration_s": 5, "has_audio": 1, "tags": ["吧檯"], "gps_lat": 25.0330, "gps_lon": 121.5654}
+    assert sc.score_collection(here, col) > sc.score_collection(elsewhere, col)

@@ -21,6 +21,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+import geo
+
 MIN_CONFIDENCE = 0.40
 
 
@@ -36,6 +38,7 @@ class Booster:
     no_tags: Sequence[str] = field(default_factory=tuple)  # none may be present
     content_types: Sequence[str] = field(default_factory=tuple)  # any frame matches
     atmospheres: Sequence[str] = field(default_factory=tuple)  # any frame matches
+    locations: Sequence[str] = field(default_factory=tuple)  # geo location_label is one of
 
 
 @dataclass(frozen=True)
@@ -64,8 +67,13 @@ def media_signal(media: Dict[str, Any]) -> Dict[str, Any]:
     Accepts either:
       - {'tags': ['a','b'], 'frames': [{'content_type':..,'atmosphere':..}, ...]}
       - a raw db row with 'frame_tags' JSON string (server /api/media/{id} shape)
+    Reads BOTH per-frame metadata AND the media-level aggregate columns
+    (content_type / atmosphere / energy on the row itself), plus a derived
+    location label from gps_lat/gps_lon.
+
     Always returns: {tags:set[str], content_types:set, atmospheres:set,
-                     energies:set, duration_s:float, has_audio:bool}
+                     energies:set, location:str|None, duration_s:float,
+                     has_audio:bool}
     """
     tags: set[str] = set()
     content_types: set[str] = set()
@@ -105,11 +113,18 @@ def media_signal(media: Dict[str, Any]) -> Dict[str, Any]:
         if fr.get("energy"):
             energies.add(str(fr["energy"]))
 
+    # media-level aggregate columns (present on the row itself, not just frames)
+    for col, bucket in (("content_type", content_types), ("atmosphere", atmospheres), ("energy", energies)):
+        v = media.get(col)
+        if v:
+            bucket.add(str(v))
+
     return {
         "tags": tags,
         "content_types": content_types,
         "atmospheres": atmospheres,
         "energies": energies,
+        "location": geo.location_label(media.get("gps_lat"), media.get("gps_lon")),
         "duration_s": float(media.get("duration_s") or 0.0),
         "has_audio": bool(media.get("has_audio")),
     }
@@ -130,6 +145,8 @@ def _booster_applies(b: Booster, sig: Dict[str, Any]) -> bool:
     if b.content_types and not (set(b.content_types) & sig["content_types"]):
         return False
     if b.atmospheres and not (set(b.atmospheres) & sig["atmospheres"]):
+        return False
+    if b.locations and sig.get("location") not in set(b.locations):
         return False
     return True
 
