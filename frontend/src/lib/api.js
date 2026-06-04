@@ -77,6 +77,12 @@ export const chat = (prompt, conversationId = null, opts) =>
 export const ingestWs = (path, limit = 0, opts) =>
   req('/api/ingest/ws', { method: 'POST', body: { path, limit }, ...opts })
 
+// POST /api/embed/rebuild — drop + rebuild the ChromaDB semantic index from all
+// media (runs in the background). Requires ingest_write (token-free on loopback).
+// → {message, queued}
+export const rebuildEmbedIndex = (opts) =>
+  req('/api/embed/rebuild', { method: 'POST', ...opts })
+
 // /api/media?limit&offset&projects&tag&rating  → {items, total, search}
 export const getMedia = (params = {}, opts) => req(`/api/media${qs(params)}`, opts)
 export const getMediaDetail = (id, opts) => req(`/api/media/${id}`, opts)

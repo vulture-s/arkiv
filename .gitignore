@@ -4,12 +4,18 @@ __pycache__/
 .env
 .env.local
 *.db
+*.db-shm
+*.db-wal
 media.db
 arkiv.db
 chroma_db/
 thumbnails/
 proxies/
 waveforms/
+
+# Local project runtime data (SQLite + WAL/SHM, vector store, thumbnails, scratch)
+.arkiv/
+temp/
 
 # Benchmark artefacts — results contain private transcripts / filenames,
 # and the scripts below have hardcoded personal paths. Keep local only.

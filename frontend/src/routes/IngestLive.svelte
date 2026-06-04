@@ -23,6 +23,7 @@
   let complete = null // {ok, skipped, failed}
   let log = [] // [{t, text}]
   let busy = false
+  let rebuilding = false
   let err = ''
 
   const wsUrl = () => {
@@ -89,6 +90,22 @@
     }
   }
 
+  // Rebuild the semantic index — independent of the ingest WS (plain POST,
+  // background task on the server). Kept on its own flag so it never collides
+  // with the ws ingest's busy/complete lifecycle.
+  async function rebuildIndex() {
+    err = ''
+    rebuilding = true
+    try {
+      const res = await api.rebuildEmbedIndex()
+      pushLog(res.message || '重建向量索引：已排入背景')
+    } catch (e) {
+      err = e.message
+    } finally {
+      rebuilding = false
+    }
+  }
+
   onMount(connect)
   onDestroy(() => ws && ws.close())
 
@@ -122,6 +139,7 @@
             <div class="triggerrow">
               <input class="ak-input limitinput" type="number" min="0" bind:value={limit} disabled={busy} title="limit (0=all)" />
               <button class="ak-btn ak-btn--primary" on:click={trigger} disabled={busy || conn !== 'open'}>{busy ? 'running…' : 'Start ingest →'}</button>
+              <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title="重建 ChromaDB 向量索引（背景執行）— ingest 後或換 embedding 模型後使用">{rebuilding ? '排入中…' : '重建索引'}</button>
             </div>
           </div>
         </div>
