@@ -114,6 +114,38 @@ thumbs_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnails")
 
 
+def _basename_safe(value: str) -> str:
+    """Separator-agnostic basename. `os.path.basename` on a POSIX host treats `\\`
+    as an ordinary character, so a Windows project path (`C:\\Users\\me\\proj`)
+    handed over by a cross-platform federation peer would survive `basename` +
+    `rstrip("/")` and leak intact. Normalise both separators first."""
+    if not value:
+        return value
+    normalized = str(value).replace("\\", "/").rstrip("/")
+    return normalized.rsplit("/", 1)[-1] or normalized
+
+
+def _looks_absolute(p: str) -> bool:
+    """True for POSIX (`/x`), Windows drive (`C:\\x`), or UNC (`\\\\host`) absolute
+    paths. `os.path.isabs` on a POSIX host misses the Windows forms, which would
+    let a cross-platform peer's absolute path slip past the leak guard."""
+    if not p:
+        return False
+    return (
+        p.startswith("/")
+        or p.startswith("\\\\")
+        # Windows drive form `X:` followed by EITHER separator (`C:\` or `C:/` —
+        # Windows APIs emit and accept both). Security-first call on an inherent
+        # ambiguity: `C:/...` could also be a POSIX *relative* path under a dir
+        # literally named "C:", but a leak guard must not let a Windows-absolute
+        # path through, and a Unix media dir literally named "C:" is pathological.
+        # So we basename it (the rare round-trip loss is the accepted trade-off vs
+        # re-opening the path leak). (Codex round-1 wanted C:/ preserved; round-2
+        # showed that re-leaks C:/ Windows absolutes — no-leak wins.)
+        or (len(p) >= 3 and p[0].isalpha() and p[1] == ":" and p[2] in ("\\", "/"))
+    )
+
+
 def _display_path(path: str) -> str:
     """Phase 16.2: the non-leaking path form for API responses.
 
@@ -129,8 +161,8 @@ def _display_path(path: str) -> str:
     if not path:
         return path
     rel = db.to_relative(path)
-    if os.path.isabs(rel):  # absolute & outside PROJECT_ROOT — don't leak it
-        return os.path.basename(rel)
+    if _looks_absolute(rel):  # absolute (POSIX/Windows/UNC) & outside root — don't leak
+        return _basename_safe(rel)
     return rel
 
 
@@ -415,19 +447,33 @@ def search_all(
 
     # Phase 16.2: federation results carry absolute media + project paths; strip
     # them at the API boundary so a videos_read client can't map the operator's
-    # cross-project directory layout. relative_path is the non-leaking form;
-    # project_path is reduced to its folder basename.
+    # cross-project directory layout. project_path is reduced to its folder
+    # basename; the internal absolute_path / relative_path fields are dropped so
+    # only the sanitized `path` survives.
+    def _basename_only(value):
+        return _basename_safe(value)
+
     for item in payload.get("items", []) or []:
-        item.pop("absolute_path", None)
-        # Route through _display_path so even a relative_path that is itself
-        # absolute (federation's empty-stored-path edge) is basenamed, never
-        # copied through as an absolute path.
+        # Route relative_path through _display_path FIRST: for an out-of-root row
+        # federation's relative_path is actually the *absolute* path (it falls
+        # back to str(stored) when relative_to() fails), so it must be basenamed,
+        # never copied through. Then drop the internal absolute/relative fields —
+        # leaving relative_path in place was the residual leak this closes.
         chosen = item.get("relative_path")
         if chosen is None:
             chosen = item.get("path") or ""
         item["path"] = _display_path(chosen)
+        item.pop("absolute_path", None)
+        item.pop("relative_path", None)
         if item.get("project_path"):
-            item["project_path"] = os.path.basename(str(item["project_path"]).rstrip("/"))
+            item["project_path"] = _basename_only(item["project_path"])
+
+    # Errors carry the absolute project_path on timeout / preflight failure
+    # (federation sets project_path=str(project.path)); a failed project must not
+    # leak its absolute root either.
+    for err in payload.get("errors", []) or []:
+        if err.get("project_path"):
+            err["project_path"] = _basename_only(err["project_path"])
 
     status_code = 200
     if payload.get("projects_queried") and payload.get("projects_failed", 0) >= payload.get("projects_queried", 0):
