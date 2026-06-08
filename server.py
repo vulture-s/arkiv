@@ -134,7 +134,11 @@ def _looks_absolute(p: str) -> bool:
     return (
         p.startswith("/")
         or p.startswith("\\\\")
-        or (len(p) >= 2 and p[1] == ":" and p[0].isalpha())
+        # Windows drive form requires a BACKSLASH after the colon (`C:\\`). A
+        # forward-slash `C:/camera/...` on POSIX is a *relative* path under a dir
+        # literally named "C:", not absolute — collapsing it would break the
+        # open-file round-trip (Codex P2).
+        or (len(p) >= 3 and p[0].isalpha() and p[1] == ":" and p[2] == "\\")
     )
 
 
