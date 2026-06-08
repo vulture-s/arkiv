@@ -1,5 +1,7 @@
 import importlib
 
+import pytest
+
 
 def test_split_sentences_and_cjk_detection():
     vectordb = importlib.import_module("vectordb")
@@ -207,3 +209,93 @@ def test_search_deduplicates_media_results_and_rounds_scores(monkeypatch):
             "chunk_type": "frame_tags",
         },
     ]
+
+
+# ── Embedding-dimension guard (bge-m3 default change) ─────────────────────────
+
+def test_get_collection_stamps_model_and_dim_on_create(monkeypatch):
+    vectordb = importlib.import_module("vectordb")
+    recorded = {}
+
+    class FakeCol:
+        def __init__(self, metadata):
+            self.metadata = metadata
+
+    class FakeClient:
+        def __init__(self, path):
+            pass
+
+        def delete_collection(self, name):
+            pass
+
+        def get_or_create_collection(self, name, metadata=None):
+            recorded["metadata"] = metadata
+            return FakeCol(metadata)
+
+    monkeypatch.setattr(vectordb.chromadb, "PersistentClient", lambda path: FakeClient(path))
+    vectordb.get_collection()
+    assert recorded["metadata"]["embed_model"] == vectordb.EMBED_MODEL
+    assert recorded["metadata"]["embed_dim"] == vectordb.EMBED_DIM
+    assert recorded["metadata"]["hnsw:space"] == "cosine"
+
+
+def test_assert_collection_compatible_raises_on_model_mismatch():
+    vectordb = importlib.import_module("vectordb")
+
+    class C:
+        metadata = {"embed_model": "nomic-embed-text", "embed_dim": 768}
+
+    with pytest.raises(vectordb.EmbeddingDimensionMismatch) as ei:
+        vectordb._assert_collection_compatible(C())
+    assert "--rebuild" in str(ei.value)
+
+
+def test_assert_collection_compatible_allows_legacy_unstamped():
+    vectordb = importlib.import_module("vectordb")
+
+    class C:
+        metadata = {"hnsw:space": "cosine"}  # no embed_model stamp
+
+    vectordb._assert_collection_compatible(C())  # must not raise
+
+
+def test_reraise_dim_error_detects_message_and_passes_others_through():
+    vectordb = importlib.import_module("vectordb")
+    with pytest.raises(vectordb.EmbeddingDimensionMismatch):
+        vectordb._reraise_dim_error(
+            Exception("Collection expecting embedding with dimension of 768, got 1024")
+        )
+    with pytest.raises(ValueError):
+        vectordb._reraise_dim_error(ValueError("connection refused"))
+
+
+def test_query_collection_reraises_dim_error_as_mismatch():
+    vectordb = importlib.import_module("vectordb")
+
+    class FakeCol:
+        def query(self, **kwargs):
+            raise Exception("Collection expecting embedding with dimension of 768, got 1024")
+
+    with pytest.raises(vectordb.EmbeddingDimensionMismatch) as ei:
+        vectordb._query_collection(FakeCol(), [[0.1, 0.2]], 5)
+    assert "--rebuild" in str(ei.value)
+
+
+def test_upsert_record_reraises_dim_error_as_mismatch(monkeypatch):
+    vectordb = importlib.import_module("vectordb")
+    monkeypatch.setattr(vectordb, "embed", lambda text: [0.1])
+
+    class FakeCol:
+        def upsert(self, **kwargs):
+            raise Exception("embedding with dimension of 1024, got 768")
+
+    rec = {"id": 1, "filename": "a.mp4", "path": "/x/a.mp4", "transcript": "hello"}
+    with pytest.raises(vectordb.EmbeddingDimensionMismatch):
+        vectordb.upsert_record(FakeCol(), rec)
+
+
+def test_assert_collection_compatible_tolerates_missing_metadata():
+    """The test-suite's fake chromadb returns a bare object() with no .metadata;
+    the guard must treat that as legacy (no raise), not AttributeError."""
+    vectordb = importlib.import_module("vectordb")
+    vectordb._assert_collection_compatible(object())  # must not raise

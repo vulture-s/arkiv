@@ -15,7 +15,7 @@ from nanoid import generate as nanoid_generate
 from config import ARKIV_CHAT_MODEL, ARKIV_INTENT_MODEL
 from db import get_conn
 from llm import chat as llm_chat
-from vectordb import search as vector_search
+from vectordb import EmbeddingDimensionMismatch, search as vector_search
 
 
 INTENT_PROMPT = """你是 video archive 助手。將用戶 prompt 分類成下列其中一個 intent，回 JSON 不要任何其他文字：
@@ -386,6 +386,18 @@ def dispatch(
     handler = HANDLERS.get(intent, handle_general)
     try:
         result = handler(prompt, history, project_scope, conversation_id)
+    except EmbeddingDimensionMismatch:
+        return {
+            "assistant_text": (
+                "向量索引與目前的 embedding 模型不相容，請在 arkiv 主機執行："
+                "python embed.py --rebuild"
+            ),
+            "scene_ids": [],
+            "tokens_used": intent_result.get("tokens_used", 0),
+            "stage": "error",
+            "intent": intent,
+            "latency_ms": intent_result.get("latency_ms", 0),
+        }
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
         return {
             "assistant_text": "處理時 LLM 失聯（{0}），已記錄 intent={1}。".format(

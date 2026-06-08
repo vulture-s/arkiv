@@ -53,6 +53,11 @@ def run_embed(rebuild: bool = False):
             n = vdb.upsert_record(col, rec)
             total_chunks += n
             print(f" -> {n} chunk(s) OK")
+        except vdb.EmbeddingDimensionMismatch as e:
+            # Whole index is incompatible — every row will fail, so stop loud
+            # instead of printing a per-row error for the entire library.
+            print(f"\n[ABORT] {e}")
+            sys.exit(1)
         except Exception as e:
             print(f" [ERROR: {e}]")
 

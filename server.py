@@ -613,9 +613,10 @@ def list_media(
     offset = max(0, offset)
     if q:
         enriched = []
+        search_warning = None
+        import vectordb as vdb
         # Try semantic search first (requires vectordb with embeddings)
         try:
-            import vectordb as vdb
             raw = vdb.search(q, n_results=limit * 3)
             results = []
             for r in raw:
@@ -640,6 +641,11 @@ def list_media(
                     rec["excerpt"] = r.get("excerpt", "")
                     rec["tags"] = db.get_tags(mid)
                     enriched.append(rec)
+        except vdb.EmbeddingDimensionMismatch as exc:
+            # Don't silently SQL-degrade a dim mismatch — log it and surface a hint
+            # so the operator knows semantic search is off until they rebuild.
+            _logging.getLogger(__name__).warning("semantic search degraded: %s", exc)
+            search_warning = str(exc)
         except Exception:
             pass
 
@@ -677,7 +683,11 @@ def list_media(
                         enriched.append(rec)
                         seen_ids.add(mid)
 
-        return {"items": enriched[:limit], "total": len(enriched), "search": True}
+        resp = {"items": enriched[:limit], "total": len(enriched), "search": True}
+        if search_warning:
+            resp["search_degraded"] = True
+            resp["warning"] = search_warning
+        return resp
 
     filters = {}
     if lang:
