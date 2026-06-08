@@ -134,11 +134,15 @@ def _looks_absolute(p: str) -> bool:
     return (
         p.startswith("/")
         or p.startswith("\\\\")
-        # Windows drive form requires a BACKSLASH after the colon (`C:\\`). A
-        # forward-slash `C:/camera/...` on POSIX is a *relative* path under a dir
-        # literally named "C:", not absolute — collapsing it would break the
-        # open-file round-trip (Codex P2).
-        or (len(p) >= 3 and p[0].isalpha() and p[1] == ":" and p[2] == "\\")
+        # Windows drive form `X:` followed by EITHER separator (`C:\` or `C:/` —
+        # Windows APIs emit and accept both). Security-first call on an inherent
+        # ambiguity: `C:/...` could also be a POSIX *relative* path under a dir
+        # literally named "C:", but a leak guard must not let a Windows-absolute
+        # path through, and a Unix media dir literally named "C:" is pathological.
+        # So we basename it (the rare round-trip loss is the accepted trade-off vs
+        # re-opening the path leak). (Codex round-1 wanted C:/ preserved; round-2
+        # showed that re-leaks C:/ Windows absolutes — no-leak wins.)
+        or (len(p) >= 3 and p[0].isalpha() and p[1] == ":" and p[2] in ("\\", "/"))
     )
 
 

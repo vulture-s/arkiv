@@ -117,14 +117,16 @@ def test_search_all_strips_windows_style_absolute_paths(fastapi_client, monkeypa
     assert "C:" not in blob and "\\" not in blob              # no Windows path fragment
 
 
-def test_looks_absolute_drive_letter_requires_backslash():
-    """Catch real Windows/UNC absolutes, but DON'T misclassify a POSIX relative
-    path that happens to start with a drive-letter-like dir (Codex P2 round-trip)."""
+def test_looks_absolute_catches_windows_drive_both_slashes():
+    """Security-first: a Windows drive path with EITHER separator is treated
+    absolute and basenamed (Codex round-2). The pathological POSIX dir literally
+    named "C:" is sacrificed to avoid re-leaking C:/ Windows absolutes."""
     import server
 
     assert server._looks_absolute("/abs/posix") is True
-    assert server._looks_absolute("C:\\Users\\me\\proj") is True   # Windows drive abs
+    assert server._looks_absolute("C:\\Users\\me\\proj") is True   # Windows abs (backslash)
+    assert server._looks_absolute("C:/Users/me/proj") is True      # Windows abs (forward slash)
     assert server._looks_absolute("\\\\nas\\share\\x") is True     # UNC
-    assert server._looks_absolute("C:/camera/clip.mov") is False   # POSIX rel under "C:" dir
+    assert server._looks_absolute("footage/clip.mov") is False     # normal relative — preserved
     assert server._looks_absolute("rel/path.mov") is False
     assert server._looks_absolute("") is False
