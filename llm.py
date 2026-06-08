@@ -11,6 +11,7 @@ from config import (
     OLLAMA_EMBED_MODEL,
     OLLAMA_URL,
     OLLAMA_VISION_MODEL,
+    OLLAMA_VISION_NUM_CTX,
 )
 
 
@@ -99,6 +100,7 @@ def vision(
             "prompt": prompt,
             "images": [image_b64],
             "stream": False,
+            "options": {"num_ctx": OLLAMA_VISION_NUM_CTX},
         },
         timeout=300,
     )

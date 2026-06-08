@@ -45,7 +45,12 @@ def _warm_up_vision_model():
             "model": model,
             "prompt": "hi",
             "stream": False,
-            "options": {"num_predict": 1},
+            # Load with the same capped context the real vision calls use
+            # (config.OLLAMA_VISION_NUM_CTX). Warming up at the model's default
+            # context first balloons VRAM and leaves the model CPU-offloaded
+            # even after the real calls reload it — keep them consistent so the
+            # model lands 100% on GPU from the first frame.
+            "options": {"num_predict": 1, "num_ctx": config.OLLAMA_VISION_NUM_CTX},
         }).encode()
         req = urllib.request.Request(
             f"{config.OLLAMA_URL}/api/generate",

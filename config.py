@@ -113,6 +113,14 @@ OLLAMA_VISION_MODEL = os.getenv(
 EMBED_MODEL = OLLAMA_EMBED_MODEL
 VISION_MODEL = OLLAMA_VISION_MODEL
 
+# Cap the vision model's context window so it fits in GPU VRAM. qwen3-vl's
+# default context balloons the model to ~28 GB, which on a 12 GB GPU (e.g.
+# RTX 4070) offloads ~75% to CPU and drops vision to minutes/frame. 16384 is
+# large enough to hold a 720p frame's image tokens + prompt + response without
+# truncating perception, while keeping the model fully resident on GPU
+# (~9.4 GB) → seconds/frame. Raise for bigger frames; lower if VRAM-starved.
+OLLAMA_VISION_NUM_CTX = int(os.getenv("ARKIV_OLLAMA_VISION_NUM_CTX", "16384"))
+
 def _detect_exiftool() -> str:
     """Resolve ExifTool binary path via fallback chain.
 
