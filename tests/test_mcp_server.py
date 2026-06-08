@@ -8,6 +8,11 @@ import json
 
 import pytest
 
+# The MCP SDK needs Python 3.10+ and is gated out of requirements.txt on 3.9, so
+# importing mcp_server (-> `from mcp.server.fastmcp import FastMCP`) would fail at
+# collection on a supported 3.9 env. Skip the whole module there (Codex P2).
+pytest.importorskip("mcp")
+
 import db
 import vectordb as vdb
 import mcp_server as m
