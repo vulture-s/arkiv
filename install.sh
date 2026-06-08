@@ -134,9 +134,11 @@ python3 -c "import db; db.init_db(); print('  DB initialized')"
 # is still the terminal, so `-t 1` would wrongly run and hang (Codex P1). `-t 0`
 # is false for piped/headless installs and true only for a real interactive shell.
 SHORTCUT="$HOME/Desktop/arkiv.command"
+SHORTCUT_CREATED=""
 if [ -t 0 ] && [ -f "$INSTALL_DIR/arkiv.command" ]; then
     cp "$INSTALL_DIR/arkiv.command" "$SHORTCUT"
     chmod +x "$SHORTCUT"
+    SHORTCUT_CREATED=1
     echo -e "  ${GREEN}✓${NC} Desktop shortcut created"
 fi
 
@@ -144,8 +146,13 @@ echo ""
 echo -e "${GREEN}${BOLD}═══ arkiv installed successfully ═══${NC}"
 echo ""
 echo "  Location:  $INSTALL_DIR"
-echo "  Launch:    double-click ~/Desktop/arkiv.command"
-echo "  Or:        cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT"
+if [ -n "$SHORTCUT_CREATED" ]; then
+    echo "  Launch:    double-click ~/Desktop/arkiv.command"
+    echo "  Or:        cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT"
+else
+    # No desktop shortcut on a piped/headless install — don't advertise it (Codex P3)
+    echo "  Launch:    cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT"
+fi
 echo "  Ingest:    python ingest.py --dir /path/to/your/footage"
 echo "  Health:    python health.py"
 echo "  Uninstall: bash $INSTALL_DIR/uninstall.sh"
