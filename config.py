@@ -119,7 +119,19 @@ VISION_MODEL = OLLAMA_VISION_MODEL
 # large enough to hold a 720p frame's image tokens + prompt + response without
 # truncating perception, while keeping the model fully resident on GPU
 # (~9.4 GB) → seconds/frame. Raise for bigger frames; lower if VRAM-starved.
-OLLAMA_VISION_NUM_CTX = int(os.getenv("ARKIV_OLLAMA_VISION_NUM_CTX", "16384"))
+def _read_vision_num_ctx() -> int:
+    """Parse ARKIV_OLLAMA_VISION_NUM_CTX, falling back to the default on a
+    missing / non-integer / non-positive value so a malformed env var can't
+    crash import or silently load the vision model with an unusable context."""
+    raw = os.getenv("ARKIV_OLLAMA_VISION_NUM_CTX", "16384")
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return 16384
+    return val if val > 0 else 16384
+
+
+OLLAMA_VISION_NUM_CTX = _read_vision_num_ctx()
 
 def _detect_exiftool() -> str:
     """Resolve ExifTool binary path via fallback chain.
