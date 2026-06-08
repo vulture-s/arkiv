@@ -299,3 +299,32 @@ def test_assert_collection_compatible_tolerates_missing_metadata():
     the guard must treat that as legacy (no raise), not AttributeError."""
     vectordb = importlib.import_module("vectordb")
     vectordb._assert_collection_compatible(object())  # must not raise
+
+
+def test_assert_collection_compatible_catches_legacy_dim_mismatch():
+    """Codex P2: a legacy (unstamped) index whose stored vectors are the wrong
+    dimension must fail loud — otherwise incremental embed reports 'up to date'
+    while semantic search stays broken."""
+    vectordb = importlib.import_module("vectordb")
+
+    class LegacyCol:
+        metadata = {"hnsw:space": "cosine"}  # no embed_model stamp
+
+        def get(self, include=None, limit=None):
+            return {"embeddings": [[0.1] * 768]}  # 768 != EMBED_DIM (1024)
+
+    with pytest.raises(vectordb.EmbeddingDimensionMismatch) as ei:
+        vectordb._assert_collection_compatible(LegacyCol())
+    assert "--rebuild" in str(ei.value)
+
+
+def test_assert_collection_compatible_legacy_matching_dim_ok():
+    vectordb = importlib.import_module("vectordb")
+
+    class LegacyCol:
+        metadata = {"hnsw:space": "cosine"}
+
+        def get(self, include=None, limit=None):
+            return {"embeddings": [[0.1] * vectordb.EMBED_DIM]}
+
+    vectordb._assert_collection_compatible(LegacyCol())  # matching dim — no raise

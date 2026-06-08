@@ -110,14 +110,33 @@ def _assert_collection_compatible(col) -> None:
     verified here — they fall through to the defensive query/upsert catch."""
     meta = getattr(col, "metadata", None) or {}
     stamped = meta.get("embed_model")
-    if stamped is None:
-        return  # legacy / unstamped — rely on _reraise_dim_error at query/upsert
-    if stamped != EMBED_MODEL:
-        raise EmbeddingDimensionMismatch(
-            f"Vector index was built with embed_model={stamped!r} "
-            f"(dim {meta.get('embed_dim')}), but the active config is "
-            f"{EMBED_MODEL!r} (dim {EMBED_DIM}). {_REBUILD_HINT}"
-        )
+    if stamped is not None:
+        if stamped != EMBED_MODEL:
+            raise EmbeddingDimensionMismatch(
+                f"Vector index was built with embed_model={stamped!r} "
+                f"(dim {meta.get('embed_dim')}), but the active config is "
+                f"{EMBED_MODEL!r} (dim {EMBED_DIM}). {_REBUILD_HINT}"
+            )
+        return
+
+    # Legacy / unstamped collection (built before the stamp existed). We can't
+    # read the model name, but we CAN check the stored vector dimension — without
+    # this, an incremental `embed.py` on a pre-bge-m3 index sees every id already
+    # indexed, reports "up to date", and leaves semantic search silently broken
+    # on the 768-vs-1024 mismatch (Codex P2). Best-effort: a collection we can't
+    # introspect (empty, or the test stub) falls through to the query/upsert catch.
+    try:
+        sample = col.get(include=["embeddings"], limit=1)
+        embeddings = sample.get("embeddings") if isinstance(sample, dict) else None
+    except Exception:
+        return
+    if embeddings is not None and len(embeddings) > 0 and embeddings[0] is not None:
+        stored_dim = len(embeddings[0])
+        if stored_dim != EMBED_DIM:
+            raise EmbeddingDimensionMismatch(
+                f"Legacy vector index has dimension {stored_dim}, but the active "
+                f"model {EMBED_MODEL!r} produces dimension {EMBED_DIM}. {_REBUILD_HINT}"
+            )
 
 
 def get_collection(reset: bool = False):
