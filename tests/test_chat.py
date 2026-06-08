@@ -375,3 +375,26 @@ def test_chat_conversation_isolation_between_tokens(server_module):
         # A can still read its own
         own = client.get(f"/api/chat/history/{conv_a}", headers={"Authorization": f"Bearer {raw_a}"})
         assert own.status_code == 200
+
+
+def test_chat_embedding_dim_mismatch_returns_clean_error(fastapi_client):
+    """A stale-index dimension mismatch must surface as a clean 200 error-dict
+    with a rebuild hint, not a 500."""
+    import vectordb
+
+    with patch("chat.classify_intent") as mock_cls, patch("chat.vector_search") as mock_search:
+        mock_cls.return_value = {
+            "intent": "compilation",
+            "search_params": {"query": "海邊"},
+            "limit": 5,
+            "tokens_used": 10,
+            "latency_ms": 5,
+        }
+        mock_search.side_effect = vectordb.EmbeddingDimensionMismatch(
+            "model mismatch — Run `python embed.py --rebuild` to rebuild the index."
+        )
+        resp = fastapi_client.post("/api/chat", json={"prompt": "給我海邊的鏡頭"})
+
+    assert resp.status_code == 200  # clean error-dict, not a 500
+    data = resp.json()
+    assert "--rebuild" in data["assistant_text"]

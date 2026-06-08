@@ -103,11 +103,15 @@ def _score_from_distance(distance: Any) -> float:
 def _query_chroma(project: ProjectMeta, query_embeddings, limit: int) -> List[Dict[str, Any]]:
     client = chromadb.PersistentClient(path=str(_project_root(project) / ".arkiv" / "chroma_db"))
     collection = client.get_collection(config.COLLECTION_NAME)
-    raw = collection.query(
-        query_embeddings=[query_embeddings],
-        n_results=max(limit * 3, limit),
-        include=["documents", "metadatas", "distances"],
-    )
+    try:
+        raw = collection.query(
+            query_embeddings=[query_embeddings],
+            n_results=max(limit * 3, limit),
+            include=["documents", "metadatas", "distances"],
+        )
+    except Exception as exc:
+        import vectordb
+        vectordb._reraise_dim_error(exc)  # dim mismatch -> EmbeddingDimensionMismatch
     documents = raw.get("documents", [[]])[0] if raw.get("documents") else []
     metadatas = raw.get("metadatas", [[]])[0] if raw.get("metadatas") else []
     distances = raw.get("distances", [[]])[0] if raw.get("distances") else []
@@ -238,6 +242,9 @@ def query_single_project(
                 elif fallback_sql:
                     items = _sql_like_search(conn, project, query, limit)
             except Exception as exc:
+                import vectordb
+                if isinstance(exc, vectordb.EmbeddingDimensionMismatch):
+                    raise  # don't SQL-degrade a dim mismatch — surface as project error
                 LOGGER.warning("project query failed for %s: %s", project.name, exc)
                 if fallback_sql:
                     items = _sql_like_search(conn, project, query, limit)

@@ -3,13 +3,14 @@ from __future__ import annotations
 Vector DB module — ChromaDB + Ollama bge-m3 (multilingual, default)
 """
 import json
+import logging
 import re
 import requests
 from typing import Any, Dict, List, Optional
 
 import chromadb
 
-from config import CHROMA_PATH, COLLECTION_NAME, EMBED_MODEL, OLLAMA_URL
+from config import CHROMA_PATH, COLLECTION_NAME, EMBED_DIM, EMBED_MODEL, OLLAMA_URL
 from llm import embed
 
 OLLAMA_EMBED_URL = f"{OLLAMA_URL}/api/embeddings"
@@ -17,6 +18,40 @@ CHUNK_SIZE = 180      # words per chunk (Latin) or chars×4 (CJK)
 CHUNK_OVERLAP = 20    # words / chars overlap
 CHUNK_CHARS = 500     # character limit per chunk for CJK
 EMBED_MAX_CHARS = 2000  # hard cap before sending to Ollama
+
+_LOGGER = logging.getLogger(__name__)
+
+_REBUILD_HINT = (
+    "Run `python embed.py --rebuild` to rebuild the index for the current "
+    "embedding model."
+)
+
+
+class EmbeddingDimensionMismatch(RuntimeError):
+    """The active embedding model/dimension disagrees with the persisted ChromaDB
+    collection. Subclasses RuntimeError so existing broad ``except Exception``
+    handlers still catch it; always carries the rebuild hint."""
+
+
+def _is_dimension_error(exc: Exception) -> bool:
+    """ChromaDB signals a vector-dimension mismatch differently across versions
+    (``InvalidDimensionException`` in older releases; ``InvalidArgumentError``
+    with a ``"dimension"`` message in 1.5.x). Detect by message, with the typed
+    exception as a fallback."""
+    if "dimension" in str(exc).lower():
+        return True
+    inv = getattr(getattr(chromadb, "errors", None), "InvalidDimensionException", None)
+    return inv is not None and isinstance(exc, inv)
+
+
+def _reraise_dim_error(exc: Exception) -> None:
+    """Re-raise a chromadb dimension error as ``EmbeddingDimensionMismatch`` (with
+    the rebuild hint); pass anything else through unchanged. Always raises."""
+    if isinstance(exc, EmbeddingDimensionMismatch):
+        raise exc
+    if _is_dimension_error(exc):
+        raise EmbeddingDimensionMismatch(f"{exc} — {_REBUILD_HINT}") from exc
+    raise exc
 
 
 # ── Embedding ────────────────────────────────────────────────────────────────
@@ -69,6 +104,41 @@ def chunk_text(text: str) -> List[str]:
 
 # ── ChromaDB client ───────────────────────────────────────────────────────────
 
+def _assert_collection_compatible(col) -> None:
+    """Fail loud if the persisted collection was built with a different embedding
+    model than the active config. Legacy collections with no stamp can't be
+    verified here — they fall through to the defensive query/upsert catch."""
+    meta = getattr(col, "metadata", None) or {}
+    stamped = meta.get("embed_model")
+    if stamped is not None:
+        if stamped != EMBED_MODEL:
+            raise EmbeddingDimensionMismatch(
+                f"Vector index was built with embed_model={stamped!r} "
+                f"(dim {meta.get('embed_dim')}), but the active config is "
+                f"{EMBED_MODEL!r} (dim {EMBED_DIM}). {_REBUILD_HINT}"
+            )
+        return
+
+    # Legacy / unstamped collection (built before the stamp existed). We can't
+    # read the model name, but we CAN check the stored vector dimension — without
+    # this, an incremental `embed.py` on a pre-bge-m3 index sees every id already
+    # indexed, reports "up to date", and leaves semantic search silently broken
+    # on the 768-vs-1024 mismatch (Codex P2). Best-effort: a collection we can't
+    # introspect (empty, or the test stub) falls through to the query/upsert catch.
+    try:
+        sample = col.get(include=["embeddings"], limit=1)
+        embeddings = sample.get("embeddings") if isinstance(sample, dict) else None
+    except Exception:
+        return
+    if embeddings is not None and len(embeddings) > 0 and embeddings[0] is not None:
+        stored_dim = len(embeddings[0])
+        if stored_dim != EMBED_DIM:
+            raise EmbeddingDimensionMismatch(
+                f"Legacy vector index has dimension {stored_dim}, but the active "
+                f"model {EMBED_MODEL!r} produces dimension {EMBED_DIM}. {_REBUILD_HINT}"
+            )
+
+
 def get_collection(reset: bool = False):
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     if reset:
@@ -76,10 +146,16 @@ def get_collection(reset: bool = False):
             client.delete_collection(COLLECTION_NAME)
         except Exception:
             pass
-    return client.get_or_create_collection(
+    col = client.get_or_create_collection(
         COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},
+        # Stamp the embedding model + dim so a later model change is detected and
+        # fails loud instead of throwing a raw chromadb dimension error. On an
+        # EXISTING collection chromadb ignores these extra metadata keys (verified
+        # on 1.5.x), so the stamp only lands when the collection is created/reset.
+        metadata={"hnsw:space": "cosine", "embed_model": EMBED_MODEL, "embed_dim": EMBED_DIM},
     )
+    _assert_collection_compatible(col)
+    return col
 
 
 # ── Index operations ──────────────────────────────────────────────────────────
@@ -158,7 +234,10 @@ def upsert_record(col, record: dict) -> int:
         embeddings.append(embed(frame_doc))
         metadatas.append({**meta_base, "chunk_type": "frame_tags", "chunk_idx": 0})
 
-    col.upsert(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
+    try:
+        col.upsert(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
+    except Exception as exc:  # defensive: a dim mismatch here means a stale index
+        _reraise_dim_error(exc)
     return len(ids)
 
 
@@ -177,7 +256,10 @@ def _query_collection(col, query_embeddings, n_results, project_scope=None):
     where = _scope_where(project_scope)
     if where:
         kwargs["where"] = where
-    return col.query(**kwargs)
+    try:
+        return col.query(**kwargs)
+    except Exception as exc:  # defensive: surface a dim mismatch as a clear error
+        _reraise_dim_error(exc)
 
 
 def _process_query_results(raw: Dict[str, Any], n_results: int, skip_media_ids=None) -> List[Dict[str, Any]]:
