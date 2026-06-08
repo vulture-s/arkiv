@@ -415,19 +415,33 @@ def search_all(
 
     # Phase 16.2: federation results carry absolute media + project paths; strip
     # them at the API boundary so a videos_read client can't map the operator's
-    # cross-project directory layout. relative_path is the non-leaking form;
-    # project_path is reduced to its folder basename.
+    # cross-project directory layout. project_path is reduced to its folder
+    # basename; the internal absolute_path / relative_path fields are dropped so
+    # only the sanitized `path` survives.
+    def _basename_only(value):
+        return os.path.basename(str(value).rstrip("/")) if value else value
+
     for item in payload.get("items", []) or []:
-        item.pop("absolute_path", None)
-        # Route through _display_path so even a relative_path that is itself
-        # absolute (federation's empty-stored-path edge) is basenamed, never
-        # copied through as an absolute path.
+        # Route relative_path through _display_path FIRST: for an out-of-root row
+        # federation's relative_path is actually the *absolute* path (it falls
+        # back to str(stored) when relative_to() fails), so it must be basenamed,
+        # never copied through. Then drop the internal absolute/relative fields —
+        # leaving relative_path in place was the residual leak this closes.
         chosen = item.get("relative_path")
         if chosen is None:
             chosen = item.get("path") or ""
         item["path"] = _display_path(chosen)
+        item.pop("absolute_path", None)
+        item.pop("relative_path", None)
         if item.get("project_path"):
-            item["project_path"] = os.path.basename(str(item["project_path"]).rstrip("/"))
+            item["project_path"] = _basename_only(item["project_path"])
+
+    # Errors carry the absolute project_path on timeout / preflight failure
+    # (federation sets project_path=str(project.path)); a failed project must not
+    # leak its absolute root either.
+    for err in payload.get("errors", []) or []:
+        if err.get("project_path"):
+            err["project_path"] = _basename_only(err["project_path"])
 
     status_code = 200
     if payload.get("projects_queried") and payload.get("projects_failed", 0) >= payload.get("projects_queried", 0):
