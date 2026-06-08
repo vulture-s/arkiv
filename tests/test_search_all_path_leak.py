@@ -84,3 +84,34 @@ def test_search_all_handles_none_project_path_in_errors(fastapi_client, monkeypa
     resp = fastapi_client.get("/api/search/all", params={"q": "x"})
     assert resp.status_code in (200, 207)
     assert resp.json()["errors"][0]["project_path"] is None
+
+
+# Codex P2: a cross-platform federation peer can hand over Windows-style absolute
+# paths; os.path.basename on a POSIX host doesn't split on "\" and would leak them.
+WIN_ABS = "C:\\Users\\me\\secret-proj\\footage\\clip.mov"
+WIN_ROOT = "C:\\Users\\me\\secret-proj"
+
+
+def test_search_all_strips_windows_style_absolute_paths(fastapi_client, monkeypatch):
+    def _payload(*a, **k):
+        return {
+            "query": "x", "total_results": 1, "projects_queried": 2, "projects_failed": 1,
+            "items": [{
+                "media_id": 1, "project_name": "p", "filename": "clip.mov",
+                "relative_path": WIN_ABS, "absolute_path": WIN_ABS, "path": WIN_ABS,
+                "project_path": WIN_ROOT, "score": 0.9,
+            }],
+            "errors": [{"project_name": "slow", "project_path": WIN_ROOT,
+                        "error": "timeout after 10.0s", "stage": "timeout"}],
+        }
+
+    monkeypatch.setattr(federation, "search_all_projects", _payload)
+    resp = fastapi_client.get("/api/search/all", params={"q": "x"})
+    assert resp.status_code in (200, 207)
+    data = resp.json()
+    assert data["items"][0]["path"] == "clip.mov"              # basenamed across "\"
+    assert data["items"][0]["project_path"] == "secret-proj"
+    assert data["errors"][0]["project_path"] == "secret-proj"
+    blob = json.dumps(data, ensure_ascii=False)
+    assert WIN_ABS not in blob and WIN_ROOT not in blob
+    assert "C:" not in blob and "\\" not in blob              # no Windows path fragment

@@ -114,6 +114,30 @@ thumbs_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnails")
 
 
+def _basename_safe(value: str) -> str:
+    """Separator-agnostic basename. `os.path.basename` on a POSIX host treats `\\`
+    as an ordinary character, so a Windows project path (`C:\\Users\\me\\proj`)
+    handed over by a cross-platform federation peer would survive `basename` +
+    `rstrip("/")` and leak intact. Normalise both separators first."""
+    if not value:
+        return value
+    normalized = str(value).replace("\\", "/").rstrip("/")
+    return normalized.rsplit("/", 1)[-1] or normalized
+
+
+def _looks_absolute(p: str) -> bool:
+    """True for POSIX (`/x`), Windows drive (`C:\\x`), or UNC (`\\\\host`) absolute
+    paths. `os.path.isabs` on a POSIX host misses the Windows forms, which would
+    let a cross-platform peer's absolute path slip past the leak guard."""
+    if not p:
+        return False
+    return (
+        p.startswith("/")
+        or p.startswith("\\\\")
+        or (len(p) >= 2 and p[1] == ":" and p[0].isalpha())
+    )
+
+
 def _display_path(path: str) -> str:
     """Phase 16.2: the non-leaking path form for API responses.
 
@@ -129,8 +153,8 @@ def _display_path(path: str) -> str:
     if not path:
         return path
     rel = db.to_relative(path)
-    if os.path.isabs(rel):  # absolute & outside PROJECT_ROOT — don't leak it
-        return os.path.basename(rel)
+    if _looks_absolute(rel):  # absolute (POSIX/Windows/UNC) & outside root — don't leak
+        return _basename_safe(rel)
     return rel
 
 
@@ -419,7 +443,7 @@ def search_all(
     # basename; the internal absolute_path / relative_path fields are dropped so
     # only the sanitized `path` survives.
     def _basename_only(value):
-        return os.path.basename(str(value).rstrip("/")) if value else value
+        return _basename_safe(value)
 
     for item in payload.get("items", []) or []:
         # Route relative_path through _display_path FIRST: for an out-of-root row
