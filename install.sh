@@ -129,10 +129,12 @@ python3 -c "import db; db.init_db(); print('  DB initialized')"
 
 # ── 8. Create desktop shortcut (interactive installs only) ──
 # A headless / piped (`curl | bash`) / nohup install has no GUI to answer macOS's
-# Desktop (TCC) access prompt, so `cp` into ~/Desktop can hang indefinitely. Only
-# create the shortcut when attached to a terminal; otherwise skip it silently.
+# Desktop (TCC) access prompt, so `cp` into ~/Desktop can hang indefinitely. Guard
+# on STDIN, not stdout: for `curl | bash` fd 0 is the pipe (not a tty) while fd 1
+# is still the terminal, so `-t 1` would wrongly run and hang (Codex P1). `-t 0`
+# is false for piped/headless installs and true only for a real interactive shell.
 SHORTCUT="$HOME/Desktop/arkiv.command"
-if [ -t 1 ] && [ -f "$INSTALL_DIR/arkiv.command" ]; then
+if [ -t 0 ] && [ -f "$INSTALL_DIR/arkiv.command" ]; then
     cp "$INSTALL_DIR/arkiv.command" "$SHORTCUT"
     chmod +x "$SHORTCUT"
     echo -e "  ${GREEN}✓${NC} Desktop shortcut created"
