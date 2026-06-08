@@ -1,0 +1,230 @@
+"""arkiv MCP server (Phase 14).
+
+Exposes arkiv's local media knowledge layer — semantic search, metadata,
+transcripts, stats — to MCP clients (Claude, OpenClaw) over stdio.
+
+Design contract:
+- **Read-only.** No ingest, no delete, no mutation. The server only reads the
+  existing DB / vector index.
+- **No absolute-path leak.** Every filesystem path in a response is
+  PROJECT_ROOT-relative, with a basename fallback for out-of-root legacy rows
+  (`db.to_relative` passes those through as absolute). Mirrors the Phase 16.2
+  path-leak hardening on the HTTP API — a red line for this server.
+- **Reuse, don't fork.** Backed by `db` + `vectordb`; deliberately does NOT
+  import `server` (that would pull in the whole FastAPI app + its startup cost).
+
+Run:  python mcp_server.py            # stdio MCP server
+"""
+from __future__ import annotations
+
+import json
+import os
+from typing import Any, Dict, List, Optional
+
+import db
+import vectordb as vdb
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("arkiv")
+
+
+# ── path safety ───────────────────────────────────────────────────────────────
+def _safe_path(p: Optional[str]) -> Optional[str]:
+    """Return a PROJECT_ROOT-relative path, never an absolute one.
+
+    `db.to_relative` relativizes paths under PROJECT_ROOT but passes out-of-root
+    absolute paths through unchanged — which would leak the operator's directory
+    tree. Fall back to the basename in that case so a response can never expose
+    an absolute path (red line, mirrors Phase 16.2).
+    """
+    if not p:
+        return p
+    rel = db.to_relative(p)
+    if os.path.isabs(rel):
+        return os.path.basename(rel)
+    return rel
+
+
+# ── shaping ───────────────────────────────────────────────────────────────────
+_LIGHT_FIELDS = ("id", "filename", "lang", "duration_s", "size_mb", "rating", "created_at")
+
+
+def _light(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """Lightweight record for list/search results (no transcript / frame_tags)."""
+    out = {k: rec.get(k) for k in _LIGHT_FIELDS if k in rec}
+    if rec.get("path"):
+        out["path"] = _safe_path(rec["path"])
+    return out
+
+
+def _full(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """Full record with every path field sanitized."""
+    out = dict(rec)
+    out["path"] = _safe_path(rec.get("path"))
+    if "thumbnail_path" in out:
+        out["thumbnail_path"] = _safe_path(rec.get("thumbnail_path"))
+    return out
+
+
+def _tag_names(media_id: int) -> List[str]:
+    return [t["name"] for t in db.get_tags(media_id) if t.get("name")]
+
+
+# ── impl (unit-testable; no MCP/stdio coupling) ───────────────────────────────
+def search_media_impl(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    """Semantic search with SQL text fallback. Returns lightweight records."""
+    query = (query or "").strip()
+    if not query:
+        return []
+    limit = max(1, min(100, limit))
+
+    enriched: List[Dict[str, Any]] = []
+    seen: set = set()
+
+    # 1. Semantic (vector) search — preferred.
+    try:
+        for r in vdb.search(query, n_results=limit * 3):
+            mid = int(r["media_id"])
+            if mid in seen:
+                continue
+            rec = db.get_record_by_id(mid)
+            if not rec:
+                continue
+            seen.add(mid)
+            item = _light(rec)
+            item["score"] = round(float(r.get("score", 0)), 4)
+            if r.get("excerpt"):
+                item["excerpt"] = r["excerpt"]
+            item["tags"] = _tag_names(mid)
+            enriched.append(item)
+            if len(enriched) >= limit:
+                break
+    except Exception:
+        # Vector index unavailable/empty/dim-mismatch — degrade to SQL.
+        enriched, seen = [], set()
+
+    # 2. SQL text fallback (filename / transcript) when semantic found nothing.
+    if not enriched:
+        like = f"%{query}%"
+        with db.get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM media WHERE filename LIKE ? OR transcript LIKE ? "
+                "ORDER BY id LIMIT ?",
+                (like, like, limit),
+            ).fetchall()
+            for row in rows:
+                rec = dict(row)
+                mid = rec["id"]
+                if mid in seen:
+                    continue
+                seen.add(mid)
+                item = _light(rec)
+                item["tags"] = _tag_names(mid)
+                enriched.append(item)
+
+    return enriched[:limit]
+
+
+def get_media_impl(media_id: int) -> Optional[Dict[str, Any]]:
+    """Full metadata for one media item (sanitized paths + tags), or None."""
+    rec = db.get_record_by_id(int(media_id))
+    if not rec:
+        return None
+    out = _full(rec)
+    out["tags"] = _tag_names(int(media_id))
+    return out
+
+
+def get_transcript_impl(media_id: int) -> Optional[Dict[str, Any]]:
+    """Transcript text for one media item, or None."""
+    rec = db.get_record_by_id(int(media_id))
+    if not rec:
+        return None
+    return {
+        "id": rec.get("id"),
+        "filename": rec.get("filename"),
+        "lang": rec.get("lang"),
+        "transcript": rec.get("transcript"),
+    }
+
+
+def list_recent_impl(limit: int = 20) -> List[Dict[str, Any]]:
+    """Most recent media (lightweight)."""
+    limit = max(1, min(100, limit))
+    return [_light(r) for r in db.get_media_list(offset=0, limit=limit, lang=None)]
+
+
+def library_stats_impl() -> Dict[str, Any]:
+    """Library aggregate stats."""
+    return db.get_stats()
+
+
+def list_tags_impl(limit: int = 30) -> List[Dict[str, Any]]:
+    """Top tags by frequency."""
+    limit = max(1, min(200, limit))
+    return db.get_top_tags(limit)
+
+
+# ── MCP tools ─────────────────────────────────────────────────────────────────
+# Tools return JSON strings (ensure_ascii=False keeps Chinese readable, matching
+# export.py) — an unambiguous, version-stable contract across MCP SDK releases.
+def _j(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False, default=str)
+
+
+@mcp.tool()
+def search_media(query: str, limit: int = 20) -> str:
+    """Search the local media library by natural-language query.
+
+    Semantic search over transcripts + vision tags, falling back to
+    filename/transcript text match. Returns a JSON list of lightweight records:
+    {id, filename, path, score, excerpt, tags, lang, duration_s}.
+    """
+    return _j(search_media_impl(query, limit))
+
+
+@mcp.tool()
+def get_media(media_id: int) -> str:
+    """Full metadata for one media item (relative paths, tags, vision fields).
+
+    Returns a JSON object, or null if the id is unknown.
+    """
+    return _j(get_media_impl(media_id))
+
+
+@mcp.tool()
+def get_transcript(media_id: int) -> str:
+    """Full transcript text for one media item.
+
+    Returns JSON {id, filename, lang, transcript}, or null if unknown.
+    """
+    return _j(get_transcript_impl(media_id))
+
+
+@mcp.tool()
+def list_recent(limit: int = 20) -> str:
+    """Most recently ingested media (lightweight). Returns a JSON list."""
+    return _j(list_recent_impl(limit))
+
+
+@mcp.tool()
+def library_stats() -> str:
+    """Library totals: count, transcribed, total duration/size, languages.
+
+    Returns a JSON object.
+    """
+    return _j(library_stats_impl())
+
+
+@mcp.tool()
+def list_tags(limit: int = 30) -> str:
+    """Top tags in the library by frequency. Returns a JSON list of {name, count}."""
+    return _j(list_tags_impl(limit))
+
+
+def main() -> None:
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()

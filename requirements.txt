@@ -39,6 +39,12 @@ whisper-guard>=0.3   # 4-layer anti-hallucination text filter (was vendored; now
 faster-whisper>=1.0;platform_system!="Darwin"
 mlx-whisper>=0.4;platform_system=="Darwin"
 
+# ── MCP server (Phase 14) — optional ─────────────────────
+# Only needed to run the MCP server (`python mcp_server.py`), which exposes
+# arkiv's search/metadata to MCP clients (Claude, OpenClaw). The HTTP API and
+# CLI work without it.
+mcp>=1.2
+
 # ── CUDA / GPU support (install manually if needed) ──────
 # torch>=2.0              # Required for CUDA Whisper; skip on macOS (MLX)
 
