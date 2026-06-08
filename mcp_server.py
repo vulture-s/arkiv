@@ -29,19 +29,35 @@ mcp = FastMCP("arkiv")
 
 
 # ── path safety ───────────────────────────────────────────────────────────────
+def _looks_absolute(p: str) -> bool:
+    """True for POSIX (`/x`), Windows drive (`C:\\x`), or UNC (`\\\\host`) absolutes.
+    `os.path.isabs` on a POSIX host misses the Windows forms, which would let a
+    legacy/cross-platform row leak its full path. The Windows drive form requires
+    a backslash after the colon (`C:\\`); a forward-slash `C:/x` is a POSIX
+    relative path under a dir named like a drive letter."""
+    if not p:
+        return False
+    return (
+        p.startswith("/")
+        or p.startswith("\\\\")
+        or (len(p) >= 3 and p[0].isalpha() and p[1] == ":" and p[2] == "\\")
+    )
+
+
 def _safe_path(p: Optional[str]) -> Optional[str]:
     """Return a PROJECT_ROOT-relative path, never an absolute one.
 
     `db.to_relative` relativizes paths under PROJECT_ROOT but passes out-of-root
     absolute paths through unchanged — which would leak the operator's directory
-    tree. Fall back to the basename in that case so a response can never expose
-    an absolute path (red line, mirrors Phase 16.2).
+    tree. Fall back to a separator-agnostic basename in that case so a response
+    can never expose an absolute path, POSIX **or** Windows/UNC (red line,
+    mirrors the HTTP API's Phase 16.2 `_display_path`).
     """
     if not p:
         return p
     rel = db.to_relative(p)
-    if os.path.isabs(rel):
-        return os.path.basename(rel)
+    if _looks_absolute(rel):
+        return rel.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
     return rel
 
 
@@ -149,9 +165,19 @@ def get_transcript_impl(media_id: int) -> Optional[Dict[str, Any]]:
 
 
 def list_recent_impl(limit: int = 20) -> List[Dict[str, Any]]:
-    """Most recent media (lightweight)."""
+    """Most recent media (lightweight), newest first.
+
+    `db.get_media_list` paginates by `id` ASC (oldest first), so reusing it would
+    return the OLDEST ingests — the opposite of this tool's contract. Query
+    descending instead.
+    """
     limit = max(1, min(100, limit))
-    return [_light(r) for r in db.get_media_list(offset=0, limit=limit, lang=None)]
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT {db.LIGHT_COLS} FROM media ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [_light(dict(r)) for r in rows]
 
 
 def library_stats_impl() -> Dict[str, Any]:

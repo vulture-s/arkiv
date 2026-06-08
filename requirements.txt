@@ -42,8 +42,9 @@ mlx-whisper>=0.4;platform_system=="Darwin"
 # ── MCP server (Phase 14) — optional ─────────────────────
 # Only needed to run the MCP server (`python mcp_server.py`), which exposes
 # arkiv's search/metadata to MCP clients (Claude, OpenClaw). The HTTP API and
-# CLI work without it.
-mcp>=1.2
+# CLI work without it. Gated on Python 3.10+ — the MCP SDK requires it, and arkiv
+# still supports 3.9 (NAS), where an unconditional entry would break pip install.
+mcp>=1.2; python_version >= "3.10"
 
 # ── CUDA / GPU support (install manually if needed) ──────
 # torch>=2.0              # Required for CUDA Whisper; skip on macOS (MLX)

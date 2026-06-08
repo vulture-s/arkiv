@@ -164,14 +164,39 @@ def test_get_transcript_not_found(monkeypatch):
 
 
 # ── pass-through impls ────────────────────────────────────────────────────────
-def test_list_recent(monkeypatch):
+def test_list_recent_orders_descending(monkeypatch):
+    """Codex P2: 'most recent' must query id DESC, not reuse the ASC paginator."""
     monkeypatch.setattr(db, "to_relative", lambda p: "r.mp4")
-    monkeypatch.setattr(
-        db, "get_media_list",
-        lambda offset, limit, lang: [{"id": 1, "filename": "r.mp4", "path": "/abs/r.mp4"}],
-    )
+    captured = {}
+
+    class _CapCursor:
+        def fetchall(self):
+            return [{"id": 9, "filename": "r.mp4", "path": "/abs/r.mp4"}]
+
+    class _CapConn:
+        def execute(self, sql, params=None):
+            captured["sql"] = sql
+            return _CapCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(db, "get_conn", lambda: _CapConn())
     out = m.list_recent_impl(5)
     assert out[0]["path"] == "r.mp4"
+    assert "DESC" in captured["sql"].upper()  # newest-first
+
+
+def test_safe_path_windows_and_unc_absolute(monkeypatch):
+    """Codex P1: os.path.isabs misses Windows/UNC on POSIX — must still basename."""
+    monkeypatch.setattr(db, "to_relative", lambda p: p)  # passthrough (out-of-root)
+    assert m._safe_path("C:\\Users\\me\\footage\\x.mov") == "x.mov"
+    assert m._safe_path("\\\\nas\\share\\clip.mov") == "clip.mov"
+    # forward-slash drive-like dir is a POSIX relative path — preserved
+    assert m._safe_path("C:/camera/clip.mov") == "C:/camera/clip.mov"
 
 
 def test_library_stats(monkeypatch):
