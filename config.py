@@ -180,6 +180,81 @@ def _detect_exiftool() -> str:
 
 EXIFTOOL_PATH = _detect_exiftool()
 
+
+def _is_app_exec_alias(p: str) -> bool:
+    """True if `p` is a Windows App Execution Alias / WinGet 'Links' shim.
+
+    Those are reparse points (not real .exe files); launching one from a
+    non-interactive session (headless service / SSH) raises [WinError 448]
+    "cannot be performed on a file with a user-mapped section open". We must
+    skip them and resolve a real binary instead.
+    """
+    low = p.replace("\\", "/").lower()
+    return "/winget/links/" in low or "/microsoft/windowsapps/" in low
+
+
+def _detect_ffmpeg_tool(tool: str, env_var: str) -> str:
+    """Resolve an ffmpeg-family binary (``ffmpeg`` / ``ffprobe``).
+
+    Priority: ``ARKIV_<TOOL>_PATH`` env > ``shutil.which()`` (skipping App
+    Execution Alias shims) > common per-platform install paths > the literal
+    name (so subprocess fails loudly with WinError 2 / FileNotFoundError).
+
+    Background: on Windows, ``winget install`` exposes ffmpeg as an App
+    Execution Alias under ``WinGet\\Links`` / ``WindowsApps``. Those raise
+    [WinError 448] when launched from a non-interactive session, so every
+    headless / SSH ingest died at the first ``ffprobe`` probe. Preferring a
+    real .exe (Gyan full build, choco, scoop) fixes headless ingest while
+    leaving interactive runs and macOS/Linux (where ``which`` already returns a
+    real path) unchanged.
+    """
+    import shutil as _shutil
+
+    env_val = os.getenv(env_var)
+    if env_val:
+        return env_val
+
+    which = _shutil.which(tool)
+    if which and not _is_app_exec_alias(which):
+        return which
+
+    candidates = []
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    if localappdata:
+        pkgs = Path(localappdata) / "Microsoft" / "WinGet" / "Packages"
+        try:
+            # versioned dir → glob; newest first
+            candidates += sorted(
+                pkgs.glob("Gyan.FFmpeg*/ffmpeg-*/bin/{0}.exe".format(tool)),
+                reverse=True,
+            )
+        except OSError:
+            pass
+    candidates += [
+        # Windows
+        Path("C:/ffmpeg/bin/{0}.exe".format(tool)),
+        Path("C:/ProgramData/chocolatey/bin/{0}.exe".format(tool)),
+        Path(os.environ.get("USERPROFILE", "")) / "scoop" / "shims" / "{0}.exe".format(tool),
+        # macOS
+        Path("/opt/homebrew/bin/{0}".format(tool)),
+        Path("/usr/local/bin/{0}".format(tool)),
+        # Linux
+        Path("/usr/bin/{0}".format(tool)),
+    ]
+    for c in candidates:
+        try:
+            if c.exists():
+                return str(c)
+        except OSError:
+            continue
+
+    # Last resort: the alias shim (works interactively) or the literal name.
+    return which or tool
+
+
+FFMPEG_PATH = _detect_ffmpeg_tool("ffmpeg", "ARKIV_FFMPEG_PATH")
+FFPROBE_PATH = _detect_ffmpeg_tool("ffprobe", "ARKIV_FFPROBE_PATH")
+
 import platform as _plat
 
 _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"

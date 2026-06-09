@@ -288,6 +288,8 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | 選用的較快意圖分類模型；必須已安裝 |
 | `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (其他) | Whisper 模型 |
 | `ARKIV_EXIFTOOL_PATH` | *（空 — 自動偵測）* | exiftool 路徑（選用） |
+| `ARKIV_FFMPEG_PATH` | *（空 — 自動偵測）* | ffmpeg 路徑（選用；headless Windows 上 PATH 只有 WinGet alias shim 時可指定真實路徑） |
+| `ARKIV_FFPROBE_PATH` | *（空 — 自動偵測）* | ffprobe 路徑（選用；同上） |
 | `ARKIV_HOST` | `0.0.0.0` | 伺服器綁定位址 |
 | `ARKIV_PORT` | `8501` | 伺服器埠號 |
 

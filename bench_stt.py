@@ -94,6 +94,7 @@ def _edit_distance_list(s1: list, s2: list) -> int:
 def cmd_arkiv(args):
     """Run arkiv transcription with timing."""
     import subprocess
+    from config import FFPROBE_PATH  # resolved ffprobe (headless Windows safe)
     media = args.file
     print(f"[bench] Transcribing with arkiv: {media}")
 
@@ -112,7 +113,7 @@ def cmd_arkiv(args):
 
     # Get duration
     dur_cmd = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+        [FFPROBE_PATH, "-v", "quiet", "-show_entries", "format=duration",
          "-of", "csv=p=0", media],
         capture_output=True, text=True
     )

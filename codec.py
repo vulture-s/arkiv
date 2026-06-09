@@ -12,6 +12,8 @@ import os
 import subprocess
 from typing import Optional
 
+from config import FFPROBE_PATH  # resolved ffprobe (handles headless Windows / WinError 448)
+
 PROXY_CODECS = frozenset({
     "hevc", "hev1",
     "prores", "ap4h", "ap4x", "apch", "apcn", "apcs", "apco",
@@ -40,11 +42,14 @@ def probe_codec(path: str, timeout: float = 10.0) -> Optional[str]:
     if key in _codec_cache:
         return _codec_cache[key]
     cmd = [
-        "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+        FFPROBE_PATH, "-v", "quiet", "-select_streams", "v:0",
         "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(path),
     ]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        # encoding pinned to utf-8: Windows cp950 default can choke on ffprobe
+        # output bytes (headless ingest crash), so decode explicitly.
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
         codec = r.stdout.strip().strip(",").lower() or None
     except Exception:
         codec = None

@@ -22,6 +22,7 @@ from config import (
     WHISPER_GUARD_DEFAULT_MODE,
     WHISPER_GUARD_LAYERS,
     OLLAMA_CHAT_MODEL,
+    FFMPEG_PATH,
 )
 from llm import chat
 NO_SPEECH_THRESHOLD = 0.6
@@ -177,7 +178,7 @@ def warm_up():
         _fd, silence = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
         try:
             subprocess.run([
-                "ffmpeg", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                FFMPEG_PATH, "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
                 "-t", "1", "-loglevel", "error", silence, "-y"
             ], capture_output=True)
             mlx_whisper.transcribe(silence, path_or_hf_repo=WHISPER_MODEL, language="zh")
@@ -518,7 +519,7 @@ def _llm_polish(text: str, language: str = "zh") -> str:
 def _to_wav(media_path: str):
     _fd, out = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
     cmd = [
-        "ffmpeg", "-i", media_path,
+        FFMPEG_PATH, "-i", media_path,
         "-ac", "1", "-ar", "16000",
         "-map", "a:0",
         "-loglevel", "error",

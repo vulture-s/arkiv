@@ -289,6 +289,8 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | Optional faster model for intent classification only; must be installed |
 | `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (other) | Whisper model |
 | `ARKIV_EXIFTOOL_PATH` | *(empty — auto-detect)* | Path to exiftool binary (optional) |
+| `ARKIV_FFMPEG_PATH` | *(empty — auto-detect)* | Path to ffmpeg binary (optional; set on headless Windows where only a WinGet alias shim is on PATH) |
+| `ARKIV_FFPROBE_PATH` | *(empty — auto-detect)* | Path to ffprobe binary (optional; same as above) |
 | `ARKIV_HOST` | `0.0.0.0` | Server bind address |
 | `ARKIV_PORT` | `8501` | Server port |
 

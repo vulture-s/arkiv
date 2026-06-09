@@ -168,3 +168,71 @@ def test_detect_exiftool_user_local_bin(tmp_path, monkeypatch):
                                        "/usr/bin/exiftool"]):
         pytest.skip("hardcoded common path exists on host — can't isolate")
     assert config._detect_exiftool() == str(fake_exif)
+
+
+# ── ffmpeg/ffprobe auto-detect (headless-Windows WinError 448 fix) ────────────
+
+def test_is_app_exec_alias_detects_winget_and_windowsapps():
+    """WinGet 'Links' and WindowsApps App Execution Aliases are reparse-point
+    shims that raise [WinError 448] under non-interactive sessions — must be
+    flagged so the resolver skips them."""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    assert config._is_app_exec_alias(r"C:\Users\u\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe")
+    assert config._is_app_exec_alias(r"C:\Users\u\AppData\Local\Microsoft\WindowsApps\ffprobe.exe")
+    assert not config._is_app_exec_alias("/opt/homebrew/bin/ffmpeg")
+    assert not config._is_app_exec_alias(r"C:\ffmpeg\bin\ffmpeg.exe")
+
+
+@pytest.mark.parametrize("env_var,tool", [
+    ("ARKIV_FFMPEG_PATH", "ffmpeg"),
+    ("ARKIV_FFPROBE_PATH", "ffprobe"),
+])
+def test_detect_ffmpeg_env_var_wins(monkeypatch, env_var, tool):
+    """ARKIV_FF*_PATH env > everything (trusts user override blindly)."""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    monkeypatch.setenv(env_var, "/custom/bin/" + tool)
+    assert config._detect_ffmpeg_tool(tool, env_var) == "/custom/bin/" + tool
+
+
+def test_detect_ffmpeg_returns_real_which(monkeypatch):
+    """No env, which() returns a real (non-alias) path → use it (macOS/Linux)."""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    monkeypatch.delenv("ARKIV_FFMPEG_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    assert config._detect_ffmpeg_tool("ffmpeg", "ARKIV_FFMPEG_PATH") == "/usr/bin/ffmpeg"
+
+
+def test_detect_ffmpeg_skips_winget_alias_shim(tmp_path, monkeypatch):
+    """which() returns a WinGet Links shim → skip it and resolve a real Gyan
+    winget-packages binary instead. This is the headless WinError 448 fix."""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    shim = r"C:\Users\u\AppData\Local\Microsoft\WinGet\Links\ffprobe.exe"
+    monkeypatch.delenv("ARKIV_FFPROBE_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _: shim)
+    real = (tmp_path / "Microsoft" / "WinGet" / "Packages" / "Gyan.FFmpeg_x"
+            / "ffmpeg-8.1-full_build" / "bin" / "ffprobe.exe")
+    real.parent.mkdir(parents=True)
+    real.write_text("fake")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "empty"))
+    got = config._detect_ffmpeg_tool("ffprobe", "ARKIV_FFPROBE_PATH")
+    assert got == str(real), got
+    assert not config._is_app_exec_alias(got)
+
+
+def test_detect_ffmpeg_all_miss_returns_literal(monkeypatch, tmp_path):
+    """All fallbacks miss → returns the literal name (subprocess fails loud)."""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    monkeypatch.delenv("ARKIV_FFMPEG_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty1"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "empty2"))
+    if any(Path(p).exists() for p in ["/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg",
+                                       "/usr/bin/ffmpeg"]):
+        pytest.skip("hardcoded common ffmpeg exists on host — can't isolate")
+    assert config._detect_ffmpeg_tool("ffmpeg", "ARKIV_FFMPEG_PATH") == "ffmpeg"

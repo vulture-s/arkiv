@@ -17,6 +17,8 @@ import sys
 from enum import Enum
 from pathlib import Path
 
+from config import FFMPEG_PATH, FFPROBE_PATH
+
 PASS = 0
 FAIL = 0
 SKIP = 0
@@ -203,8 +205,15 @@ def main():
 
     # ── FFmpeg ──────────────────────────────────────────────────────────
     print("\n-- FFmpeg --")
-    ffmpeg = shutil.which("ffmpeg")
-    ffprobe = shutil.which("ffprobe")
+    # Report what arkiv actually resolves (config handles headless-Windows
+    # WinGet alias shims), verifying an absolute path exists or a bare name is
+    # on PATH.
+    def _tool_ok(resolved: str):
+        if os.path.isabs(resolved):
+            return resolved if os.path.exists(resolved) else None
+        return shutil.which(resolved)
+    ffmpeg = _tool_ok(FFMPEG_PATH)
+    ffprobe = _tool_ok(FFPROBE_PATH)
     check("ffmpeg", ffmpeg is not None, f"({ffmpeg})" if ffmpeg else "(not found)")
     check("ffprobe", ffprobe is not None, f"({ffprobe})" if ffprobe else "(not found)")
 

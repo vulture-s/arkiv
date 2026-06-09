@@ -188,7 +188,7 @@ def _white_balance_string(kelvin, tint, path=None):
 
 def probe(path: str) -> Optional[Dict]:
     cmd = [
-        "ffprobe", "-v", "quiet",
+        config.FFPROBE_PATH, "-v", "quiet",
         "-print_format", "json",
         "-show_streams", "-show_format", path
     ]
@@ -415,7 +415,7 @@ def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[st
     if force:
         proxy_path.unlink(missing_ok=True)
     cmd = [
-        "ffmpeg", "-y", "-i", path,
+        config.FFMPEG_PATH, "-y", "-i", path,
         "-c:v", "libx264", "-preset", "fast", "-crf", "28",
         "-profile:v", "high", "-level:v", "4.0",
         "-pix_fmt", "yuv420p",
@@ -426,7 +426,10 @@ def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[st
         str(proxy_path),
     ]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        # encoding pinned: Windows zh-TW default cp950 can't decode ffmpeg's
+        # utf-8 stderr → UnicodeDecodeError crashes proxy gen on headless ingest.
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=600)
         if r.returncode == 0 and proxy_path.exists():
             return str(proxy_path)
         proxy_path.unlink(missing_ok=True)

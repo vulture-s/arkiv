@@ -782,7 +782,7 @@ def _compute_waveform(path: str, bins: int):
     import subprocess
     import numpy as np
     cmd = [
-        "ffmpeg", "-v", "quiet", "-i", path,
+        config.FFMPEG_PATH, "-v", "quiet", "-i", path,
         "-ac", "1", "-ar", "8000", "-f", "s16le", "-",
     ]
     try:

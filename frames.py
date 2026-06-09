@@ -59,7 +59,7 @@ def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -
 
     t = max(duration_s * 0.5, 1.0)
     cmd = [
-        "ffmpeg", "-ss", str(t), "-i", video_path,
+        config.FFMPEG_PATH, "-ss", str(t), "-i", video_path,
         "-vf", "scale=320:-1",
         "-frames:v", "1", str(out), "-y"
     ]
@@ -112,7 +112,7 @@ def _extract_fixed_persistent(
         already_ok = out.exists() and out.stat().st_size > 0
         if not already_ok:
             cmd = [
-                "ffmpeg", "-ss", str(t), "-i", video_path,
+                config.FFMPEG_PATH, "-ss", str(t), "-i", video_path,
                 "-vf", "scale=320:-1",
                 "-frames:v", "1", str(out), "-y"
             ]
@@ -135,7 +135,7 @@ def _extract_scene_persistent(
     """Use scene detection, then persist top scene-change frames."""
     # First pass: detect scene timestamps via showinfo (stderr), discard frames
     cmd = [
-        "ffmpeg", "-i", video_path,
+        config.FFMPEG_PATH, "-i", video_path,
         "-vf", "select='gt(scene,0.3)',showinfo",
         "-vsync", "vfr", "-f", "null", "-"
     ]
@@ -166,7 +166,7 @@ def _extract_scene_persistent(
         already_ok = out.exists() and out.stat().st_size > 0
         if not already_ok:
             cmd = [
-                "ffmpeg", "-ss", str(t), "-i", video_path,
+                config.FFMPEG_PATH, "-ss", str(t), "-i", video_path,
                 "-vf", "scale=320:-1",
                 "-frames:v", "1", str(out), "-y"
             ]

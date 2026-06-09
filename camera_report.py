@@ -162,7 +162,7 @@ def _first_regex_match(pattern_text: Optional[str], filename: str) -> str:
 def _probe_codec(media_path: Optional[str]) -> str:
     if not media_path:
         return ""
-    probe = shutil.which("ffprobe")
+    probe = config.FFPROBE_PATH
     if not probe:
         return ""
     path_text = str(media_path)
