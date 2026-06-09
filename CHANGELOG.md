@@ -1,6 +1,16 @@
 # Changelog
 ## Unreleased
 
+### Added
+- **Chapter-marker export (`export.py chapters <id>`).** Turns a clip's sampled
+  scene frames (scene-change timestamps for long clips) into chapter markers, with
+  titles auto-generated from each frame's vision description (first sentence,
+  truncated). Two formats: `--format youtube` emits `MM:SS Title` lines (first
+  marker forced to `0:00` per YouTube's rule) for video descriptions; `--format
+  ffmetadata` emits an ffmpeg metadata file to embed real chapters (`ffmpeg -i in
+  -i chapters.txt -map_metadata 1 -codec copy out`). Borrowed from the FatSub
+  ProChapter benchmark; reuses existing scene segmentation, no new deps.
+
 ### Fixed
 - **Headless / SSH ingest on Windows no longer dies at the first `ffprobe` ([WinError 448]).** arkiv invoked `ffmpeg`/`ffprobe` by bare name, so on a non-interactive Windows session (headless service, SSH) they resolved to the WinGet `Links` App Execution Alias — a reparse-point shim that raises `[WinError 448]` outside an interactive token, crashing `probe()` before any clip is processed. ffmpeg/ffprobe are now resolved once via `config.FFMPEG_PATH` / `config.FFPROBE_PATH`: `ARKIV_FFMPEG_PATH` / `ARKIV_FFPROBE_PATH` env > `shutil.which()` (skipping alias shims) > common install paths (Gyan winget full build, choco, scoop, Homebrew, `/usr/bin`) > literal name. macOS/Linux behavior is unchanged (`which` returns a real path). New tests in `tests/test_config.py`.
 - **`UnicodeDecodeError` on Windows zh-TW (cp950) during proxy generation / codec probe.** `subprocess.run(..., text=True)` without an explicit encoding decoded ffmpeg/ffprobe output with the cp950 locale codec and crashed on utf-8 bytes. Proxy gen (`ingest.py`) and codec probe (`codec.py`) now pin `encoding="utf-8", errors="replace"`.

@@ -160,3 +160,72 @@ def test_cli_jsonl_writes_valid_lines(ex, sample_record, tmp_path):
 
 def test_cli_txt_missing_id_returns_1(ex):
     assert ex.main(["txt", "99999"]) == 1
+
+
+# --------------------------------------------------------------------------
+# chapters (ProChapter-style markers from scene frames)
+# --------------------------------------------------------------------------
+def _seed_with_frames(sample_record):
+    db.upsert(sample_record(path="/m/ch.mp4", filename="ch.mp4", lang="zh", duration_s=120.0))
+    mid = db.get_record_by_id(1)["id"]
+    db.upsert_frame(mid, 0, 0.0, description="開場：店內空景，木質吧台。整體氛圍溫暖。")
+    db.upsert_frame(mid, 1, 30.0, description="主廚特寫切肉")
+    db.upsert_frame(mid, 2, 75.0, description="")  # no usable description
+    return mid
+
+
+def test_chapters_youtube_format(ex, sample_record):
+    _seed_with_frames(sample_record)
+    out = ex.build_chapters(1, "youtube")
+    lines = out.splitlines()
+    assert lines[0].startswith("00:00 ")     # YouTube requires a 0:00 chapter
+    assert "01:15" in out                     # 75s -> 1:15
+    assert "Chapter 3" in out                 # empty description -> numbered title
+    # title = first sentence only (stops at the first 。)
+    assert "開場：店內空景，木質吧台。" in out
+    assert "整體氛圍溫暖" not in out
+
+
+def test_chapters_inserts_intro_when_first_frame_not_at_zero(ex, sample_record):
+    db.upsert(sample_record(path="/m/i.mp4", duration_s=60.0))
+    mid = db.get_record_by_id(1)["id"]
+    db.upsert_frame(mid, 0, 12.0, description="第一個畫面")
+    out = ex.build_chapters(mid, "youtube")
+    assert out.splitlines()[0] == "00:00 Intro"
+    assert "00:12 第一個畫面" in out
+
+
+def test_chapters_ffmetadata_format(ex, sample_record):
+    _seed_with_frames(sample_record)
+    out = ex.build_chapters(1, "ffmetadata")
+    assert out.startswith(";FFMETADATA1")
+    assert out.count("[CHAPTER]") == 3
+    assert "TIMEBASE=1/1000" in out
+    for s in ("START=0", "START=30000", "START=75000"):
+        assert s in out
+    assert "END=120000" in out               # last chapter ends at duration
+    assert "title=主廚特寫切肉" in out
+
+
+def test_chapters_no_frames_returns_empty(ex, sample_record):
+    db.upsert(sample_record(path="/m/nf.mp4", duration_s=10.0))
+    assert ex.build_chapters(1, "youtube") == ""
+
+
+def test_chapters_missing_media_raises(ex):
+    with pytest.raises(KeyError):
+        ex.build_chapters(99999)
+
+
+def test_fmt_ts(ex):
+    assert ex._fmt_ts(0) == "00:00"
+    assert ex._fmt_ts(75) == "01:15"
+    assert ex._fmt_ts(3661) == "1:01:01"
+
+
+def test_cli_chapters_writes_out(ex, sample_record, tmp_path):
+    _seed_with_frames(sample_record)
+    out = tmp_path / "ch.txt"
+    rc = ex.main(["chapters", "1", "--format", "ffmetadata", "--out", str(out)])
+    assert rc == 0
+    assert ";FFMETADATA1" in out.read_text(encoding="utf-8")

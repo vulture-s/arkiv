@@ -14,6 +14,9 @@ LoRA / RAG pipeline actually wants:
     python export.py txt <media_id> [--out clip.txt]
         a single clip's transcript.
 
+    python export.py chapters <media_id> [--format youtube|ffmetadata] [--out]
+        chapter markers from the clip's scene frames (ProChapter-style).
+
 Reads the DB directly via db.get_conn() (same as ingest.py) so it stays free of
 the FastAPI server import. Honours --db / ARKIV_DB_PATH.
 """
@@ -146,6 +149,97 @@ def export_srt(media_id: int, max_units: float = 14.0) -> str:
     return subtitle.segments_to_srt(segments, max_units=max_units)
 
 
+def _fmt_ts(seconds: float) -> str:
+    """Seconds → `MM:SS` (or `H:MM:SS` past an hour). YouTube-chapter style."""
+    s = int(max(0.0, seconds))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return "{0}:{1:02d}:{2:02d}".format(h, m, sec)
+    return "{0:02d}:{1:02d}".format(m, sec)
+
+
+def _chapter_title(desc: Optional[str], idx: int, max_len: int = 60) -> str:
+    """One-line chapter title from a frame's vision description.
+
+    Collapses whitespace, clips to the first sentence (CJK 。！？ or ASCII . ! ?)
+    when that lands within max_len, then hard-truncates. Falls back to a numbered
+    'Chapter N' when the frame has no usable description.
+    """
+    if not desc or not desc.strip():
+        return "Chapter {0}".format(idx)
+    flat = " ".join(desc.split())
+    cut = len(flat)
+    for term in ("。", "！", "？"):
+        i = flat.find(term)
+        if 0 <= i < cut:
+            cut = i + 1  # keep the CJK terminator
+    for term in (". ", "! ", "? "):
+        i = flat.find(term)
+        if 0 <= i < cut:
+            cut = i + 1  # keep the '.', drop the space
+    flat = flat[:cut].strip()
+    if len(flat) > max_len:
+        flat = flat[:max_len].rstrip() + "…"
+    return flat or "Chapter {0}".format(idx)
+
+
+def build_chapters(media_id: int, fmt: str = "youtube") -> str:
+    """Chapter markers for one clip from its sampled frames.
+
+    For long clips arkiv's frame timestamps are scene-change points (see
+    frames._extract_scene_persistent), so they double as natural chapter
+    boundaries; short clips get evenly-spaced markers. Titles come from each
+    frame's vision description.
+
+    fmt="youtube"     → `MM:SS Title` lines (first marker forced to 0:00, as
+                        YouTube requires).
+    fmt="ffmetadata"  → ffmpeg metadata file; embed with
+                        `ffmpeg -i in.mp4 -i chapters.txt -map_metadata 1 -codec copy out.mp4`.
+    """
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise KeyError("media id {0} not found".format(media_id))
+    duration = float(rec.get("duration_s") or 0.0)
+
+    seen = set()
+    ordered: List[List] = []  # [timestamp_s, description]
+    for fr in sorted(db.get_frames(media_id), key=lambda f: f.get("timestamp_s") or 0.0):
+        ts = float(fr.get("timestamp_s") or 0.0)
+        bucket = int(ts)  # collapse sub-second duplicates
+        if bucket in seen:
+            continue
+        seen.add(bucket)
+        ordered.append([ts, fr.get("description")])
+    if not ordered:
+        return ""
+
+    titled = [(ts, _chapter_title(desc, i + 1)) for i, (ts, desc) in enumerate(ordered)]
+
+    if fmt == "youtube":
+        if titled[0][0] > 0.5:  # YouTube requires a 0:00 chapter
+            titled.insert(0, (0.0, "Intro"))
+        return "\n".join("{0} {1}".format(_fmt_ts(ts), title) for ts, title in titled)
+
+    if fmt == "ffmetadata":
+        lines = [";FFMETADATA1"]
+        for i, (ts, title) in enumerate(titled):
+            start_ms = int(ts * 1000)
+            nxt = titled[i + 1][0] if i + 1 < len(titled) else (duration or ts + 1.0)
+            end_ms = int(nxt * 1000)
+            if end_ms <= start_ms:
+                end_ms = start_ms + 1000
+            esc = title
+            for a, b in (("\\", "\\\\"), ("=", "\\="), (";", "\\;"), ("#", "\\#"), ("\n", " ")):
+                esc = esc.replace(a, b)
+            lines += ["[CHAPTER]", "TIMEBASE=1/1000",
+                      "START={0}".format(start_ms), "END={0}".format(end_ms),
+                      "title={0}".format(esc)]
+        return "\n".join(lines)
+
+    raise ValueError("unknown chapter format: {0}".format(fmt))
+
+
 def _emit(content: str, out: Optional[str]) -> None:
     if out:
         Path(out).expanduser().write_text(content, encoding="utf-8")
@@ -178,6 +272,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_srt.add_argument("--max-cjk", type=float, default=14.0, help="Max CJK units per line (default 14)")
     p_srt.add_argument("--out", default=None, help="Output file (default: stdout)")
 
+    p_ch = sub.add_parser("chapters", help="A single clip's chapter markers from scene frames")
+    p_ch.add_argument("media_id", type=int)
+    p_ch.add_argument("--format", choices=["youtube", "ffmetadata"], default="youtube",
+                      help="youtube = 'MM:SS Title' lines; ffmetadata = ffmpeg chapter file")
+    p_ch.add_argument("--out", default=None, help="Output file (default: stdout)")
+
     args = parser.parse_args(argv)
     if args.db:
         db.DB_PATH = Path(args.db)
@@ -195,6 +295,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.cmd == "srt":
         try:
             _emit(export_srt(args.media_id, args.max_cjk), args.out)
+        except KeyError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+    elif args.cmd == "chapters":
+        try:
+            _emit(build_chapters(args.media_id, args.format), args.out)
         except KeyError as e:
             print(str(e), file=sys.stderr)
             return 1
