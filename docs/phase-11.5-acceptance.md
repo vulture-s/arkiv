@@ -30,24 +30,32 @@ by mocks.
 parallel=2 doesn't beat parallel=1 on wall time without pushing peak memory past
 the threshold, keep the default at 1.
 
+**Result**: ✅ **PASS** — `2026-06-09`, PC (RTX 4070, 12 GB), 10 iphone clips
+(C462–C471, 15–230 s, 52 frames total), latest `main`. Both legs were a full
+cold-start ingest of the **same** 10 clips through a dedicated `ollama serve`
+(par=1 on :11435, par=2 on :11436; NUM_PARALLEL set at serve start, models
+unloaded between legs so each is a fair cold run). Desktop ollama (:11434)
+untouched. ffmpeg/ffprobe resolved via the Gyan build (headless WinError 448 fix).
+
 | metric | parallel=1 | parallel=2 |
 |---|---|---|
-| wall time (s) | 1172 (full ingest, 3 clips) | _not run_ |
-| per-frame vision avg (s) | ~122 (1099.6s / 9 frames) | _not run_ |
-| peak mem % | 94% (probe, pre-vision) | _not run_ |
-| frames with NULL description | 0 / 9 | _not run_ |
+| wall time (s) | **3905** | **4101**  (+5%, slower) |
+| per-frame vision avg (s) | ~34 (1618 s / ~47 frames) | 35.9 (1867 s / 52 frames) |
+| peak GPU VRAM | 11866 MiB (96.6%) | 11870 MiB (96.6%) |
+| frames with NULL description | **0 / 52** | **0 / 52** |
 
-> ⚠️ **Small sample (n=3 clips / 9 frames), single run, parallel=1 only.** This
-> daytime session ran the cold-start anchor (B) on parallel=1; the parallel=2
-> A/B leg was **not run** (it needs an Ollama restart with the env flag + a
-> ≥10-clip set for a fair comparison). The parallel=1 column here is a real but
-> small data point, not the full A/B. Per EC-1 (sample-size labeling): low n,
-> treat as directional, not a production tuning decision.
+> ⚠️ **Small sample (n=10 clips / 52 frames), single run per leg.** A real
+> two-legged A/B (unlike the 2026-06-03 stub), but one run each — directional
+> per EC-1, not a multi-run benchmark. The parallel=1 vision-total counts 9 of
+> 10 clips (one clip's `>vision` stdout line wasn't captured by the parser);
+> wall time is the full, authoritative figure for both legs.
 
-**Recommendation**: _parallel=2 A/B still pending a fair ≥10-clip run._ On this
-machine (mini, 16GB, M2 Pro) parallel=1 already pushed probe memory to 94% and
-triggered backpressure (see C) — raising parallel risks more contention, not
-less, so **keep the default at 1 here** until a real A/B says otherwise.
+**Recommendation**: **keep `OLLAMA_NUM_PARALLEL=1`.** On the RTX 4070, parallel=1
+already pins VRAM at ~97%; parallel=2 hits the *same* ceiling but runs **5%
+slower** wall-clock and worse per-frame — a second slot just adds scheduling
+contention on a GPU that's already memory-bound for a num_ctx=16384 vision model.
+parallel=2 brings no throughput win and no cold-start regression (NULL=0 in both),
+so the default stands.
 
 ---
 
@@ -65,14 +73,16 @@ less, so **keep the default at 1 here** until a real A/B says otherwise.
 **Pass condition**: count == 0 (no frame left undescribed by a cold-start
 timeout).
 
-**Result**: ✅ **PASS** — `2026-06-09`, mini-relay (M2 Pro, 16GB), 3 NAS clips
-(C4606/C4609/C4611, 2023 Tokyo, ~134MB each), latest `main`.
+**Result**: ✅ **PASS** — confirmed on two machines, `2026-06-09`:
+- **PC (RTX 4070, NVIDIA)** — 10 iphone clips / **52 frames**, both A/B legs
+  (par=1 and par=2): **0 NULL** each. This is the stronger sample (n=10).
+- **mini-relay (M2 Pro, 16GB, Apple)** — 3 NAS clips (C4606/C4609/C4611, 2023
+  Tokyo, ~134MB each): 0 NULL. The original directional run.
 
 ```
-media: 3 | transcribed: 3
-frames: 9 | NULL/empty description: 0
-wall_seconds: 1172 | ingest_exit: 0
-vision per clip: 311.6s / 400.2s / 387.8s
+PC   : media 10 | frames 52 | NULL 0  (×2 legs)   | NVIDIA cold start
+mini : media 3  | frames 9  | NULL 0  | wall 1172s | Apple cold start
+       vision per clip (mini): 311.6s / 400.2s / 387.8s
 ```
 
 `SELECT COUNT(*) FROM frames WHERE description IS NULL OR description=''` → **0**.
@@ -121,13 +131,15 @@ counterpart to the mock backpressure tests.
 
 | anchor | status | note |
 |---|---|---|
-| A — parallel 1 vs 2 A/B | ⏳ partial | parallel=1 leg run (n=3); parallel=2 A/B still pending a ≥10-clip run |
-| B — cold-start elimination | ✅ pass | 0/9 NULL frames, small sample (n=3 clips) |
+| A — parallel 1 vs 2 A/B | ✅ pass | full A/B on RTX 4070 (n=10); par=2 is 5% slower at the same 97% VRAM ceiling → keep `OLLAMA_NUM_PARALLEL=1` |
+| B — cold-start elimination | ✅ pass | 0 NULL frames — NVIDIA n=10 (×2 legs) + Apple n=3 |
 | C — backpressure fires live | ✅ pass | observed live, 94%>80% WAIT → warm-up → proceed |
 
-Anchors B and C — the headline cold-start risk — are closed on real GPU
-(directional, small-sample per EC-1). Anchor A's full parallel A/B is the one
-remaining tuning task; the default `OLLAMA_NUM_PARALLEL=1` stands until then.
+All three anchors closed on real GPU (directional, small-sample per EC-1). The
+production default `OLLAMA_NUM_PARALLEL=1` is now backed by a real A/B, not just
+the contention argument.
 
-*Stub created 2026-06-03 by the overnight run. A/B/C filled 2026-06-09 from a
-scoped daytime GPU run (3 NAS clips) on mini-relay; B+C pass, A partial.*
+*Stub created 2026-06-03 by the overnight run. B+C filled 2026-06-09 from a
+scoped GPU run (3 NAS clips) on mini-relay. Anchor A closed 2026-06-09 by a full
+parallel=1-vs-2 A/B (10 iphone clips / 52 frames) on PC (RTX 4070); B also
+re-confirmed there at n=10.*
