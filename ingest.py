@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
@@ -187,17 +188,37 @@ def _white_balance_string(kelvin, tint, path=None):
 
 
 def probe(path: str) -> Optional[Dict]:
+    # `-v error` (not `quiet`) so real ffprobe errors surface on stderr — a
+    # silent `-v quiet` failure mid-ingest used to print only "[ffprobe failed]"
+    # with no cause. Bounded timeout + one retry recovers from transient
+    # subprocess-spawn / resource pressure (e.g. handle exhaustion under load)
+    # that otherwise poisons every subsequent clip in a long batch.
     cmd = [
-        config.FFPROBE_PATH, "-v", "quiet",
+        config.FFPROBE_PATH, "-v", "error",
         "-print_format", "json",
         "-show_streams", "-show_format", path
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    r = None
+    last_err = ""
+    for attempt in range(2):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=120)
+            break
+        except (OSError, subprocess.TimeoutExpired) as e:
+            last_err = "{0}: {1}".format(type(e).__name__, e)
+            if attempt == 0:
+                time.sleep(2)  # let transient resource pressure clear, then retry
+    if r is None:
+        print("\n    [ffprobe spawn failed: {0}]".format(last_err))
+        return None
     if r.returncode != 0:
+        print("\n    [ffprobe rc={0}] {1}".format(r.returncode, (r.stderr or "").strip()[:300]))
         return None
     try:
         data = json.loads(r.stdout)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        print("\n    [ffprobe bad json: {0}]".format(e))
         return None
 
     fmt = data.get("format", {})

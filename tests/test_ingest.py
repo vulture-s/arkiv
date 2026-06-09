@@ -242,3 +242,92 @@ def test_bmd_metadata_roundtrips_white_balance_column(tmp_db, sample_record):
     assert row["aperture"] == 2.8
     assert row["shutter_speed"] == "1/50"
     assert row["white_balance"] == "5600K T0"
+
+
+# ── probe() robustness: surface real errors + timeout + one retry ────────────
+
+def _probe_good_json():
+    import json
+    return json.dumps({
+        "format": {"duration": "5", "size": "1048576"},
+        "streams": [
+            {"codec_type": "video", "r_frame_rate": "30/1", "width": 1920,
+             "height": 1080, "codec_name": "h264"},
+            {"codec_type": "audio"},
+        ],
+    })
+
+
+def test_probe_retries_on_spawn_error_then_succeeds(monkeypatch):
+    """A transient subprocess-spawn failure (e.g. handle exhaustion under load)
+    is retried once instead of poisoning the whole batch."""
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    class _P:
+        returncode = 0
+        stdout = _probe_good_json()
+        stderr = ""
+
+    calls = {"n": 0}
+
+    def fake_run(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError(24, "Too many open files")
+        return _P()
+
+    monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+    monkeypatch.setattr(ingest.time, "sleep", lambda *_: None)
+    meta = ingest.probe("x.mp4")
+    assert meta is not None
+    assert calls["n"] == 2                      # failed once, retried, then OK
+    assert abs(meta["duration_s"] - 5.0) < 0.01
+
+
+def test_probe_returns_none_and_surfaces_nonzero_rc(monkeypatch, capsys):
+    """rc != 0 no longer silently returns None — the real ffprobe stderr is printed."""
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    class _P:
+        returncode = 1
+        stdout = ""
+        stderr = "moov atom not found"
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _P())
+    assert ingest.probe("bad.mp4") is None
+    out = capsys.readouterr().out
+    assert "rc=1" in out and "moov atom" in out
+
+
+def test_probe_gives_up_after_retry_on_persistent_spawn_error(monkeypatch, capsys):
+    """Two spawn failures → returns None with a diagnostic, not an unhandled raise."""
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    def fake_run(*a, **kw):
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+    monkeypatch.setattr(ingest.time, "sleep", lambda *_: None)
+    assert ingest.probe("x.mp4") is None
+    assert "spawn failed" in capsys.readouterr().out
+
+
+def test_probe_returns_none_on_timeout(monkeypatch, capsys):
+    """A hung ffprobe times out (bounded) instead of blocking the batch forever."""
+    import sys, os, subprocess as _sp
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    def fake_run(*a, **kw):
+        raise _sp.TimeoutExpired(cmd="ffprobe", timeout=120)
+
+    monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+    monkeypatch.setattr(ingest.time, "sleep", lambda *_: None)
+    assert ingest.probe("x.mp4") is None
+    assert "spawn failed" in capsys.readouterr().out
