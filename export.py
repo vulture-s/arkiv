@@ -219,7 +219,15 @@ def build_chapters(media_id: int, fmt: str = "youtube") -> str:
     if fmt == "youtube":
         if titled[0][0] > 0.5:  # YouTube requires a 0:00 chapter
             titled.insert(0, (0.0, "Intro"))
-        return "\n".join("{0} {1}".format(_fmt_ts(ts), title) for ts, title in titled)
+        # YouTube silently ignores the whole chapter list unless every chapter is
+        # >= 10s after the previous one — drop too-close scene markers (keep the
+        # first). ffmetadata has no such rule, so this only applies here.
+        min_gap = 10.0
+        kept = []
+        for ts, title in titled:
+            if not kept or ts - kept[-1][0] >= min_gap:
+                kept.append((ts, title))
+        return "\n".join("{0} {1}".format(_fmt_ts(ts), title) for ts, title in kept)
 
     if fmt == "ffmetadata":
         lines = [";FFMETADATA1"]

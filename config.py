@@ -248,8 +248,12 @@ def _detect_ffmpeg_tool(tool: str, env_var: str) -> str:
         except OSError:
             continue
 
-    # Last resort: the alias shim (works interactively) or the literal name.
-    return which or tool
+    # Last resort: the literal name. NEVER the alias shim even if `which` found
+    # one — handing back a known-bad WinGet/WindowsApps reparse point would
+    # re-trigger [WinError 448] headless. The bare name defers to runtime PATH
+    # resolution (which may surface a real binary the import-time scan missed)
+    # and otherwise fails loudly via the caller (probe() now reports the error).
+    return tool
 
 
 FFMPEG_PATH = _detect_ffmpeg_tool("ffmpeg", "ARKIV_FFMPEG_PATH")

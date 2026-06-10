@@ -229,3 +229,16 @@ def test_cli_chapters_writes_out(ex, sample_record, tmp_path):
     rc = ex.main(["chapters", "1", "--format", "ffmetadata", "--out", str(out)])
     assert rc == 0
     assert ";FFMETADATA1" in out.read_text(encoding="utf-8")
+
+
+def test_chapters_youtube_drops_sub_10s_markers(ex, sample_record):
+    """YouTube ignores chapter lists with <10s gaps — too-close scene markers
+    are dropped for youtube (kept for ffmetadata). Codex P3."""
+    db.upsert(sample_record(path="/m/g.mp4", duration_s=60.0))
+    mid = db.get_record_by_id(1)["id"]
+    db.upsert_frame(mid, 0, 0.0, description="A")
+    db.upsert_frame(mid, 1, 5.0, description="B")    # 5s after A → dropped
+    db.upsert_frame(mid, 2, 30.0, description="C")   # 25s gap → kept
+    db.upsert_frame(mid, 3, 35.0, description="D")   # 5s after C → dropped
+    assert ex.build_chapters(mid, "youtube").splitlines() == ["00:00 A", "00:30 C"]
+    assert ex.build_chapters(mid, "ffmetadata").count("[CHAPTER]") == 4  # no spacing rule

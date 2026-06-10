@@ -224,6 +224,24 @@ def test_detect_ffmpeg_skips_winget_alias_shim(tmp_path, monkeypatch):
     assert not config._is_app_exec_alias(got)
 
 
+def test_detect_ffmpeg_never_returns_alias_shim(monkeypatch, tmp_path):
+    """Last resort must be the literal name, NEVER the rejected WinGet alias —
+    handing back the shim would re-trigger headless [WinError 448] (Codex P2)."""
+    sys.path.insert(0, str(ARKIV_ROOT))
+    import config
+    shim = r"C:\Users\u\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe"
+    monkeypatch.delenv("ARKIV_FFMPEG_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _: shim)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty1"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "empty2"))
+    if any(Path(p).exists() for p in ["/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg",
+                                       "/usr/bin/ffmpeg"]):
+        pytest.skip("hardcoded common ffmpeg exists on host — can't isolate")
+    got = config._detect_ffmpeg_tool("ffmpeg", "ARKIV_FFMPEG_PATH")
+    assert got == "ffmpeg"  # literal, not the alias path
+    assert not config._is_app_exec_alias(got)
+
+
 def test_detect_ffmpeg_all_miss_returns_literal(monkeypatch, tmp_path):
     """All fallbacks miss → returns the literal name (subprocess fails loud)."""
     sys.path.insert(0, str(ARKIV_ROOT))
