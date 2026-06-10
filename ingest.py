@@ -758,6 +758,7 @@ def _run_vision_only(args):
 
     if not halted:
         print(f"\nVision-only done. {ok} files patched.")
+    return halted
 
 
 def _regenerate_proxies():
@@ -1067,7 +1068,9 @@ def main():
 
     # ── Vision-only mode: patch missing vision descriptions ──────────────
     if args.vision_only:
-        _run_vision_only(args)
+        halted = _run_vision_only(args)
+        if halted:
+            sys.exit(1)  # halt mid-patch must not report success to cron/watch
         return
 
     # Warm up models before batch processing
@@ -1200,14 +1203,16 @@ def main():
             failed += 1
 
     # ── Phase 2: Vision (unload LLM first to free VRAM) ───────────────────
+    # Initialized unconditionally so the exit-code logic can read them even when
+    # Phase 2 doesn't run (was a fragile locals().get("vision_fail", 0) hack).
+    vision_ok = vision_fail = 0
+    consecutive_vision_fail = 0  # halt-on-N-consecutive (Phase 6 / R6)
+    vision_halted = False
     if phase1_results:
         print(f"\n{'─'*60}")
         print(f"Phase 2: Vision — {len(phase1_results)} files, unloading LLM to free VRAM...")
         _unload_ollama_model("qwen2.5:14b")
         _ensure_vision_ready()
-
-        vision_ok, vision_fail = 0, 0
-        consecutive_vision_fail = 0  # halt-on-N-consecutive (Phase 6 / R6)
         for vi, (fpath, (record, frames)) in enumerate(phase1_results.items(), 1):
             fname = Path(fpath).name
             video_frames = [fd for fd in frames if fd.get("thumbnail_path")]
@@ -1242,6 +1247,11 @@ def main():
                 # Vision fail after both phases → halt
                 still_failed = sum(1 for vr in frame_results if vr.get("error") or not vr.get("description"))
                 if still_failed:
+                    # Count the halt as a failure so the exit code is nonzero —
+                    # otherwise a halt on the first file left vision_fail=0 →
+                    # implicit exit 0, hiding a fully-unindexed library from cron.
+                    vision_fail += 1
+                    vision_halted = True
                     remaining = len(phase1_results) - vi
                     print(f"\n\n{'!'*60}")
                     print(f"VISION HALTED: {still_failed}/{len(video_frames)} frames failed on {fname} (both models)")
@@ -1314,6 +1324,7 @@ def main():
                 # Symmetric with still_failed halt above — don't burn through every file
                 # writing the same error 200 times.
                 if consecutive_vision_fail >= 3:
+                    vision_halted = True
                     remaining = len(phase1_results) - vi
                     print(f"\n{'!'*60}")
                     print(f"VISION HALTED: {consecutive_vision_fail} consecutive failures (last: {fname})")
@@ -1413,11 +1424,10 @@ def main():
     # Phase 8.0e (R1): exit code reflects actual ingest outcome.
     # Before this, main() always fell through to exit 0 — 222/222 fail
     # on 2026-05-25 still returned 0, hiding the regression from runner.
-    _vfail = locals().get("vision_fail", 0)
     if failed and not ok:
         sys.exit(2)  # all phase 1 failed
-    if failed or _vfail:
-        sys.exit(1)  # partial fail (phase 1 or phase 2)
+    if failed or vision_fail or vision_halted:
+        sys.exit(1)  # partial fail (phase 1) or vision failure/halt (phase 2)
     # else: implicit exit 0
 
 

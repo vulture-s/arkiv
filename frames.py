@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -7,6 +9,21 @@ from typing import Dict, List, Optional
 import config
 
 THUMBNAILS_DIR = config.THUMBNAILS_DIR
+
+
+def _safe_stem(video_path: str) -> str:
+    """Thumbnail filename stem scoped by a hash of the absolute source path.
+
+    The bare filename stem is NOT unique: camera cards routinely reuse names
+    (Sony C0001.MP4, GoPro GX010001.MP4). With --recursive over several card
+    dumps, two clips share a stem, the second finds the first's thumbnail
+    already on disk and reuses it — so its vision tags/score are computed from
+    the wrong frames. Proxies already guard this via config.proxy_path_for;
+    thumbnails get the same path-hash treatment here.
+    """
+    stem = Path(video_path).stem
+    digest = hashlib.sha1(os.path.abspath(video_path).encode("utf-8")).hexdigest()[:10]
+    return f"{stem}_{digest}"
 
 
 def _ensure_thumbnails_dir() -> None:
@@ -52,7 +69,7 @@ def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -
     after the thumbnail-rendering logic changes).
     """
     _ensure_thumbnails_dir()
-    stem = Path(video_path).stem
+    stem = _safe_stem(video_path)
     out = THUMBNAILS_DIR / f"{stem}.jpg"
     if not force and out.exists() and out.stat().st_size > 0:
         return str(out)
@@ -84,7 +101,7 @@ def extract_frames(video_path: str, duration_s: float, fps: float) -> List[Dict]
     - Long clip: scene detect with adaptive cap, fallback to fixed frames
     """
     _ensure_thumbnails_dir()
-    stem = Path(video_path).stem
+    stem = _safe_stem(video_path)
     n_frames = _adaptive_frame_count(duration_s)
 
     if duration_s < 60:

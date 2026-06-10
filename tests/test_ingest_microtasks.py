@@ -82,7 +82,9 @@ def test_b4_extract_thumbnail_force_bypasses_cache(monkeypatch, tmp_path):
     import frames as frm
     monkeypatch.setattr(frm, "THUMBNAILS_DIR", tmp_path)
     monkeypatch.setattr(frm, "_ensure_thumbnails_dir", lambda: None)
-    (tmp_path / "clip.jpg").write_text("old")  # pre-existing poster
+    # Thumbnails are now keyed by stem + abs-path hash (C1: kill cross-card
+    # same-name collisions), so the pre-existing poster must use the safe stem.
+    (tmp_path / f"{frm._safe_stem('/x/clip.mp4')}.jpg").write_text("old")
     ran = []
     monkeypatch.setattr(frm, "_run_ffmpeg", lambda cmd, out: ran.append(1) or True)
 

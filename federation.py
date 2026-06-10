@@ -320,7 +320,14 @@ def search_all_projects(
         q_embed = None
 
     merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=min(len(projects), 8)) as executor:
+    # Manual executor (not a `with` block): the context manager's __exit__ calls
+    # shutdown(wait=True), which blocks until every worker returns — so a worker
+    # hung on a stale NAS mount would make this function hang for far longer than
+    # `timeout`, despite the per-future timeout below. We instead bound total
+    # wall-clock with a shared deadline and abandon stragglers via
+    # shutdown(wait=False, cancel_futures=True).
+    executor = ThreadPoolExecutor(max_workers=min(len(projects), 8))
+    try:
         futures = []
         for project in projects:
             futures.append((project, executor.submit(
@@ -332,9 +339,13 @@ def search_all_projects(
                 fallback_sql,
             )))
 
+        deadline = time.monotonic() + timeout
         for project, future in futures:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                remaining = 0
             try:
-                result = future.result(timeout=timeout)
+                result = future.result(timeout=remaining)
             except FuturesTimeoutError:
                 LOGGER.warning("project query timeout for %s after %ss", project.name, timeout)
                 response["projects_failed"] += 1
@@ -361,6 +372,9 @@ def search_all_projects(
                 existing = merged.get(key)
                 if existing is None or float(item.get("score", 0)) > float(existing.get("score", 0)):
                     merged[key] = item
+    finally:
+        # Do not wait on stragglers; cancel anything not yet started.
+        executor.shutdown(wait=False, cancel_futures=True)
 
     items = sorted(
         merged.values(),
