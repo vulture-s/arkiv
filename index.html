@@ -265,7 +265,28 @@ window.onunhandledrejection = function(e) {
 
 <script>
 // HTML escape to prevent XSS from filenames, transcripts, tags
-function esc(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+// Quote-safe HTML escape: the old textContent trick left ' and " unescaped, so
+// every esc() inside an HTML attribute (title="${esc(...)}") or an inline JS
+// string was injectable via LLM-generated tag names / filenames (M8). Escapes
+// &<>"' so it is safe in element body AND double/single-quoted attributes.
+function esc(s) {
+  if (s == null || s === '') return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// Safe to embed inside a SINGLE-quoted JS string that itself sits in a
+// DOUBLE-quoted HTML attribute, e.g. onclick="doAddTag(1,'${escJsAttr(name)}')".
+// Backslash-escapes JS metachars (these survive HTML attribute decoding) and
+// HTML-escapes the attribute-breaking chars.
+function escJsAttr(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/[\r\n]/g, ' ');
+}
 
 function setTheme(dark) {
   const h = document.documentElement;
@@ -673,7 +694,7 @@ function renderPagination() {
 
 function renderContentTitle() {
   document.getElementById('contentTitle').innerHTML = state.query
-    ? `搜尋：「${state.query}」<span class="text-txt-tertiary">&mdash; ${state.total} 個結果</span>`
+    ? `搜尋：「${esc(state.query)}」<span class="text-txt-tertiary">&mdash; ${state.total} 個結果</span>`
     : `全部素材 <span class="text-txt-tertiary">&mdash; ${state.total} 個項目</span>`;
 }
 
@@ -693,13 +714,13 @@ async function renderInspector() {
   const res = rec.width ? `${rec.width} × ${rec.height}` : 'audio';
 
   const tagsHtml = (rec.tags||[]).map(t =>
-    `<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${esc(t.name)} <span class="tag-remove" onclick="doRemoveTag(${rec.id},'${esc(t.name)}')">&times;</span></span>`
+    `<span class="tag tag-${t.source==='auto'?'auto':'manual'}">${esc(t.name)} <span class="tag-remove" onclick="doRemoveTag(${rec.id},'${escJsAttr(t.name)}')">&times;</span></span>`
   ).join(' ');
 
   var framesHtml = (rec.frames||[]).map(function(f) {
     var fThumb = f.thumbnail_path ? `/thumbnails/${f.thumbnail_path.replace(/\\/g,'/').split('/').pop()}` : '';
     var fTime = fmtHMS(f.timestamp_s);
-    var fDesc = f.description || ('Frame ' + (f.frame_index+1));
+    var fDesc = esc(f.description || ('Frame ' + (f.frame_index+1)));
     return `<div class="bg-surface-50 rounded overflow-hidden cursor-pointer mb-1.5 flex" style="border:1px solid var(--panel-border)" onclick="seekToFrame(${f.timestamp_s})">
       ${fThumb ? `<div style="width:80px;min-height:48px;flex-shrink:0;position:relative;background:var(--preview-bg)"><img src="${fThumb}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'"/><div style="position:absolute;bottom:2px;right:2px;background:rgba(0,0,0,.7);color:#fff;font-size:9px;padding:0 4px;border-radius:2px;font-family:monospace">${fTime}</div></div>` : ''}
       <div style="padding:6px 8px;flex:1;min-width:0"><div class="text-2xs font-semibold" style="color:var(--txt-secondary)">Frame ${f.frame_index+1} <span style="color:var(--txt-tertiary);font-weight:400">${fTime}</span></div><div class="text-2xs mt-0.5 truncate" style="color:var(--txt-primary)">${fDesc}</div></div>
@@ -944,12 +965,12 @@ function onTagInput(mediaId) {
   if(!val) { dropdown.classList.remove('show'); return; }
   const matches = state.allTags.filter(t=>t.name.includes(val)).slice(0,5);
   let h = matches.map(t=>
-    `<div class="tag-autocomplete-item" onclick="doAddTag(${mediaId},'${t.name}');document.getElementById('tagInput').value='';hideAutocomplete();">
+    `<div class="tag-autocomplete-item" onclick="doAddTag(${mediaId},'${escJsAttr(t.name)}');document.getElementById('tagInput').value='';hideAutocomplete();">
       <span>${esc(t.name)}</span><span class="text-txt-tertiary" style="font-size:9px">${t.count} 次</span></div>`
   ).join('');
   if(!matches.find(t=>t.name===val)) {
-    h += `<div class="tag-autocomplete-item border-t border-panel-border" onclick="doAddTag(${mediaId},'${val}');document.getElementById('tagInput').value='';hideAutocomplete();">
-      <span style="color:#4ade80">+ 建立「${val}」</span><span class="text-txt-tertiary" style="font-size:9px">新增</span></div>`;
+    h += `<div class="tag-autocomplete-item border-t border-panel-border" onclick="doAddTag(${mediaId},'${escJsAttr(val)}');document.getElementById('tagInput').value='';hideAutocomplete();">
+      <span style="color:#4ade80">+ 建立「${esc(val)}」</span><span class="text-txt-tertiary" style="font-size:9px">新增</span></div>`;
   }
   dropdown.innerHTML = h;
   dropdown.classList.add('show');
@@ -1001,9 +1022,28 @@ async function doExport(id, fmt) {
 }
 
 async function doExportGoodEdl() {
-  const goodItems = state.items.filter(r => r.rating === 'good');
-  if (goodItems.length === 0) { await tauriMessage('沒有 GOOD 評級的素材'); return; }
-  await doExport(goodItems[0].id, 'edl');
+  // Export ALL good-rated clips as one timeline, not just the first clip on the
+  // current grid page (M7). Fetch the full good set, then hit the batch
+  // timeline endpoint that sequences them onto a single EDL.
+  let goodIds = [];
+  try {
+    const r = await fetch('/api/media?rating=good&limit=500');
+    if (!r.ok) { await tauriMessage('讀取 GOOD 素材失敗：HTTP ' + r.status); return; }
+    const d = await r.json();
+    goodIds = (d.items || []).map(it => it.id).filter(x => x != null);
+  } catch (e) { await tauriMessage('讀取 GOOD 素材錯誤：' + e.message); return; }
+  if (goodIds.length === 0) { await tauriMessage('沒有 GOOD 評級的素材'); return; }
+
+  try {
+    const resp = await fetch('/api/export/timeline/edl?ids=' + encodeURIComponent(goodIds.join(',')));
+    if (!resp.ok) { await tauriMessage('Export 失敗：HTTP ' + resp.status); return; }
+    const blob = new Blob([await resp.text()], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'arkiv_good_timeline.edl';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    await tauriMessage('已匯出 ' + goodIds.length + ' 支 GOOD 素材為 EDL 時間線');
+  } catch (e) { await tauriMessage('Export 錯誤：' + e.message); }
 }
 
 async function doExportDaVinciCsv() {

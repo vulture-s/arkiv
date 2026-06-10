@@ -33,6 +33,10 @@ SCOPES = frozenset((
 
 _LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
 
+# Minimum seconds between last_used_at writes per token (M9): keeps "last used"
+# roughly accurate without turning every authenticated read into a write.
+_LAST_USED_THROTTLE_S = 60
+
 
 def _trust_loopback() -> bool:
     """Local browser on the same machine is trusted by default (single-machine
@@ -158,7 +162,7 @@ def resolve_raw_token(raw: str, client_ip: str, user_agent: str = "") -> dict:
     placeholders = ",".join("?" for _ in cand_hashes)
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, name, expires_at, allowed_ips_json, token_hash "
+            "SELECT id, name, expires_at, allowed_ips_json, token_hash, last_used_at "
             "FROM access_tokens WHERE token_hash IN ({0})".format(placeholders),
             cand_hashes,
         ).fetchone()
@@ -204,13 +208,31 @@ def resolve_raw_token(raw: str, client_ip: str, user_agent: str = "") -> dict:
         ).fetchall()
         scopes = frozenset(scope_row["scope"] for scope_row in scope_rows)
 
-        try:
-            conn.execute(
-                "UPDATE access_tokens SET last_used_at = ?, last_used_ip = ?, last_used_user_agent = ? WHERE id = ?",
-                (datetime.now(timezone.utc).isoformat(), client_ip, (user_agent or "")[:200], row["id"]),
-            )
-        except Exception:
-            pass
+        # Throttle the last_used write: without this, EVERY authenticated request
+        # (including reads like GET /api/media) became a write transaction, which
+        # is the prime "database is locked" trigger under concurrent ingest (M9).
+        # Skip the UPDATE when last_used_at is fresh (<60s) so a read stays a read
+        # and never contends for the write lock.
+        now = datetime.now(timezone.utc)
+        should_touch = True
+        prev = row["last_used_at"]
+        if prev:
+            try:
+                prev_dt = datetime.fromisoformat(prev)
+                if prev_dt.tzinfo is None:
+                    prev_dt = prev_dt.replace(tzinfo=timezone.utc)
+                if (now - prev_dt).total_seconds() < _LAST_USED_THROTTLE_S:
+                    should_touch = False
+            except (TypeError, ValueError):
+                pass
+        if should_touch:
+            try:
+                conn.execute(
+                    "UPDATE access_tokens SET last_used_at = ?, last_used_ip = ?, last_used_user_agent = ? WHERE id = ?",
+                    (now.isoformat(), client_ip, (user_agent or "")[:200], row["id"]),
+                )
+            except Exception:
+                pass
 
     return {"id": row["id"], "name": row["name"], "scopes": scopes}
 
