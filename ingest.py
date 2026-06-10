@@ -280,6 +280,10 @@ def probe(path: str) -> Optional[Dict]:
         "fps": round(fps, 2) if fps else None,
         "has_audio": 1 if audio_stream else 0,
         "start_tc": start_tc,
+        # Persisted so Phase 3 can decide proxy need from the DB instead of
+        # re-running ffprobe over the entire library every ingest (H1: the
+        # mid-run ffprobe storm / ingest53 root cause).
+        "codec": (video_stream.get("codec_name") or "").lower() or None if video_stream else None,
     }
 
 
@@ -476,14 +480,20 @@ def _get_media_row_for_path(path: Path) -> Optional[Dict]:
         return dict(row) if row else None
 
 
-def _get_media_id_for_path(path: Path) -> Optional[int]:
+def _get_media_id_for_path(path: Path, _conn=None) -> Optional[int]:
     abs_path, rel_path = _db_path_params(path)
-    with db.get_conn() as conn:
-        row = conn.execute(
+
+    def _do(c):
+        row = c.execute(
             "SELECT id FROM media WHERE path=? OR path=?",
             (abs_path, rel_path),
         ).fetchone()
         return row[0] if row else None
+
+    if _conn is not None:
+        return _do(_conn)
+    with db.get_conn() as conn:
+        return _do(conn)
 
 
 def _apply_vision_to_frame_data(frame_data: List[Dict], frame_results: List[Dict]) -> List[float]:
@@ -531,8 +541,11 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None)
         **exif,
         "transcript": existing.get("transcript") if existing else None,
         "lang": existing.get("lang") if existing else None,
-        "frame_tags": None,
-        "thumbnail_path": None,
+        # frame_tags / thumbnail_path are intentionally NOT seeded here. db.upsert
+        # is column-subset, so omitting them means a refresh whose vision or
+        # thumbnail step fails leaves the prior values intact instead of nulling
+        # media.frame_tags (search text) / thumbnail_path (H6). They are added to
+        # the record below / in Phase 2 only when a real value exists.
         "processed_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -557,7 +570,11 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None)
     if is_video and meta["duration_s"] > 0:
         print(" >thumb", end="", flush=True)
         thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"])
-        record["thumbnail_path"] = db.to_relative(thumb_path) if thumb_path else None
+        # Only record a thumbnail when extraction succeeded — omitting the key on
+        # failure preserves the prior value on refresh (H6) and leaves new rows
+        # at the column default (NULL).
+        if thumb_path:
+            record["thumbnail_path"] = db.to_relative(thumb_path)
 
     # Frame extraction (video only) — persistent thumbnails + DB records
     if is_video and meta["duration_s"] > 0:
@@ -1114,6 +1131,7 @@ def main():
     import time as _time
 
     ok, skipped, failed = 0, 0, 0
+    refreshed_ids = set()  # already-indexed ids re-processed this run → force re-embed
     bench_log = []  # per-file benchmark records
     batch_start = _time.time()
 
@@ -1143,7 +1161,10 @@ def main():
             file_elapsed = _time.time() - file_start
             if record:
                 frames = record.pop("_frames", [])
-                db.upsert(record)
+                # Write media row + auto tags + frame rows in ONE transaction
+                # (H7): a crash between the media upsert and the frame inserts used
+                # to leave a frame-less row that is_processed then skipped forever,
+                # only recoverable via a full --refresh.
                 # NB: a refresh's stale-auto-tag clear lives in Phase 2, inside
                 # the same transaction as the fresh vision-tag write — so a clip
                 # whose vision FAILS keeps its prior tags rather than being left
@@ -1151,17 +1172,16 @@ def main():
                 # there too. For video clips this Phase-1 add is redundant with
                 # Phase 2, but it's the ONLY tag write for audio/no-vision clips.
                 auto_tags = record.get("_auto_tags") or []
-                if auto_tags:
-                    mid = _get_media_id_for_path(f)
+                with db.get_conn() as conn:
+                    db.upsert(record, _conn=conn)
+                    mid = _get_media_id_for_path(f, _conn=conn)
                     if mid:
-                        with db.get_conn() as conn:
-                            for tag_name in auto_tags:
-                                db.add_tag(mid, tag_name, source="auto", _conn=conn)
-                # Store frame records (without vision descriptions yet)
-                if frames:
-                    with db.get_conn() as conn:
-                        mid = _get_media_id_for_path(f)
-                        if mid:
+                        if existing is not None:
+                            refreshed_ids.add(mid)
+                        for tag_name in auto_tags:
+                            db.add_tag(mid, tag_name, source="auto", _conn=conn)
+                        # Store frame records (without vision descriptions yet)
+                        if frames:
                             db.delete_frames(mid, _conn=conn)
                             for fd in frames:
                                 db.upsert_frame(
@@ -1182,9 +1202,9 @@ def main():
                                     edit_reason=fd.get("edit_reason"),
                                     _conn=conn,
                                 )
-                    # Queue for Phase 2 vision
-                    if need_vision:
-                        phase1_results[str(f)] = (record, frames)
+                # Queue for Phase 2 vision
+                if frames and need_vision:
+                    phase1_results[str(f)] = (record, frames)
 
                 dur = record.get("duration_s", 0)
                 bench_log.append({
@@ -1349,8 +1369,8 @@ def main():
     print("Phase 3: Proxy generation for browser-incompatible codecs...")
     proxy_ok, proxy_skip = 0, 0
     with db.get_conn() as conn:
-        all_media = conn.execute("SELECT id, path FROM media").fetchall()
-    for mid, mpath in all_media:
+        all_media = conn.execute("SELECT id, path, codec FROM media").fetchall()
+    for mid, mpath, stored_codec in all_media:
         resolved_path = db.resolve_path(mpath)
         proxy_path = config.proxy_path_for(mid, resolved_path)
         if proxy_path.exists():
@@ -1358,7 +1378,23 @@ def main():
             continue
         if not Path(resolved_path).suffix.lower() in VIDEO_EXT:
             continue
-        if needs_proxy(resolved_path):
+        # Decide proxy need from the stored codec (set at ingest time) instead of
+        # re-running ffprobe on every browser-compatible file each invocation
+        # (H1). Only legacy rows with NULL codec fall back to a one-time probe,
+        # whose result is then persisted so the next run skips it too.
+        if stored_codec:
+            want_proxy = stored_codec.lower() in codec.PROXY_CODECS
+        else:
+            verdict = codec.needs_proxy(resolved_path)
+            want_proxy = verdict == codec.NEEDED
+            if verdict != codec.UNKNOWN:
+                probed = codec.probe_codec(resolved_path)
+                if probed:
+                    with db.get_conn() as conn:
+                        conn.execute(
+                            "UPDATE media SET codec=? WHERE id=?", (probed.lower(), mid)
+                        )
+        if want_proxy:
             print(f"  [{mid}] {Path(resolved_path).name} >proxy", end="", flush=True)
             result = generate_proxy(mid, resolved_path)
             if result:
@@ -1382,11 +1418,16 @@ def main():
     # ingest writes SQLite records; embeddings live in ChromaDB and were a
     # separate `embed.py` step — easy to forget, leaving search/chat returning
     # nothing. Default ON; --no-embed to skip (e.g. batch-ingest then embed once).
-    if ok > 0 and not getattr(args, "no_embed", False):
+    #
+    # Run even when ok == 0 (was gated on ok>0): a prior run that died mid-batch
+    # left SQLite rows the next run sees as "processed" (ok==0) and never embedded
+    # → invisible to search forever. run_embed reconciles — it re-embeds anything
+    # not yet indexed, force re-embeds refreshed rows, and prunes deleted ones (H5).
+    if not getattr(args, "no_embed", False):
         try:
             import embed
             print(f"\n{'─'*60}")
-            embed.run_embed()
+            embed.run_embed(force_ids=refreshed_ids)
         except Exception as exc:
             print(f"\n[embed] ⚠ vector index build failed: {exc}")
             print("[embed] run `python embed.py` manually; ingest itself succeeded.")

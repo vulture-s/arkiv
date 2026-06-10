@@ -28,7 +28,7 @@ def get_indexed_media_ids(col) -> set[str]:
     return {m["media_id"] for m in result["metadatas"]}
 
 
-def run_embed(rebuild: bool = False):
+def run_embed(rebuild: bool = False, force_ids=None, prune: bool = True):
     print(f"{'Rebuilding' if rebuild else 'Updating'} vector index...")
     col = vdb.get_collection(reset=rebuild)
 
@@ -37,8 +37,25 @@ def run_embed(rebuild: bool = False):
         print("No records in SQLite. Run ingest.py first.")
         sys.exit(1)
 
+    force_ids = {str(i) for i in (force_ids or set())}
     indexed_ids = set() if rebuild else get_indexed_media_ids(col)
-    to_process = [r for r in records if str(r["id"]) not in indexed_ids]
+
+    # Reconcile: drop Chroma entries whose media_id no longer exists in SQLite,
+    # so deleted clips stop surfacing in search (H5).
+    if prune and not rebuild:
+        db_ids = {str(r["id"]) for r in records}
+        orphans = indexed_ids - db_ids
+        for oid in orphans:
+            vdb.delete_media(col, oid)
+        if orphans:
+            print(f"Pruned {len(orphans)} orphaned media id(s) from index.")
+
+    # Re-embed anything not yet indexed PLUS any caller-forced ids (e.g. records
+    # re-processed by `ingest --refresh`, which are already indexed but stale).
+    to_process = [
+        r for r in records
+        if str(r["id"]) not in indexed_ids or str(r["id"]) in force_ids
+    ]
 
     print(f"Total records: {len(records)} | Already indexed: {len(indexed_ids)} | To process: {len(to_process)}")
 

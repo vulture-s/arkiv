@@ -167,6 +167,9 @@ def init_db():
             ("edit_position", "TEXT"),
             ("edit_reason", "TEXT"),
             ("editability_score", "REAL"),
+            # Phase: persist ffprobe codec so Phase 3 proxy decisions don't
+            # re-probe the whole library each ingest (H1).
+            ("codec", "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE media ADD COLUMN {col} {typ}")
@@ -330,10 +333,11 @@ _ALLOWED_COLS = {
     "focus_score", "exposure", "stability", "audio_quality",
     "atmosphere", "energy", "edit_position", "edit_reason",
     "editability_score",
+    "codec",
 }
 
 
-def upsert(record: dict):
+def upsert(record: dict, _conn=None):
     # Only allow known column names to prevent SQL injection via dict keys
     safe = {k: v for k, v in record.items() if k in _ALLOWED_COLS}
     if not safe:
@@ -345,8 +349,14 @@ def upsert(record: dict):
         INSERT INTO media ({cols}) VALUES ({placeholders})
         ON CONFLICT(path) DO UPDATE SET {updates}
     """
-    with get_conn() as conn:
-        conn.execute(sql, list(safe.values()))
+    # Accept an external connection so callers can write the media row and its
+    # frame rows in one transaction (H7: a crash between the two used to leave a
+    # frame-less row that is_processed then skipped forever).
+    if _conn is not None:
+        _conn.execute(sql, list(safe.values()))
+    else:
+        with get_conn() as conn:
+            conn.execute(sql, list(safe.values()))
 
 
 # ── Lightweight queries (Phase 4) ────────────────────────────────────────────

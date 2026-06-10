@@ -200,9 +200,22 @@ def build_doc_text(record: dict) -> str:
     return " ".join(parts)
 
 
+def delete_media(col, media_id) -> None:
+    """Remove all chunks for a media_id. Used before re-embedding (refresh) and
+    by reconcile to drop rows deleted from SQLite (H5)."""
+    try:
+        col.delete(where={"media_id": str(media_id)})
+    except Exception:
+        pass
+
+
 def upsert_record(col, record: dict) -> int:
     """Upsert one SQLite media record into ChromaDB. Returns chunk count."""
     media_id = str(record["id"])
+    # Delete existing chunks first: a re-embed of a shrunk transcript (5→2
+    # chunks) otherwise leaves orphan {id}_t2.. behind, and a refresh re-embed
+    # would stack stale vectors (H5).
+    delete_media(col, media_id)
     transcript = record.get("transcript") or ""
     frame_doc = build_doc_text(record)
 
