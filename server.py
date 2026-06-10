@@ -615,32 +615,40 @@ def list_media(
         enriched = []
         search_warning = None
         import vectordb as vdb
+
+        def _passes_filters(rec: dict) -> bool:
+            # Applied to the ENRICHED record (which has real lang/rating), not the
+            # raw vector hit — vectordb results carry no `rating`, so filtering on
+            # them dropped every semantic hit under `rating=good` and silently fell
+            # through to an unfiltered SQL LIKE (H8).
+            if lang and rec.get("lang") != lang:
+                return False
+            rv = rec.get("rating")
+            if rating == "unrated" and rv is not None:
+                return False
+            if rating and rating != "unrated" and rv != rating:
+                return False
+            return True
+
         # Try semantic search first (requires vectordb with embeddings)
         try:
             raw = vdb.search(q, n_results=limit * 3)
-            results = []
-            for r in raw:
-                if lang and r.get("lang") != lang:
-                    continue
-                if rating == "unrated" and r.get("rating") is not None:
-                    continue
-                elif rating and rating != "unrated" and r.get("rating") != rating:
-                    continue
-                results.append(r)
-            results = results[:limit]
             seen = set()
-            for r in results:
+            for r in raw:
                 mid = int(r["media_id"])
                 if mid in seen:
                     continue
                 seen.add(mid)
                 rec = db.get_record_by_id(mid)
-                if rec:
-                    _resolve_record(rec)
-                    rec["score"] = r.get("score", 0)
-                    rec["excerpt"] = r.get("excerpt", "")
-                    rec["tags"] = db.get_tags(mid)
-                    enriched.append(rec)
+                if not rec or not _passes_filters(rec):
+                    continue
+                _resolve_record(rec)
+                rec["score"] = r.get("score", 0)
+                rec["excerpt"] = r.get("excerpt", "")
+                rec["tags"] = db.get_tags(mid)
+                enriched.append(rec)
+                if len(enriched) >= limit:
+                    break
         except vdb.EmbeddingDimensionMismatch as exc:
             # Don't silently SQL-degrade a dim mismatch — log it and surface a hint
             # so the operator knows semantic search is off until they rebuild.
@@ -649,7 +657,8 @@ def list_media(
         except Exception:
             pass
 
-        # Fallback: SQL text search (filename, transcript, tags)
+        # Fallback: SQL text search (filename, transcript, tags) — same lang/rating
+        # filter applied so a degraded search still honors the active filters.
         if not enriched:
             seen_ids = set()
             like = f"%{q}%"
@@ -662,6 +671,8 @@ def list_media(
                 ).fetchall()
                 for r in rows:
                     rec = dict(r)
+                    if not _passes_filters(rec):
+                        continue
                     _resolve_record(rec)
                     rec["tags"] = db.get_tags(rec["id"])
                     enriched.append(rec)
@@ -677,7 +688,7 @@ def list_media(
                     if mid in seen_ids:
                         continue
                     rec = db.get_record_by_id(mid)
-                    if rec:
+                    if rec and _passes_filters(rec):
                         _resolve_record(rec)
                         rec["tags"] = db.get_tags(mid)
                         enriched.append(rec)

@@ -311,8 +311,9 @@ def test_chat_full_flow_compilation_to_refinement(fastapi_client, tmp_db, sample
 
     ids = _seed_media(db, sample_record, count=3)
     with patch("chat.classify_intent") as mock_cls, patch("chat.llm_chat") as mock_chat, patch("chat.vector_search") as mock_search:
+        # One classify per request now (H10 removed the duplicate
+        # classification that handle_compilation used to run).
         mock_cls.side_effect = [
-            _intent("compilation"),
             _intent("compilation"),
             _intent("refinement"),
         ]
