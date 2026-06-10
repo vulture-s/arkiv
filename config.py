@@ -398,6 +398,23 @@ WHISPER_GUARD_LAYERS = {
 CUSTOM_VOCABULARY = os.getenv("ARKIV_CUSTOM_VOCABULARY", "")
 FILTER_WORDS = os.getenv("ARKIV_FILTER_WORDS", "")
 
+
+def _default_vocab_file() -> str:
+    """PROJECT_ROOT/.arkiv/vocabulary.txt when present, else ''."""
+    try:
+        cand = _ARKIV_DIR / "vocabulary.txt"
+        return str(cand) if cand.exists() else ""
+    except OSError:
+        return ""
+
+
+# Optional newline-delimited vocabulary file (one hotword/term per line; blank
+# lines and '#' comments ignored). Lets editors keep a long persistent jargon /
+# name list (people, places, product names) instead of cramming a single env
+# var — the wordlist workflow FatSub validated with Taiwanese editors. Terms are
+# merged with (and appended after) the comma-separated ARKIV_CUSTOM_VOCABULARY.
+VOCABULARY_FILE = os.getenv("ARKIV_VOCABULARY_FILE", "") or _default_vocab_file()
+
 HOST = os.getenv("ARKIV_HOST", "0.0.0.0")
 PORT = int(os.getenv("ARKIV_PORT", "8501"))
 

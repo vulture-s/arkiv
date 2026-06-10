@@ -157,3 +157,43 @@ def test_dispatcher_no_speech_returns_empty(monkeypatch, hermetic):
     monkeypatch.setattr(transcribe, "_vad_filter", lambda w: None)  # no speech
 
     assert transcribe.transcribe("/clip.mp4", language="zh") == ("", "", [], [])
+
+
+# ── custom vocabulary: env + file merge (FatSub-style hotword wordlist) ───────
+
+def test_custom_terms_env_only(monkeypatch):
+    monkeypatch.setattr(transcribe, "CUSTOM_VOCABULARY", "富田, Furutech ,明燒肉")
+    monkeypatch.setattr(transcribe, "VOCABULARY_FILE", "")
+    assert transcribe._custom_terms() == ["富田", "Furutech", "明燒肉"]
+    assert transcribe._build_initial_prompt() == "富田、Furutech、明燒肉"
+
+
+def test_custom_terms_file_only(monkeypatch, tmp_path):
+    vf = tmp_path / "vocabulary.txt"
+    vf.write_text("# 影視人名詞庫\n恬馨\n\nWaffle House\n  明燒肉  \n", encoding="utf-8")
+    monkeypatch.setattr(transcribe, "CUSTOM_VOCABULARY", "")
+    monkeypatch.setattr(transcribe, "VOCABULARY_FILE", str(vf))
+    # comments + blank lines ignored, surrounding whitespace trimmed
+    assert transcribe._custom_terms() == ["恬馨", "Waffle House", "明燒肉"]
+
+
+def test_custom_terms_env_and_file_merge_dedup(monkeypatch, tmp_path):
+    vf = tmp_path / "vocabulary.txt"
+    vf.write_text("明燒肉\n富田\n新詞\n", encoding="utf-8")
+    monkeypatch.setattr(transcribe, "CUSTOM_VOCABULARY", "富田,明燒肉")
+    monkeypatch.setattr(transcribe, "VOCABULARY_FILE", str(vf))
+    # env terms keep their leading position; file-only '新詞' appended; dups dropped
+    assert transcribe._custom_terms() == ["富田", "明燒肉", "新詞"]
+
+
+def test_custom_terms_missing_file_non_fatal(monkeypatch):
+    monkeypatch.setattr(transcribe, "CUSTOM_VOCABULARY", "甲,乙")
+    monkeypatch.setattr(transcribe, "VOCABULARY_FILE", "/no/such/vocabulary.txt")
+    assert transcribe._custom_terms() == ["甲", "乙"]
+
+
+def test_custom_terms_empty(monkeypatch):
+    monkeypatch.setattr(transcribe, "CUSTOM_VOCABULARY", "")
+    monkeypatch.setattr(transcribe, "VOCABULARY_FILE", "")
+    assert transcribe._custom_terms() == []
+    assert transcribe._build_initial_prompt() == ""

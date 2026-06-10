@@ -2,6 +2,7 @@
 ## Unreleased
 
 ### Added
+- **Custom-vocabulary file for transcription hotwords.** Beyond the comma-separated `ARKIV_CUSTOM_VOCABULARY` env, you can now keep a newline-delimited wordlist (one term per line, `#` comments) — `ARKIV_VOCABULARY_FILE`, defaulting to `.arkiv/vocabulary.txt` when present. Terms (names, places, product jargon) merge with the env list, dedup, and feed Whisper's `initial_prompt` — the persistent-wordlist workflow FatSub validated with editors. Tests in `tests/test_transcribe_faster_whisper.py`.
 - **Chapter-marker export (`export.py chapters <id>`).** Turns a clip's sampled
   scene frames (scene-change timestamps for long clips) into chapter markers, with
   titles auto-generated from each frame's vision description (first sentence,

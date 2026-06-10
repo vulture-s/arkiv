@@ -288,6 +288,8 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_CHAT_MODEL` | `qwen2.5:14b` | Chat model — answers and (by default) intent classification |
 | `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | Optional faster model for intent classification only; must be installed |
 | `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (other) | Whisper model |
+| `ARKIV_CUSTOM_VOCABULARY` | *(empty)* | Comma-separated hotwords (names/jargon) fed to Whisper's `initial_prompt` |
+| `ARKIV_VOCABULARY_FILE` | *(empty → `.arkiv/vocabulary.txt` if present)* | Newline-delimited hotword file (one term/line, `#` comments); merged with the above |
 | `ARKIV_EXIFTOOL_PATH` | *(empty — auto-detect)* | Path to exiftool binary (optional) |
 | `ARKIV_FFMPEG_PATH` | *(empty — auto-detect)* | Path to ffmpeg binary (optional; set on headless Windows where only a WinGet alias shim is on PATH) |
 | `ARKIV_FFPROBE_PATH` | *(empty — auto-detect)* | Path to ffprobe binary (optional; same as above) |

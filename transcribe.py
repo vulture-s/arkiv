@@ -18,6 +18,7 @@ import whisper_guard
 from config import (
     WHISPER_MODEL,
     CUSTOM_VOCABULARY,
+    VOCABULARY_FILE,
     FILTER_WORDS,
     WHISPER_GUARD_DEFAULT_MODE,
     WHISPER_GUARD_LAYERS,
@@ -241,11 +242,32 @@ def transcribe(media_path: str, language=None) -> tuple:
     finally:
         Path(wav).unlink(missing_ok=True)
 
-def _build_initial_prompt() -> str:
-    """Build initial_prompt from custom vocabulary config."""
-    if not CUSTOM_VOCABULARY:
-        return ""
+def _custom_terms() -> list:
+    """Merged hotword list: comma-separated ARKIV_CUSTOM_VOCABULARY env first,
+    then one-per-line VOCABULARY_FILE (blank lines / '#' comments ignored).
+    Order preserved, duplicates dropped — env terms win position."""
     terms = [t.strip() for t in CUSTOM_VOCABULARY.split(",") if t.strip()]
+    if VOCABULARY_FILE:
+        try:
+            with open(VOCABULARY_FILE, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        terms.append(line)
+        except OSError:
+            pass  # missing / unreadable file is non-fatal — just use env terms
+    seen = set()
+    out = []
+    for t in terms:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+def _build_initial_prompt() -> str:
+    """Build whisper initial_prompt from the merged custom vocabulary (env + file)."""
+    terms = _custom_terms()
     return "、".join(terms) if terms else ""
 
 

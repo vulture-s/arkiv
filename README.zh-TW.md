@@ -287,6 +287,8 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | `ARKIV_CHAT_MODEL` | `qwen2.5:14b` | Chat 模型 —— 回答與（預設）意圖分類 |
 | `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | 選用的較快意圖分類模型；必須已安裝 |
 | `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (其他) | Whisper 模型 |
+| `ARKIV_CUSTOM_VOCABULARY` | *（空）* | 逗號分隔的熱詞（人名／術語），餵進 Whisper `initial_prompt` |
+| `ARKIV_VOCABULARY_FILE` | *（空 → 有則用 `.arkiv/vocabulary.txt`）* | 換行分隔的詞庫檔（一行一詞、`#` 註解）；與上者合併 |
 | `ARKIV_EXIFTOOL_PATH` | *（空 — 自動偵測）* | exiftool 路徑（選用） |
 | `ARKIV_FFMPEG_PATH` | *（空 — 自動偵測）* | ffmpeg 路徑（選用；headless Windows 上 PATH 只有 WinGet alias shim 時可指定真實路徑） |
 | `ARKIV_FFPROBE_PATH` | *（空 — 自動偵測）* | ffprobe 路徑（選用；同上） |
