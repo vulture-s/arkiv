@@ -1303,3 +1303,29 @@ def test_search_all_basenames_absolute_relative_path_edge(fastapi_client, monkey
     item = fastapi_client.get("/api/search/all", params={"q": "x"}).json()["items"][0]
     assert item["path"] == "clip.mp4"
     assert "/Volumes" not in item["path"]
+
+
+def test_media_chapters_endpoint(fastapi_client, sample_record):
+    db = importlib.import_module("db")
+    _insert_media(sample_record)  # media 1 = interview-zh, duration_s=90
+    db.upsert_frame(1, 0, 0.0, description="開場空景。第二句不要。")
+    db.upsert_frame(1, 1, 30.0, description="主廚切肉")
+    db.upsert_frame(1, 2, 75.0, description="")  # no description -> numbered
+
+    yt = fastapi_client.get("/api/media/1/chapters")
+    assert yt.status_code == 200
+    d = yt.json()
+    assert d["format"] == "youtube" and d["count"] == 3
+    lines = d["chapters"].splitlines()
+    assert lines[0].startswith("00:00 ")
+    assert "01:15" in d["chapters"]          # 75s -> 1:15
+    assert "Chapter 3" in d["chapters"]      # empty description
+    assert "第二句不要" not in d["chapters"]  # first-sentence clip
+
+    ff = fastapi_client.get("/api/media/1/chapters", params={"format": "ffmetadata"})
+    assert ff.status_code == 200
+    fd = ff.json()
+    assert fd["chapters"].startswith(";FFMETADATA1") and fd["count"] == 3
+
+    assert fastapi_client.get("/api/media/1/chapters", params={"format": "xml"}).status_code == 422
+    assert fastapi_client.get("/api/media/999/chapters").status_code == 404

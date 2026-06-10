@@ -828,6 +828,28 @@ def get_media_scenes(
     return {"media_id": media_id, "scenes": scenes, "total": len(scenes)}
 
 
+@app.get("/api/media/{media_id}/chapters")
+def get_media_chapters(
+    media_id: int,
+    format: str = "youtube",
+    _tok: dict = Depends(require_scopes("media_read")),
+):
+    """ProChapter-style chapter markers from the clip's scene frames.
+
+    `format=youtube`   → `MM:SS Title` lines (first marker forced to 0:00).
+    `format=ffmetadata` → ffmpeg chapter file (embed with -map_metadata).
+    """
+    if format not in ("youtube", "ffmetadata"):
+        raise HTTPException(422, "format must be 'youtube' or 'ffmetadata'")
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到")
+    import export
+    text = export.build_chapters(media_id, fmt=format)
+    count = text.count("[CHAPTER]") if format == "ffmetadata" else (len(text.splitlines()) if text else 0)
+    return {"media_id": media_id, "format": format, "chapters": text, "count": count}
+
+
 @app.patch("/api/media/{media_id}/rating")
 def update_rating(
     media_id: int,

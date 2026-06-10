@@ -9,7 +9,9 @@
   marker forced to `0:00` per YouTube's rule) for video descriptions; `--format
   ffmetadata` emits an ffmpeg metadata file to embed real chapters (`ffmpeg -i in
   -i chapters.txt -map_metadata 1 -codec copy out`). Borrowed from the FatSub
-  ProChapter benchmark; reuses existing scene segmentation, no new deps.
+  ProChapter benchmark; reuses existing scene segmentation, no new deps. Also
+  exposed over HTTP: `GET /api/media/{id}/chapters?format=youtube|ffmetadata`
+  (scope `media_read`) returns `{media_id, format, chapters, count}`.
 
 ### Fixed
 - **`probe()` no longer swallows ffprobe failures, hangs, or lets one bad clip poison a batch.** It used `-v quiet` with no timeout and returned `None` on any non-zero exit — so a mid-ingest failure printed only `[ffprobe failed]` with no cause, and a transient subprocess-spawn failure (e.g. Windows handle exhaustion after a heavy clip) could fail every subsequent clip. Now: `-v error` surfaces the real stderr, a 120s timeout bounds hangs, the actual rc/stderr/exception is printed, and one retry (2s back-off) recovers transient spawn/resource pressure. Tests in `tests/test_ingest.py`.
