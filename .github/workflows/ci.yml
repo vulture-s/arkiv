@@ -1,0 +1,67 @@
+name: CI
+
+# Correctness gate: runs the pytest suite on every PR and on pushes to main.
+#
+# Runner = macOS (Apple Silicon). This matches what arkiv actually ships on:
+# the M2 Max dev host and Mac production both run the mlx-whisper backend, and
+# health.py imports mlx.core for the Apple-Silicon capability check. The
+# install-closure test (test_install.py) AST-walks every import from server.py
+# and asserts it resolves — on a Linux runner `mlx` has no wheel, so that test
+# would red for a platform reason rather than a real one. Running on macOS keeps
+# the test env faithful to the deploy target.
+#
+# tests/conftest.py fakes the heavy/optional backends (torch, silero_vad,
+# soundfile, whisperx, faster_whisper, chromadb) via sys.modules.setdefault, so
+# CI installs only the lean real deps the suite actually exercises: the FastAPI
+# surface, numpy (pytest.approx needs a real numpy in sys.modules), and
+# mlx-whisper (so the install-closure walk resolves mlx).
+#
+# Python matrix = 3.9 + 3.12. 3.9 enforces the NAS deploy constraint (no
+# match/case / 3.10+ syntax — see platform-compatibility rule); 3.12 is the
+# M2 Max dev runtime.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install deps
+        # Lean set: the real (non-faked) deps the suite imports, plus numpy (for
+        # pytest.approx), mlx-whisper (so the install-closure walk resolves mlx)
+        # and mcp (gated to >=3.10 to mirror requirements.txt — on 3.9 the MCP
+        # tests importorskip cleanly). Heavy backends faked in tests/conftest.py
+        # are deliberately NOT installed.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install \
+            "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
+            "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
+            "psutil>=5.9" "whisper-guard>=0.3" numpy mlx-whisper \
+            "mcp>=1.2; python_version >= '3.10'"
+
+      - name: Run tests
+        run: pytest -q
