@@ -6,6 +6,7 @@ Remaining handlers stay as B.4b stubs.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import requests
 from typing import Any, Dict, List, Optional
@@ -64,7 +65,9 @@ def classify_intent(prompt: str, history: List[Dict[str, Any]]) -> Dict[str, Any
         parsed["limit"] = int(parsed.get("limit", 20))
     except (TypeError, ValueError):
         parsed["limit"] = 20
-    parsed["limit"] = min(parsed["limit"], 100)
+    # Clamp both ends: a model-returned 0/negative limit becomes n_results<=0
+    # downstream and makes Chroma raise (M3).
+    parsed["limit"] = max(1, min(parsed["limit"], 100))
 
     parsed["tokens_used"] = result.get("tokens_used", 0)
     parsed["latency_ms"] = result.get("latency_ms", 0)
@@ -76,9 +79,12 @@ def handle_compilation(
     history: List[Dict[str, Any]],
     project_scope: Optional[List[str]],
     conversation_id: str,
+    intent_result: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     del conversation_id
-    intent = classify_intent(prompt, history)
+    # Reuse dispatch's classification instead of re-running the intent LLM call —
+    # the common compilation path otherwise classified twice per request (H10).
+    intent = intent_result if intent_result is not None else classify_intent(prompt, history)
     results = vector_search(
         intent["search_params"]["query"],
         n_results=intent.get("limit", 20),
@@ -162,6 +168,24 @@ def handle_refinement(
 
     if not isinstance(filtered, list):
         filtered = prior_ids
+    # Intersect with the prior set: the filter prompt embeds raw transcript/
+    # filename text, so a transcript can steer the model to emit arbitrary IDs
+    # that would otherwise be persisted into scene_ids_json (H9). Coerce to int
+    # and keep only ids that were actually in the previous result.
+    prior_set = set(prior_ids)
+    valid = []
+    for i in filtered:
+        try:
+            iv = int(i)
+        except (TypeError, ValueError):
+            continue
+        if iv in prior_set:
+            valid.append(iv)
+    # All returned ids were outside the prior set → treat as hallucinated/injected
+    # and keep the prior set rather than persisting bogus ids or showing nothing.
+    if filtered and not valid:
+        valid = prior_ids
+    filtered = valid
     return {
         "assistant_text": "從 {0} 個 refine 到 {1} 個。{2}".format(
             len(prior_ids), len(filtered), parsed.get("reason", "")
@@ -251,14 +275,22 @@ def handle_analytics(
     if not isinstance(params.get("time_range"), dict):
         params["time_range"] = {"start": None, "end": None}
 
+    # Validate shape before string-concatenating: json_mode only guarantees
+    # syntactic JSON, so the model can return {"start": 2026} (int) which used to
+    # raise TypeError → unhandled 500 (M1). Accept only "YYYY-MM" strings.
+    def _valid_year_month(v) -> bool:
+        return isinstance(v, str) and re.match(r"^\d{4}-\d{2}$", v) is not None
+
     where = ""
     args = []
-    if params["time_range"].get("start"):
+    start = params["time_range"].get("start")
+    if _valid_year_month(start):
         where += " AND processed_at >= ?"
-        args.append(params["time_range"]["start"] + "-01")
-    if params["time_range"].get("end"):
+        args.append(start + "-01")
+    end = params["time_range"].get("end")
+    if _valid_year_month(end):
         where += " AND processed_at < ?"
-        args.append(params["time_range"]["end"] + "-32")
+        args.append(end + "-32")
 
     metric = params.get("metric", "count")
     with get_conn() as conn:
@@ -385,7 +417,11 @@ def dispatch(
         intent = "general"
     handler = HANDLERS.get(intent, handle_general)
     try:
-        result = handler(prompt, history, project_scope, conversation_id)
+        if handler is handle_compilation:
+            # Pass the precomputed intent so the flagship path classifies once.
+            result = handler(prompt, history, project_scope, conversation_id, intent_result)
+        else:
+            result = handler(prompt, history, project_scope, conversation_id)
     except EmbeddingDimensionMismatch:
         return {
             "assistant_text": (
@@ -416,6 +452,19 @@ def dispatch(
                 "LLM 請求被拒，通常是模型未安裝。請在 Ollama 主機執行："
                 "ollama pull {0}".format(ARKIV_CHAT_MODEL)
             ),
+            "scene_ids": [],
+            "tokens_used": intent_result.get("tokens_used", 0),
+            "stage": "error",
+            "intent": intent,
+            "latency_ms": intent_result.get("latency_ms", 0),
+        }
+    except Exception as exc:
+        # Belt-and-suspenders: a handler bug or malformed-but-parseable model
+        # output (bad type/value) must not surface as an unhandled 500 after the
+        # user turn was already persisted (M1/H4).
+        logging.getLogger(__name__).warning("chat handler %s failed: %s", intent, exc)
+        return {
+            "assistant_text": "處理時發生內部錯誤，請換個說法再試一次。",
             "scene_ids": [],
             "tokens_used": intent_result.get("tokens_used", 0),
             "stage": "error",

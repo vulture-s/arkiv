@@ -615,32 +615,40 @@ def list_media(
         enriched = []
         search_warning = None
         import vectordb as vdb
+
+        def _passes_filters(rec: dict) -> bool:
+            # Applied to the ENRICHED record (which has real lang/rating), not the
+            # raw vector hit — vectordb results carry no `rating`, so filtering on
+            # them dropped every semantic hit under `rating=good` and silently fell
+            # through to an unfiltered SQL LIKE (H8).
+            if lang and rec.get("lang") != lang:
+                return False
+            rv = rec.get("rating")
+            if rating == "unrated" and rv is not None:
+                return False
+            if rating and rating != "unrated" and rv != rating:
+                return False
+            return True
+
         # Try semantic search first (requires vectordb with embeddings)
         try:
             raw = vdb.search(q, n_results=limit * 3)
-            results = []
-            for r in raw:
-                if lang and r.get("lang") != lang:
-                    continue
-                if rating == "unrated" and r.get("rating") is not None:
-                    continue
-                elif rating and rating != "unrated" and r.get("rating") != rating:
-                    continue
-                results.append(r)
-            results = results[:limit]
             seen = set()
-            for r in results:
+            for r in raw:
                 mid = int(r["media_id"])
                 if mid in seen:
                     continue
                 seen.add(mid)
                 rec = db.get_record_by_id(mid)
-                if rec:
-                    _resolve_record(rec)
-                    rec["score"] = r.get("score", 0)
-                    rec["excerpt"] = r.get("excerpt", "")
-                    rec["tags"] = db.get_tags(mid)
-                    enriched.append(rec)
+                if not rec or not _passes_filters(rec):
+                    continue
+                _resolve_record(rec)
+                rec["score"] = r.get("score", 0)
+                rec["excerpt"] = r.get("excerpt", "")
+                rec["tags"] = db.get_tags(mid)
+                enriched.append(rec)
+                if len(enriched) >= limit:
+                    break
         except vdb.EmbeddingDimensionMismatch as exc:
             # Don't silently SQL-degrade a dim mismatch — log it and surface a hint
             # so the operator knows semantic search is off until they rebuild.
@@ -649,7 +657,8 @@ def list_media(
         except Exception:
             pass
 
-        # Fallback: SQL text search (filename, transcript, tags)
+        # Fallback: SQL text search (filename, transcript, tags) — same lang/rating
+        # filter applied so a degraded search still honors the active filters.
         if not enriched:
             seen_ids = set()
             like = f"%{q}%"
@@ -662,6 +671,8 @@ def list_media(
                 ).fetchall()
                 for r in rows:
                     rec = dict(r)
+                    if not _passes_filters(rec):
+                        continue
                     _resolve_record(rec)
                     rec["tags"] = db.get_tags(rec["id"])
                     enriched.append(rec)
@@ -677,7 +688,7 @@ def list_media(
                     if mid in seen_ids:
                         continue
                     rec = db.get_record_by_id(mid)
-                    if rec:
+                    if rec and _passes_filters(rec):
                         _resolve_record(rec)
                         rec["tags"] = db.get_tags(mid)
                         enriched.append(rec)
@@ -2349,6 +2360,30 @@ async def ws_ingest(ws: WebSocket):
         ingest_ws.disconnect(ws)
 
 
+# Tracks the single in-flight WS ingest. asyncio.create_task references must be
+# held or the task can be GC'd mid-run and its exceptions silently dropped; the
+# flag also serializes ingests so concurrent runs don't hammer the same SQLite DB.
+_ingest_ws_tasks: set = set()
+_ingest_ws_active = False
+
+
+def _on_ingest_ws_done(task: "asyncio.Task") -> None:
+    global _ingest_ws_active
+    _ingest_ws_tasks.discard(task)
+    _ingest_ws_active = False
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        import traceback
+        print(
+            "[ingest-ws] task crashed: "
+            + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            flush=True,
+        )
+
+
 async def _run_ingest_with_ws(target: Path, limit: int):
     """Run ingest as a single subprocess, parse stdout for progress."""
     import re, sys
@@ -2359,14 +2394,20 @@ async def _run_ingest_with_ws(target: Path, limit: int):
 
     await ingest_ws.broadcast({"type": "start", "total": limit or 0})
 
+    # stderr merged into stdout (STDOUT) rather than a separate PIPE: ingest.py is
+    # log-heavy, and an unread stderr=PIPE fills its ~64KB OS buffer, blocks the
+    # child's write, stalls the stdout read loop, and `proc.wait()` hangs forever.
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE, cwd=str(ROOT)
+        stderr=asyncio.subprocess.STDOUT, cwd=str(ROOT)
     )
 
     ok, skipped, failed = 0, 0, 0
-    file_re = re.compile(r"\[(\d+)/(\d+)\]\s+(SKIP\s+)?(\S+)\s+>")
-    done_re = re.compile(r"\[(\d+)/(\d+)\]\s+(\S+)\s+.+\[OK\]")
+    last_total = limit or 0
+    # Filenames can contain spaces — match non-greedily up to the trailing " >"
+    # / " ...[OK]" marker instead of \S+ (which truncated at the first space).
+    file_re = re.compile(r"\[(\d+)/(\d+)\]\s+(SKIP\s+)?(.+?)\s+>")
+    done_re = re.compile(r"\[(\d+)/(\d+)\]\s+(.+?)\s+.+\[OK\]")
 
     async for line in proc.stdout:
         text = line.decode("utf-8", errors="replace").strip()
@@ -2378,6 +2419,7 @@ async def _run_ingest_with_ws(target: Path, limit: int):
         m = file_re.match(text)
         if m:
             idx, total, skip, fname = m.group(1), m.group(2), m.group(3), m.group(4)
+            last_total = max(last_total, int(total))
             if skip:
                 skipped += 1
                 await ingest_ws.broadcast({
@@ -2394,6 +2436,7 @@ async def _run_ingest_with_ws(target: Path, limit: int):
         d = done_re.match(text)
         if d:
             ok += 1
+            last_total = max(last_total, int(d.group(2)))
             await ingest_ws.broadcast({
                 "type": "file", "index": int(d.group(1)), "total": int(d.group(2)),
                 "filename": d.group(3).strip(), "status": "done"
@@ -2403,14 +2446,20 @@ async def _run_ingest_with_ws(target: Path, limit: int):
         if text.startswith("Found "):
             fm = re.search(r"Processing (\d+)", text)
             if fm:
+                last_total = max(last_total, int(fm.group(1)))
                 await ingest_ws.broadcast({"type": "start", "total": int(fm.group(1))})
 
     await proc.wait()
-    failed = (limit or 0) - ok - skipped if limit else 0
-    print(f"[ingest-ws] COMPLETE ok={ok} skipped={skipped} failed={failed}", flush=True)
+    # Derive failed from the observed total (not `limit`, which is 0 for "all"
+    # and overstates when it exceeds the real file count) and surface the exit
+    # code so a nonzero ingest result (e.g. vision halt) is visible to the UI.
+    failed = max(0, last_total - ok - skipped)
+    rc = proc.returncode or 0
+    print(f"[ingest-ws] COMPLETE ok={ok} skipped={skipped} failed={failed} rc={rc}", flush=True)
 
     await ingest_ws.broadcast({
-        "type": "complete", "ok": ok, "skipped": skipped, "failed": failed
+        "type": "complete", "ok": ok, "skipped": skipped, "failed": failed,
+        "returncode": rc
     })
 
 
@@ -2426,11 +2475,17 @@ async def ingest_media_ws(
     could drive the ingest pipeline over an arbitrary directory (Codex-class
     finding from the overnight audit).
     """
+    global _ingest_ws_active
     target = Path(body.path).expanduser().resolve()
     if not target.is_dir():
         raise HTTPException(400, f"路徑不是有效的目錄：{body.path}")
     _assert_ingest_path_safe(target)
-    asyncio.create_task(_run_ingest_with_ws(target, body.limit))
+    if _ingest_ws_active:
+        raise HTTPException(409, "已有匯入進行中，請等待完成後再試")
+    _ingest_ws_active = True
+    task = asyncio.create_task(_run_ingest_with_ws(target, body.limit))
+    _ingest_ws_tasks.add(task)
+    task.add_done_callback(_on_ingest_ws_done)
     return {"ok": True, "message": "已開始匯入 — 連線 /ws/ingest 取得進度"}
 
 

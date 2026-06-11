@@ -4,10 +4,21 @@
 set -e
 
 INSTALL_DIR="${ARKIV_DIR:-$HOME/.arkiv}"
-RED='\033[31m'; GREEN='\033[32m'; BOLD='\033[1m'; NC='\033[0m'
+RED='\033[31m'; GREEN='\033[32m'; YELLOW='\033[33m'; BOLD='\033[1m'; NC='\033[0m'
 
 echo -e "${BOLD}═══ arkiv uninstaller ═══${NC}"
 echo ""
+
+# Refuse to rm -rf a directory that isn't actually an arkiv install. ARKIV_DIR
+# comes from the environment, so a stray `ARKIV_DIR=$HOME` (or a footage volume)
+# would otherwise wipe an unrelated tree (M5). Require the install markers.
+if [ ! -f "$INSTALL_DIR/server.py" ] || [ ! -f "$INSTALL_DIR/config.py" ]; then
+    echo -e "${RED}Refusing to uninstall:${NC} '$INSTALL_DIR' does not look like an"
+    echo "arkiv install (server.py / config.py not found)."
+    echo "Set ARKIV_DIR to the correct install directory and retry."
+    exit 1
+fi
+
 echo "This will remove:"
 echo "  $INSTALL_DIR (app + venv + DB)"
 echo ""

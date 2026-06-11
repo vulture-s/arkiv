@@ -1,13 +1,16 @@
 # arkiv — Media Asset Manager
 # Core
+# Upper bounds on the libraries that gate the API/data contract so a future
+# major (e.g. chromadb 2.x changing the collection API, pydantic 3.x) can't
+# silently break a fresh install. Bump deliberately after testing.
 fastapi>=0.100.0
 uvicorn>=0.20.0
-pydantic>=2.0
-chromadb>=1.0
+pydantic>=2.0,<3
+chromadb>=1.0,<2
 requests>=2.28
-pandas>=1.5
 xxhash>=2.0.0
 nanoid>=2.0.0
+# (pandas removed — it was an unused ~70 MB dependency, imported nowhere.)
 
 # Media processing
 pillow>=9.0

@@ -24,14 +24,20 @@ fi
 echo -e "  ${GREEN}✓${NC} Homebrew"
 
 # Python 3.10+
+PY_BIN="python3"
 PY_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0.0")
 PY_MAJOR=$(echo "$PY_VERSION" | cut -d. -f1)
 PY_MINOR=$(echo "$PY_VERSION" | cut -d. -f2)
 if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
     echo -e "${YELLOW}Installing Python 3.12...${NC}"
     brew install python@3.12
+    # python@3.12 is keg-only — `python3` still resolves to the old interpreter,
+    # so the venv must be built from the freshly-installed binary explicitly,
+    # otherwise it lands on the very version we just rejected (M2).
+    PY_BIN="$(brew --prefix python@3.12)/bin/python3.12"
+    PY_VERSION="3.12"
 fi
-echo -e "  ${GREEN}✓${NC} Python $PY_VERSION"
+echo -e "  ${GREEN}✓${NC} Python $PY_VERSION ($PY_BIN)"
 
 # FFmpeg
 if ! command -v ffmpeg &>/dev/null; then
@@ -91,7 +97,7 @@ fi
 
 # ── 3. Virtual environment ──
 echo "  Creating virtual environment..."
-python3 -m venv "$VENV_DIR"
+"$PY_BIN" -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
 echo "  Installing dependencies..."
@@ -106,11 +112,15 @@ fi
 echo ""
 
 # ── 4. Pull Ollama models ──
+# Must match config.py defaults — pulling the wrong embed model (the old
+# nomic-embed-text instead of bge-m3) left a fresh install's semantic search
+# silently degraded to SQL LIKE on first run (M3).
 echo "Pulling Ollama models (this may take a while)..."
 ollama serve &>/dev/null &
 sleep 2
-ollama pull nomic-embed-text 2>/dev/null && echo -e "  ${GREEN}✓${NC} nomic-embed-text" || echo -e "  ${YELLOW}⏭${NC} nomic-embed-text (pull later)"
-ollama pull qwen3-vl:8b 2>/dev/null && echo -e "  ${GREEN}✓${NC} qwen3-vl:8b" || echo -e "  ${YELLOW}⏭${NC} qwen3-vl:8b (pull later)"
+ollama pull bge-m3 2>/dev/null && echo -e "  ${GREEN}✓${NC} bge-m3 (embeddings)" || echo -e "  ${YELLOW}⏭${NC} bge-m3 (pull later)"
+ollama pull qwen3-vl:8b 2>/dev/null && echo -e "  ${GREEN}✓${NC} qwen3-vl:8b (vision)" || echo -e "  ${YELLOW}⏭${NC} qwen3-vl:8b (pull later)"
+ollama pull qwen2.5:14b 2>/dev/null && echo -e "  ${GREEN}✓${NC} qwen2.5:14b (chat)" || echo -e "  ${YELLOW}⏭${NC} qwen2.5:14b (pull later — needed for chat)"
 
 echo ""
 
