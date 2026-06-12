@@ -1,5 +1,16 @@
 # Changelog
-## Unreleased
+## v0.8.1 - 2026-06-12
+
+### Added
+- **360-camera formats (`.insv`, `.360`) are now first-class video.** Insta360 `.insv` and GoPro Max `.360` are HEVC-in-MOV/MP4 — ffmpeg probes them and extracts frames fine, but they were absent from the ingest whitelist, so `is_video` was False and they silently skipped thumbnail/frames/vision. Added to `VIDEO_EXT`/`SUPPORTED` (ingest), `_VIDEO_EXTS`/`MEDIA_EXTS` (server), `watch.py`, and the UI format lists. Verified on a real `.insv` (dual 2880×2880 HEVC fisheye + AAC; thumbnail decodes). `.insp` (Insta360 stills) not included — no image pipeline. Tests in `tests/test_ingest_microtasks.py`.
+
+### Tests
+- **Pinned 3 Codex-flagged edges as resolved** (H5 abs/rel row merge, scene_ids dangling reference, M24 codec backfill freshness). All were already fixed in the v0.8.0 sprint; regression tests in `tests/test_v081_edges.py` lock the behaviour — frames+tags merge to the survivor with no orphans + FK integrity (incl. the frame_index collision branch); a dangling `scene_ids_json` id drops gracefully (`WHERE id IN` + `find_similar` return `[]`); stored codec skips re-probe, NULL probes once + backfills, probe failure falls through without crashing playback.
+
+### Docs
+- README (EN + zh-TW): documented 360 format support and that camera identity is read from embedded EXIF **and** the Sony XAVC NRT sidecar XML (so FX30 / FX-series footage keeps make/model/lens/timecode that consumer DAMs drop).
+
+## v0.8.0 - 2026-06-12
 
 ### Security
 - **Stored/reflected XSS in the web UI closed.** `esc()` only escaped `&<>` (the textContent trick), leaving `'`/`"` raw — so LLM-generated tag names / filenames interpolated into HTML attributes and inline `onclick` strings were injectable, and the vision-LLM frame description was written into `innerHTML` unescaped (stored XSS via on-screen text in footage). `esc()` is now quote-safe, a dedicated `escJsAttr()` guards values placed in inline-handler JS strings, and the frame description, tag handlers, autocomplete row, and search-query title are all escaped.
