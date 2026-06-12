@@ -115,29 +115,33 @@ def mark_failed(job_id: int, error: str = "") -> bool:
 
 
 def cancel(job_id: int) -> bool:
-    """Cancel a pending/running job. Returns False if absent or terminal."""
+    """Cancel a pending/running job. Returns False if absent or terminal.
+
+    audit L1: single status-guarded UPDATE (no check-then-write race) — a job
+    that goes terminal between read and write can no longer be flipped to
+    cancelled; rowcount is the truth.
+    """
     with db.get_conn() as conn:
-        row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
-        if row is None or row["status"] in _TERMINAL:
-            return False
-        conn.execute(
-            "UPDATE jobs SET status=?, finished_at=datetime('now') WHERE id=?",
-            (CANCELLED, job_id),
+        cur = conn.execute(
+            "UPDATE jobs SET status=?, finished_at=datetime('now') "
+            "WHERE id=? AND status IN (?, ?)",
+            (CANCELLED, job_id, PENDING, RUNNING),
         )
-        return True
+        return cur.rowcount == 1
 
 
 def retry(job_id: int) -> bool:
-    """Re-queue a failed/cancelled job back to pending. Returns False otherwise."""
+    """Re-queue a failed/cancelled job back to pending. Returns False otherwise.
+
+    audit L1: single status-guarded UPDATE, same rationale as cancel().
+    """
     with db.get_conn() as conn:
-        row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
-        if row is None or row["status"] not in (FAILED, CANCELLED):
-            return False
-        conn.execute(
-            "UPDATE jobs SET status=?, started_at=NULL, finished_at=NULL, error=NULL WHERE id=?",
-            (PENDING, job_id),
+        cur = conn.execute(
+            "UPDATE jobs SET status=?, started_at=NULL, finished_at=NULL, error=NULL "
+            "WHERE id=? AND status IN (?, ?)",
+            (PENDING, job_id, FAILED, CANCELLED),
         )
-        return True
+        return cur.rowcount == 1
 
 
 def counts() -> Dict[str, int]:

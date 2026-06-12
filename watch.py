@@ -10,11 +10,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List, Set
+from typing import List, Sequence, Set
 
 MEDIA_EXTS = {
     ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts",  # video
@@ -37,14 +39,57 @@ def find_new_files(watch_dir: Path, known: Set[str]) -> List[Path]:
     return sorted(new)
 
 
+def run_tree(cmd: Sequence[str], timeout: float) -> subprocess.CompletedProcess:
+    """subprocess.run-like wrapper that kills the *whole process tree* on timeout.
+
+    audit H8: plain subprocess.run(timeout=...) only kills the direct child;
+    grandchildren (ffmpeg/whisper spawned by ingest.py) become orphans and keep
+    running — and on Windows they hold the stdout/stderr pipes open, so
+    communicate() hangs forever. POSIX: new session + killpg. Windows:
+    taskkill /T /F (needs verification on PC — cannot be exercised on mac).
+    """
+    kwargs = {}
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    else:
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    proc = subprocess.Popen(
+        list(cmd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **kwargs,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
+        else:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+            )
+            proc.kill()  # belt-and-suspenders if taskkill failed
+        # Tree is dead, so draining the pipes terminates promptly; bound it anyway.
+        try:
+            out, err = proc.communicate(timeout=10)
+        except Exception:
+            out, err = "", ""
+        raise subprocess.TimeoutExpired(list(cmd), timeout, output=out, stderr=err)
+    return subprocess.CompletedProcess(list(cmd), proc.returncode, out, err)
+
+
 def ingest_file(filepath: Path) -> bool:
     """Run ingest.py on a single file."""
     script = Path(__file__).parent / "ingest.py"
     try:
-        result = subprocess.run(
+        # audit H8: use run_tree so a timeout reaps ffmpeg/whisper grandchildren too
+        result = run_tree(
             [sys.executable, str(script), "--dir", str(filepath)],
-            capture_output=True,
-            text=True,
             timeout=600,  # 10 min per file
         )
         if result.returncode == 0:
@@ -83,8 +128,11 @@ def main():
             rows = conn.execute("SELECT path FROM media").fetchall()
             known = {db.resolve_path(r["path"]) for r in rows}
         print(f"  {len(known)} files already in DB")
-    except Exception:
-        pass
+    except Exception as e:
+        # audit L9: don't swallow DB load failure silently — without `known`
+        # the watcher re-ingests everything it sees; warn loudly up front.
+        print(f"  WARN: could not load known files from DB ({e.__class__.__name__}: {e}); "
+              f"starting with empty set — already-ingested files may be re-processed")
 
     while True:
         new_files = find_new_files(watch_dir, known)

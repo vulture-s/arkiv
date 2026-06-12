@@ -58,7 +58,9 @@ def _warm_up_vision_model():
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        urllib.request.urlopen(req, timeout=180)
+        # audit L3: close the response socket instead of leaking the fd to GC
+        with urllib.request.urlopen(req, timeout=180):
+            pass
         print(" ready")
     except Exception as e:
         print(f" warning: {e}")
@@ -74,7 +76,9 @@ def _unload_ollama_model(model: str):
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        urllib.request.urlopen(req, timeout=30)
+        # audit L3: close the response socket instead of leaking the fd to GC
+        with urllib.request.urlopen(req, timeout=30):
+            pass
         print(f"  Unloaded {model} from VRAM")
     except Exception as e:
         print(f"  Warning: could not unload {model}: {e}")
@@ -287,8 +291,15 @@ def probe(path: str) -> Optional[Dict]:
     }
 
 
+# audit H11: once-only banner flag — a missing exiftool binary used to be
+# swallowed per-file by a bare except, leaving the whole library's camera
+# metadata silently NULL with zero signal.
+_exiftool_missing_warned = False
+
+
 def exiftool_extract(path: str, fps: Optional[float] = None) -> dict:
     """Extract EXIF metadata via exiftool -json. Returns dict of 12 fields."""
+    global _exiftool_missing_warned
     cmd = [
         config.EXIFTOOL_PATH, "-json",
         "-Make", "-Model", "-LensModel",
@@ -316,16 +327,27 @@ def exiftool_extract(path: str, fps: Optional[float] = None) -> dict:
         "-n",  # numeric output for GPS
         path,
     ]
+    # audit H11: split the old bare `except Exception: return {}` so failures
+    # are loud — metadata still degrades gracefully to {}, but with a cause.
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=30)
         if r.returncode != 0:
+            print("\n    [exiftool rc={0}] {1}".format(
+                r.returncode, (r.stderr or "").strip()[:200]))
             return {}
         data = json.loads(r.stdout)
         if not data:
             return {}
         d = data[0]
-    except Exception:
+    except FileNotFoundError:
+        if not _exiftool_missing_warned:
+            _exiftool_missing_warned = True
+            print("\n    [exiftool not found: {0} — camera metadata will be NULL"
+                  " for this run]".format(config.EXIFTOOL_PATH))
+        return {}
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+        print("\n    [exiftool failed: {0}: {1}]".format(type(e).__name__, e))
         return {}
 
     # Parse focal length (may be "50 mm" or numeric)
@@ -1096,7 +1118,10 @@ def main():
     tr.warm_up_ollama()
     print("")
 
-    media_dir = Path(args.dir)
+    # audit M7: a relative --dir (e.g. `--dir clips`) used to flow cwd-relative
+    # paths into the DB — a third path form besides abs/rel-to-PROJECT_ROOT,
+    # breaking dedupe and resolve_path. Canonicalize before any DB interaction.
+    media_dir = Path(args.dir).expanduser().resolve()
     if not media_dir.exists():
         print(f"Error: {media_dir} does not exist")
         sys.exit(1)
@@ -1116,9 +1141,20 @@ def main():
         )
 
     total = len(files)
+
+    # audit M26: load the known-path set ONCE for the whole batch —
+    # db.is_processed() opens a fresh connection per file, so a 5000-file dir
+    # cost 5000+ connections just to build a skip set. Same abs-OR-rel
+    # semantics as is_processed.
+    with db.get_conn() as conn:
+        _known_paths = {r[0] for r in conn.execute("SELECT path FROM media").fetchall()}
+
+    def _is_known(p) -> bool:
+        return str(p) in _known_paths or db.to_relative(str(p)) in _known_paths
+
     if args.limit and not args.refresh:
         # Filter out already-processed files before applying limit
-        new_files = [f for f in files if not db.is_processed(str(f))]
+        new_files = [f for f in files if not _is_known(f)]
         skipped_count = total - len(new_files)
         files = new_files[:args.limit]
         print(f"Found {total} media files ({skipped_count} already indexed). Processing {len(files)}...\n")
@@ -1143,7 +1179,7 @@ def main():
     phase1_results = {}  # path -> (record, frames)
 
     for i, f in enumerate(files, 1):
-        already = db.is_processed(str(f))
+        already = _is_known(f)  # audit M26: set lookup, not a per-file connection
         if already and not args.refresh:
             print(f"[{i}/{len(files)}] SKIP {f.name}")
             skipped += 1
@@ -1173,8 +1209,19 @@ def main():
                 # Phase 2, but it's the ONLY tag write for audio/no-vision clips.
                 auto_tags = record.get("_auto_tags") or []
                 with db.get_conn() as conn:
-                    db.upsert(record, _conn=conn)
+                    # audit H5: resolve the existing row id FIRST (the lookup
+                    # matches abs OR rel form) and UPDATE in place. upsert's
+                    # ON CONFLICT(path) never fires across abs↔rel forms, so a
+                    # refresh of a legacy absolute-path row used to INSERT a
+                    # duplicate row that frames/tags then attached to
+                    # arbitrarily (observed in prod). Updating by id also
+                    # normalizes the stored path to the relative form.
                     mid = _get_media_id_for_path(f, _conn=conn)
+                    if mid:
+                        db.update_media_by_id(mid, record, _conn=conn)
+                    else:
+                        db.upsert(record, _conn=conn)
+                        mid = _get_media_id_for_path(f, _conn=conn)
                     if mid:
                         if existing is not None:
                             refreshed_ids.add(mid)
@@ -1281,9 +1328,14 @@ def main():
                     print(f"{'!'*60}\n")
                     break
 
-                # Update DB: frames + media.frame_tags
+                # Update DB: frames + media.frame_tags + auto tags.
+                # audit L2: the frame/media UPDATEs and the tag clear+rewrite
+                # used to live in TWO separate transactions — a crash between
+                # them left frame_tags and the tags table permanently
+                # inconsistent with no resume path. Everything for one clip now
+                # commits atomically in a single transaction.
                 with db.get_conn() as conn:
-                    mid = _get_media_id_for_path(Path(fpath))
+                    mid = _get_media_id_for_path(Path(fpath), _conn=conn)
                     if mid:
                         for fd in video_frames:
                             conn.execute(
@@ -1311,23 +1363,20 @@ def main():
                                 )
                             )
                         frame_tags_json = vis.frames_to_json(frame_results)
+                        # audit M2: COALESCE so a free-text vision fallback
+                        # (all frames score=None → scores empty) preserves the
+                        # prior editability_score instead of nulling it on
+                        # refresh — same semantics as _run_vision_only.
                         conn.execute(
-                            "UPDATE media SET frame_tags=?, editability_score=? WHERE id=?",
+                            "UPDATE media SET frame_tags=?, editability_score=COALESCE(?, editability_score) WHERE id=?",
                             (frame_tags_json, max(scores) if scores else None, mid),
                         )
-
-                v_elapsed = _time.time() - v_start
-                print(f" [{v_elapsed:.1f}s] [OK]")
-                vision_ok += 1
-                consecutive_vision_fail = 0  # reset streak on success
-                # Write auto tags from vision. Clear + rewrite happen in ONE
-                # transaction reached only on vision success: a refresh that
-                # fails vision never clears, so old searchable tags survive
-                # (Codex review P2). BMD tags (added in Phase 1) are cleared by
-                # this too, so re-apply them here.
-                with db.get_conn() as conn:
-                    mid = _get_media_id_for_path(Path(fpath))
-                    if mid:
+                        # Write auto tags from vision. Clear + rewrite happen in
+                        # ONE transaction reached only on vision success: a
+                        # refresh that fails vision never clears, so old
+                        # searchable tags survive (Codex review P2). BMD tags
+                        # (added in Phase 1) are cleared by this too, so
+                        # re-apply them here.
                         db.delete_auto_tags(mid, _conn=conn)
                         for tag_name in (record.get("_auto_tags") or []):
                             db.add_tag(mid, tag_name, source="auto", _conn=conn)
@@ -1336,6 +1385,11 @@ def main():
                                 tag_name = tag_name.strip()
                                 if tag_name and tag_name != "```":
                                     db.add_tag(mid, tag_name, source="auto", _conn=conn)
+
+                v_elapsed = _time.time() - v_start
+                print(f" [{v_elapsed:.1f}s] [OK]")
+                vision_ok += 1
+                consecutive_vision_fail = 0  # reset streak on success
             except Exception as e:
                 print(f" [ERROR: {e}]")
                 vision_fail += 1

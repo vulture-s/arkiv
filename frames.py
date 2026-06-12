@@ -46,12 +46,26 @@ def _ensure_thumbnails_dir() -> None:
     THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _run_ffmpeg(cmd, out_path: Optional[Path] = None) -> bool:
+def _run_ffmpeg(cmd, out_path: Optional[Path] = None, timeout: float = 60) -> bool:
     """Strict ffmpeg success: returncode == 0 AND out_path (if given)
     is a non-zero-size file. 0-byte file from ffmpeg-exit-0-but-failed
     is treated as fail (avoids registering empty frames as valid)."""
-    result = subprocess.run(cmd, capture_output=True)
+    try:
+        # Single-frame extraction must not hang forever on a corrupt file —
+        # an unbounded ffmpeg here wedged whole Phase 1 batches (audit H6).
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # audit H6: timeout → fail loud; drop any partial output so a torn
+        # jpg isn't reused as "already_ok" on the next pass
+        print(f"  [frames] ffmpeg timed out (>{int(timeout)}s), skipping frame", flush=True)
+        if out_path is not None:
+            out_path.unlink(missing_ok=True)
+        return False
     if result.returncode != 0:
+        # audit M18: failures used to be silently dropped — clips ended up
+        # permanently frameless with zero diagnostics
+        err = (result.stderr or b"").decode("utf-8", "replace").strip()
+        print(f"  [frames] ffmpeg failed rc={result.returncode}: {err[-300:] or '(no stderr)'}", flush=True)
         return False
     if out_path is not None:
         if not out_path.exists() or out_path.stat().st_size == 0:
@@ -111,6 +125,10 @@ def extract_frames(video_path: str, duration_s: float, fps: float) -> List[Dict]
         if not results:
             results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames)
 
+    if not results:
+        # audit M18: a video ending up with zero frames used to look like [OK]
+        # — leave at least one trace in the log
+        print(f"  [frames] WARNING: extracted 0 frames for {video_path}", flush=True)
     return results
 
 
@@ -156,8 +174,22 @@ def _extract_scene_persistent(
         "-vf", "select='gt(scene,0.3)',showinfo",
         "-vsync", "vfr", "-f", "null", "-"
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    # Full-file scene-detect pass scales with clip length — bound it so one
+    # bad file can't hang the whole batch; timeout falls back to fixed frames
+    # via the caller (audit H6).
+    scene_timeout = max(120.0, duration_s * 2)
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=scene_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"  [frames] scene-detect timed out (>{int(scene_timeout)}s), falling back to fixed frames", flush=True)  # audit H6
+        return []
     if proc.returncode != 0:
+        # audit M18: surface why scene detection failed instead of silent []
+        err = (proc.stderr or "").strip()
+        print(f"  [frames] scene-detect failed rc={proc.returncode}: {err[-300:] or '(no stderr)'}", flush=True)
         return []
 
     # Parse timestamps from showinfo output

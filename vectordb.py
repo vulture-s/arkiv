@@ -5,6 +5,7 @@ Vector DB module — ChromaDB + Ollama bge-m3 (multilingual, default)
 import json
 import logging
 import re
+import threading
 import requests
 from typing import Any, Dict, List, Optional
 
@@ -56,7 +57,50 @@ def _reraise_dim_error(exc: Exception) -> None:
 
 # ── Embedding ────────────────────────────────────────────────────────────────
 
+# audit M27: reuse one TCP connection for embedding calls instead of a bare
+# requests.post per chunk (connection setup dominated rebuild wall-clock time).
+_EMBED_SESSION = requests.Session()
+# None = unprobed; False = this Ollama has no batch /api/embed (pre-0.1.32) —
+# don't re-probe a 404 on every record.
+_BATCH_EMBED_SUPPORTED: Optional[bool] = None
+
+
 def embed_batch(texts: List[str]) -> List[List[float]]:
+    """Embed many texts in ONE Ollama ``/api/embed`` call (batch ``input``) over a
+    shared Session (audit M27). Falls back to per-text ``embed()`` when the batch
+    endpoint is unavailable (older Ollama) or returns an unexpected shape.
+
+    Single-text calls delegate straight to ``embed()`` — no batch win there, and
+    it keeps the module-level ``embed`` the single seam tests monkeypatch."""
+    global _BATCH_EMBED_SUPPORTED
+    if not texts:
+        return []
+    if len(texts) == 1 or _BATCH_EMBED_SUPPORTED is False:
+        return [embed(t) for t in texts]
+
+    truncated = [t[:EMBED_MAX_CHARS] for t in texts]
+    try:
+        resp = _EMBED_SESSION.post(
+            f"{OLLAMA_URL}/api/embed",
+            json={"model": EMBED_MODEL, "input": truncated},
+            timeout=max(30, 5 * len(truncated)),
+        )
+        if resp.status_code == 404:
+            _BATCH_EMBED_SUPPORTED = False
+        else:
+            resp.raise_for_status()
+            vectors = resp.json().get("embeddings")
+            if (isinstance(vectors, list) and len(vectors) == len(truncated)
+                    and all(isinstance(v, list) and v for v in vectors)):
+                _BATCH_EMBED_SUPPORTED = True
+                return vectors
+            # Responded but with a shape we don't trust — stop using it.
+            _BATCH_EMBED_SUPPORTED = False
+            _LOGGER.warning("/api/embed returned unexpected shape; falling back to per-text embeds")
+    except requests.RequestException:
+        # Transient (timeout / connection refused): don't mark unsupported —
+        # fall back for this call only; per-text embed surfaces the real error.
+        pass
     return [embed(t) for t in texts]
 
 
@@ -139,21 +183,29 @@ def _assert_collection_compatible(col) -> None:
             )
 
 
+# audit M11: chromadb's PersistentClient/get_or_create_collection is a
+# check-then-create on shared on-disk state — concurrent callers (FastAPI
+# threadpool workers, federation, embed rebuild) can race it and leak System
+# instances. Serialize client + collection acquisition behind one lock.
+_CHROMA_LOCK = threading.Lock()
+
+
 def get_collection(reset: bool = False):
-    client = chromadb.PersistentClient(path=str(CHROMA_PATH))
-    if reset:
-        try:
-            client.delete_collection(COLLECTION_NAME)
-        except Exception:
-            pass
-    col = client.get_or_create_collection(
-        COLLECTION_NAME,
-        # Stamp the embedding model + dim so a later model change is detected and
-        # fails loud instead of throwing a raw chromadb dimension error. On an
-        # EXISTING collection chromadb ignores these extra metadata keys (verified
-        # on 1.5.x), so the stamp only lands when the collection is created/reset.
-        metadata={"hnsw:space": "cosine", "embed_model": EMBED_MODEL, "embed_dim": EMBED_DIM},
-    )
+    with _CHROMA_LOCK:  # audit M11
+        client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+        if reset:
+            try:
+                client.delete_collection(COLLECTION_NAME)
+            except Exception:
+                pass
+        col = client.get_or_create_collection(
+            COLLECTION_NAME,
+            # Stamp the embedding model + dim so a later model change is detected and
+            # fails loud instead of throwing a raw chromadb dimension error. On an
+            # EXISTING collection chromadb ignores these extra metadata keys (verified
+            # on 1.5.x), so the stamp only lands when the collection is created/reset.
+            metadata={"hnsw:space": "cosine", "embed_model": EMBED_MODEL, "embed_dim": EMBED_DIM},
+        )
     _assert_collection_compatible(col)
     return col
 
@@ -233,11 +285,12 @@ def upsert_record(col, record: dict) -> int:
 
     if transcript:
         chunks = chunk_text(transcript)
-        for i, chunk in enumerate(chunks):
+        vectors = embed_batch(chunks)  # audit M27: one HTTP call for all chunks
+        for i, (chunk, vec) in enumerate(zip(chunks, vectors)):
             doc_id = f"{media_id}_t{i}"
             ids.append(doc_id)
             documents.append(chunk)
-            embeddings.append(embed(chunk))
+            embeddings.append(vec)
             metadatas.append({**meta_base, "chunk_type": "transcript", "chunk_idx": i})
     else:
         # No transcript — embed frame tags / filename only
