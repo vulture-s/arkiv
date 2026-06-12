@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 import argparse
 import sys
+from typing import Dict, List
 
 import db
 import vectordb as vdb
@@ -22,7 +23,7 @@ import vectordb as vdb
 FAIL_FAST_CONSECUTIVE = 10
 
 
-def get_all_media_ids() -> list[int]:
+def get_all_media_ids() -> List[int]:
     """IDs only — reconcile/diff doesn't need the heavy transcript/JSON columns
     (audit M25)."""
     with db.get_conn() as conn:
@@ -30,12 +31,12 @@ def get_all_media_ids() -> list[int]:
         return [r[0] for r in rows]
 
 
-def get_records_by_ids(ids: list[int]) -> list[dict]:
+def get_records_by_ids(ids: List[int]) -> List[Dict]:
     """Fetch full rows only for the records that actually need (re)embedding
     (audit M25). Chunked IN-queries to stay under SQLite's variable limit."""
     if not ids:
         return []
-    records: list[dict] = []
+    records: List[Dict] = []
     with db.get_conn() as conn:
         for i in range(0, len(ids), 500):
             batch = ids[i:i + 500]

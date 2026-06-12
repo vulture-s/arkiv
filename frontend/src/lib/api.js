@@ -99,8 +99,11 @@ export const search = (q, params = {}, opts) =>
 // per-id route. /api/media items carry `thumbnail_path` (absolute fs path);
 // derive the served URL from its basename. Verified: /thumbnails/C3742.jpg → 200.
 // Split on both / and \ so Windows paths (C:\…\thumbnails\foo.jpg) extract the basename.
+// /thumbnails now requires videos_read (audit M12). An <img src> can't send an
+// Authorization header, so carry the token as ?token= when set — no-op on loopback
+// (token unset), same as streamUrl(). Without this, remote token deployments 401.
 export const thumbUrlFromPath = (thumbnailPath) =>
-  thumbnailPath ? `${BASE}/thumbnails/${thumbnailPath.split(/[/\\]/).pop()}` : null
+  thumbnailPath ? appendToken(`${BASE}/thumbnails/${thumbnailPath.split(/[/\\]/).pop()}`) : null
 // Append ?token= to a URL when a token is set — for WebSocket / media-asset URLs
 // that can't send an Authorization header. No-op on loopback / behind the dev
 // proxy (token unset there).
