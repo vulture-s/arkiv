@@ -25,6 +25,18 @@ def test_b3_video_ext_subset_of_supported(ingest_mod):
 
 
 # --------------------------------------------------------------------------
+# 360 rigs: .insv (Insta360) / .360 (GoPro Max) are HEVC-in-MOV/MP4 — ffmpeg
+# probes + extracts frames. Verified 2026-06-12 on a real .insv (dual 2880×2880
+# HEVC fisheye + AAC, thumbnail decodes). Competitor StoryCube shows the same
+# files as UNKNOWN; arkiv must treat them as first-class video.
+# --------------------------------------------------------------------------
+def test_360_formats_are_video(ingest_mod):
+    for ext in (".insv", ".360"):
+        assert ext in ingest_mod.VIDEO_EXT, f"{ext} should be a video ext"
+        assert ext in ingest_mod.SUPPORTED, f"{ext} should be ingestible"
+
+
+# --------------------------------------------------------------------------
 # B6: size helpers
 # --------------------------------------------------------------------------
 def test_b6_dir_size_bytes(ingest_mod, tmp_path):

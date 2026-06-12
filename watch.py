@@ -20,6 +20,7 @@ from typing import List, Sequence, Set
 
 MEDIA_EXTS = {
     ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts",  # video
+    ".insv", ".360",  # 360 rigs (Insta360 / GoPro Max)
     ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg",  # audio
 }
 
