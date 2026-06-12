@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from typing import Optional
 
 from config import FFPROBE_PATH  # resolved ffprobe (handles headless Windows / WinError 448)
@@ -42,7 +43,8 @@ def probe_codec(path: str, timeout: float = 10.0) -> Optional[str]:
     if key in _codec_cache:
         return _codec_cache[key]
     cmd = [
-        FFPROBE_PATH, "-v", "quiet", "-select_streams", "v:0",
+        # audit M15: -v error (was quiet) so failure reasons reach stderr.
+        FFPROBE_PATH, "-v", "error", "-select_streams", "v:0",
         "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(path),
     ]
     try:
@@ -50,10 +52,19 @@ def probe_codec(path: str, timeout: float = 10.0) -> Optional[str]:
         # output bytes (headless ingest crash), so decode explicitly.
         r = subprocess.run(cmd, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout)
-        codec = r.stdout.strip().strip(",").lower() or None
     except Exception:
-        codec = None
-    _codec_cache[key] = codec
+        # audit M15: transient failure (timeout / missing binary) — do NOT
+        # negative-cache, so the next call can re-probe and self-heal.
+        return None
+    # getattr: real CompletedProcess always has returncode; some test fakes don't.
+    rc = getattr(r, "returncode", 0)
+    if rc != 0:
+        # audit M15: probe error — log tail, skip caching so it can self-heal.
+        err = (getattr(r, "stderr", "") or "").strip()
+        print(f"[WARN] ffprobe rc={rc} for {path}: {err[-200:]}", file=sys.stderr)
+        return None
+    codec = r.stdout.strip().strip(",").lower() or None
+    _codec_cache[key] = codec  # audit M15: only successful probes are cached
     return codec
 
 

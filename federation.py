@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
@@ -16,6 +17,61 @@ from projects import ProjectMeta
 
 
 LOGGER = logging.getLogger(__name__)
+
+# audit M10: shared bounded executor — the previous per-request ThreadPoolExecutor
+# + shutdown(wait=False) abandoned workers hung on stale NAS mounts with no global
+# bound, so threads/SQLite connections/Chroma Systems accumulated per request.
+# A single module-level pool caps total concurrency for the whole process.
+_EXECUTOR_MAX_WORKERS = 8
+_EXECUTOR_LOCK = threading.Lock()
+_EXECUTOR: Optional[ThreadPoolExecutor] = None
+
+
+def _shared_executor() -> ThreadPoolExecutor:
+    global _EXECUTOR
+    if _EXECUTOR is None:
+        with _EXECUTOR_LOCK:
+            if _EXECUTOR is None:
+                _EXECUTOR = ThreadPoolExecutor(
+                    max_workers=_EXECUTOR_MAX_WORKERS,
+                    thread_name_prefix="arkiv-fed",
+                )
+    return _EXECUTOR
+
+
+# audit M10: negative cache for timed-out projects — a project that just timed
+# out is skipped for a short TTL so a stalled mount can't pin the bounded pool's
+# workers on every federated query. Self-heals after the TTL.
+_TIMEOUT_NEG_TTL_S = 60.0
+_TIMEOUT_NEG_LOCK = threading.Lock()
+_timeout_neg_cache: Dict[str, float] = {}  # key -> monotonic expiry
+
+
+def _neg_cache_key(project: ProjectMeta) -> str:
+    return str(_project_root(project).resolve(strict=False)).casefold()
+
+
+def _neg_cached(project: ProjectMeta) -> bool:
+    key = _neg_cache_key(project)
+    with _TIMEOUT_NEG_LOCK:
+        expiry = _timeout_neg_cache.get(key)
+        if expiry is None:
+            return False
+        if time.monotonic() >= expiry:
+            del _timeout_neg_cache[key]
+            return False
+        return True
+
+
+def _neg_mark(project: ProjectMeta) -> None:
+    with _TIMEOUT_NEG_LOCK:
+        _timeout_neg_cache[_neg_cache_key(project)] = time.monotonic() + _TIMEOUT_NEG_TTL_S
+
+
+def _neg_clear() -> None:
+    """Drop the timeout negative cache (used by tests)."""
+    with _TIMEOUT_NEG_LOCK:
+        _timeout_neg_cache.clear()
 
 
 def embed_query(query: str):
@@ -320,16 +376,26 @@ def search_all_projects(
         q_embed = None
 
     merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    # Manual executor (not a `with` block): the context manager's __exit__ calls
-    # shutdown(wait=True), which blocks until every worker returns — so a worker
-    # hung on a stale NAS mount would make this function hang for far longer than
-    # `timeout`, despite the per-future timeout below. We instead bound total
-    # wall-clock with a shared deadline and abandon stragglers via
-    # shutdown(wait=False, cancel_futures=True).
-    executor = ThreadPoolExecutor(max_workers=min(len(projects), 8))
+    # audit M10: shared module-level bounded executor (see _shared_executor) —
+    # total wall-clock is still bounded by the deadline below; stragglers keep
+    # their worker until they return, but the pool caps process-wide leakage and
+    # the timeout negative cache stops re-feeding stalled mounts.
+    executor = _shared_executor()
+    futures: List[Tuple[ProjectMeta, Any]] = []
     try:
-        futures = []
         for project in projects:
+            if _neg_cached(project):  # audit M10: skip recently-timed-out project
+                LOGGER.warning(
+                    "project %s skipped: recent timeout (negative cache)", project.name)
+                response["projects_failed"] += 1
+                response["errors"].append({
+                    "project_name": project.name,
+                    "project_path": str(project.path),
+                    "error": "skipped: recent timeout (retry in <{0:.0f}s)".format(
+                        _TIMEOUT_NEG_TTL_S),
+                    "stage": "negative_cache",
+                })
+                continue
             futures.append((project, executor.submit(
                 query_single_project,
                 project,
@@ -348,6 +414,7 @@ def search_all_projects(
                 result = future.result(timeout=remaining)
             except FuturesTimeoutError:
                 LOGGER.warning("project query timeout for %s after %ss", project.name, timeout)
+                _neg_mark(project)  # audit M10: back off this project for a TTL
                 response["projects_failed"] += 1
                 response["errors"].append({
                     "project_name": project.name,
@@ -373,8 +440,10 @@ def search_all_projects(
                 if existing is None or float(item.get("score", 0)) > float(existing.get("score", 0)):
                     merged[key] = item
     finally:
-        # Do not wait on stragglers; cancel anything not yet started.
-        executor.shutdown(wait=False, cancel_futures=True)
+        # audit M10: shared executor — never shut it down per request; just
+        # cancel anything still queued (no-op for done/running futures).
+        for _project, future in futures:
+            future.cancel()
 
     items = sorted(
         merged.values(),

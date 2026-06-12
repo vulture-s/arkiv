@@ -11,28 +11,45 @@ from config import DB_PATH
 from contextlib import contextmanager
 
 
+# audit L14: once-only init — the parent-dir check + double chmod used to run
+# on EVERY connection, multiplying syscalls on N+1-heavy call paths. Keyed on
+# the DB path (not a plain bool) so tests / `--db` that rebind db.DB_PATH at
+# runtime still re-init for the new location.
+_init_done_for: Optional[str] = None
+
+
 @contextmanager
 def get_conn():
-    # Ensure the DB's parent dir exists. On a fresh clone the .arkiv/ data dir
-    # doesn't exist yet, and server.py calls init_db() at import → sqlite would
-    # raise "unable to open database file". Covers every DB-opening path
-    # (server / ingest / embed / tests), not just server startup.
-    parent = Path(DB_PATH).expanduser().parent
-    if parent and not parent.exists():
-        parent.mkdir(parents=True, exist_ok=True)
-        # Only tighten a dir WE just created — never an existing (possibly shared)
-        # parent, which could strip access from unrelated files.
+    global _init_done_for
+    first_open = _init_done_for != str(DB_PATH)
+    if first_open:
+        # Ensure the DB's parent dir exists. On a fresh clone the .arkiv/ data dir
+        # doesn't exist yet, and server.py calls init_db() at import → sqlite would
+        # raise "unable to open database file". Covers every DB-opening path
+        # (server / ingest / embed / tests), not just server startup.
+        parent = Path(DB_PATH).expanduser().parent
+        if parent and not parent.exists():
+            parent.mkdir(parents=True, exist_ok=True)
+            # Only tighten a dir WE just created — never an existing (possibly shared)
+            # parent, which could strip access from unrelated files.
+            try:
+                os.chmod(parent, 0o700)
+            except OSError:
+                pass
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    # audit M6: SQLite ships with foreign_keys OFF per-connection, so every
+    # ON DELETE CASCADE in the schema was dead — revoking a token or deleting
+    # media left orphan child rows. init_db() clears pre-existing orphans via
+    # foreign_key_check before enforcement can bite on legacy data.
+    conn.execute("PRAGMA foreign_keys=ON")
+    if first_open:
+        # Our own token-hash DB file — keep it owner-only on shared hosts.
+        # Best-effort (no-op / may fail on Windows).
         try:
-            os.chmod(parent, 0o700)
+            os.chmod(DB_PATH, 0o600)
         except OSError:
             pass
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    # Our own token-hash DB file — keep it owner-only on shared hosts.
-    # Best-effort (no-op / may fail on Windows).
-    try:
-        os.chmod(DB_PATH, 0o600)
-    except OSError:
-        pass
+        _init_done_for = str(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -80,6 +97,20 @@ def resolve_path(rel_path: str) -> str:
             f"DB rel_path 解析後逃出 PROJECT_ROOT 邊界：{rel_path!r} → {joined!s}"
         )
     return str(joined)
+
+
+def _add_column_if_missing(conn, table: str, col: str, typ: str):
+    """ALTER TABLE ... ADD COLUMN that only swallows the expected
+    "duplicate column name" error.
+
+    audit L10: the old bare `except Exception: pass` here also ate
+    database-locked / disk-I/O errors, silently skipping schema migrations —
+    those must surface, only the idempotent re-run case is benign."""
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
 
 
 def init_db():
@@ -171,10 +202,7 @@ def init_db():
             # re-probe the whole library each ingest (H1).
             ("codec", "TEXT"),
         ]:
-            try:
-                conn.execute(f"ALTER TABLE media ADD COLUMN {col} {typ}")
-            except Exception:
-                pass
+            _add_column_if_missing(conn, "media", col, typ)  # audit L10
         for col, typ in [
             ("content_type", "TEXT"),
             ("focus_score", "INTEGER"),
@@ -186,10 +214,7 @@ def init_db():
             ("edit_position", "TEXT"),
             ("edit_reason", "TEXT"),
         ]:
-            try:
-                conn.execute(f"ALTER TABLE frames ADD COLUMN {col} {typ}")
-            except Exception:
-                pass
+            _add_column_if_missing(conn, "frames", col, typ)  # audit L10
         conn.execute("""
             CREATE TABLE IF NOT EXISTS access_tokens (
                 id TEXT PRIMARY KEY,
@@ -206,10 +231,9 @@ def init_db():
             )
         """)
         # Phase 16.1: hash_algo on pre-existing token tables (sha256 legacy).
-        try:
-            conn.execute("ALTER TABLE access_tokens ADD COLUMN hash_algo TEXT NOT NULL DEFAULT 'sha256'")
-        except Exception:
-            pass
+        _add_column_if_missing(  # audit L10
+            conn, "access_tokens", "hash_algo", "TEXT NOT NULL DEFAULT 'sha256'"
+        )
         conn.execute("""
             CREATE TABLE IF NOT EXISTS access_token_scopes (
                 token_id TEXT NOT NULL,
@@ -271,12 +295,37 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_jobs_status_priority "
             "ON jobs(status, priority, created_at)"
         )
+        # audit M6: PRAGMA foreign_keys was never enabled before, so orphan
+        # child rows accumulated (e.g. scopes of revoked tokens, tags/frames of
+        # deleted media). Clear them once here so the now-active enforcement in
+        # get_conn() doesn't start failing writes against legacy inconsistency.
+        _known_child_tables = {"tags", "frames", "access_token_scopes", "chat_messages"}
+        try:
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        except sqlite3.Error:
+            violations = []
+        removed = 0
+        for v in violations:
+            tbl, rowid = v[0], v[1]
+            # Only touch tables we know are pure child rows — never auto-delete
+            # from anything unexpected.
+            if tbl in _known_child_tables and rowid is not None:
+                conn.execute(
+                    "DELETE FROM {0} WHERE rowid=?".format(tbl), (rowid,)
+                )
+                removed += 1
+        if removed:
+            print(
+                "[init_db] foreign_key_check: removed {0} orphan child row(s)"
+                " left from pre-enforcement era (audit M6)".format(removed)
+            )
 
 
 def migrate_to_relative():
     """Convert DB path fields from absolute to relative paths."""
     media_count = 0
     frame_count = 0
+    merged_count = 0
     with get_conn() as conn:
         rows = conn.execute("SELECT id, path, thumbnail_path FROM media").fetchall()
         for row in rows:
@@ -289,8 +338,29 @@ def migrate_to_relative():
                         (new_path, new_thumb, row["id"]),
                     )
                     media_count += 1
-                except sqlite3.IntegrityError as exc:
-                    print(f"[migrate] warning: media id={row['id']} skipped due to UNIQUE conflict: {exc}")
+                except sqlite3.IntegrityError:
+                    # audit H5: another row already holds the relative form
+                    # (abs/rel duplicate pair — upsert's ON CONFLICT(path) never
+                    # fires across the two forms). Merge instead of skip: move
+                    # over child rows the survivor doesn't already have, then
+                    # drop the duplicate. UPDATE OR IGNORE skips children that
+                    # would violate UNIQUE(media_id, frame_index/name) — the
+                    # survivor's own copy wins there.
+                    survivor = conn.execute(
+                        "SELECT id FROM media WHERE path=? AND id<>?",
+                        (new_path, row["id"]),
+                    ).fetchone()
+                    if survivor is None:
+                        print(f"[migrate] warning: media id={row['id']} UNIQUE conflict without locatable survivor — skipped")
+                        continue
+                    sid = survivor["id"]
+                    conn.execute("UPDATE OR IGNORE frames SET media_id=? WHERE media_id=?", (sid, row["id"]))
+                    conn.execute("DELETE FROM frames WHERE media_id=?", (row["id"],))
+                    conn.execute("UPDATE OR IGNORE tags SET media_id=? WHERE media_id=?", (sid, row["id"]))
+                    conn.execute("DELETE FROM tags WHERE media_id=?", (row["id"],))
+                    conn.execute("DELETE FROM media WHERE id=?", (row["id"],))
+                    merged_count += 1
+                    print(f"[migrate] merged duplicate media id={row['id']} into id={sid} ({new_path})")
         frame_rows = conn.execute(
             "SELECT id, thumbnail_path FROM frames WHERE thumbnail_path IS NOT NULL"
         ).fetchall()
@@ -307,6 +377,8 @@ def migrate_to_relative():
             media_count, len(rows), frame_count, len(frame_rows)
         )
     )
+    if merged_count:
+        print("[migrate] 另合併 {0} 組 abs/rel 重複 row（audit H5）。".format(merged_count))
 
 
 def is_processed(path: str) -> bool:
@@ -357,6 +429,29 @@ def upsert(record: dict, _conn=None):
     else:
         with get_conn() as conn:
             conn.execute(sql, list(safe.values()))
+
+
+def update_media_by_id(media_id: int, record: dict, _conn=None):
+    """UPDATE an existing media row by id (column-subset, same key filter as
+    upsert).
+
+    audit H5: refresh used to go through upsert's ON CONFLICT(path), which
+    never fires when the stored path is absolute and the incoming one relative
+    (or vice versa) — silently INSERTing a duplicate row that frames/tags then
+    attached to arbitrarily. Callers that already resolved the row id (via
+    abs-OR-rel lookup) update in place instead, which also normalizes a legacy
+    absolute path to the incoming relative form."""
+    safe = {k: v for k, v in record.items() if k in _ALLOWED_COLS}
+    if not safe:
+        return
+    sets = ", ".join(f"{k}=?" for k in safe)
+    sql = f"UPDATE media SET {sets} WHERE id=?"
+    params = list(safe.values()) + [media_id]
+    if _conn is not None:
+        _conn.execute(sql, params)
+    else:
+        with get_conn() as conn:
+            conn.execute(sql, params)
 
 
 # ── Lightweight queries (Phase 4) ────────────────────────────────────────────
@@ -613,13 +708,20 @@ def upsert_frame(
             _do(conn)
 
 
-def get_frames(media_id: int) -> List[Dict]:
-    with get_conn() as conn:
-        rows = conn.execute(
+def get_frames(media_id: int, _conn=None) -> List[Dict]:
+    def _do(c):
+        rows = c.execute(
             "SELECT * FROM frames WHERE media_id = ? ORDER BY frame_index",
             (media_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+    # _conn lets a caller read frames inside its own open write txn — without it
+    # a second connection can't see the txn's uncommitted UPDATEs (stale read,
+    # audit M1) and on SQLite would block on the writer lock (audit C1).
+    if _conn is not None:
+        return _do(_conn)
+    with get_conn() as conn:
+        return _do(conn)
 
 
 def delete_frames(media_id: int, _conn=None):

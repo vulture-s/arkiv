@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import platform
 from pathlib import Path
 
@@ -123,6 +124,7 @@ def _optional_option(opts, key, value):
         opts[key] = value
 
 _whisper_loaded = False
+_warm_up_lock = threading.Lock()  # audit L7: guard lazy model load against concurrent callers
 _fw_model = None  # faster-whisper model instance
 _whisperx_model = None  # WhisperX model instance
 _vad_model = None  # Silero VAD model instance
@@ -161,7 +163,11 @@ def _vad_filter(wav_path: str, sample_rate: int = 16000):
     speech = np.concatenate(chunks)
 
     _fd, out = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
-    sf.write(out, speech, sample_rate)
+    try:
+        sf.write(out, speech, sample_rate)
+    except Exception:
+        Path(out).unlink(missing_ok=True)  # audit L4: don't leak the temp wav on write failure
+        raise
     kept = len(speech) / max(len(audio), 1)
     print(f"  [VAD] kept {kept:.0%} of audio ({len(stamps)} segments)", flush=True)
     return out
@@ -173,35 +179,41 @@ def warm_up():
     if _whisper_loaded:
         return
 
-    if _USE_MLX:
-        import mlx_whisper
-        import numpy as np
-        _fd, silence = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
-        try:
-            subprocess.run([
-                FFMPEG_PATH, "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
-                "-t", "1", "-loglevel", "error", silence, "-y"
-            ], capture_output=True)
-            mlx_whisper.transcribe(silence, path_or_hf_repo=WHISPER_MODEL, language="zh")
-        except Exception:
-            pass
-        finally:
-            Path(silence).unlink(missing_ok=True)
-    elif _non_mac_backend() == "whisperx":
-        import whisperx
-        _whisperx_model = whisperx.load_model(
-            WHISPER_MODEL,
-            "cuda",
-            compute_type="float16",
-        )
-        print("  [whisperx on cuda]", flush=True)
-    else:
-        from faster_whisper import WhisperModel
-        _fw_model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
-        print("  [faster-whisper on cuda]", flush=True)
+    # audit L7: double-checked locking — concurrent retranscribe requests used
+    # to both pass the flag check and load the model twice (RAM spike).
+    with _warm_up_lock:
+        if _whisper_loaded:
+            return
 
-    _whisper_loaded = True
-    print("  [whisper model loaded]", flush=True)
+        if _USE_MLX:
+            import mlx_whisper
+            import numpy as np
+            _fd, silence = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
+            try:
+                subprocess.run([
+                    FFMPEG_PATH, "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                    "-t", "1", "-loglevel", "error", silence, "-y"
+                ], capture_output=True)
+                mlx_whisper.transcribe(silence, path_or_hf_repo=WHISPER_MODEL, language="zh")
+            except Exception:
+                pass
+            finally:
+                Path(silence).unlink(missing_ok=True)
+        elif _non_mac_backend() == "whisperx":
+            import whisperx
+            _whisperx_model = whisperx.load_model(
+                WHISPER_MODEL,
+                "cuda",
+                compute_type="float16",
+            )
+            print("  [whisperx on cuda]", flush=True)
+        else:
+            from faster_whisper import WhisperModel
+            _fw_model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
+            print("  [faster-whisper on cuda]", flush=True)
+
+        _whisper_loaded = True
+        print("  [whisper model loaded]", flush=True)
 
 
 def transcribe(media_path: str, language=None) -> tuple:
@@ -547,9 +559,21 @@ def _to_wav(media_path: str):
         "-loglevel", "error",
         out, "-y"
     ]
-    r = subprocess.run(cmd, capture_output=True)
-    if r.returncode != 0 or not Path(out).exists():
-        return None
+    # duration-unaware files can hang ffmpeg — bound it so a single bad file can't
+    # wedge the whole whisper phase (audit H7).
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        Path(out).unlink(missing_ok=True)
+        raise RuntimeError("ffmpeg audio extract timed out (>900s): {0}".format(media_path))
+    if r.returncode != 0 or not Path(out).exists() or Path(out).stat().st_size == 0:
+        Path(out).unlink(missing_ok=True)  # don't leak the temp wav on failure (H7)
+        err = (r.stderr or b"").decode("utf-8", "replace").strip()
+        err = err[-300:] if err else "(no stderr)"
+        # A failed extraction must NOT masquerade as "no speech" (returning empty
+        # made ingest record an empty transcript forever and retranscribe overwrite
+        # a good one — audit H1/H2). Raise so the caller counts it a real failure.
+        raise RuntimeError("ffmpeg audio extract failed rc={0}: {1}".format(r.returncode, err))
     return out
 
 

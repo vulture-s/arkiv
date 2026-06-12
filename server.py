@@ -12,12 +12,11 @@ import json
 import os
 import urllib.request
 from pathlib import Path
-from typing import List, Literal, Optional, Set
+from typing import Any, List, Literal, Optional, Set
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 import admin
@@ -33,6 +32,41 @@ import smart_collections
 import tag_quality
 
 
+# ── Ingest single-flight guard ───────────────────────────────────────────────
+# One guard for ALL ingest entry points (REST /api/ingest, reingest, WS) so two
+# full pipelines can't run at once → DB-lock contention + double whisper + OOM on a
+# 16GB box (audit H3). threading.Lock because REST runs in the threadpool while the
+# WS variant runs on the event loop.
+import threading as _threading
+_ingest_lock = _threading.Lock()
+_ingest_active = False
+
+def _acquire_ingest_slot() -> bool:
+    global _ingest_active
+    with _ingest_lock:
+        if _ingest_active:
+            return False
+        _ingest_active = True
+        return True
+
+def _release_ingest_slot() -> None:
+    global _ingest_active
+    with _ingest_lock:
+        _ingest_active = False
+
+# audit M9 (partial): vision.VISION_MODEL is module-global, so two concurrent
+# retry-vision calls could interleave their save/swap/restore and permanently
+# pin the fallback model as "primary" (silent quality degradation). Serializing
+# the swap window removes the race; the full fix (pass the model as a
+# describe_frames parameter) needs a vision.py signature change.
+_vision_fallback_lock = _threading.Lock()
+
+# audit M8: single-flight for the embed rebuild — double-clicking the rebuild
+# button used to launch N concurrent drop+rebuild subprocesses over the same
+# Chroma collection.
+_embed_rebuild_lock = _threading.Lock()
+_embed_rebuild_active = False
+
 # ── WebSocket connection manager ────────────────────────────────────────────
 _MAX_WS_CONNECTIONS = 32  # cap concurrent progress listeners (DoS guard)
 
@@ -47,6 +81,11 @@ class IngestBroadcaster:
             await ws.close(code=1013)  # try again later
             return False
         await ws.accept()
+        # audit L6: re-check after the await — concurrent handshakes can all pass
+        # the pre-accept check before any of them is added to the set (TOCTOU).
+        if len(self.connections) >= _MAX_WS_CONNECTIONS:
+            await ws.close(code=1013)
+            return False
         self.connections.add(ws)
         return True
 
@@ -55,7 +94,9 @@ class IngestBroadcaster:
 
     async def broadcast(self, data: dict):
         dead = set()
-        for ws in self.connections:
+        # snapshot: send_json awaits, so a concurrent connect/disconnect mutating
+        # the live set mid-iteration would raise "Set changed size" (audit H9).
+        for ws in list(self.connections):
             try:
                 await ws.send_json(data)
             except Exception:
@@ -105,13 +146,37 @@ app.add_middleware(
 
 ROOT = Path(__file__).parent
 
-# Serve thumbnails as static files (create dir if missing so mount always works).
-# Honor ARKIV_THUMBNAILS_DIR (via config.THUMBNAILS_DIR) instead of hardcoding
-# ROOT / "thumbnails" — otherwise any deployment that points thumbnails elsewhere
-# (test rig, docker, worktree QA) silently 404s every /thumbnails/*.jpg.
+# Serve thumbnails through an AUTHED route (create dir if missing so it always
+# works). Honor ARKIV_THUMBNAILS_DIR (via config.THUMBNAILS_DIR) instead of
+# hardcoding ROOT / "thumbnails" — otherwise any deployment that points
+# thumbnails elsewhere (test rig, docker, worktree QA) silently 404s every
+# /thumbnails/*.jpg.
 thumbs_dir = config.THUMBNAILS_DIR
 thumbs_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/thumbnails", StaticFiles(directory=str(thumbs_dir)), name="thumbnails")
+
+
+# audit M12: thumbnails were a StaticFiles mount, which bypasses the auth
+# dependency entirely — any unauthenticated client could pull every scene
+# thumbnail. Serve via an authed route instead: loopback trust still covers the
+# local UI token-free; a remote client needs a videos_read token.
+@app.get("/thumbnails/{name}")
+def serve_thumbnail(
+    name: str,
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    # basename + containment check: no separators (an encoded %2F decodes into
+    # the path param), no hidden/dot names, and the resolved path must stay
+    # inside the thumbnails dir (symlink defense).
+    if "/" in name or "\\" in name or name.startswith("."):
+        raise HTTPException(404, "not found")
+    try:
+        resolved = (thumbs_dir / name).resolve()
+        resolved.relative_to(thumbs_dir.resolve())
+    except (OSError, ValueError):
+        raise HTTPException(404, "not found")
+    if not resolved.is_file():
+        raise HTTPException(404, "not found")
+    return FileResponse(str(resolved))
 
 
 def _basename_safe(value: str) -> str:
@@ -221,6 +286,23 @@ class ProjectCreate(BaseModel):
     name: str
     path: str
     tags: Optional[List[str]] = None
+
+    # audit M21: empty / control-char / separator-bearing names were accepted —
+    # a name containing '/' can be created but never DELETEd (the path param
+    # can't match it), and unbounded names bloat the registry.
+    @field_validator("name")
+    @classmethod
+    def _clean_project_name(cls, v: str) -> str:
+        cleaned = " ".join(
+            "".join(c for c in (v or "") if c == " " or (ord(c) >= 0x20 and c != "\x7f")).split()
+        )
+        if not cleaned:
+            raise ValueError("project name must not be empty")
+        if len(cleaned) > 100:
+            raise ValueError("project name too long (max 100)")
+        if "/" in cleaned or "\\" in cleaned:
+            raise ValueError("project name must not contain path separators")
+        return cleaned
 
 
 class CreateTokenRequest(BaseModel):
@@ -424,11 +506,13 @@ def list_chat_conversations(
 @app.get("/api/search/all")
 def search_all(
     q: str = Query(..., alias="q"),
-    limit: int = 50,
-    per_project_limit: int = 20,
+    # audit H13: declarative bounds — limit=-1 silently truncated, and
+    # timeout=999999 parked a threadpool worker on a stalled peer for hours.
+    limit: int = Query(50, ge=1, le=500),
+    per_project_limit: int = Query(20, ge=1, le=100),
     projects: Optional[str] = None,
     tag: Optional[str] = None,
-    timeout: float = 10.0,
+    timeout: float = Query(10.0, gt=0.0, le=30.0),
     no_fallback_sql: bool = False,
     _tok: dict = Depends(require_scopes("videos_read")),
 ):
@@ -499,6 +583,14 @@ def add_project(
     body: ProjectCreate,
     _tok: dict = Depends(require_scopes("projects_write")),
 ):
+    # audit M21: registry add_project silently REPLACES an existing entry of the
+    # same name — surface the collision as 409 instead of overwriting.
+    try:
+        existing = {p.name for p in project_registry.list_registry_projects()}
+    except project_registry.RegistryError as exc:
+        raise HTTPException(status_code=500, detail="project registry unreadable: {0}".format(exc))
+    if body.name in existing:
+        raise HTTPException(status_code=409, detail="project name already exists: {0}".format(body.name))
     try:
         project = project_registry.add_project(body.name, body.path, body.tags or [])
     except project_registry.RegistryError as exc:
@@ -557,14 +649,20 @@ def media_position(
         filters["media_type"] = media_type
     where, params = db._build_filter_clause(**filters)
     order = db.SORT_MAP.get(sort, "id")
+    # audit L12: single window-function query instead of fetching the whole view
+    # into Python; and a clip NOT in the current view now says so explicitly
+    # (in_view=false) instead of a fake offset 0 that is indistinguishable from
+    # genuinely being first. offset stays 0 in that case so the existing UI
+    # fallback (jump to page 0) keeps working.
     with db.get_conn() as conn:
-        rows = conn.execute(
-            f"SELECT id FROM media WHERE {where} ORDER BY {order}", params
-        ).fetchall()
-        for idx, row in enumerate(rows):
-            if row["id"] == media_id:
-                return {"id": media_id, "offset": idx}
-    return {"id": media_id, "offset": 0}
+        row = conn.execute(
+            f"SELECT pos FROM (SELECT id, ROW_NUMBER() OVER (ORDER BY {order}) - 1 AS pos "
+            f"FROM media WHERE {where}) ranked WHERE id = ?",
+            (*params, media_id),
+        ).fetchone()
+    if row is None:
+        return {"id": media_id, "offset": 0, "in_view": False}
+    return {"id": media_id, "offset": row["pos"], "in_view": True}
 
 
 @app.get("/api/media/pool")
@@ -595,6 +693,49 @@ def media_pool(
     return {"items": items, "total": len(items)}
 
 
+# audit H14: ext buckets mirror db._build_filter_clause's media_type sets so the
+# search branch applies the SAME filter the SQL (non-search) path does.
+_VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts"})
+_AUDIO_EXTS = frozenset({".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"})
+
+
+def _get_tags_bulk(media_ids) -> dict:
+    """audit H15: tags for many media ids in ONE query — the per-row db.get_tags
+    loop opened a fresh SQLite connection per record (501 connections for a
+    500-row page). Returns {media_id: [tag dicts]} matching db.get_tags shape."""
+    out = {int(m): [] for m in media_ids}
+    if not out:
+        return out
+    ids = list(out.keys())
+    placeholders = ",".join("?" * len(ids))
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, media_id, name, source FROM tags "
+            "WHERE media_id IN ({0}) ORDER BY name".format(placeholders),
+            ids,
+        ).fetchall()
+    for r in rows:
+        out[r["media_id"]].append({"id": r["id"], "name": r["name"], "source": r["source"]})
+    return out
+
+
+def _get_light_records_by_ids(media_ids) -> list:
+    """audit H16: LIGHT_COLS records for many ids in ONE query, preserving input
+    order. The semantic-search path did a per-hit SELECT * (words_json /
+    segments_json — tens of MB across a page) plus one connection per hit."""
+    ids = [int(m) for m in media_ids]
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT {db.LIGHT_COLS} FROM media WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+    by_id = {r["id"]: dict(r) for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
 @app.get("/api/media")
 def list_media(
     offset: int = 0,
@@ -615,6 +756,11 @@ def list_media(
         enriched = []
         search_warning = None
         import vectordb as vdb
+        # audit M19: search used to ignore `offset` entirely (page 2 == page 1).
+        # Collect up to offset+limit matches, then slice the requested page.
+        # Capped so a huge ?offset can't inflate n_results / SQL LIMIT (audit
+        # H13-class DoS); search hits past 2000 are noise anyway.
+        needed = min(offset + limit, 2000)
 
         def _passes_filters(rec: dict) -> bool:
             # Applied to the ENRICHED record (which has real lang/rating), not the
@@ -628,73 +774,115 @@ def list_media(
                 return False
             if rating and rating != "unrated" and rv != rating:
                 return False
+            # audit H14: media_type was silently ignored on the search branch
+            # (?q=...&media_type=video still returned audio). Mirror the SQL
+            # path's ext buckets.
+            ext = (rec.get("ext") or "").lower()
+            if media_type == "video" and ext not in _VIDEO_EXTS:
+                return False
+            if media_type == "audio" and ext not in _AUDIO_EXTS:
+                return False
             return True
 
         # Try semantic search first (requires vectordb with embeddings)
         try:
-            raw = vdb.search(q, n_results=limit * 3)
+            raw = vdb.search(q, n_results=needed * 3)
             seen = set()
+            ordered_ids = []
+            hit_by_id = {}
             for r in raw:
                 mid = int(r["media_id"])
                 if mid in seen:
                     continue
                 seen.add(mid)
-                rec = db.get_record_by_id(mid)
-                if not rec or not _passes_filters(rec):
+                ordered_ids.append(mid)
+                hit_by_id[mid] = r
+            # audit H16: one batched LIGHT_COLS fetch instead of per-hit SELECT *
+            for rec in _get_light_records_by_ids(ordered_ids):
+                if not _passes_filters(rec):
                     continue
                 _resolve_record(rec)
-                rec["score"] = r.get("score", 0)
-                rec["excerpt"] = r.get("excerpt", "")
-                rec["tags"] = db.get_tags(mid)
+                hit = hit_by_id[rec["id"]]
+                rec["score"] = hit.get("score", 0)
+                rec["excerpt"] = hit.get("excerpt", "")
                 enriched.append(rec)
-                if len(enriched) >= limit:
+                if len(enriched) >= needed:
                     break
         except vdb.EmbeddingDimensionMismatch as exc:
             # Don't silently SQL-degrade a dim mismatch — log it and surface a hint
             # so the operator knows semantic search is off until they rebuild.
             _logging.getLogger(__name__).warning("semantic search degraded: %s", exc)
             search_warning = str(exc)
-        except Exception:
-            pass
+        except Exception as exc:
+            # audit L8: was a bare `except: pass` — Ollama being down degraded to
+            # SQL search with zero signal anywhere. Log + flag the degradation.
+            _logging.getLogger(__name__).warning(
+                "semantic search failed, falling back to SQL: %s", exc
+            )
+            search_warning = "semantic search unavailable (SQL fallback used)"
 
         # Fallback: SQL text search (filename, transcript, tags) — same lang/rating
         # filter applied so a degraded search still honors the active filters.
         if not enriched:
             seen_ids = set()
             like = f"%{q}%"
+            # audit H17: push the active filters into WHERE and bound the scan —
+            # the old query LIKE-scanned the whole table, built every matching
+            # record, then threw away everything past `limit`.
+            filter_sql = ""
+            filter_params: list = []
+            if lang:
+                filter_sql += " AND lang = ?"
+                filter_params.append(lang)
+            if rating == "unrated":
+                filter_sql += " AND rating IS NULL"
+            elif rating:
+                filter_sql += " AND rating = ?"
+                filter_params.append(rating)
+            if media_type == "video":
+                filter_sql += " AND ext IN ({0})".format(",".join("?" * len(_VIDEO_EXTS)))
+                filter_params.extend(sorted(_VIDEO_EXTS))
+            elif media_type == "audio":
+                filter_sql += " AND ext IN ({0})".format(",".join("?" * len(_AUDIO_EXTS)))
+                filter_params.extend(sorted(_AUDIO_EXTS))
             with db.get_conn() as conn:
                 rows = conn.execute(
                     f"SELECT {db.LIGHT_COLS} FROM media "
-                    "WHERE filename LIKE ? OR transcript LIKE ? "
-                    "ORDER BY id",
-                    (like, like),
+                    "WHERE (filename LIKE ? OR transcript LIKE ?)" + filter_sql +
+                    " ORDER BY id LIMIT ?",
+                    (like, like, *filter_params, needed),
                 ).fetchall()
                 for r in rows:
                     rec = dict(r)
-                    if not _passes_filters(rec):
-                        continue
                     _resolve_record(rec)
-                    rec["tags"] = db.get_tags(rec["id"])
                     enriched.append(rec)
                     seen_ids.add(rec["id"])
 
-                # Also search by tag name
-                tag_rows = conn.execute(
-                    "SELECT DISTINCT media_id FROM tags WHERE name LIKE ?",
-                    (like,),
-                ).fetchall()
-                for tr in tag_rows:
-                    mid = tr["media_id"]
-                    if mid in seen_ids:
+            # Also search by tag name (bounded — audit H17)
+            if len(enriched) < needed:
+                with db.get_conn() as conn:
+                    tag_rows = conn.execute(
+                        "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
+                        (like, needed * 3),
+                    ).fetchall()
+                tag_ids = [tr["media_id"] for tr in tag_rows if tr["media_id"] not in seen_ids]
+                for rec in _get_light_records_by_ids(tag_ids):
+                    if not _passes_filters(rec):
                         continue
-                    rec = db.get_record_by_id(mid)
-                    if rec and _passes_filters(rec):
-                        _resolve_record(rec)
-                        rec["tags"] = db.get_tags(mid)
-                        enriched.append(rec)
-                        seen_ids.add(mid)
+                    _resolve_record(rec)
+                    enriched.append(rec)
+                    seen_ids.add(rec["id"])
+                    if len(enriched) >= needed:
+                        break
 
-        resp = {"items": enriched[:limit], "total": len(enriched), "search": True}
+        # audit M19: slice the requested page; total = bounded match count (the
+        # same "items seen so far" semantic for both search sub-paths).
+        items = enriched[offset:offset + limit]
+        # audit H15: one bulk tag query for the returned page only
+        tags_by_id = _get_tags_bulk([rec["id"] for rec in items])
+        for rec in items:
+            rec["tags"] = tags_by_id.get(rec["id"], [])
+        resp = {"items": items, "total": len(enriched), "search": True}
         if search_warning:
             resp["search_degraded"] = True
             resp["warning"] = search_warning
@@ -711,10 +899,12 @@ def list_media(
     records, total = db.get_media_filtered(
         offset=offset, limit=limit, sort=sort, **filters,
     )
-    # Attach tags to each record
+    # Attach tags to each record — one bulk query for the page instead of one
+    # SQLite connection per row (audit H15).
+    tags_by_id = _get_tags_bulk([rec["id"] for rec in records])
     for rec in records:
         _resolve_record(rec)
-        rec["tags"] = db.get_tags(rec["id"])
+        rec["tags"] = tags_by_id.get(rec["id"], [])
 
     return {"items": records, "total": total, "search": False}
 
@@ -782,7 +972,12 @@ def get_media_waveform(
         raise HTTPException(500, "波形計算失敗")
     payload = {"media_id": media_id, "bins": bins, "peaks": peaks}
     try:
-        cache_path.write_text(json.dumps(payload), encoding="utf-8")
+        # audit L5: atomic write (tmp + os.replace) — a direct write_text could
+        # leave a concurrent reader a torn/partial JSON. pid-suffixed tmp name so
+        # two concurrent writers don't tear each other's tmp file either.
+        tmp_path = cache_path.with_name("{0}.{1}.tmp".format(cache_path.name, os.getpid()))
+        tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp_path, cache_path)
     except Exception:
         pass
     return payload
@@ -867,12 +1062,32 @@ def update_rating(
     body: RatingUpdate,
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
-    """Set or clear rating for a media asset."""
+    """Set or clear rating for a media asset.
+
+    PATCH semantics (audit M20): a field OMITTED from the body is left
+    untouched; an explicit null clears it. PATCH {rating:'good'} used to
+    silently wipe the stored note (PUT semantics in a PATCH endpoint).
+    """
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
-    db.set_rating(media_id, body.rating, body.note)
-    return {"ok": True, "rating": body.rating, "note": body.note}
+    provided = body.model_fields_set  # audit M20: omitted vs explicit-null
+    sets, params = [], []
+    if "rating" in provided:
+        sets.append("rating = ?")
+        params.append(body.rating)
+    if "note" in provided:
+        sets.append("rating_note = ?")
+        params.append(body.note)
+    if sets:
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
+                (*params, media_id),
+            )
+    new_rating = body.rating if "rating" in provided else rec.get("rating")
+    new_note = body.note if "note" in provided else rec.get("rating_note")
+    return {"ok": True, "rating": new_rating, "note": new_note}
 
 
 @app.get("/api/media/{media_id}/tags")
@@ -951,7 +1166,16 @@ def list_collections(
     defs = smart_collections.DEFAULT_COLLECTIONS
     buckets = {c.key: {"key": c.key, "title": c.title, "category": c.category, "items": []} for c in defs}
 
-    for rec in db.get_all_records():
+    # audit L13: classify reads only these columns (frame_tags + media-level
+    # aggregates + gps + duration/audio) — get_all_records() was SELECT *,
+    # hauling words_json/segments_json/transcript for the entire library.
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, filename, thumbnail_path, duration_s, has_audio, "
+            "frame_tags, content_type, atmosphere, energy, gps_lat, gps_lon "
+            "FROM media ORDER BY id"
+        ).fetchall()
+    for rec in (dict(r) for r in rows):
         for hit in smart_collections.classify(rec, defs):
             buckets[hit["key"]]["items"].append({
                 "id": rec["id"],
@@ -1252,7 +1476,9 @@ class MetadataCsvExportRequest(BaseModel):
 @app.post("/api/export/metadata-csv-to")
 def export_metadata_csv_to(
     body: MetadataCsvExportRequest,
-    _tok: dict = Depends(require_scopes("media_read")),
+    # writes a file to a caller-chosen local path — gate on write, not read, so a
+    # read-only token can't drop files in the operator's home dir (audit H10).
+    _tok: dict = Depends(require_scopes("videos_write")),
 ):
     """Tauri WKWebView path: server writes CSV directly to user-picked dest.
 
@@ -1365,21 +1591,42 @@ def ingest_media(
     cmd = [sys.executable, str(ROOT / "ingest.py"), "--dir", str(target)]
     if body.limit > 0:
         cmd += ["--limit", str(body.limit)]
+    if not _acquire_ingest_slot():  # audit H3
+        raise HTTPException(409, "已有匯入任務進行中，請稍候")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, cwd=str(ROOT))
-        return {
+        payload = {
             "ok": result.returncode == 0,
             "stdout": result.stdout[-2000:] if result.stdout else "",
             "stderr": result.stderr[-1000:] if result.stderr else "",
         }
+        if result.returncode != 0:
+            # audit L11: failures used to come back HTTP 200 + ok:false — keep
+            # the body shape for the UI but surface the failure as a 5xx so
+            # status-code monitors see it.
+            return JSONResponse(status_code=500, content=payload)
+        return payload
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "匯入逾時（>30 分鐘）"}
+        raise HTTPException(504, "匯入逾時（>30 分鐘）")  # audit L11: was 200 + ok:false
+    finally:
+        _release_ingest_slot()
 
 
 # ── Re-transcribe ─────────────────────────────────────────────────────────────
 
 class RetranscribeRequest(BaseModel):
     language: str = "zh"
+
+    # audit M23: an arbitrary string used to flow straight into whisper → 500
+    # with raw str(e) leaked to the client + a polluted lang column on partial
+    # writes. Accept ISO-639-shaped codes only (whisper's set is 2-3 letters).
+    @field_validator("language")
+    @classmethod
+    def _check_language(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if not _re.fullmatch(r"[a-z]{2,3}", v):
+            raise ValueError("language must be a 2-3 letter ISO-639 code (e.g. 'zh', 'en')")
+        return v
 
 @app.get("/api/media/{media_id}/remotion-props")
 def get_remotion_props(
@@ -1413,20 +1660,27 @@ def retranscribe_media(
     try:
         import transcribe as tr
         text, lang, segments, words = tr.transcribe(media_path, language=body.language)
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
-                (
-                    text,
-                    body.language,
-                    json.dumps(segments, ensure_ascii=False) if segments else None,
-                    json.dumps(words, ensure_ascii=False) if words else None,
-                    media_id,
-                )
-            )
-        return {"ok": True, "transcript_length": len(text), "language": body.language}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        # Extraction/transcription failed — leave the existing transcript untouched
+        # rather than blanking it (audit H1/H2).
+        raise HTTPException(500, "retranscribe 失敗：{0}".format(e))
+    # An empty result means "no speech"; for a clip that already has a transcript
+    # that's almost always a regression (transient decode failure), not intent —
+    # refuse to overwrite a good transcript with nothing (audit H1).
+    if not (text or "").strip() and (rec.get("transcript") or "").strip():
+        raise HTTPException(422, "transcribe 回空，拒絕覆寫既有逐字稿（可能是音訊擷取失敗）")
+    with db.get_conn() as conn:
+        conn.execute(
+            "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
+            (
+                text,
+                lang or body.language,  # store the detected language, not just the hint
+                json.dumps(segments, ensure_ascii=False) if segments else None,
+                json.dumps(words, ensure_ascii=False) if words else None,
+                media_id,
+            )
+        )
+    return {"ok": True, "transcript_length": len(text), "language": lang or body.language}
 
 
 @app.post("/api/media/{media_id}/retry-vision")
@@ -1454,16 +1708,20 @@ def retry_vision(
     # Phase 2: fallback to lighter model for failed frames
     if failed:
         fallback_model = "moondream2:latest"
-        original_model = vis.VISION_MODEL
-        try:
-            vis.VISION_MODEL = fallback_model
-            retry_paths = [frame_paths[i] for i in failed]
-            retry_results = vis.describe_frames(retry_paths)
-            for idx, retry_r in zip(failed, retry_results):
-                if retry_r.get("description") and not retry_r.get("error"):
-                    results[idx] = retry_r
-        finally:
-            vis.VISION_MODEL = original_model
+        # audit M9: hold the lock across save/swap/restore so a concurrent
+        # retry-vision can't snapshot the fallback as "original" and restore it
+        # as the permanent primary model.
+        with _vision_fallback_lock:
+            original_model = vis.VISION_MODEL
+            try:
+                vis.VISION_MODEL = fallback_model
+                retry_paths = [frame_paths[i] for i in failed]
+                retry_results = vis.describe_frames(retry_paths)
+                for idx, retry_r in zip(failed, retry_results):
+                    if retry_r.get("description") and not retry_r.get("error"):
+                        results[idx] = retry_r
+            finally:
+                vis.VISION_MODEL = original_model
 
     # Write results to DB
     patched = 0
@@ -1499,19 +1757,22 @@ def retry_vision(
                 for tag_name in vr.get("tags", []):
                     tag_name = tag_name.strip()
                     if tag_name and tag_name != "```":
-                        db.add_tag(media_id, tag_name, source="auto")
+                        # _conn=conn: add_tag must reuse the open write txn, else it
+                        # opens a 2nd connection that deadlocks on our own writer lock
+                        # (audit C1 — 30s wait then the whole patch rolls back / 500).
+                        db.add_tag(media_id, tag_name, source="auto", _conn=conn)
                 patched += 1
-        # Update legacy frame_tags
-        all_frames = db.get_frames(media_id)
+        # Update legacy frame_tags. Read frames through the SAME conn so we see the
+        # UPDATEs just written above, not a stale pre-txn snapshot (audit M1).
+        all_frames = db.get_frames(media_id, _conn=conn)
         frame_tags = [{"description": f.get("description", ""), "tags": f.get("tags", "").split(",") if f.get("tags") else []} for f in all_frames]
         frame_tags_json = json.dumps(frame_tags, ensure_ascii=False)
-        editability_score = None
-        for frame in all_frames:
-            if frame.get("focus_score") is not None:
-                editability_score = db.compute_editability(frame)
-                break
+        # max over all scored frames (not the first), and leave the prior score
+        # untouched when nothing scored rather than nulling it (audit M1).
+        scores = [db.compute_editability(fr) for fr in all_frames if fr.get("focus_score") is not None]
+        editability_score = max(scores) if scores else None
         conn.execute(
-            "UPDATE media SET frame_tags=?, editability_score=? WHERE id=?",
+            "UPDATE media SET frame_tags=?, editability_score=COALESCE(?, editability_score) WHERE id=?",
             (frame_tags_json, editability_score, media_id),
         )
 
@@ -1537,21 +1798,34 @@ def reingest_media(
     if not Path(media_path).exists():
         raise HTTPException(400, f"找不到媒體檔案：{media_path}")
     import subprocess, sys
+    if not _acquire_ingest_slot():  # audit H3 — don't run concurrently with another ingest
+        raise HTTPException(409, "已有匯入任務進行中，請稍候")
     try:
+        # Single-file mode (ingest.py handles a file path as --dir). The old
+        # `--dir <parent> --limit 1` re-processed the alphabetically-first file of
+        # the folder, not this media — silently refreshing the WRONG row (audit H4).
         result = subprocess.run(
-            [sys.executable, str(ROOT / "ingest.py"), "--dir", str(Path(media_path).parent),
-             "--limit", "1", "--refresh"],
+            [sys.executable, str(ROOT / "ingest.py"), "--dir", media_path, "--refresh"],
             capture_output=True, text=True, timeout=600, cwd=str(ROOT)
         )
-        return {
+        payload = {
             "ok": result.returncode == 0,
             "stdout": result.stdout[-1000:] if result.stdout else "",
             "stderr": result.stderr[-500:] if result.stderr else "",
         }
+        if result.returncode != 0:
+            # audit L11: same error-schema unification as /api/ingest — failure
+            # is a 5xx with the diagnostic body, not 200 + ok:false.
+            return JSONResponse(status_code=500, content=payload)
+        return payload
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "重新處理逾時（>10 分鐘）"}
+        raise HTTPException(504, "重新處理逾時（>10 分鐘）")  # audit L11
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, str(e))
+    finally:
+        _release_ingest_slot()
 
 
 # ── Cache Management ──────────────────────────────────────────────────────────
@@ -2032,7 +2306,8 @@ class ExportToRequest(BaseModel):
 def export_to_file(
     media_id: int,
     body: ExportToRequest,
-    _tok: dict = Depends(require_scopes("media_read")),
+    # writes a file to a caller-chosen local path → require write scope (audit H10).
+    _tok: dict = Depends(require_scopes("videos_write")),
 ):
     """Export and write directly to a local path (for Tauri native save dialog).
 
@@ -2364,13 +2639,9 @@ async def ws_ingest(ws: WebSocket):
 # held or the task can be GC'd mid-run and its exceptions silently dropped; the
 # flag also serializes ingests so concurrent runs don't hammer the same SQLite DB.
 _ingest_ws_tasks: set = set()
-_ingest_ws_active = False
-
-
 def _on_ingest_ws_done(task: "asyncio.Task") -> None:
-    global _ingest_ws_active
     _ingest_ws_tasks.discard(task)
-    _ingest_ws_active = False
+    _release_ingest_slot()  # audit H3 — shared single-flight guard
     try:
         exc = task.exception()
     except asyncio.CancelledError:
@@ -2399,7 +2670,10 @@ async def _run_ingest_with_ws(target: Path, limit: int):
     # child's write, stalls the stdout read loop, and `proc.wait()` hangs forever.
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT, cwd=str(ROOT)
+        stderr=asyncio.subprocess.STDOUT, cwd=str(ROOT),
+        # audit M3: a single stdout line beyond the default 64KB reader limit
+        # raises inside the read loop; give pathological log lines 1MB headroom.
+        limit=2 ** 20,
     )
 
     ok, skipped, failed = 0, 0, 0
@@ -2409,47 +2683,56 @@ async def _run_ingest_with_ws(target: Path, limit: int):
     file_re = re.compile(r"\[(\d+)/(\d+)\]\s+(SKIP\s+)?(.+?)\s+>")
     done_re = re.compile(r"\[(\d+)/(\d+)\]\s+(.+?)\s+.+\[OK\]")
 
-    async for line in proc.stdout:
-        text = line.decode("utf-8", errors="replace").strip()
-        if not text:
-            continue
-        print(f"[ingest-ws] {text}", flush=True)
+    # audit M3: if the read loop dies (oversized line, task cancel, broadcast
+    # error) nobody drains stdout — the child wedges forever on a full pipe
+    # while the done-callback frees the single-flight slot, allowing a second
+    # concurrent ingest. Always kill the subprocess on the way out.
+    try:
+        async for line in proc.stdout:
+            text = line.decode("utf-8", errors="replace").strip()
+            if not text:
+                continue
+            print(f"[ingest-ws] {text}", flush=True)
 
-        # Parse progress lines like "[1/3] FX30.5365.MP4 >probe >whisper..."
-        m = file_re.match(text)
-        if m:
-            idx, total, skip, fname = m.group(1), m.group(2), m.group(3), m.group(4)
-            last_total = max(last_total, int(total))
-            if skip:
-                skipped += 1
+            # Parse progress lines like "[1/3] FX30.5365.MP4 >probe >whisper..."
+            m = file_re.match(text)
+            if m:
+                idx, total, skip, fname = m.group(1), m.group(2), m.group(3), m.group(4)
+                last_total = max(last_total, int(total))
+                if skip:
+                    skipped += 1
+                    await ingest_ws.broadcast({
+                        "type": "file", "index": int(idx), "total": int(total),
+                        "filename": fname.strip(), "status": "skipped"
+                    })
+                else:
+                    await ingest_ws.broadcast({
+                        "type": "file", "index": int(idx), "total": int(total),
+                        "filename": fname.strip(), "status": "transcribing"
+                    })
+
+            # Parse completion "[OK]"
+            d = done_re.match(text)
+            if d:
+                ok += 1
+                last_total = max(last_total, int(d.group(2)))
                 await ingest_ws.broadcast({
-                    "type": "file", "index": int(idx), "total": int(total),
-                    "filename": fname.strip(), "status": "skipped"
-                })
-            else:
-                await ingest_ws.broadcast({
-                    "type": "file", "index": int(idx), "total": int(total),
-                    "filename": fname.strip(), "status": "transcribing"
+                    "type": "file", "index": int(d.group(1)), "total": int(d.group(2)),
+                    "filename": d.group(3).strip(), "status": "done"
                 })
 
-        # Parse completion "[OK]"
-        d = done_re.match(text)
-        if d:
-            ok += 1
-            last_total = max(last_total, int(d.group(2)))
-            await ingest_ws.broadcast({
-                "type": "file", "index": int(d.group(1)), "total": int(d.group(2)),
-                "filename": d.group(3).strip(), "status": "done"
-            })
+            # Parse "Found N media files"
+            if text.startswith("Found "):
+                fm = re.search(r"Processing (\d+)", text)
+                if fm:
+                    last_total = max(last_total, int(fm.group(1)))
+                    await ingest_ws.broadcast({"type": "start", "total": int(fm.group(1))})
 
-        # Parse "Found N media files"
-        if text.startswith("Found "):
-            fm = re.search(r"Processing (\d+)", text)
-            if fm:
-                last_total = max(last_total, int(fm.group(1)))
-                await ingest_ws.broadcast({"type": "start", "total": int(fm.group(1))})
-
-    await proc.wait()
+        await proc.wait()
+    finally:
+        if proc.returncode is None:  # audit M3: loop exited abnormally — reap child
+            proc.kill()
+            await proc.wait()
     # Derive failed from the observed total (not `limit`, which is 0 for "all"
     # and overstates when it exceeds the real file count) and surface the exit
     # code so a nonzero ingest result (e.g. vision halt) is visible to the UI.
@@ -2475,14 +2758,12 @@ async def ingest_media_ws(
     could drive the ingest pipeline over an arbitrary directory (Codex-class
     finding from the overnight audit).
     """
-    global _ingest_ws_active
     target = Path(body.path).expanduser().resolve()
     if not target.is_dir():
         raise HTTPException(400, f"路徑不是有效的目錄：{body.path}")
     _assert_ingest_path_safe(target)
-    if _ingest_ws_active:
+    if not _acquire_ingest_slot():  # audit H3 — shared single-flight with REST ingest/reingest
         raise HTTPException(409, "已有匯入進行中，請等待完成後再試")
-    _ingest_ws_active = True
     task = asyncio.create_task(_run_ingest_with_ws(target, body.limit))
     _ingest_ws_tasks.add(task)
     task.add_done_callback(_on_ingest_ws_done)
@@ -2563,7 +2844,20 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
     # 「需先建 proxy」的引導 + POST /api/proxy/build 觸發背景生成。
     # tri-state: NEEDED → 409；NOT_NEEDED / UNKNOWN（ffprobe 失敗、binary 缺、
     # NAS unreachable）→ fall through，維持送原檔的舊 fallback 行為。
-    if codec.needs_proxy(str(file_path)) == codec.NEEDED:
+    # audit M24: use the codec persisted at ingest instead of re-running ffprobe
+    # on EVERY playback; only probe when the column is NULL (legacy rows) and
+    # backfill so the next play is probe-free. None (probe failed / audio-only)
+    # keeps the UNKNOWN fall-through behavior.
+    stored_codec = (rec.get("codec") or "").strip().lower() or None
+    if stored_codec is None:
+        stored_codec = codec.probe_codec(str(file_path))
+        if stored_codec:
+            try:
+                with db.get_conn() as conn:
+                    conn.execute("UPDATE media SET codec=? WHERE id=?", (stored_codec, media_id))
+            except Exception:
+                pass  # backfill is best-effort; playback must not fail on it
+    if stored_codec and stored_codec in codec.PROXY_CODECS:
         return JSONResponse(
             status_code=409,
             content={
@@ -2589,6 +2883,24 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
 
 # PROXY_CODECS lives in codec.py — single source of truth.
 
+def _assert_same_site(request: Request) -> None:
+    """audit M14: the no-body POSTs below are CORS 'simple requests' — a
+    malicious page can fire them cross-site WITHOUT a preflight, and
+    loopback-trust then authorizes them (whole-library rebuild / proxy-build
+    DoS). Browsers attach Sec-Fetch-Site and/or Origin on cross-site POSTs;
+    non-browser clients (curl, scripts) send neither and pass through."""
+    sfs = request.headers.get("sec-fetch-site")
+    if sfs and sfs not in ("same-origin", "same-site", "none"):
+        raise HTTPException(403, "cross-site request rejected")
+    origin = request.headers.get("origin")
+    if not origin:
+        return  # non-browser client
+    if origin in _ALLOWED_ORIGINS:
+        return
+    if origin != "null" and origin.split("://", 1)[-1] == request.headers.get("host", ""):
+        return  # same-origin for whatever host/port this deployment uses
+    raise HTTPException(403, "cross-site request rejected")
+
 @app.get("/api/proxy/status")
 def proxy_status(_tok: dict = Depends(require_scopes("videos_read"))):
     """Check proxy status for all media files."""
@@ -2605,8 +2917,9 @@ def proxy_status(_tok: dict = Depends(require_scopes("videos_read"))):
 
 
 @app.post("/api/proxy/build")
-def proxy_build(background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
+def proxy_build(request: Request, background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
     """Queue proxy generation for all HEVC/ProRes files without proxy."""
+    _assert_same_site(request)  # audit M14
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
     with db.get_conn() as conn:
@@ -2622,9 +2935,10 @@ def proxy_build(background_tasks: BackgroundTasks, _tok: dict = Depends(require_
 
 
 @app.post("/api/proxy/build/{media_id}")
-def proxy_build_one(media_id: int, background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
+def proxy_build_one(media_id: int, request: Request, background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
     """Per-id proxy build — surface 自 7.7g 409 「生成 proxy」按鈕，使用者點到
     哪個 HEVC 就只建那個，避免 build all 整庫拖時間。"""
+    _assert_same_site(request)  # audit M14
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
     rec = db.get_record_by_id(media_id)
@@ -2656,13 +2970,19 @@ def _build_proxies(items: list):
 
 
 @app.post("/api/embed/rebuild")
-def embed_rebuild(background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
+def embed_rebuild(request: Request, background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
     """Drop + rebuild the ChromaDB semantic index from all media.
     Wired to 進階設定 → 搜尋引擎 → 「重建向量索引」button."""
+    _assert_same_site(request)  # audit M14
+    global _embed_rebuild_active
     with db.get_conn() as conn:
         total = conn.execute("SELECT count(*) FROM media").fetchone()[0]
     if not total:
         return {"message": "尚無素材可建立索引", "queued": 0}
+    with _embed_rebuild_lock:  # audit M8: refuse concurrent rebuilds
+        if _embed_rebuild_active:
+            raise HTTPException(409, "向量索引重建已在進行中，請稍候")
+        _embed_rebuild_active = True
     background_tasks.add_task(_rebuild_embeddings)
     return {"message": f"開始重建向量索引（{total} 筆素材，背景執行）", "queued": total}
 
@@ -2671,12 +2991,16 @@ def _rebuild_embeddings():
     """Background task: full embedding rebuild via subprocess. Runs embed.py in a
     child process to isolate its sys.exit() guard and use sys.executable per the
     platform Python-concurrency rule (not in-process — sys.exit would kill server)."""
+    global _embed_rebuild_active
     import subprocess
     import sys
     try:
         subprocess.run([sys.executable, str(ROOT / "embed.py"), "--rebuild"], check=False)
     except Exception as e:
         print(f"[embed] rebuild failed: {e}")
+    finally:
+        with _embed_rebuild_lock:  # audit M8: always free the single-flight slot
+            _embed_rebuild_active = False
 
 
 # ── Serve Frontend ───────────────────────────────────────────────────────────
@@ -2688,9 +3012,14 @@ def _load_index() -> str:
         return index.read_text(encoding="utf-8")
     return "<h1>arkiv</h1><p>index.html not found</p>"
 
+class OpenFileRequest(BaseModel):  # audit M22: malformed JSON → clean 422, not a raw 500
+    path: str
+    reveal: bool = False
+
+
 @app.post("/api/open-file")
-async def open_file(
-    request: __import__('starlette.requests', fromlist=['Request']).Request,
+def open_file(
+    body: OpenFileRequest,
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
     """Open file in OS default app or reveal in file manager. Only allows known media files from DB.
@@ -2700,9 +3029,8 @@ async def open_file(
     read-only browse token is correctly refused.
     """
     import subprocess, platform
-    body = await request.json()
-    file_path = body.get("path", "")
-    reveal = body.get("reveal", False)
+    file_path = body.path
+    reveal = body.reveal
     # Validate: only allow paths that exist in our database
     if not db.is_processed(file_path):
         raise HTTPException(403, "只能開啟已索引的媒體檔案")
@@ -2727,8 +3055,16 @@ async def open_file(
     return {"ok": True}
 
 
+class ClientLogRequest(BaseModel):
+    # audit M22: the model's job is turning malformed JSON into a 422 instead of
+    # a raw 500. Fields stay Any (the WebView occasionally logs non-string
+    # payloads); the handler stringifies + sanitizes as before.
+    level: Any = "info"
+    msg: Any = ""
+
+
 @app.post("/api/client-log")
-async def client_log(request: __import__('starlette.requests', fromlist=['Request']).Request):
+def client_log(body: ClientLogRequest):
     """Receive client-side logs (errors, info) and print to server terminal.
 
     Stays unauthenticated (the WebView logs diagnostics, sometimes before a token
@@ -2737,9 +3073,8 @@ async def client_log(request: __import__('starlette.requests', fromlist=['Reques
     caller can't forge log lines or corrupt the operator's terminal, and lengths
     are capped so it can't be used to fill a redirected logfile.
     """
-    body = await request.json()
-    level = _log_safe(str(body.get("level", "info")).upper(), 16)
-    msg = _log_safe(str(body.get("msg", "")), 2000)
+    level = _log_safe(str(body.level if body.level is not None else "info").upper(), 16)
+    msg = _log_safe(str(body.msg if body.msg is not None else ""), 2000)
     print(f"[WebView {level}] {msg}", flush=True)
     return {"ok": True}
 

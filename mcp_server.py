@@ -18,12 +18,16 @@ Run:  python mcp_server.py            # stdio MCP server
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
 import db
 import vectordb as vdb
 from mcp.server.fastmcp import FastMCP
+
+# Logging goes to stderr (never stdout — stdout is the MCP stdio channel).
+LOGGER = logging.getLogger(__name__)
 
 mcp = FastMCP("arkiv")
 
@@ -87,8 +91,17 @@ def _tag_names(media_id: int) -> List[str]:
 
 
 # ── impl (unit-testable; no MCP/stdio coupling) ───────────────────────────────
-def search_media_impl(query: str, limit: int = 20) -> List[Dict[str, Any]]:
-    """Semantic search with SQL text fallback. Returns lightweight records."""
+def search_media_impl(
+    query: str,
+    limit: int = 20,
+    _warnings: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Semantic search with SQL text fallback. Returns lightweight records.
+
+    ``_warnings``: optional out-param list; degraded-search messages (e.g.
+    embedding dimension mismatch) are appended so the tool layer can surface
+    them without changing this function's list return contract (audit M17).
+    """
     query = (query or "").strip()
     if not query:
         return []
@@ -115,8 +128,16 @@ def search_media_impl(query: str, limit: int = 20) -> List[Dict[str, Any]]:
             enriched.append(item)
             if len(enriched) >= limit:
                 break
+    # audit M17: split the dim-mismatch branch out of the blanket except — log
+    # it and surface a degraded hint (mirrors server.py's search_degraded fix)
+    # instead of silently SQL-degrading. SQL fallback still runs below.
+    except vdb.EmbeddingDimensionMismatch as exc:
+        LOGGER.warning("mcp semantic search degraded: %s", exc)
+        if _warnings is not None:
+            _warnings.append(str(exc))
+        enriched, seen = [], set()
     except Exception:
-        # Vector index unavailable/empty/dim-mismatch — degrade to SQL.
+        # Vector index unavailable/empty — degrade to SQL.
         enriched, seen = [], set()
 
     # 2. SQL text fallback (filename / transcript) when semantic found nothing.
@@ -205,8 +226,15 @@ def search_media(query: str, limit: int = 20) -> str:
     Semantic search over transcripts + vision tags, falling back to
     filename/transcript text match. Returns a JSON list of lightweight records:
     {id, filename, path, score, excerpt, tags, lang, duration_s}.
+    If semantic search is degraded (e.g. embedding index needs a rebuild), the
+    response is instead {items, search_degraded: true, warning}.
     """
-    return _j(search_media_impl(query, limit))
+    # audit M17: surface degraded-search hint instead of silently falling back.
+    warnings: List[str] = []
+    items = search_media_impl(query, limit, _warnings=warnings)
+    if warnings:
+        return _j({"items": items, "search_degraded": True, "warning": warnings[0]})
+    return _j(items)
 
 
 @mcp.tool()
