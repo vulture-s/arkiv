@@ -1,4 +1,9 @@
 # Changelog
+## Unreleased
+
+### Added
+- **Vision frame-failure tolerance (`--max-failures` / `--skip-failed`, issue #48).** The vision phase used to halt the entire run on the first frame that failed both the primary and fallback model — fine interactively, but a single transient Ollama hiccup killed a 481-frame overnight run. `--max-failures N` tolerates N cumulative failed frames before halting (N=0, the default, keeps the historical zero-tolerance behaviour). `--skip-failed` never halts on individual frame failures — it leaves them with an empty description (so a later `--vision-only` retries exactly those frames) and prints a report at the end. A consecutive-failure guard (whole files producing nothing) still halts fast under either flag, so a real Ollama outage can't spin all night. Successful frames are now committed even on a file that later triggers a halt (no lost work). `--vision-only` and the main Phase-2 loop share one describe→fallback→tolerance path. Tests in `tests/test_vision_tolerance.py`.
+
 ## v0.8.1 - 2026-06-12
 
 ### Added
