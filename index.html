@@ -1396,7 +1396,7 @@ async function doChangeLang(id, lang) {
     });
     hideIngestModal();
     if (r.ok) { await tauriMessage('轉錄完成'); await fetchDetail(id); renderInspector(); }
-    else { const d = await r.json().catch(()=>({})); await tauriMessage('轉錄失敗: ' + (d.error || r.status)); }
+    else { const d = await r.json().catch(()=>({})); await tauriMessage('轉錄失敗: ' + (d.detail || d.error || ('HTTP ' + r.status))); }
   } catch(e) { hideIngestModal(); await tauriMessage('錯誤: ' + e.message); }
 }
 
@@ -1441,7 +1441,8 @@ async function doReIngest(id) {
         await tauriMessage('Re-ingest 失敗：\n' + (data.stderr || data.error || ''));
       }
     } else {
-      await tauriMessage('Re-ingest 失敗: HTTP ' + r.status);
+      const d = await r.json().catch(()=>({}));
+      await tauriMessage('Re-ingest 失敗：\n' + (d.stderr || d.detail || d.error || ('HTTP ' + r.status)));
     }
   } catch(e) { hideIngestModal(); await tauriMessage('Re-ingest 錯誤：' + e.message); }
 }
