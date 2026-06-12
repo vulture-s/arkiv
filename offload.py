@@ -5,6 +5,8 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import subprocess
 import sys
 import unicodedata
 from datetime import datetime, timezone
@@ -39,6 +41,126 @@ def _ensure_parent(path):
 def _normalize_relpath(path, root):
     rel = path.resolve(strict=False).relative_to(root.resolve(strict=False))
     return unicodedata.normalize("NFC", rel.as_posix())
+
+
+# ── naming / folder policy (DIT wrapper ①) ──────────────────────────────────
+# `--organize "{date}/{camera}/{reel}"` lays files out by camera metadata instead
+# of mirroring the card's structure — the thing Gate's folder logic got wrong.
+# Tokens: {date} {camera} {reel} {stem} {ext}. The original filename is always
+# appended, so the template defines FOLDERS only. Token values are sanitized to a
+# single safe path segment (no separators / traversal) before substitution, so a
+# camera string like "Sony/FX30" can't spawn an extra directory.
+_ORGANIZE_TOKENS = ("date", "camera", "reel", "stem", "ext")
+_UNSAFE_SEGMENT_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _sanitize_token(value):
+    """Coerce a metadata value into one filesystem-safe path segment.
+    Empty / None → 'UNKNOWN'. Never returns '', '.', '..', or a separator."""
+    if value is None or str(value).strip() == "":
+        return "UNKNOWN"
+    v = unicodedata.normalize("NFC", str(value)).strip()
+    v = _UNSAFE_SEGMENT_RE.sub("_", v)
+    v = v.replace("..", "_").strip(". ")
+    v = re.sub(r"\s+", " ", v)
+    return v[:64] if v else "UNKNOWN"
+
+
+def _exiftool_path():
+    try:
+        import config
+        return getattr(config, "EXIFTOOL_PATH", "exiftool")
+    except Exception:
+        return "exiftool"
+
+
+def _probe_camera_meta(path):
+    """Best-effort {date, camera, reel} for naming templates. exiftool first, then a
+    Sony XAVC NRT sidecar (`<stem>M01.XML`) fallback for camera/date, then file mtime
+    for date. Never raises — an offload must not fail on a metadata hiccup."""
+    meta = {"date": None, "camera": None, "reel": None}
+    path = Path(path)
+    try:
+        out = subprocess.run(
+            [_exiftool_path(), "-json", "-Make", "-Model", "-CreateDate",
+             "-DateTimeOriginal", "-ReelName", "-CameraReelName", str(path)],
+            capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            d = json.loads(out.stdout)[0]
+            make, model = d.get("Make"), d.get("Model")
+            if model:
+                meta["camera"] = "{0} {1}".format(make, model) if make and make not in str(model) else str(model)
+            elif make:
+                meta["camera"] = str(make)
+            raw_date = d.get("CreateDate") or d.get("DateTimeOriginal")
+            if raw_date:
+                meta["date"] = str(raw_date)[:10].replace(":", "-")  # "2026:03:09 .." → "2026-03-09"
+            meta["reel"] = d.get("ReelName") or d.get("CameraReelName")
+    except Exception:
+        pass
+    if not meta["camera"] or not meta["date"]:
+        sidecar = path.with_name(path.stem + "M01.XML")
+        if sidecar.exists():
+            try:
+                import xml.etree.ElementTree as ET
+                root = ET.parse(sidecar).getroot()
+                ns = {"x": root.tag.split("}")[0].lstrip("{")} if "}" in root.tag else {}
+                dev = root.find(".//x:Device", ns) if ns else root.find(".//Device")
+                if dev is not None and not meta["camera"]:
+                    mk, md = dev.get("manufacturer"), dev.get("modelName")
+                    meta["camera"] = "{0} {1}".format(mk, md) if mk and md else (md or mk)
+                cd = root.find(".//x:CreationDate", ns) if ns else root.find(".//CreationDate")
+                if cd is not None and not meta["date"] and cd.get("value"):
+                    meta["date"] = cd.get("value")[:10]
+            except Exception:
+                pass
+    if not meta["date"]:
+        try:
+            meta["date"] = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    return meta
+
+
+def _organize_relpath(src_file, template, meta):
+    """Resolve a folder template + the file's metadata into a destination relpath
+    (folders from the template, original filename appended)."""
+    values = {
+        "date": _sanitize_token(meta.get("date")),
+        "camera": _sanitize_token(meta.get("camera")),
+        "reel": _sanitize_token(meta.get("reel")),
+        "stem": _sanitize_token(src_file.stem),
+        "ext": _sanitize_token(src_file.suffix.lstrip(".")),
+    }
+    resolved = template
+    for tok, val in values.items():
+        resolved = resolved.replace("{" + tok + "}", val)
+    resolved = re.sub(r"\{[^}]*\}", "UNKNOWN", resolved)  # any unknown token → UNKNOWN
+    # Defense-in-depth: sanitize EVERY segment (template literals too, not just token
+    # values). Normalize "\\"→"/" first so a Windows-style literal can't smuggle an
+    # extra separator, then strip drive colons / unsafe chars / traversal per segment.
+    # Without this a literal like "C:\\out\\..\\{date}" would escape dst_root on Windows.
+    resolved = resolved.replace("\\", "/")
+    parts = []
+    for raw in resolved.split("/"):
+        seg = _UNSAFE_SEGMENT_RE.sub("_", raw).replace("..", "_").strip(". ")
+        if seg not in ("", ".", ".."):
+            parts.append(seg)
+    folder = "/".join(parts)
+    name = unicodedata.normalize("NFC", src_file.name)
+    return (folder + "/" + name) if folder else name
+
+
+def _validate_organize_template(template):
+    if not any(("{" + tok + "}") in template for tok in _ORGANIZE_TOKENS):
+        raise ValueError(
+            "--organize template must contain at least one of {0}".format(
+                ", ".join("{" + t + "}" for t in _ORGANIZE_TOKENS)))
+    if template.startswith("/") or template.startswith("\\"):
+        raise ValueError("--organize template must be relative (no leading slash)")
+    if ":" in template:
+        raise ValueError("--organize template must not contain ':' (drive letters / streams)")
 
 
 def _fallback_hasher(algo):
@@ -148,12 +270,26 @@ def _build_file_records(source_files, dsts):
     return files
 
 
-def _ensure_file_records(state, source_files, dsts):
+def _ensure_file_records(state, source_files, dsts, organize=None):
     if state.get("files"):
         return state
     state["files"] = []
+    rel_seen = {}  # rel → source, only meaningful under --organize (mirror can't collide)
     for src_file in source_files:
-        rel = _normalize_relpath(src_file, Path(state["source"]))
+        if organize:
+            rel = _organize_relpath(src_file, organize, _probe_camera_meta(src_file))
+            # Case-fold the key: on a case-insensitive destination (default macOS /
+            # Windows) "C0001.MP4" and "c0001.mp4" are the same file — exact-string
+            # matching would miss that and the second copy would overwrite the first.
+            key = rel.casefold()
+            if key in rel_seen:
+                raise ValueError(
+                    "--organize collision: '{0}' and '{1}' both map to '{2}' "
+                    "(case-insensitive). Add {{stem}} or {{reel}} to the template "
+                    "to disambiguate.".format(rel_seen[key], src_file, rel))
+            rel_seen[key] = src_file
+        else:
+            rel = _normalize_relpath(src_file, Path(state["source"]))
         state["files"].append(
             {
                 "rel": rel,
@@ -275,21 +411,45 @@ def _verify_emitted_mhl(dst_root, mhl_path):
     return mhl.verify_manifest(mhl_path)
 
 
-def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=None, retry_limit=DEFAULT_RETRY_LIMIT, chunk_size=DEFAULT_CHUNK_SIZE, verify=True, emit_mhl=True, dry_run=False, progress="tui"):
+def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=None, retry_limit=DEFAULT_RETRY_LIMIT, chunk_size=DEFAULT_CHUNK_SIZE, verify=True, emit_mhl=True, dry_run=False, progress="tui", organize=None):
     src_root = Path(src).expanduser().resolve(strict=False)
     dst_roots = [Path(dst).expanduser().resolve(strict=False) for dst in dsts]
     if not src_root.exists():
         raise FileNotFoundError("source missing: {0}".format(src_root))
     if not dst_roots:
         raise ValueError("at least one destination is required")
+    if organize:
+        _validate_organize_template(organize)
 
     state_path = Path(resume).expanduser().resolve(strict=False) if resume else Path.cwd() / "offload-state.json"
     state = _load_state(state_path) if resume else None
     if state is None:
         state = _state_template(src_root, dst_roots, hash_algo, retry_limit, include_heic, chunk_size)
+        if organize:
+            state["organize"] = organize
+    else:
+        # Resuming: the layout is frozen in the loaded state (rels already computed).
+        # Omitting --organize adopts the stored layout (no need to re-pass the flag);
+        # passing a *different* template would print a new header but silently NOT
+        # apply, so that is refused.
+        stored = state.get("organize")
+        if organize is None:
+            organize = stored
+        elif (organize or None) != (stored or None):
+            raise ValueError(
+                "--organize mismatch on resume: state was built with {0!r}, "
+                "requested {1!r}. Resume with the original template, or omit "
+                "--organize to reuse it.".format(stored, organize))
     source_files = _collect_sources(src_root, include_heic=include_heic)
-    state = _ensure_file_records(state, source_files, dst_roots)
+    state = _ensure_file_records(state, source_files, dst_roots, organize=organize)
     _save_state(state_path, state)
+
+    if organize and (dry_run or progress == "tui"):
+        print("Organize layout ({0}):".format(organize))
+        for fe in state["files"][:50]:
+            print("  {0}  →  {1}".format(Path(fe["source"]).name, fe["rel"]))
+        if len(state["files"]) > 50:
+            print("  … and {0} more".format(len(state["files"]) - 50))
 
     summary = {}
     all_ok = True
@@ -380,6 +540,13 @@ def build_parser():
     parser.add_argument("--progress", default="tui", choices=["json", "tui"])
     parser.add_argument("--retry-limit", type=int, default=DEFAULT_RETRY_LIMIT)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--organize", default=None, metavar="TEMPLATE",
+        help='Lay files out by camera metadata instead of mirroring the card. '
+             'Folder template with tokens {date}/{camera}/{reel}/{stem}/{ext} '
+             '(original filename always appended), e.g. "{date}/{camera}/{reel}". '
+             'Pair with --dry-run to preview the layout. Metadata via ExifTool + '
+             'Sony XAVC sidecar; missing values → UNKNOWN.')
     return parser
 
 
@@ -398,6 +565,7 @@ def main(argv=None):
             emit_mhl=not args.no_mhl,
             dry_run=args.dry_run,
             progress=args.progress,
+            organize=args.organize,
         )
     except ValueError as exc:
         print(str(exc))
