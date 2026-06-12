@@ -163,7 +163,7 @@
           </div>
           <div class="supported">
             <Mono dim style="font-size:10.5px;letter-spacing:0.08em;">SUPPORTED</Mono>
-            <Mono dim style="font-size:10.5px;">.mov · .mp4 · .mxf · .braw · .r3d · .wav · .flac</Mono>
+            <Mono dim style="font-size:10.5px;">.mov · .mp4 · .insv · .360 · .mxf · .braw · .r3d · .wav · .flac</Mono>
           </div>
         </div>
       </div>

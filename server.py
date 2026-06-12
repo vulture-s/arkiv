@@ -695,7 +695,7 @@ def media_pool(
 
 # audit H14: ext buckets mirror db._build_filter_clause's media_type sets so the
 # search branch applies the SAME filter the SQL (non-search) path does.
-_VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts"})
+_VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".insv", ".360"})
 _AUDIO_EXTS = frozenset({".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"})
 
 
@@ -1510,7 +1510,7 @@ class IngestRequest(BaseModel):
 class ScanRequest(BaseModel):
     path: str
 
-MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
+MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".insv", ".360", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
 
 def _allowed_ingest_roots() -> list:
     """Approved roots for ingest scan / ingest endpoints.
