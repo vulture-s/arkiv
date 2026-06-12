@@ -682,6 +682,62 @@ def _run_status_cmd(args):
     print("next vision phase would: {0} ({1})".format(decision, reason))
 
 
+# issue #48: vision failure tolerance. A frame is "failed" when both the primary
+# and fallback model leave its description empty. Historically a single failed
+# frame halted the whole run (zero-tolerance) — fine interactively, fragile for a
+# 481-frame overnight run where one transient Ollama hiccup kills the night.
+#   --max-failures N : tolerate N cumulative failed frames, halt once exceeded
+#                      (N=0, the default, preserves the historical behaviour).
+#   --skip-failed    : never halt on frame failures; leave them empty (so a later
+#                      --vision-only re-picks them) and report the list at the end.
+# A consecutive-failure guard fires regardless of the above: this many frames
+# failing in a row (whole files producing nothing) means Ollama is down, so we
+# halt fast instead of spinning all night writing the same error.
+_VISION_CONSECUTIVE_HALT = 20
+
+
+def _describe_frames_with_fallback(frame_paths):
+    """Primary vision model, then minicpm-v fallback for any failed frame.
+
+    Returns (frame_results, still_failed_indices). Shared by --vision-only and the
+    main Phase-2 loop so both get identical describe → fallback → tolerance logic.
+    """
+    frame_results = vis.describe_frames(frame_paths)
+    failed_indices = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
+    if failed_indices:
+        print(f" [Phase 1: {len(failed_indices)} failed, trying fallback]", end="", flush=True)
+        fallback_model = "minicpm-v:latest"
+        original_model = vis.VISION_MODEL
+        try:
+            vis.VISION_MODEL = fallback_model
+            retry_results = vis.describe_frames([frame_paths[i] for i in failed_indices])
+            for idx, retry_r in zip(failed_indices, retry_results):
+                if retry_r.get("description") and not retry_r.get("error"):
+                    frame_results[idx] = retry_r
+        finally:
+            vis.VISION_MODEL = original_model
+    still_failed = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
+    return frame_results, still_failed
+
+
+def _vision_halt_decision(file_failed, file_total, total_failed, consecutive_failed,
+                          max_failures, skip_failed):
+    """Decide whether to halt after a file with `file_failed`/`file_total` still-failing
+    frames. Returns (should_halt, reason); reason is "" when continuing.
+
+    Order matters: the consecutive-failure guard is checked first and ignores the
+    tolerance flags — an Ollama outage must stop an unattended run even under
+    --skip-failed.
+    """
+    if consecutive_failed >= _VISION_CONSECUTIVE_HALT:
+        return True, "{0} consecutive frame failures — Ollama likely down / model crash".format(consecutive_failed)
+    if skip_failed:
+        return False, ""
+    if total_failed > max_failures:
+        return True, "{0} failed frame(s) exceeded --max-failures={1}".format(total_failed, max_failures)
+    return False, ""
+
+
 def _run_vision_only(args):
     """Resume vision: only process frames with empty descriptions."""
     import time as _time
@@ -715,7 +771,11 @@ def _run_vision_only(args):
     _unload_ollama_model("qwen2.5:14b")
     _ensure_vision_ready()
 
+    max_failures = getattr(args, "max_failures", 0) or 0
+    skip_failed = getattr(args, "skip_failed", False)
     ok, halted = 0, False
+    total_failed, consecutive_failed = 0, 0
+    failed_files = []  # (fname, failed_count, frame_count) for the end-of-run report
     for vi, (mid, frames_list) in enumerate(media_frames.items(), 1):
         fname = frames_list[0]["filename"]
         frame_paths = [db.resolve_path(f["thumbnail_path"]) for f in frames_list]
@@ -723,38 +783,11 @@ def _run_vision_only(args):
         print(f"[{vi}/{len(media_frames)}] {fname} ({len(frame_paths)} frames) >vision", end="", flush=True)
         v_start = _time.time()
 
-        # Phase 1: primary vision model
-        frame_results = vis.describe_frames(frame_paths)
-        failed_indices = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
+        frame_results, still_failed_idx = _describe_frames_with_fallback(frame_paths)
 
-        # Phase 2: fallback model for failed frames
-        if failed_indices:
-            print(f" [Phase 1: {len(failed_indices)} failed, trying fallback]", end="", flush=True)
-            fallback_model = "minicpm-v:latest"
-            original_model = vis.VISION_MODEL
-            try:
-                vis.VISION_MODEL = fallback_model
-                retry_paths = [frame_paths[i] for i in failed_indices]
-                retry_results = vis.describe_frames(retry_paths)
-                for idx, retry_r in zip(failed_indices, retry_results):
-                    if retry_r.get("description") and not retry_r.get("error"):
-                        frame_results[idx] = retry_r
-            finally:
-                vis.VISION_MODEL = original_model
-
-        # Check if still failing after both phases
-        still_failed = sum(1 for vr in frame_results if vr.get("error") or not vr.get("description"))
-        if still_failed:
-            remaining = len(media_frames) - vi
-            print(f"\n\n{'!'*60}")
-            print(f"VISION HALTED: {still_failed}/{len(frame_paths)} frames failed on {fname} (both models)")
-            print(f"  Completed: {ok}  |  Remaining: {remaining}")
-            print(f"  Fix Ollama, then re-run: py -3.12 ingest.py --dir {args.dir} --vision-only")
-            print(f"{'!'*60}\n")
-            halted = True
-            break
-
-        # Write to DB
+        # Commit now — successful frames get descriptions; failed frames keep their
+        # empty description (so a later --vision-only re-picks exactly them). Work is
+        # never lost, even on a file we may halt after.
         with db.get_conn() as conn:
             for f_info, vr in zip(frames_list, frame_results):
                 desc = vr.get("description", "")
@@ -799,11 +832,41 @@ def _run_vision_only(args):
                 )
 
         v_elapsed = _time.time() - v_start
-        print(f" [{v_elapsed:.1f}s] [OK]")
-        ok += 1
+        n_failed = len(still_failed_idx)
+        if n_failed:
+            total_failed += n_failed
+            # Only a *whole* file producing nothing counts toward the Ollama-down
+            # streak; a partial failure (some frames succeeded) resets it.
+            consecutive_failed = consecutive_failed + n_failed if n_failed == len(frame_paths) else 0
+            failed_files.append((fname, n_failed, len(frame_paths)))
+            print(f" [{v_elapsed:.1f}s] [{n_failed}/{len(frame_paths)} FAILED]")
+            should_halt, reason = _vision_halt_decision(
+                n_failed, len(frame_paths), total_failed, consecutive_failed, max_failures, skip_failed)
+            if should_halt:
+                remaining = len(media_frames) - vi
+                print(f"\n\n{'!'*60}")
+                print(f"VISION HALTED: {reason}")
+                print(f"  Completed: {ok}  |  Remaining: {remaining}  |  Failed frames: {total_failed}")
+                print(f"  Fix Ollama, then resume: py -3.12 ingest.py --vision-only")
+                print(f"  (skip persistent failures: add --skip-failed)")
+                print(f"{'!'*60}\n")
+                halted = True
+                break
+        else:
+            consecutive_failed = 0
+            print(f" [{v_elapsed:.1f}s] [OK]")
+            ok += 1
 
+    if failed_files:
+        total = sum(n for _, n, _ in failed_files)
+        print(f"\n⚠ {total} frame(s) across {len(failed_files)} file(s) left empty (re-run --vision-only to retry just those):")
+        for fn, n, tot in failed_files[:20]:
+            print(f"    {fn}: {n}/{tot}")
+        if len(failed_files) > 20:
+            print(f"    … and {len(failed_files) - 20} more file(s)")
     if not halted:
-        print(f"\nVision-only done. {ok} files patched.")
+        suffix = f", {len(failed_files)} with skipped frames." if failed_files else "."
+        print(f"\nVision-only done. {ok} file(s) fully patched{suffix}")
     return halted
 
 
@@ -1030,6 +1093,8 @@ def main():
     parser.add_argument("--skip-vision", action="store_true", help="Skip llava frame description")
     parser.add_argument("--refresh", action="store_true", help="Re-process already-indexed files (thumbnail + vision)")
     parser.add_argument("--vision-only", action="store_true", help="Only run vision on frames with empty descriptions (resume after halt)")
+    parser.add_argument("--max-failures", type=int, default=0, metavar="N", help="issue #48: tolerate N cumulative failed frames before halting vision (0=halt on first, the default). Failed frames are left empty for a later --vision-only retry.")
+    parser.add_argument("--skip-failed", action="store_true", help="issue #48: never halt on individual frame vision failures — skip them (left empty for retry), report at end. Recommended for large unattended/overnight runs. A whole-Ollama outage still halts fast.")
     parser.add_argument(
         "--migrate-relative",
         action="store_true",
@@ -1280,8 +1345,14 @@ def main():
     # Initialized unconditionally so the exit-code logic can read them even when
     # Phase 2 doesn't run (was a fragile locals().get("vision_fail", 0) hack).
     vision_ok = vision_fail = 0
-    consecutive_vision_fail = 0  # halt-on-N-consecutive (Phase 6 / R6)
+    consecutive_vision_fail = 0  # halt-on-N-consecutive whole-file EXCEPTIONS (Phase 6 / R6)
     vision_halted = False
+    # issue #48: frame-failure tolerance (see _vision_halt_decision). Default 0 /
+    # False = historical zero-tolerance halt.
+    max_failures = getattr(args, "max_failures", 0) or 0
+    skip_failed = getattr(args, "skip_failed", False)
+    total_failed, consecutive_empty_frames = 0, 0
+    vision_failed_files = []  # (fname, failed_count, frame_count)
     if phase1_results:
         print(f"\n{'─'*60}")
         print(f"Phase 2: Vision — {len(phase1_results)} files, unloading LLM to free VRAM...")
@@ -1297,43 +1368,8 @@ def main():
             v_start = _time.time()
             try:
                 frame_paths = [db.resolve_path(fd["thumbnail_path"]) for fd in video_frames]
-                # Phase 2a: primary vision model
-                frame_results = vis.describe_frames(frame_paths)
-                failed_indices = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
-
-                # Phase 2b: fallback model for failed frames
-                if failed_indices:
-                    print(f" [Phase 2a: {len(failed_indices)} failed, trying fallback]", end="", flush=True)
-                    fallback_model = "minicpm-v:latest"
-                    original_model = vis.VISION_MODEL
-                    try:
-                        vis.VISION_MODEL = fallback_model
-                        retry_paths = [frame_paths[i] for i in failed_indices]
-                        retry_results = vis.describe_frames(retry_paths)
-                        for idx, retry_r in zip(failed_indices, retry_results):
-                            if retry_r.get("description") and not retry_r.get("error"):
-                                frame_results[idx] = retry_r
-                    finally:
-                        vis.VISION_MODEL = original_model
-
+                frame_results, still_failed_idx = _describe_frames_with_fallback(frame_paths)
                 scores = _apply_vision_to_frame_data(video_frames, frame_results)
-
-                # Vision fail after both phases → halt
-                still_failed = sum(1 for vr in frame_results if vr.get("error") or not vr.get("description"))
-                if still_failed:
-                    # Count the halt as a failure so the exit code is nonzero —
-                    # otherwise a halt on the first file left vision_fail=0 →
-                    # implicit exit 0, hiding a fully-unindexed library from cron.
-                    vision_fail += 1
-                    vision_halted = True
-                    remaining = len(phase1_results) - vi
-                    print(f"\n\n{'!'*60}")
-                    print(f"VISION HALTED: {still_failed}/{len(video_frames)} frames failed on {fname} (both models)")
-                    print(f"  Completed: {vision_ok}  |  Remaining: {remaining}")
-                    print(f"  Fix Ollama, then resume with:")
-                    print(f"    py -3.12 ingest.py --dir <path> --vision-only")
-                    print(f"{'!'*60}\n")
-                    break
 
                 # Update DB: frames + media.frame_tags + auto tags.
                 # audit L2: the frame/media UPDATEs and the tag clear+rewrite
@@ -1394,16 +1430,45 @@ def main():
                                     db.add_tag(mid, tag_name, source="auto", _conn=conn)
 
                 v_elapsed = _time.time() - v_start
-                print(f" [{v_elapsed:.1f}s] [OK]")
-                vision_ok += 1
-                consecutive_vision_fail = 0  # reset streak on success
+                consecutive_vision_fail = 0  # reset EXCEPTION streak: file processed without raising
+                n_failed = len(still_failed_idx)
+                if n_failed:
+                    # issue #48: some frames still empty after both models. The
+                    # successful frames were already committed above; the failed
+                    # ones keep empty descriptions so a later --vision-only retries
+                    # exactly them. Tolerate / halt per the policy.
+                    # NOT counted in vision_fail: that drives sys.exit(1) (line ~1600),
+                    # and a tolerated/skipped frame must leave the exit code 0 when the
+                    # run completes — matching --vision-only (where only a halt exits 1).
+                    # vision_fail stays reserved for whole-file EXCEPTIONS below.
+                    total_failed += n_failed
+                    consecutive_empty_frames = consecutive_empty_frames + n_failed if n_failed == len(video_frames) else 0
+                    vision_failed_files.append((fname, n_failed, len(video_frames)))
+                    print(f" [{v_elapsed:.1f}s] [{n_failed}/{len(video_frames)} FAILED]")
+                    should_halt, reason = _vision_halt_decision(
+                        n_failed, len(video_frames), total_failed, consecutive_empty_frames, max_failures, skip_failed)
+                    if should_halt:
+                        vision_halted = True
+                        remaining = len(phase1_results) - vi
+                        print(f"\n\n{'!'*60}")
+                        print(f"VISION HALTED: {reason}")
+                        print(f"  Completed: {vision_ok}  |  Remaining: {remaining}  |  Failed frames: {total_failed}")
+                        print(f"  Fix Ollama, then resume: py -3.12 ingest.py --vision-only")
+                        print(f"  (skip persistent failures: add --skip-failed)")
+                        print(f"{'!'*60}\n")
+                        break
+                else:
+                    consecutive_empty_frames = 0
+                    print(f" [{v_elapsed:.1f}s] [OK]")
+                    vision_ok += 1
             except Exception as e:
                 print(f" [ERROR: {e}]")
                 vision_fail += 1
                 consecutive_vision_fail += 1
-                # Halt on consecutive failures (likely Ollama disconnect / model crash).
-                # Symmetric with still_failed halt above — don't burn through every file
-                # writing the same error 200 times.
+                # Halt on consecutive whole-file EXCEPTIONS (likely Ollama disconnect
+                # / model crash). Distinct from the empty-description streak above —
+                # this is describe_frames itself raising. Don't burn through every
+                # file writing the same error 200 times.
                 if consecutive_vision_fail >= 3:
                     vision_halted = True
                     remaining = len(phase1_results) - vi
@@ -1415,7 +1480,15 @@ def main():
                     print(f"{'!'*60}\n")
                     break
 
-        print(f"Vision done. OK={vision_ok}  fail={vision_fail}")
+        if vision_failed_files and not vision_halted:
+            total = sum(n for _, n, _ in vision_failed_files)
+            print(f"\n⚠ {total} frame(s) across {len(vision_failed_files)} file(s) left empty (re-run --vision-only to retry):")
+            for fn, n, tot in vision_failed_files[:20]:
+                print(f"    {fn}: {n}/{tot}")
+            if len(vision_failed_files) > 20:
+                print(f"    … and {len(vision_failed_files) - 20} more file(s)")
+        skipped_frames = sum(n for _, n, _ in vision_failed_files)
+        print(f"Vision done. OK={vision_ok}  exceptions={vision_fail}  skipped_frames={skipped_frames}")
     elif need_vision and ok == 0 and failed > 0:
         # Phase 1 全 fail → Phase 2 沒檔可跑（不是「沒新檔」是「上游全炸」）
         print(f"\nPhase 2 skipped: phase 1 had {failed}/{len(files)} failures, no frames to process.")
