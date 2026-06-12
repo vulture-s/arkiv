@@ -337,7 +337,9 @@ Yes — the native Python install is the primary workflow. Docker is optional fo
 
 **Q: What file formats are supported?**
 Video: `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.mts`
+360: `.insv` (Insta360), `.360` (GoPro Max) — indexed as raw fisheye
 Audio: `.wav`, `.mp3`, `.m4a`, `.aac`, `.flac`, `.ogg`
+Camera metadata (make/model/lens/timecode) is read from embedded EXIF **and** Sony XAVC NRT sidecar XML — so FX30/FX-series footage keeps its identity.
 
 ## Smoke Test
 
