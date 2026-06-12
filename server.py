@@ -33,6 +33,28 @@ import smart_collections
 import tag_quality
 
 
+# ── Ingest single-flight guard ───────────────────────────────────────────────
+# One guard for ALL ingest entry points (REST /api/ingest, reingest, WS) so two
+# full pipelines can't run at once → DB-lock contention + double whisper + OOM on a
+# 16GB box (audit H3). threading.Lock because REST runs in the threadpool while the
+# WS variant runs on the event loop.
+import threading as _threading
+_ingest_lock = _threading.Lock()
+_ingest_active = False
+
+def _acquire_ingest_slot() -> bool:
+    global _ingest_active
+    with _ingest_lock:
+        if _ingest_active:
+            return False
+        _ingest_active = True
+        return True
+
+def _release_ingest_slot() -> None:
+    global _ingest_active
+    with _ingest_lock:
+        _ingest_active = False
+
 # ── WebSocket connection manager ────────────────────────────────────────────
 _MAX_WS_CONNECTIONS = 32  # cap concurrent progress listeners (DoS guard)
 
@@ -55,7 +77,9 @@ class IngestBroadcaster:
 
     async def broadcast(self, data: dict):
         dead = set()
-        for ws in self.connections:
+        # snapshot: send_json awaits, so a concurrent connect/disconnect mutating
+        # the live set mid-iteration would raise "Set changed size" (audit H9).
+        for ws in list(self.connections):
             try:
                 await ws.send_json(data)
             except Exception:
@@ -1252,7 +1276,9 @@ class MetadataCsvExportRequest(BaseModel):
 @app.post("/api/export/metadata-csv-to")
 def export_metadata_csv_to(
     body: MetadataCsvExportRequest,
-    _tok: dict = Depends(require_scopes("media_read")),
+    # writes a file to a caller-chosen local path — gate on write, not read, so a
+    # read-only token can't drop files in the operator's home dir (audit H10).
+    _tok: dict = Depends(require_scopes("videos_write")),
 ):
     """Tauri WKWebView path: server writes CSV directly to user-picked dest.
 
@@ -1365,6 +1391,8 @@ def ingest_media(
     cmd = [sys.executable, str(ROOT / "ingest.py"), "--dir", str(target)]
     if body.limit > 0:
         cmd += ["--limit", str(body.limit)]
+    if not _acquire_ingest_slot():  # audit H3
+        raise HTTPException(409, "已有匯入任務進行中，請稍候")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, cwd=str(ROOT))
         return {
@@ -1374,6 +1402,8 @@ def ingest_media(
         }
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "匯入逾時（>30 分鐘）"}
+    finally:
+        _release_ingest_slot()
 
 
 # ── Re-transcribe ─────────────────────────────────────────────────────────────
@@ -1413,20 +1443,27 @@ def retranscribe_media(
     try:
         import transcribe as tr
         text, lang, segments, words = tr.transcribe(media_path, language=body.language)
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
-                (
-                    text,
-                    body.language,
-                    json.dumps(segments, ensure_ascii=False) if segments else None,
-                    json.dumps(words, ensure_ascii=False) if words else None,
-                    media_id,
-                )
-            )
-        return {"ok": True, "transcript_length": len(text), "language": body.language}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        # Extraction/transcription failed — leave the existing transcript untouched
+        # rather than blanking it (audit H1/H2).
+        raise HTTPException(500, "retranscribe 失敗：{0}".format(e))
+    # An empty result means "no speech"; for a clip that already has a transcript
+    # that's almost always a regression (transient decode failure), not intent —
+    # refuse to overwrite a good transcript with nothing (audit H1).
+    if not (text or "").strip() and (rec.get("transcript") or "").strip():
+        raise HTTPException(422, "transcribe 回空，拒絕覆寫既有逐字稿（可能是音訊擷取失敗）")
+    with db.get_conn() as conn:
+        conn.execute(
+            "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
+            (
+                text,
+                lang or body.language,  # store the detected language, not just the hint
+                json.dumps(segments, ensure_ascii=False) if segments else None,
+                json.dumps(words, ensure_ascii=False) if words else None,
+                media_id,
+            )
+        )
+    return {"ok": True, "transcript_length": len(text), "language": lang or body.language}
 
 
 @app.post("/api/media/{media_id}/retry-vision")
@@ -1499,19 +1536,22 @@ def retry_vision(
                 for tag_name in vr.get("tags", []):
                     tag_name = tag_name.strip()
                     if tag_name and tag_name != "```":
-                        db.add_tag(media_id, tag_name, source="auto")
+                        # _conn=conn: add_tag must reuse the open write txn, else it
+                        # opens a 2nd connection that deadlocks on our own writer lock
+                        # (audit C1 — 30s wait then the whole patch rolls back / 500).
+                        db.add_tag(media_id, tag_name, source="auto", _conn=conn)
                 patched += 1
-        # Update legacy frame_tags
-        all_frames = db.get_frames(media_id)
+        # Update legacy frame_tags. Read frames through the SAME conn so we see the
+        # UPDATEs just written above, not a stale pre-txn snapshot (audit M1).
+        all_frames = db.get_frames(media_id, _conn=conn)
         frame_tags = [{"description": f.get("description", ""), "tags": f.get("tags", "").split(",") if f.get("tags") else []} for f in all_frames]
         frame_tags_json = json.dumps(frame_tags, ensure_ascii=False)
-        editability_score = None
-        for frame in all_frames:
-            if frame.get("focus_score") is not None:
-                editability_score = db.compute_editability(frame)
-                break
+        # max over all scored frames (not the first), and leave the prior score
+        # untouched when nothing scored rather than nulling it (audit M1).
+        scores = [db.compute_editability(fr) for fr in all_frames if fr.get("focus_score") is not None]
+        editability_score = max(scores) if scores else None
         conn.execute(
-            "UPDATE media SET frame_tags=?, editability_score=? WHERE id=?",
+            "UPDATE media SET frame_tags=?, editability_score=COALESCE(?, editability_score) WHERE id=?",
             (frame_tags_json, editability_score, media_id),
         )
 
@@ -1537,10 +1577,14 @@ def reingest_media(
     if not Path(media_path).exists():
         raise HTTPException(400, f"找不到媒體檔案：{media_path}")
     import subprocess, sys
+    if not _acquire_ingest_slot():  # audit H3 — don't run concurrently with another ingest
+        raise HTTPException(409, "已有匯入任務進行中，請稍候")
     try:
+        # Single-file mode (ingest.py handles a file path as --dir). The old
+        # `--dir <parent> --limit 1` re-processed the alphabetically-first file of
+        # the folder, not this media — silently refreshing the WRONG row (audit H4).
         result = subprocess.run(
-            [sys.executable, str(ROOT / "ingest.py"), "--dir", str(Path(media_path).parent),
-             "--limit", "1", "--refresh"],
+            [sys.executable, str(ROOT / "ingest.py"), "--dir", media_path, "--refresh"],
             capture_output=True, text=True, timeout=600, cwd=str(ROOT)
         )
         return {
@@ -1552,6 +1596,8 @@ def reingest_media(
         return {"ok": False, "error": "重新處理逾時（>10 分鐘）"}
     except Exception as e:
         raise HTTPException(500, str(e))
+    finally:
+        _release_ingest_slot()
 
 
 # ── Cache Management ──────────────────────────────────────────────────────────
@@ -2032,7 +2078,8 @@ class ExportToRequest(BaseModel):
 def export_to_file(
     media_id: int,
     body: ExportToRequest,
-    _tok: dict = Depends(require_scopes("media_read")),
+    # writes a file to a caller-chosen local path → require write scope (audit H10).
+    _tok: dict = Depends(require_scopes("videos_write")),
 ):
     """Export and write directly to a local path (for Tauri native save dialog).
 
@@ -2364,13 +2411,9 @@ async def ws_ingest(ws: WebSocket):
 # held or the task can be GC'd mid-run and its exceptions silently dropped; the
 # flag also serializes ingests so concurrent runs don't hammer the same SQLite DB.
 _ingest_ws_tasks: set = set()
-_ingest_ws_active = False
-
-
 def _on_ingest_ws_done(task: "asyncio.Task") -> None:
-    global _ingest_ws_active
     _ingest_ws_tasks.discard(task)
-    _ingest_ws_active = False
+    _release_ingest_slot()  # audit H3 — shared single-flight guard
     try:
         exc = task.exception()
     except asyncio.CancelledError:
@@ -2475,14 +2518,12 @@ async def ingest_media_ws(
     could drive the ingest pipeline over an arbitrary directory (Codex-class
     finding from the overnight audit).
     """
-    global _ingest_ws_active
     target = Path(body.path).expanduser().resolve()
     if not target.is_dir():
         raise HTTPException(400, f"路徑不是有效的目錄：{body.path}")
     _assert_ingest_path_safe(target)
-    if _ingest_ws_active:
+    if not _acquire_ingest_slot():  # audit H3 — shared single-flight with REST ingest/reingest
         raise HTTPException(409, "已有匯入進行中，請等待完成後再試")
-    _ingest_ws_active = True
     task = asyncio.create_task(_run_ingest_with_ws(target, body.limit))
     _ingest_ws_tasks.add(task)
     task.add_done_callback(_on_ingest_ws_done)

@@ -613,13 +613,20 @@ def upsert_frame(
             _do(conn)
 
 
-def get_frames(media_id: int) -> List[Dict]:
-    with get_conn() as conn:
-        rows = conn.execute(
+def get_frames(media_id: int, _conn=None) -> List[Dict]:
+    def _do(c):
+        rows = c.execute(
             "SELECT * FROM frames WHERE media_id = ? ORDER BY frame_index",
             (media_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+    # _conn lets a caller read frames inside its own open write txn — without it
+    # a second connection can't see the txn's uncommitted UPDATEs (stale read,
+    # audit M1) and on SQLite would block on the writer lock (audit C1).
+    if _conn is not None:
+        return _do(_conn)
+    with get_conn() as conn:
+        return _do(conn)
 
 
 def delete_frames(media_id: int, _conn=None):

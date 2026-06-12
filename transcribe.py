@@ -547,9 +547,21 @@ def _to_wav(media_path: str):
         "-loglevel", "error",
         out, "-y"
     ]
-    r = subprocess.run(cmd, capture_output=True)
-    if r.returncode != 0 or not Path(out).exists():
-        return None
+    # duration-unaware files can hang ffmpeg — bound it so a single bad file can't
+    # wedge the whole whisper phase (audit H7).
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        Path(out).unlink(missing_ok=True)
+        raise RuntimeError("ffmpeg audio extract timed out (>900s): {0}".format(media_path))
+    if r.returncode != 0 or not Path(out).exists() or Path(out).stat().st_size == 0:
+        Path(out).unlink(missing_ok=True)  # don't leak the temp wav on failure (H7)
+        err = (r.stderr or b"").decode("utf-8", "replace").strip()
+        err = err[-300:] if err else "(no stderr)"
+        # A failed extraction must NOT masquerade as "no speech" (returning empty
+        # made ingest record an empty transcript forever and retranscribe overwrite
+        # a good one — audit H1/H2). Raise so the caller counts it a real failure.
+        raise RuntimeError("ffmpeg audio extract failed rc={0}: {1}".format(r.returncode, err))
     return out
 
 
