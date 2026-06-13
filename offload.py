@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -528,10 +529,143 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
     return exit_code, summary, state_path
 
 
+# ── card-watcher (DIT wrapper ②) ────────────────────────────────────────────
+# `--watch --dst X [--organize T]` waits for a camera card to mount, then offloads
+# it automatically (copy + hash-verify + MHL, never deletes the source) with the ①
+# naming policy. The engine layer's "insert → it just copies" half of the Gate
+# replacement. A card is a freshly-mounted volume with a DCIM/ folder or media files;
+# only NEW mounts (vs the baseline at start) trigger, so already-plugged disks don't.
+_CARD_MEDIA_EXTS = {
+    ".mp4", ".mov", ".m4v", ".mts", ".mxf", ".avi", ".insv", ".360",  # video
+    ".braw", ".r3d", ".ari",                                          # cinema raw
+    ".jpg", ".jpeg", ".heic", ".dng", ".arw", ".cr2", ".cr3", ".nef", ".raf",  # stills
+    ".wav", ".aif", ".aiff",                                          # audio
+}
+
+
+def _looks_like_card(mountpoint):
+    """True if a mountpoint looks like a camera card: the universal DCIM/ folder, or
+    media files in a shallow scan. Never raises."""
+    try:
+        if os.path.isdir(os.path.join(mountpoint, "DCIM")):
+            return True
+        scanned = 0
+        for entry in os.scandir(mountpoint):
+            if entry.is_file(follow_symlinks=False) and \
+               os.path.splitext(entry.name)[1].lower() in _CARD_MEDIA_EXTS:
+                return True
+            scanned += 1
+            if scanned > 200:  # shallow — don't walk a huge disk root
+                break
+    except OSError:
+        return False
+    return False
+
+
+def _media_volumes(_partitions=None):
+    """Currently-mounted volumes that look like camera cards. `_partitions` is an
+    injection point for tests; defaults to psutil.disk_partitions()."""
+    parts = _partitions
+    if parts is None:
+        try:
+            import psutil
+            parts = [p.mountpoint for p in psutil.disk_partitions(all=False)]
+        except Exception:
+            return set()
+    out = set()
+    for mp in parts:
+        # skip the obvious system roots; cards mount under /Volumes (mac), a drive
+        # letter (Windows), or /media|/mnt (Linux) — the new-mount diff also guards this
+        if not mp or mp in ("/",) or os.path.normpath(mp) == os.path.normpath(os.path.expanduser("~")):
+            continue
+        if os.path.isdir(mp) and _looks_like_card(mp):
+            out.add(os.path.normpath(mp))
+    return out
+
+
+def _all_mounts(_partitions=None):
+    """All current mountpoints (no card filter), normpath'd. Test seam via _partitions."""
+    parts = _partitions
+    if parts is None:
+        try:
+            import psutil
+            parts = [p.mountpoint for p in psutil.disk_partitions(all=False)]
+        except Exception:
+            return set()
+    return {os.path.normpath(p) for p in parts if p}
+
+
+def run_card_watch(dsts, organize=None, interval=3.0, hash_algo=DEFAULT_HASH,
+                   include_heic=False, retry_limit=DEFAULT_RETRY_LIMIT, verify=True,
+                   emit_mhl=True, once=False, _loops=None, _list_fn=None, _mounts_fn=None):
+    """Poll for newly-appeared camera cards and offload each to ``dsts`` with the ①
+    naming policy. Returns the list of (volume, exit_code) handled (for tests).
+    Copy-only — never touches the source card. `once`/`_loops`/`_list_fn`/`_mounts_fn`
+    are test seams.
+
+    A volume is offloaded once per continuous mount: ``handled`` is pruned by the RAW
+    mount set (not the card-detection result), so a transient _looks_like_card() miss
+    on a still-plugged card can't re-trigger an offload (Codex). Only an unplug→replug
+    (the path leaving the raw mount set) re-arms it."""
+    if not dsts:
+        raise ValueError("--watch requires at least one --dst")
+    if organize:
+        _validate_organize_template(organize)
+    list_fn = _list_fn or _media_volumes
+    mounts_fn = _mounts_fn or _all_mounts
+    # Baseline: every volume mounted at startup is ignored — only new inserts trigger.
+    handled = set(mounts_fn())
+    print("Watching for camera cards… dst={0} organize={1} (already-mounted ignored)".format(
+        list(dsts), organize or "mirror"))
+    results = []
+    i = 0
+    while True:
+        try:
+            raw = set(mounts_fn())
+            cards = set(list_fn())
+        except Exception as exc:
+            print("[card-watch] volume scan error: {0}".format(exc))
+            raw, cards = set(), set()
+        if not raw:
+            # A real system always has at least one mount ("/"), so an empty raw set
+            # means the probe transiently failed (or raised above). Treat it as "no
+            # information": keep `handled` intact and skip this cycle, rather than
+            # pruning everything and re-offloading still-mounted cards (Codex).
+            i += 1
+            if once or (_loops is not None and i >= _loops):
+                break
+            time.sleep(interval)
+            continue
+        handled &= raw  # forget unmounted volumes → a replug re-arms; a flicker does not
+        for vol in sorted(cards - handled):
+            print("\n[card-watch] detected card: {0} → offloading (copy + verify + MHL)".format(vol))
+            handled.add(vol)  # mark before running so a slow offload can't double-fire
+            try:
+                code, _summary, _sp = run_offload(
+                    vol, dsts, hash_algo=hash_algo, include_heic=include_heic,
+                    retry_limit=retry_limit, verify=verify, emit_mhl=emit_mhl,
+                    organize=organize)
+                print("[card-watch] {0} done (exit {1})".format(vol, code))
+                results.append((vol, code))
+            except Exception as exc:
+                print("[card-watch] offload failed for {0}: {1}".format(vol, exc))
+                results.append((vol, 1))
+        i += 1
+        if once or (_loops is not None and i >= _loops):
+            break
+        time.sleep(interval)
+    return results
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="arkiv offload")
-    parser.add_argument("--src", required=True)
+    parser.add_argument("--src", default=None, help="Source card / directory (required unless --watch)")
     parser.add_argument("--dst", action="append", required=True)
+    parser.add_argument("--watch", action="store_true",
+                        help="DIT wrapper ②: wait for a camera card to mount, then auto-offload it "
+                             "(copy + verify + MHL, never deletes the source) with --organize. "
+                             "Already-mounted volumes are ignored; only new inserts trigger.")
+    parser.add_argument("--interval", type=float, default=3.0, help="--watch poll seconds (default 3)")
     parser.add_argument("--hash", dest="hash_algo", default="xxh3", choices=["xxh3", "md5", "sha1", "sha256"])
     parser.add_argument("--no-verify", action="store_true")
     parser.add_argument("--no-mhl", action="store_true")
@@ -553,6 +687,22 @@ def build_parser():
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.watch:
+        try:
+            run_card_watch(
+                args.dst, organize=args.organize, interval=args.interval,
+                hash_algo=args.hash_algo, include_heic=args.include_heic,
+                retry_limit=args.retry_limit, verify=not args.no_verify,
+                emit_mhl=not args.no_mhl)
+        except ValueError as exc:
+            print(str(exc))
+            return 4
+        except KeyboardInterrupt:
+            print("\n[card-watch] stopped")
+        return 0
+    if not args.src:
+        print("--src is required (or use --watch)")
+        return 4
     try:
         code, summary, state_path = run_offload(
             args.src,
