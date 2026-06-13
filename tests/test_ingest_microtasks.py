@@ -98,7 +98,13 @@ def test_b4_extract_thumbnail_force_bypasses_cache(monkeypatch, tmp_path):
     # same-name collisions), so the pre-existing poster must use the safe stem.
     (tmp_path / f"{frm._safe_stem('/x/clip.mp4')}.jpg").write_text("old")
     ran = []
-    monkeypatch.setattr(frm, "_run_ffmpeg", lambda cmd, out: ran.append(1) or True)
+    # _run_ffmpeg=True means the output file was written — honor that so the atomic
+    # temp→os.replace in _extract_frame_to (issue #53) has a temp file to promote.
+    def fake_run(cmd, out, timeout=60):
+        ran.append(1)
+        out.write_bytes(b"\xff\xd8\xff")
+        return True
+    monkeypatch.setattr(frm, "_run_ffmpeg", fake_run)
 
     frm.extract_thumbnail("/x/clip.mp4", 10.0, force=False)
     assert ran == []  # reuse — no rebuild

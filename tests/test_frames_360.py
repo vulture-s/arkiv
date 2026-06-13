@@ -101,3 +101,77 @@ def test_missing_file_not_360(monkeypatch):
     monkeypatch.setattr(frames.subprocess, "run",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("no probe")))
     assert frames._is_360_dualfisheye("/nope/clip.insv") is False
+
+
+# ── issue #53: --refresh forces frame re-extraction (force= bypasses reuse) ──
+def _patch_thumbs(monkeypatch, tmp_path):
+    monkeypatch.setattr(frames, "THUMBNAILS_DIR", tmp_path)
+    monkeypatch.setattr(frames, "_is_360_dualfisheye", lambda p: False)
+    calls = {"n": 0}
+    def fake_run(cmd, out_path=None, timeout=60):
+        calls["n"] += 1
+        if out_path is not None:
+            out_path.write_bytes(b"\xff\xd8\xff")  # pretend a jpg was written
+        return True
+    monkeypatch.setattr(frames, "_run_ffmpeg", fake_run)
+    return calls
+
+
+def test_force_false_reuses_existing_frame(monkeypatch, tmp_path):
+    calls = _patch_thumbs(monkeypatch, tmp_path)
+    stem = frames._safe_stem("/x/clip.mp4")
+    (tmp_path / f"{stem}_frame0.jpg").write_bytes(b"\xff\xd8\xff")  # pre-existing
+    frames._extract_fixed_persistent("/x/clip.mp4", 5.0, 30.0, stem, n_frames=1, force=False)
+    assert calls["n"] == 0  # existing thumbnail reused, no ffmpeg
+
+
+def test_force_true_reextracts(monkeypatch, tmp_path):
+    calls = _patch_thumbs(monkeypatch, tmp_path)
+    stem = frames._safe_stem("/x/clip.mp4")
+    (tmp_path / f"{stem}_frame0.jpg").write_bytes(b"\xff\xd8\xff")  # pre-existing
+    frames._extract_fixed_persistent("/x/clip.mp4", 5.0, 30.0, stem, n_frames=1, force=True)
+    assert calls["n"] == 1  # force bypasses reuse → re-extracted
+
+
+def test_extract_frames_threads_force(monkeypatch, tmp_path):
+    calls = _patch_thumbs(monkeypatch, tmp_path)
+    stem = frames._safe_stem("/x/clip.mp4")
+    (tmp_path / f"{stem}_frame0.jpg").write_bytes(b"\xff\xd8\xff")
+    frames.extract_frames("/x/clip.mp4", 5.0, 30.0, force=True)  # short clip → fixed path
+    assert calls["n"] >= 1  # force propagated through extract_frames
+
+
+# ── Codex fix: a failed forced re-extract must NOT destroy the prior good file ─
+def test_failed_force_reextract_preserves_old_thumbnail(monkeypatch, tmp_path):
+    monkeypatch.setattr(frames, "THUMBNAILS_DIR", tmp_path)
+    monkeypatch.setattr(frames, "_ensure_thumbnails_dir", lambda: None)
+    monkeypatch.setattr(frames, "_is_360_dualfisheye", lambda p: False)
+    stem = frames._safe_stem("/x/clip.mp4")
+    canonical = tmp_path / f"{stem}.jpg"
+    canonical.write_bytes(b"OLDGOOD")
+    # ffmpeg "fails" (and a real _run_ffmpeg would unlink its temp output)
+    monkeypatch.setattr(frames, "_run_ffmpeg",
+                        lambda cmd, out, timeout=60: (out.unlink(missing_ok=True), False)[1])
+    res = frames.extract_thumbnail("/x/clip.mp4", 10.0, force=True)
+    assert res is None
+    assert canonical.read_bytes() == b"OLDGOOD"   # prior thumbnail survives (atomic temp)
+    import glob
+    assert not glob.glob(str(tmp_path / f"{stem}.tmp.*.jpg"))  # temp cleaned up
+
+
+def test_temp_keeps_image_suffix_for_ffmpeg(monkeypatch, tmp_path):
+    # ffmpeg infers the output format from the extension; the temp MUST end in the
+    # real image suffix (.jpg), not a bare .tmp, or ffmpeg aborts with "Unable to
+    # choose an output format" (Codex). Pin the temp filename shape.
+    monkeypatch.setattr(frames, "THUMBNAILS_DIR", tmp_path)
+    monkeypatch.setattr(frames, "_is_360_dualfisheye", lambda p: False)
+    seen = {}
+    def cap(cmd, out, timeout=60):
+        seen["out"] = out
+        out.write_bytes(b"\xff\xd8\xff")
+        return True
+    monkeypatch.setattr(frames, "_run_ffmpeg", cap)
+    frames._extract_frame_to("/x/clip.mp4", 1.0, tmp_path / "poster.jpg")
+    assert seen["out"].suffix == ".jpg"   # ffmpeg can infer jpeg from the temp
+    assert ".tmp." in seen["out"].name    # …but a distinct temp, not the canonical
+    assert seen["out"].name != "poster.jpg"

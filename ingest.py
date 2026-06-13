@@ -544,7 +544,7 @@ def _apply_vision_to_frame_data(frame_data: List[Dict], frame_results: List[Dict
     return scores
 
 
-def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None) -> Dict:
+def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None, refresh: bool = False) -> Dict:
     """
     Process one media file.
     If `existing` is provided (refresh mode), skip transcription and reuse existing
@@ -598,7 +598,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None)
     is_video = path.suffix.lower() in VIDEO_EXT
     if is_video and meta["duration_s"] > 0:
         print(" >thumb", end="", flush=True)
-        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"])
+        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh)
         # Only record a thumbnail when extraction succeeded — omitting the key on
         # failure preserves the prior value on refresh (H6) and leaves new rows
         # at the column default (NULL).
@@ -608,7 +608,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None)
     # Frame extraction (video only) — persistent thumbnails + DB records
     if is_video and meta["duration_s"] > 0:
         print(" >frames", end="", flush=True)
-        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30)
+        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh)
         for frame in frame_data:
             if frame.get("thumbnail_path"):
                 frame["thumbnail_path"] = db.to_relative(frame["thumbnail_path"])
@@ -1091,7 +1091,7 @@ def main():
     parser.add_argument("--dir", help="Media directory to scan (required unless --migrate-* / --regenerate-proxies / --vision-only)")
     parser.add_argument("--limit", type=int, default=0, help="Max files to process (0=all)")
     parser.add_argument("--skip-vision", action="store_true", help="Skip llava frame description")
-    parser.add_argument("--refresh", action="store_true", help="Re-process already-indexed files (thumbnail + vision)")
+    parser.add_argument("--refresh", action="store_true", help="Re-process already-indexed files — re-extracts thumbnail + frames (not reusing cached ones, so changed extraction logic like 360 reproject re-applies) + re-runs vision (issue #53)")
     parser.add_argument("--vision-only", action="store_true", help="Only run vision on frames with empty descriptions (resume after halt)")
     parser.add_argument("--max-failures", type=int, default=0, metavar="N", help="issue #48: tolerate N cumulative failed frames before halting vision (0=halt on first, the default). Failed frames are left empty for a later --vision-only retry.")
     parser.add_argument("--skip-failed", action="store_true", help="issue #48: never halt on individual frame vision failures — skip them (left empty for retry), report at end. Recommended for large unattended/overnight runs. A whole-Ollama outage still halts fast.")
@@ -1265,7 +1265,7 @@ def main():
         file_start = _time.time()
         try:
             # Phase 1: always skip vision — will run in Phase 2
-            record = process_file(f, skip_vision=True, existing=existing)
+            record = process_file(f, skip_vision=True, existing=existing, refresh=args.refresh)
             file_elapsed = _time.time() - file_start
             if record:
                 frames = record.pop("_frames", [])
