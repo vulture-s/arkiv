@@ -1,6 +1,9 @@
 # Changelog
 ## Unreleased
 
+### Added
+- **DIT card-watcher (`offload.py --watch`).** Waits for a camera card to mount, then auto-offloads it — copy + hash-verify + MHL, **never deletes the source** — with the `--organize` naming policy. A card is a newly-mounted volume with a `DCIM/` folder or media files; only NEW inserts trigger (already-plugged disks at startup are the baseline and ignored), and a removed→reinserted card re-triggers. One failed offload is logged and the watch loop survives. The "insert → it just copies" half of the Gate replacement, paired with the `--organize` folder policy. Requires at least one `--dst`. Tests in `tests/test_offload_card_watch.py`.
+
 ### Fixed
 - **`--refresh` now actually re-extracts thumbnails + frames (issue #53).** It used to re-run vision/embed but reuse cached frame thumbnails (the `already_ok` check skipped extraction whenever a file existed), so a change to the extraction logic itself — e.g. the Phase 8.3b 360 reproject — never re-applied to already-ingested clips; they kept their stale raw-fisheye frames. `--refresh` now threads `force=True` down to frame/thumbnail extraction. Re-extraction is atomic (ffmpeg writes a temp sibling, `os.replace` onto the canonical file only on success), so a forced re-extract that times out / fails can't destroy the prior good thumbnail while the DB still points at it. Non-refresh ingest still reuses existing thumbnails (cheap re-ingest, unchanged).
 
