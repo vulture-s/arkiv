@@ -11,6 +11,61 @@ import config
 THUMBNAILS_DIR = config.THUMBNAILS_DIR
 
 
+# Phase 8.3b: dual-fisheye 360 (Insta360 .insv / GoPro Max .360) get stitched into a
+# full equirectangular panorama BEFORE frame extraction so vision sees an undistorted
+# scene. Phase 8.3a POC (references/plans/arkiv/2026-06-13-arkiv-8.3a-360-indexing-poc):
+# the raw fisheye buries the wearer + on-screen text (event name, bib #) in the
+# distorted edge and the VLM reads nothing; the equirect stitch surfaces them. 360
+# frames extract larger (1024px vs the normal 320px) so reprojected detail survives.
+_FISHEYE_360_EXT = {".insv", ".360"}
+_V360_360_FILTER = "v360=dfisheye:equirect:ih_fov=193:iv_fov=193"
+_360_SCALE = "scale=1024:-1"
+_NORMAL_SCALE = "scale=320:-1"
+_is_360_cache: dict = {}
+
+
+def _is_360_dualfisheye(video_path: str) -> bool:
+    """True for a dual-fisheye 360 source: ext gate + two video streams confirmed via
+    ffprobe (so a single-lens file mislabeled .360 won't try to stitch a missing
+    stream). Cache keyed by (path, mtime, size) — like codec.py — so a replaced file
+    re-probes; a failed/errored probe is NOT cached so it retries next time."""
+    if Path(video_path).suffix.lower() not in _FISHEYE_360_EXT:
+        return False
+    try:
+        st = os.stat(video_path)
+        key = (os.path.abspath(video_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return False
+    if key in _is_360_cache:
+        return _is_360_cache[key]
+    try:
+        out = subprocess.run(
+            [config.FFPROBE_PATH, "-v", "error", "-select_streams", "v",
+             "-show_entries", "stream=index", "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        if out.returncode != 0:
+            return False  # transient/failed probe — don't cache, retry next time
+        ok = len([r for r in out.stdout.splitlines() if r.strip()]) >= 2
+    except Exception:
+        return False  # don't cache transient failure
+    _is_360_cache[key] = ok
+    return ok
+
+
+def _frame_vf_args(video_path: str) -> List[str]:
+    """ffmpeg filter args for frame extraction: a full-360 equirect stitch for
+    dual-fisheye sources (both lenses hstacked → dfisheye→equirect), else a plain
+    downscale. Slots in where ``["-vf", "scale=320:-1"]`` used to be.
+
+    Uses video-stream-relative mapping ``[0:v:0][0:v:1]`` (not ``[0:0][0:1]``) so an
+    audio stream sitting between the two fisheye tracks can't get hstacked by mistake.
+    """
+    if _is_360_dualfisheye(video_path):
+        fc = "[0:v:0][0:v:1]hstack[f];[f]{0},{1}[o]".format(_V360_360_FILTER, _360_SCALE)
+        return ["-filter_complex", fc, "-map", "[o]"]
+    return ["-vf", _NORMAL_SCALE]
+
+
 def _safe_stem(video_path: str) -> str:
     """Thumbnail filename stem scoped by a hash of the absolute source path.
 
@@ -89,11 +144,11 @@ def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -
         return str(out)
 
     t = max(duration_s * 0.5, 1.0)
-    cmd = [
-        config.FFMPEG_PATH, "-ss", str(t), "-i", video_path,
-        "-vf", "scale=320:-1",
-        "-frames:v", "1", str(out), "-y"
-    ]
+    cmd = (
+        [config.FFMPEG_PATH, "-ss", str(t), "-i", video_path]
+        + _frame_vf_args(video_path)
+        + ["-frames:v", "1", str(out), "-y"]
+    )
     return str(out) if _run_ffmpeg(cmd, out) else None
 
 
@@ -146,11 +201,11 @@ def _extract_fixed_persistent(
         out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
         already_ok = out.exists() and out.stat().st_size > 0
         if not already_ok:
-            cmd = [
-                config.FFMPEG_PATH, "-ss", str(t), "-i", video_path,
-                "-vf", "scale=320:-1",
-                "-frames:v", "1", str(out), "-y"
-            ]
+            cmd = (
+                [config.FFMPEG_PATH, "-ss", str(t), "-i", video_path]
+                + _frame_vf_args(video_path)
+                + ["-frames:v", "1", str(out), "-y"]
+            )
             if not _run_ffmpeg(cmd, out):
                 continue
         results.append({
@@ -214,11 +269,11 @@ def _extract_scene_persistent(
         out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
         already_ok = out.exists() and out.stat().st_size > 0
         if not already_ok:
-            cmd = [
-                config.FFMPEG_PATH, "-ss", str(t), "-i", video_path,
-                "-vf", "scale=320:-1",
-                "-frames:v", "1", str(out), "-y"
-            ]
+            cmd = (
+                [config.FFMPEG_PATH, "-ss", str(t), "-i", video_path]
+                + _frame_vf_args(video_path)
+                + ["-frames:v", "1", str(out), "-y"]
+            )
             if not _run_ffmpeg(cmd, out):
                 continue
         results.append({
