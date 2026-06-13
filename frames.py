@@ -128,6 +128,29 @@ def _run_ffmpeg(cmd, out_path: Optional[Path] = None, timeout: float = 60) -> bo
     return True
 
 
+def _extract_frame_to(video_path: str, t: float, out: Path) -> bool:
+    """Extract one frame at time ``t`` to ``out`` atomically: ffmpeg writes a temp
+    sibling, then os.replace onto ``out`` only on success. So a forced re-extraction
+    (--refresh) that times out / fails can't destroy the prior good thumbnail while
+    the DB still references it (issue #53 / Codex). For 360 sources the filter is the
+    full-equirect stitch (see _frame_vf_args)."""
+    # Temp MUST keep the real image suffix (…tmp.<pid>.jpg, not …jpg.tmp): ffmpeg
+    # infers the output format from the extension, and a bare ".tmp" makes it abort
+    # ("Unable to choose an output format"). The <pid> keeps concurrent refreshes of
+    # the same output from clobbering each other's temp.
+    tmp = out.with_name("{0}.tmp.{1}{2}".format(out.stem, os.getpid(), out.suffix))
+    cmd = (
+        [config.FFMPEG_PATH, "-ss", str(t), "-i", video_path]
+        + _frame_vf_args(video_path)
+        + ["-frames:v", "1", str(tmp), "-y"]
+    )
+    if _run_ffmpeg(cmd, tmp):
+        os.replace(str(tmp), str(out))
+        return True
+    tmp.unlink(missing_ok=True)
+    return False
+
+
 def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -> Optional[str]:
     """
     Extract one representative frame (50% position) and save permanently
@@ -144,12 +167,7 @@ def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -
         return str(out)
 
     t = max(duration_s * 0.5, 1.0)
-    cmd = (
-        [config.FFMPEG_PATH, "-ss", str(t), "-i", video_path]
-        + _frame_vf_args(video_path)
-        + ["-frames:v", "1", str(out), "-y"]
-    )
-    return str(out) if _run_ffmpeg(cmd, out) else None
+    return str(out) if _extract_frame_to(video_path, t, out) else None
 
 
 def _adaptive_frame_count(duration_s: float) -> int:
@@ -162,23 +180,28 @@ def _adaptive_frame_count(duration_s: float) -> int:
     return 5 + max(1, int((duration_s - 60) / 30))
 
 
-def extract_frames(video_path: str, duration_s: float, fps: float) -> List[Dict]:
+def extract_frames(video_path: str, duration_s: float, fps: float, force: bool = False) -> List[Dict]:
     """
     Extract representative frames from a video and persist thumbnails.
     Returns list of {index, timestamp_s, thumbnail_path}.
     - Short clip: fixed evenly-spaced frames
     - Long clip: scene detect with adaptive cap, fallback to fixed frames
+
+    force=True re-extracts even when a thumbnail already exists — needed when the
+    extraction logic itself changed (e.g. Phase 8.3b 360 reproject), so `--refresh`
+    actually re-applies it to already-ingested clips instead of reusing stale frames
+    (issue #53). Default reuses existing thumbnails for cheap re-ingest.
     """
     _ensure_thumbnails_dir()
     stem = _safe_stem(video_path)
     n_frames = _adaptive_frame_count(duration_s)
 
     if duration_s < 60:
-        results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames)
+        results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames, force=force)
     else:
-        results = _extract_scene_persistent(video_path, duration_s, stem, max_frames=n_frames)
+        results = _extract_scene_persistent(video_path, duration_s, stem, max_frames=n_frames, force=force)
         if not results:
-            results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames)
+            results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames, force=force)
 
     if not results:
         # audit M18: a video ending up with zero frames used to look like [OK]
@@ -193,20 +216,16 @@ def _extract_fixed_persistent(
     fps: float,
     stem: str,
     n_frames: int = 3,
+    force: bool = False,
 ) -> List[Dict]:
     positions = [float(i) / float(n_frames + 1) for i in range(1, n_frames + 1)]
     results = []
     for i, pct in enumerate(positions):
         t = duration_s * pct
         out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
-        already_ok = out.exists() and out.stat().st_size > 0
+        already_ok = (not force) and out.exists() and out.stat().st_size > 0
         if not already_ok:
-            cmd = (
-                [config.FFMPEG_PATH, "-ss", str(t), "-i", video_path]
-                + _frame_vf_args(video_path)
-                + ["-frames:v", "1", str(out), "-y"]
-            )
-            if not _run_ffmpeg(cmd, out):
+            if not _extract_frame_to(video_path, t, out):
                 continue
         results.append({
             "index": i,
@@ -221,6 +240,7 @@ def _extract_scene_persistent(
     duration_s: float,
     stem: str,
     max_frames: int = 5,
+    force: bool = False,
 ) -> List[Dict]:
     """Use scene detection, then persist top scene-change frames."""
     # First pass: detect scene timestamps via showinfo (stderr), discard frames
@@ -267,14 +287,9 @@ def _extract_scene_persistent(
     results = []
     for i, t in enumerate(timestamps[:max_frames]):
         out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
-        already_ok = out.exists() and out.stat().st_size > 0
+        already_ok = (not force) and out.exists() and out.stat().st_size > 0
         if not already_ok:
-            cmd = (
-                [config.FFMPEG_PATH, "-ss", str(t), "-i", video_path]
-                + _frame_vf_args(video_path)
-                + ["-frames:v", "1", str(out), "-y"]
-            )
-            if not _run_ffmpeg(cmd, out):
+            if not _extract_frame_to(video_path, t, out):
                 continue
         results.append({
             "index": i,
