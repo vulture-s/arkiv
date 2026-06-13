@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arkiv · DIT Offload</title>
+<style>
+  :root{
+    --bg:#0a0a0c; --surface:#141418; --surface2:#1b1b20; --line:#2a2a31;
+    --text:#e8e8ea; --dim:#8a8a93; --cyan:#18b6dc; --ok:#3ecf8e; --err:#e5604d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:Inter,-apple-system,"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.5}
+  .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace}
+  header{padding:22px 28px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:14px}
+  header h1{font-family:"Archivo Black",Inter,sans-serif;font-weight:900;font-size:19px;margin:0;letter-spacing:-.01em}
+  header .sub{color:var(--dim);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+  main{max-width:1080px;margin:0 auto;padding:28px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px;margin-bottom:20px}
+  label{display:block;color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 6px}
+  input[type=text]{width:100%;background:var(--surface2);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:10px 12px;font-size:13px;font-family:"JetBrains Mono",monospace}
+  input[type=text]:focus{outline:none;border-color:var(--cyan)}
+  .row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  .row > div{flex:1;min-width:240px}
+  .dsts{display:flex;flex-direction:column;gap:8px}
+  .dst-line{display:flex;gap:8px}
+  .chk{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:13px;text-transform:none;letter-spacing:0}
+  button{font-family:Inter,sans-serif;font-size:13px;font-weight:600;border-radius:7px;padding:10px 18px;
+    border:1px solid var(--line);background:var(--surface2);color:var(--text);cursor:pointer}
+  button:hover{border-color:var(--cyan)}
+  button.primary{background:var(--cyan);border-color:var(--cyan);color:#062028}
+  button.ghost{padding:8px 12px}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .actions{display:flex;gap:12px;align-items:center;margin-top:6px}
+  .hint{color:var(--dim);font-size:12px;margin-top:10px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;color:var(--dim);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+    padding:8px 10px;border-bottom:1px solid var(--line)}
+  td{padding:7px 10px;border-bottom:1px solid var(--surface2);vertical-align:top}
+  td.rel{color:var(--cyan)}
+  .arrow{color:var(--dim);padding:0 4px}
+  .status{font-size:13px;margin-top:12px;min-height:20px}
+  .status.ok{color:var(--ok)} .status.err{color:var(--err)} .status.run{color:var(--cyan)}
+  pre{background:var(--surface2);border:1px solid var(--line);border-radius:7px;padding:12px;
+    font-size:11.5px;overflow:auto;max-height:280px;white-space:pre-wrap;color:var(--dim)}
+  .meta{color:var(--dim);font-size:12px;margin:0 0 12px}
+  .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:11px;color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <h1>arkiv · DIT OFFLOAD</h1>
+  <span class="sub">card → backup · copy + verify + ascMHL · never deletes source</span>
+</header>
+<main>
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Source 來源卡 / 資料夾</label>
+        <input id="src" type="text" placeholder="/Volumes/CARD  或  /Users/you/footage" spellcheck="false">
+      </div>
+      <div>
+        <label>Organize template（資料夾規則,留空=鏡射原結構）</label>
+        <input id="organize" type="text" placeholder="{date}/{camera}/{reel}" spellcheck="false">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Destinations 目的地（一鍵多備份）</label>
+        <div class="dsts" id="dsts">
+          <div class="dst-line"><input type="text" class="dst" placeholder="/Volumes/Backup1" spellcheck="false"><button class="ghost" onclick="addDst()">+</button></div>
+        </div>
+      </div>
+      <div style="flex:0 0 220px">
+        <label>選項</label>
+        <label class="chk"><input type="checkbox" id="heic"> include .heic</label>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="previewBtn" onclick="doPreview()">Preview 預覽排版</button>
+      <button id="runBtn" onclick="doRun()" disabled>Run Offload 執行轉存</button>
+      <span class="pill mono">tokens: {date} {camera} {reel} {stem} {ext}</span>
+    </div>
+    <div class="hint">Preview 只讀不複製（顯示每個檔的目的端路徑）。Run 才真的複製 + xxh3 校驗 + 產 ascMHL,<b>絕不刪來源卡</b>。</div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="card" id="layoutCard" style="display:none">
+    <p class="meta mono" id="layoutMeta"></p>
+    <div style="max-height:420px;overflow:auto">
+      <table><thead><tr><th>Source</th><th></th><th>→ Destination (rel)</th><th>MB</th></tr></thead>
+      <tbody id="layoutBody"></tbody></table>
+    </div>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none">
+    <p class="meta">Offload 輸出</p>
+    <pre id="resultOut"></pre>
+  </div>
+</main>
+
+<script>
+function $(id){return document.getElementById(id)}
+function addDst(){
+  const wrap=$('dsts');
+  const line=document.createElement('div'); line.className='dst-line';
+  line.innerHTML='<input type="text" class="dst" placeholder="/Volumes/Backup2" spellcheck="false"><button class="ghost" onclick="this.parentNode.remove()">−</button>';
+  wrap.appendChild(line);
+}
+function dsts(){return [...document.querySelectorAll('.dst')].map(i=>i.value.trim()).filter(Boolean)}
+function setStatus(msg,cls){const s=$('status');s.textContent=msg;s.className='status '+(cls||'')}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+
+async function doPreview(){
+  const src=$('src').value.trim();
+  if(!src){setStatus('請先填來源路徑','err');return}
+  setStatus('預覽中…','run'); $('previewBtn').disabled=true;
+  try{
+    const r=await fetch('/api/offload/preview',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({src,organize:$('organize').value.trim()||null,include_heic:$('heic').checked})});
+    const d=await r.json();
+    if(!r.ok){setStatus(d.detail||'預覽失敗','err');return}
+    renderLayout(d);
+    setStatus(d.count+' 個檔案 · '+(d.organize?('organize: '+d.organize):'鏡射原結構'),'ok');
+    $('runBtn').disabled = dsts().length===0;
+    if(dsts().length===0) setStatus(d.count+' 個檔案。填一個目的地才能執行。','ok');
+  }catch(e){setStatus('錯誤: '+e,'err')}
+  finally{$('previewBtn').disabled=false}
+}
+
+function renderLayout(d){
+  $('layoutCard').style.display='block';
+  $('layoutMeta').textContent=d.src+'  ('+d.count+' files'+(d.count>=200?', 截斷顯示前 200':'')+')';
+  const b=$('layoutBody'); b.innerHTML='';
+  for(const f of d.files){
+    const name=f.source.split(/[\\/]/).pop();
+    b.insertAdjacentHTML('beforeend',
+      '<tr><td class="mono">'+esc(name)+'</td><td class="arrow">→</td><td class="rel mono">'+esc(f.rel)+'</td><td class="mono">'+(f.size_mb??'')+'</td></tr>');
+  }
+}
+
+async function doRun(){
+  const src=$('src').value.trim(); const dst=dsts();
+  if(!src||dst.length===0){setStatus('需要來源 + 至少一個目的地','err');return}
+  if(!confirm('開始轉存 '+src+'\n→ '+dst.join('\n→ ')+'\n\n(複製 + 校驗 + MHL,不刪來源)')) return;
+  setStatus('轉存中…（複製 + 校驗,可能要數分鐘）','run'); $('runBtn').disabled=true; $('previewBtn').disabled=true;
+  try{
+    const r=await fetch('/api/offload',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({src,dst,organize:$('organize').value.trim()||null,include_heic:$('heic').checked})});
+    const d=await r.json();
+    $('resultCard').style.display='block';
+    $('resultOut').textContent=(d.stdout||'')+(d.stderr?('\n--- stderr ---\n'+d.stderr):'');
+    setStatus(d.ok?('✓ 轉存完成 (exit '+d.code+')'):('✗ 轉存失敗 (exit '+(d.code??'?')+')'), d.ok?'ok':'err');
+  }catch(e){setStatus('錯誤: '+e,'err')}
+  finally{$('runBtn').disabled=false; $('previewBtn').disabled=false}
+}
+</script>
+</body>
+</html>

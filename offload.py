@@ -153,6 +153,33 @@ def _organize_relpath(src_file, template, meta):
     return (folder + "/" + name) if folder else name
 
 
+def preview_layout(src, organize=None, include_heic=False, limit=0):
+    """Return a layout preview without copying anything — powers the DIT Offload UI.
+
+    Result: {"src": <root>, "count": N, "organize": template|None,
+             "files": [{"source": abs, "rel": dest-relpath, "size_mb": f}, ...]}.
+    For --organize each rel is the camera-metadata folder path; otherwise the mirror
+    of the source tree. Pure / read-only (no copy, no state file)."""
+    if organize:
+        _validate_organize_template(organize)
+    src_root = Path(src).expanduser().resolve(strict=False)
+    if not src_root.exists():
+        raise FileNotFoundError("source missing: {0}".format(src_root))
+    files = _collect_sources(src_root, include_heic=include_heic)
+    if limit and limit > 0:
+        files = files[:limit]
+    out = []
+    for f in files:
+        rel = (_organize_relpath(f, organize, _probe_camera_meta(f)) if organize
+               else _normalize_relpath(f, src_root))
+        try:
+            size_mb = round(f.stat().st_size / 1048576, 1)
+        except OSError:
+            size_mb = None
+        out.append({"source": str(f), "rel": rel, "size_mb": size_mb})
+    return {"src": str(src_root), "count": len(out), "organize": organize or None, "files": out}
+
+
 def _validate_organize_template(template):
     if not any(("{" + tok + "}") in template for tok in _ORGANIZE_TOKENS):
         raise ValueError(

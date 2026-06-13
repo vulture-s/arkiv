@@ -1612,6 +1612,98 @@ def ingest_media(
         _release_ingest_slot()
 
 
+# ── DIT Offload (card → backup) — powers the /dit UI ─────────────────────────
+
+class OffloadPreviewRequest(BaseModel):
+    src: str
+    organize: Optional[str] = None
+    include_heic: bool = False
+    limit: int = 200  # cap the preview; a full card can be hundreds of files
+
+
+class OffloadRequest(BaseModel):
+    src: str
+    dst: List[str]
+    organize: Optional[str] = None
+    include_heic: bool = False
+
+
+@app.post("/api/offload/preview")
+def offload_preview(
+    body: OffloadPreviewRequest,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
+    """Read-only layout preview for the DIT Offload UI — shows source→dest mapping
+    under the --organize template without copying anything."""
+    import offload as _offload
+    src = Path(body.src).expanduser().resolve()
+    if not src.exists():
+        raise HTTPException(400, "來源路徑不存在")
+    # Clamp the limit server-side: it's client-controlled and a 0 / negative / huge
+    # value would otherwise disable the cap and force full enumeration + exiftool +
+    # a giant JSON on a large card (Codex). Always (0, 200].
+    safe_limit = body.limit if 0 < body.limit <= 200 else 200
+    try:
+        return _offload.preview_layout(
+            str(src), organize=body.organize, include_heic=body.include_heic,
+            limit=safe_limit)
+    except ValueError as exc:  # bad --organize template
+        raise HTTPException(400, str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/offload")
+def offload_run(
+    body: OffloadRequest,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
+    """Run a DIT offload (copy + hash-verify + MHL, never deletes source) with the
+    --organize naming policy. Mirrors /api/ingest's subprocess pattern. Source/dest
+    are arbitrary by design (card → backup drives); gated by videos_write (loopback
+    is token-free, a remote read token is refused)."""
+    import subprocess, sys
+    src = Path(body.src).expanduser().resolve()
+    if not src.exists():
+        raise HTTPException(400, "來源路徑不存在")
+    if not body.dst:
+        raise HTTPException(400, "至少需要一個目的地 (dst)")
+    cmd = [sys.executable, str(ROOT / "offload.py"), "--src", str(src), "--progress", "json"]
+    for d in body.dst:
+        cmd += ["--dst", d]
+    if body.organize:
+        cmd += ["--organize", body.organize]
+    if body.include_heic:
+        cmd += ["--include-heic"]
+    # offload writes offload-state.json into its cwd; keep that out of the install
+    # ROOT (it would dirty the repo / install dir on every UI run). Use the
+    # project's .arkiv dir so the state is scoped + resumable per project.
+    state_cwd = config.THUMBNAILS_DIR.parent
+    state_cwd.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, cwd=str(state_cwd))
+        payload = {
+            "ok": result.returncode == 0,
+            "code": result.returncode,
+            "stdout": result.stdout[-4000:] if result.stdout else "",
+            "stderr": result.stderr[-1000:] if result.stderr else "",
+        }
+        if result.returncode != 0:
+            return JSONResponse(status_code=500, content=payload)
+        return payload
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "轉存逾時（>60 分鐘）")
+
+
+@app.get("/dit", response_class=HTMLResponse)
+def serve_dit():
+    """DIT Offload control panel (separate from the main search UI)."""
+    page = ROOT / "dit-offload.html"
+    if page.exists():
+        return page.read_text(encoding="utf-8")
+    return "<h1>arkiv DIT</h1><p>dit-offload.html not found</p>"
+
+
 # ── Re-transcribe ─────────────────────────────────────────────────────────────
 
 class RetranscribeRequest(BaseModel):

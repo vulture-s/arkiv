@@ -191,3 +191,40 @@ def test_run_offload_without_organize_mirrors_source(tmp_path):
     offload.run_offload(str(src), [str(dst)], emit_mhl=False, progress="json",
                         resume=str(tmp_path / "state.json"))
     assert (dst / "DCIM" / "C0001.MP4").read_bytes() == b"hi"   # mirror layout unchanged
+
+
+# ── preview_layout (powers the DIT Offload UI) ──────────────────────────────
+def test_preview_layout_mirror(tmp_path):
+    (tmp_path / "DCIM").mkdir()
+    (tmp_path / "DCIM" / "C0001.MP4").write_bytes(b"x" * 100)
+    p = offload.preview_layout(str(tmp_path))
+    assert p["count"] == 1
+    assert p["organize"] is None
+    assert p["files"][0]["rel"] == "DCIM/C0001.MP4"
+    assert p["files"][0]["size_mb"] is not None
+
+
+def test_preview_layout_organize(monkeypatch, tmp_path):
+    monkeypatch.setattr(offload, "_probe_camera_meta",
+                        lambda f: {"date": "2026-03-09", "camera": "Sony FX30", "reel": "A001"})
+    (tmp_path / "C0001.MP4").write_bytes(b"x")
+    p = offload.preview_layout(str(tmp_path), organize="{date}/{camera}/{reel}")
+    assert p["files"][0]["rel"] == "2026-03-09/Sony FX30/A001/C0001.MP4"
+
+
+def test_preview_layout_bad_template_raises(tmp_path):
+    (tmp_path / "C0001.MP4").write_bytes(b"x")
+    with pytest.raises(ValueError):
+        offload.preview_layout(str(tmp_path), organize="no-tokens")
+
+
+def test_preview_layout_missing_src(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        offload.preview_layout(str(tmp_path / "nope"))
+
+
+def test_preview_layout_limit(tmp_path):
+    for i in range(5):
+        (tmp_path / f"C{i}.MP4").write_bytes(b"x")
+    p = offload.preview_layout(str(tmp_path), limit=2)
+    assert len(p["files"]) == 2
