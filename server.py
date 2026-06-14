@@ -16,7 +16,7 @@ from typing import Any, List, Literal, Optional, Set
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, field_validator
 
 import admin
@@ -1680,19 +1680,44 @@ def offload_run(
     # project's .arkiv dir so the state is scoped + resumable per project.
     state_cwd = config.THUMBNAILS_DIR.parent
     state_cwd.mkdir(parents=True, exist_ok=True)
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, cwd=str(state_cwd))
-        payload = {
-            "ok": result.returncode == 0,
-            "code": result.returncode,
-            "stdout": result.stdout[-4000:] if result.stdout else "",
-            "stderr": result.stderr[-1000:] if result.stderr else "",
-        }
-        if result.returncode != 0:
-            return JSONResponse(status_code=500, content=payload)
-        return payload
-    except subprocess.TimeoutExpired:
-        raise HTTPException(504, "轉存逾時（>60 分鐘）")
+
+    def _stream():
+        # Stream the offload's --progress json events line-by-line (ndjson) so the UI
+        # shows live per-file progress instead of blocking on one giant request.
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            bufsize=1, cwd=str(state_cwd))
+        saw_done = False
+        import json as _json
+        try:
+            for line in proc.stdout:
+                try:  # JSON parse (not substring) so a filename can't false-positive
+                    if _json.loads(line).get("type") == "done":
+                        saw_done = True
+                except (ValueError, AttributeError):
+                    pass
+                yield line if line.endswith("\n") else line + "\n"
+            proc.wait()
+            if not saw_done:
+                # offload exited before emitting its terminal event (e.g. a
+                # ValueError/RuntimeError exit path) — synthesize one so the UI's
+                # done-handler always fires instead of hanging on "running" (Codex).
+                yield _json.dumps({"type": "done", "code": proc.returncode if proc.returncode is not None else 1,
+                                   "summary": {}}, ensure_ascii=False) + "\n"
+        except GeneratorExit:
+            # client disconnected — stop the (resumable) offload and bound the wait
+            # so a stalled child can't pin the worker forever (Codex).
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()  # reap to avoid a zombie if terminate timed out
+            raise
+        finally:
+            if proc.stdout and not proc.stdout.closed:
+                proc.stdout.close()
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 
 @app.get("/dit", response_class=HTMLResponse)
