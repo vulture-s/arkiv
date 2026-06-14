@@ -85,6 +85,9 @@
     </div>
     <div class="hint">Preview 只讀不複製（顯示每個檔的目的端路徑）。Run 才真的複製 + xxh3 校驗 + 產 ascMHL,<b>絕不刪來源卡</b>。</div>
     <div class="status" id="status"></div>
+    <div id="bar" style="display:none;height:6px;background:var(--surface2);border-radius:4px;margin-top:10px;overflow:hidden">
+      <div id="barfill" style="height:100%;width:0;background:var(--cyan);transition:width .2s"></div>
+    </div>
   </div>
 
   <div class="card" id="layoutCard" style="display:none">
@@ -141,18 +144,38 @@ function renderLayout(d){
   }
 }
 
+function setBar(done,total){
+  const b=$('bar'); b.style.display=total?'block':'none';
+  $('barfill').style.width=(total?Math.min(100,Math.round(done/total*100)):0)+'%';
+}
 async function doRun(){
   const src=$('src').value.trim(); const dst=dsts();
   if(!src||dst.length===0){setStatus('需要來源 + 至少一個目的地','err');return}
   if(!confirm('開始轉存 '+src+'\n→ '+dst.join('\n→ ')+'\n\n(複製 + 校驗 + MHL,不刪來源)')) return;
-  setStatus('轉存中…（複製 + 校驗,可能要數分鐘）','run'); $('runBtn').disabled=true; $('previewBtn').disabled=true;
+  setStatus('轉存中…','run'); $('runBtn').disabled=true; $('previewBtn').disabled=true;
+  $('resultCard').style.display='block'; const out=$('resultOut'); out.textContent='';
+  let total=0, done=0, failed=0; setBar(0,0);
   try{
     const r=await fetch('/api/offload',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({src,dst,organize:$('organize').value.trim()||null,include_heic:$('heic').checked})});
-    const d=await r.json();
-    $('resultCard').style.display='block';
-    $('resultOut').textContent=(d.stdout||'')+(d.stderr?('\n--- stderr ---\n'+d.stderr):'');
-    setStatus(d.ok?('✓ 轉存完成 (exit '+d.code+')'):('✗ 轉存失敗 (exit '+(d.code??'?')+')'), d.ok?'ok':'err');
+    if(!r.ok){const d=await r.json().catch(()=>({}));setStatus(d.detail||('失敗 ('+r.status+')'),'err');return}
+    const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+    for(;;){
+      const {value,done:rd}=await reader.read(); if(rd) break;
+      buf+=dec.decode(value,{stream:true});
+      let nl; while((nl=buf.indexOf('\n'))>=0){
+        const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
+        if(!line) continue;
+        let ev; try{ev=JSON.parse(line)}catch(e){out.textContent+=line+'\n';continue}
+        if(ev.type==='dst_start'){total=ev.total; setStatus('複製到 '+ev.dst,'run')}
+        else if(ev.type==='file'){done++; if(ev.status==='failed')failed++;
+          setBar(done,total);
+          setStatus('複製中 '+done+(total?('/'+total):'')+' · '+ev.name+(failed?('  ('+failed+' 失敗)'):''),'run')}
+        else if(ev.type==='done'){const ok=ev.code===0; setBar(1,1);
+          setStatus(ok?('✓ 轉存完成 (exit '+ev.code+')'):('✗ 轉存失敗 (exit '+ev.code+')'), ok?'ok':'err');
+          out.textContent+=JSON.stringify(ev.summary,null,2)+'\n'}
+      }
+    }
   }catch(e){setStatus('錯誤: '+e,'err')}
   finally{$('runBtn').disabled=false; $('previewBtn').disabled=false}
 }

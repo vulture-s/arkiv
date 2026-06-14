@@ -439,6 +439,14 @@ def _verify_emitted_mhl(dst_root, mhl_path):
     return mhl.verify_manifest(mhl_path)
 
 
+def _emit(progress, event):
+    """Emit a single-line JSON progress event on stdout in --progress json mode (so a
+    caller — the /api/offload stream / a CLI consumer — can show live progress). No-op
+    in tui mode. Single line so a line-based reader can parse each event."""
+    if progress == "json":
+        print(json.dumps(event, ensure_ascii=False), flush=True)
+
+
 def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=None, retry_limit=DEFAULT_RETRY_LIMIT, chunk_size=DEFAULT_CHUNK_SIZE, verify=True, emit_mhl=True, dry_run=False, progress="tui", organize=None):
     src_root = Path(src).expanduser().resolve(strict=False)
     dst_roots = [Path(dst).expanduser().resolve(strict=False) for dst in dsts]
@@ -502,7 +510,9 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
 
         verified_rel_paths = []
         failed = 0
-        for file_entry in state["files"]:
+        total = len(state["files"])
+        _emit(progress, {"type": "dst_start", "dst": dst_key, "total": total})
+        for idx, file_entry in enumerate(state["files"], 1):
             src_path = Path(file_entry["source"])
             rel_path = file_entry["rel"]
             if rel_path is None:
@@ -511,15 +521,21 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
             file_state = file_entry["destinations"][dst_key]
             if file_state["status"] == "verified" and (dst_root / rel_path).exists():
                 verified_rel_paths.append(rel_path)
+                _emit(progress, {"type": "file", "dst": dst_key, "index": idx, "total": total,
+                                 "name": src_path.name, "status": "skipped"})
                 continue
             if dry_run:
                 file_state["status"] = "skipped"
+                _emit(progress, {"type": "file", "dst": dst_key, "index": idx, "total": total,
+                                 "name": src_path.name, "status": "skipped"})
                 continue
             ok = _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry_limit, chunk_size, state_path, state, dst_key)
             if ok:
                 verified_rel_paths.append(rel_path)
             else:
                 failed += 1
+            _emit(progress, {"type": "file", "dst": dst_key, "index": idx, "total": total,
+                             "name": src_path.name, "status": "verified" if ok else "failed"})
 
         dst_state["verified_files"] = len(verified_rel_paths)
         dst_state["failed_files"] = failed
@@ -753,7 +769,12 @@ def main(argv=None):
     except RuntimeError as exc:
         print(str(exc))
         return 1
-    print(json.dumps({"state": str(state_path), "summary": summary}, ensure_ascii=False, indent=2))
+    if args.progress == "json":
+        # single line so the stream's line reader parses it as the terminal event
+        print(json.dumps({"type": "done", "code": code, "state": str(state_path), "summary": summary},
+                         ensure_ascii=False), flush=True)
+    else:
+        print(json.dumps({"state": str(state_path), "summary": summary}, ensure_ascii=False, indent=2))
     return code
 
 

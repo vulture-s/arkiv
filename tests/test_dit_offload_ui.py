@@ -74,3 +74,39 @@ def test_offload_preview_limit_clamped(fastapi_client, tmp_path):
     # an absurd value is capped, not honored verbatim (still returns the 3 real files)
     assert fastapi_client.post("/api/offload/preview",
                                json={"src": str(card), "limit": 99999}).json()["count"] == 3
+
+
+def test_offload_run_streams_progress(fastapi_client, tmp_path):
+    import json
+    card = tmp_path / "card"; card.mkdir()
+    (card / "A.MP4").write_bytes(b"aaa")
+    (card / "B.MP4").write_bytes(b"bbb")
+    dst = tmp_path / "dst"; dst.mkdir()
+    r = fastapi_client.post("/api/offload", json={"src": str(card), "dst": [str(dst)]})
+    assert r.status_code == 200
+    events = [json.loads(l) for l in r.text.splitlines() if l.strip().startswith("{")]
+    types = [e.get("type") for e in events]
+    assert "dst_start" in types
+    assert types.count("file") >= 2              # one progress event per copied file
+    done = [e for e in events if e.get("type") == "done"][-1]
+    assert done["code"] == 0                      # terminal event carries the exit code
+    # the offload really copied the files (not just emitted events)
+    assert (dst / "A.MP4").read_bytes() == b"aaa"
+    assert (dst / "B.MP4").read_bytes() == b"bbb"
+
+
+def test_offload_run_stream_synthesizes_done_on_early_exit(fastapi_client, tmp_path):
+    # offload exits (code 4) on a bad --organize template BEFORE emitting its own
+    # done event; the stream must still end with a synthetic done so the UI's
+    # done-handler fires instead of hanging (Codex).
+    import json
+    card = tmp_path / "card"; card.mkdir()
+    (card / "A.MP4").write_bytes(b"a")
+    dst = tmp_path / "dst"; dst.mkdir()
+    r = fastapi_client.post("/api/offload",
+                            json={"src": str(card), "dst": [str(dst)], "organize": "no-tokens"})
+    assert r.status_code == 200  # validation passed → stream started
+    events = [json.loads(l) for l in r.text.splitlines() if l.strip().startswith("{")]
+    done = [e for e in events if e.get("type") == "done"]
+    assert done, "stream must always emit a terminal done event"
+    assert done[-1]["code"] != 0  # carries the offload's non-zero exit
