@@ -20,8 +20,8 @@ def test_offload_preview_mirror(fastapi_client, tmp_path):
 
 def test_offload_preview_organize(fastapi_client, tmp_path, monkeypatch):
     import offload
-    monkeypatch.setattr(offload, "_probe_camera_meta",
-                        lambda f: {"date": "2026-03-09", "camera": "Sony FX30", "reel": "A001"})
+    monkeypatch.setattr(offload, "_probe_camera_meta_batch",
+                        lambda paths: {str(p): {"date": "2026-03-09", "camera": "Sony FX30", "reel": "A001"} for p in paths})
     card = tmp_path / "card"; card.mkdir()
     (card / "C0001.MP4").write_bytes(b"x")
     r = fastapi_client.post("/api/offload/preview",

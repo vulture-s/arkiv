@@ -126,8 +126,8 @@ def test_probe_camera_meta_never_raises_on_missing_file(tmp_path):
 
 # ── collision refusal + end-to-end layout ───────────────────────────────────
 def test_organize_collision_is_refused(monkeypatch, tmp_path):
-    monkeypatch.setattr(offload, "_probe_camera_meta",
-                        lambda p: {"date": "2026-01-01", "camera": "CamX", "reel": "R1"})
+    monkeypatch.setattr(offload, "_probe_camera_meta_batch",
+                        lambda paths: {str(p): {"date": "2026-01-01", "camera": "CamX", "reel": "R1"} for p in paths})
     (tmp_path / "a").mkdir(); (tmp_path / "b").mkdir()
     f1 = tmp_path / "a" / "C0001.MP4"; f2 = tmp_path / "b" / "C0001.MP4"
     f1.write_bytes(b"x"); f2.write_bytes(b"y")          # same name + same metadata → same dest
@@ -138,8 +138,8 @@ def test_organize_collision_is_refused(monkeypatch, tmp_path):
 
 
 def test_run_offload_organize_lays_out_files(monkeypatch, tmp_path):
-    monkeypatch.setattr(offload, "_probe_camera_meta",
-                        lambda p: {"date": "2026-03-09", "camera": "Sony FX30", "reel": "A001"})
+    monkeypatch.setattr(offload, "_probe_camera_meta_batch",
+                        lambda paths: {str(p): {"date": "2026-03-09", "camera": "Sony FX30", "reel": "A001"} for p in paths})
     src = tmp_path / "card"; src.mkdir()
     (src / "C0001.MP4").write_bytes(b"hello")
     (src / "C0002.MP4").write_bytes(b"world")
@@ -157,8 +157,8 @@ def test_organize_case_insensitive_collision_refused(monkeypatch, tmp_path):
     f1 = tmp_path / "a" / "C0001.MP4"; f2 = tmp_path / "b" / "c0001.mp4"
     f1.write_bytes(b"x"); f2.write_bytes(b"y")
     # same metadata; names differ only by case → same file on macOS/Windows
-    monkeypatch.setattr(offload, "_probe_camera_meta",
-                        lambda p: {"date": "2026-01-01", "camera": "CamX", "reel": "R1"})
+    monkeypatch.setattr(offload, "_probe_camera_meta_batch",
+                        lambda paths: {str(p): {"date": "2026-01-01", "camera": "CamX", "reel": "R1"} for p in paths})
     state = {"source": str(tmp_path), "files": []}
     with pytest.raises(ValueError, match="collision"):
         offload._ensure_file_records(state, [f1, f2], [str(tmp_path / "dst")],
@@ -167,8 +167,8 @@ def test_organize_case_insensitive_collision_refused(monkeypatch, tmp_path):
 
 # ── Codex bug #3: resume with a different --organize is refused ──────────────
 def test_run_offload_resume_organize_mismatch_refused(monkeypatch, tmp_path):
-    monkeypatch.setattr(offload, "_probe_camera_meta",
-                        lambda p: {"date": "2026-03-09", "camera": "Sony FX30", "reel": "A001"})
+    monkeypatch.setattr(offload, "_probe_camera_meta_batch",
+                        lambda paths: {str(p): {"date": "2026-03-09", "camera": "Sony FX30", "reel": "A001"} for p in paths})
     src = tmp_path / "card"; src.mkdir(); (src / "C0001.MP4").write_bytes(b"hello")
     dst = tmp_path / "dst"; dst.mkdir()
     state_p = str(tmp_path / "state.json")
@@ -205,8 +205,8 @@ def test_preview_layout_mirror(tmp_path):
 
 
 def test_preview_layout_organize(monkeypatch, tmp_path):
-    monkeypatch.setattr(offload, "_probe_camera_meta",
-                        lambda f: {"date": "2026-03-09", "camera": "Sony FX30", "reel": "A001"})
+    monkeypatch.setattr(offload, "_probe_camera_meta_batch",
+                        lambda paths: {str(p): {"date": "2026-03-09", "camera": "Sony FX30", "reel": "A001"} for p in paths})
     (tmp_path / "C0001.MP4").write_bytes(b"x")
     p = offload.preview_layout(str(tmp_path), organize="{date}/{camera}/{reel}")
     assert p["files"][0]["rel"] == "2026-03-09/Sony FX30/A001/C0001.MP4"
@@ -228,3 +228,32 @@ def test_preview_layout_limit(tmp_path):
         (tmp_path / f"C{i}.MP4").write_bytes(b"x")
     p = offload.preview_layout(str(tmp_path), limit=2)
     assert len(p["files"]) == 2
+
+
+# ── exiftool batching (DIT preview/organize perf) ───────────────────────────
+def test_probe_camera_meta_batch_sidecar_and_mtime(tmp_path):
+    f1 = tmp_path / "FX30.5399.MP4"; f1.write_bytes(b"\x00")
+    (tmp_path / "FX30.5399M01.XML").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<NonRealTimeMeta xmlns="urn:schemas-professionalDisc:nonRealTimeMeta:ver.2.20">'
+        '<Device manufacturer="Sony" modelName="ILME-FX30"/>'
+        '<CreationDate value="2026-03-09T13:13:09+08:00"/></NonRealTimeMeta>', encoding="utf-8")
+    f2 = tmp_path / "plain.mov"; f2.write_bytes(b"\x00")
+    m = offload._probe_camera_meta_batch([f1, f2])
+    assert "FX30" in (m[str(f1)]["camera"] or "")   # sidecar fallback per-file in batch
+    assert m[str(f1)]["date"] == "2026-03-09"
+    assert m[str(f2)]["date"]                        # mtime fallback for the plain file
+
+
+def test_organize_uses_one_exiftool_spawn(monkeypatch, tmp_path):
+    # the whole point: a 5-file card organizes with ONE exiftool call, not 5.
+    calls = {"n": 0}
+    def counting(paths):
+        calls["n"] += 1
+        return {}  # no embedded meta → date falls back to mtime, camera UNKNOWN
+    monkeypatch.setattr(offload, "_exiftool_batch", counting)
+    card = tmp_path / "card"; card.mkdir()
+    for i in range(5):
+        (card / f"C{i}.MP4").write_bytes(b"x")
+    offload.preview_layout(str(card), organize="{date}/{camera}")
+    assert calls["n"] == 1

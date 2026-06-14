@@ -75,32 +75,28 @@ def _exiftool_path():
         return "exiftool"
 
 
-def _probe_camera_meta(path):
-    """Best-effort {date, camera, reel} for naming templates. exiftool first, then a
-    Sony XAVC NRT sidecar (`<stem>M01.XML`) fallback for camera/date, then file mtime
-    for date. Never raises — an offload must not fail on a metadata hiccup."""
+def _meta_from_exif_dict(d):
+    """Extract {date, camera, reel} from one exiftool JSON record (or {})."""
     meta = {"date": None, "camera": None, "reel": None}
+    if not d:
+        return meta
+    make, model = d.get("Make"), d.get("Model")
+    if model:
+        meta["camera"] = "{0} {1}".format(make, model) if make and make not in str(model) else str(model)
+    elif make:
+        meta["camera"] = str(make)
+    raw_date = d.get("CreateDate") or d.get("DateTimeOriginal")
+    if raw_date:
+        meta["date"] = str(raw_date)[:10].replace(":", "-")  # "2026:03:09 .." → "2026-03-09"
+    meta["reel"] = d.get("ReelName") or d.get("CameraReelName")
+    return meta
+
+
+def _apply_meta_fallbacks(meta, path):
+    """In place: Sony XAVC NRT sidecar (`<stem>M01.XML`) fallback for camera/date, then
+    file mtime for date. Never raises — an offload must not fail on a metadata hiccup."""
     path = Path(path)
-    try:
-        out = subprocess.run(
-            [_exiftool_path(), "-json", "-Make", "-Model", "-CreateDate",
-             "-DateTimeOriginal", "-ReelName", "-CameraReelName", str(path)],
-            capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
-        )
-        if out.returncode == 0 and out.stdout.strip():
-            d = json.loads(out.stdout)[0]
-            make, model = d.get("Make"), d.get("Model")
-            if model:
-                meta["camera"] = "{0} {1}".format(make, model) if make and make not in str(model) else str(model)
-            elif make:
-                meta["camera"] = str(make)
-            raw_date = d.get("CreateDate") or d.get("DateTimeOriginal")
-            if raw_date:
-                meta["date"] = str(raw_date)[:10].replace(":", "-")  # "2026:03:09 .." → "2026-03-09"
-            meta["reel"] = d.get("ReelName") or d.get("CameraReelName")
-    except Exception:
-        pass
-    if not meta["camera"] or not meta["date"]:
+    if not meta.get("camera") or not meta.get("date"):
         sidecar = path.with_name(path.stem + "M01.XML")
         if sidecar.exists():
             try:
@@ -108,20 +104,62 @@ def _probe_camera_meta(path):
                 root = ET.parse(sidecar).getroot()
                 ns = {"x": root.tag.split("}")[0].lstrip("{")} if "}" in root.tag else {}
                 dev = root.find(".//x:Device", ns) if ns else root.find(".//Device")
-                if dev is not None and not meta["camera"]:
+                if dev is not None and not meta.get("camera"):
                     mk, md = dev.get("manufacturer"), dev.get("modelName")
                     meta["camera"] = "{0} {1}".format(mk, md) if mk and md else (md or mk)
                 cd = root.find(".//x:CreationDate", ns) if ns else root.find(".//CreationDate")
-                if cd is not None and not meta["date"] and cd.get("value"):
+                if cd is not None and not meta.get("date") and cd.get("value"):
                     meta["date"] = cd.get("value")[:10]
             except Exception:
                 pass
-    if not meta["date"]:
+    if not meta.get("date"):
         try:
             meta["date"] = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d")
         except Exception:
             pass
     return meta
+
+
+def _exiftool_batch(paths):
+    """ONE exiftool subprocess for many files → {abspath: exif_dict}; {} on failure.
+    The per-file subprocess spawn was the bottleneck for previews / large-card organize
+    (a 400-file card = 400 spawns); this batches it into a single call."""
+    paths = list(paths)
+    if not paths:
+        return {}
+    try:
+        out = subprocess.run(
+            [_exiftool_path(), "-json", "-Make", "-Model", "-CreateDate",
+             "-DateTimeOriginal", "-ReelName", "-CameraReelName"] + [str(p) for p in paths],
+            capture_output=True, text=True, timeout=300, encoding="utf-8", errors="replace")
+        # exiftool returns nonzero when *some* files error but still emits JSON for the
+        # rest — accept any JSON output we got.
+        if not out.stdout.strip():
+            return {}
+        result = {}
+        for d in json.loads(out.stdout):
+            sf = d.get("SourceFile")  # exiftool -json always includes SourceFile
+            if sf:
+                result[os.path.abspath(sf)] = d
+        return result
+    except Exception:
+        return {}
+
+
+def _probe_camera_meta(path):
+    """Single-file {date, camera, reel} for naming templates. Never raises."""
+    d = _exiftool_batch([path]).get(os.path.abspath(str(path)), {})
+    return _apply_meta_fallbacks(_meta_from_exif_dict(d), path)
+
+
+def _probe_camera_meta_batch(paths):
+    """Bulk {str(path): {date, camera, reel}} with ONE exiftool spawn for all files
+    (vs one per file). Sidecar/mtime fallbacks stay per-file but are cheap (no
+    subprocess). Used by previews and large-card organize."""
+    paths = list(paths)
+    exif = _exiftool_batch(paths)
+    return {str(p): _apply_meta_fallbacks(_meta_from_exif_dict(exif.get(os.path.abspath(str(p)), {})), p)
+            for p in paths}
 
 
 def _organize_relpath(src_file, template, meta):
@@ -168,9 +206,10 @@ def preview_layout(src, organize=None, include_heic=False, limit=0):
     files = _collect_sources(src_root, include_heic=include_heic)
     if limit and limit > 0:
         files = files[:limit]
+    meta_map = _probe_camera_meta_batch(files) if organize else {}  # one exiftool spawn
     out = []
     for f in files:
-        rel = (_organize_relpath(f, organize, _probe_camera_meta(f)) if organize
+        rel = (_organize_relpath(f, organize, meta_map[str(f)]) if organize
                else _normalize_relpath(f, src_root))
         try:
             size_mb = round(f.stat().st_size / 1048576, 1)
@@ -303,9 +342,10 @@ def _ensure_file_records(state, source_files, dsts, organize=None):
         return state
     state["files"] = []
     rel_seen = {}  # rel → source, only meaningful under --organize (mirror can't collide)
+    meta_map = _probe_camera_meta_batch(source_files) if organize else {}  # one exiftool spawn
     for src_file in source_files:
         if organize:
-            rel = _organize_relpath(src_file, organize, _probe_camera_meta(src_file))
+            rel = _organize_relpath(src_file, organize, meta_map[str(src_file)])
             # Case-fold the key: on a case-insensitive destination (default macOS /
             # Windows) "C0001.MP4" and "c0001.mp4" are the same file — exact-string
             # matching would miss that and the second copy would overwrite the first.
