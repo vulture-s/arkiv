@@ -1528,6 +1528,21 @@ class IngestRequest(BaseModel):
     max_failures: int = 0
     skip_failed: bool = False
     no_embed: bool = False
+    # brick 4: transcription engine knobs. whisper_guard = quality preset 0-4
+    # (None = default); language = forced whisper code (zh/en/ja/ko, None = auto).
+    whisper_guard: Optional[int] = None
+    language: Optional[str] = None
+
+
+# brick 4 — whisper language codes the setup picker offers (whisper supports many
+# more; this is the curated UI set). Omit / None = auto-detect or the preset hint.
+_INGEST_LANGUAGES = [
+    {"code": "zh", "label": "中文"},
+    {"code": "en", "label": "English"},
+    {"code": "ja", "label": "日本語"},
+    {"code": "ko", "label": "한국어"},
+]
+_INGEST_LANGUAGE_CODES = {lang["code"] for lang in _INGEST_LANGUAGES}
 
 
 def _ingest_cmd_opts(body: "IngestRequest") -> list:
@@ -1547,6 +1562,11 @@ def _ingest_cmd_opts(body: "IngestRequest") -> list:
         opts.append("--skip-failed")
     if body.no_embed:
         opts.append("--no-embed")
+    # brick 4 — only emit when explicitly set (and valid) so defaults stay untouched.
+    if body.whisper_guard is not None and body.whisper_guard in config.WHISPER_GUARD_LAYERS:
+        opts += ["--whisper-guard", str(int(body.whisper_guard))]
+    if body.language and body.language in _INGEST_LANGUAGE_CODES:
+        opts += ["--language", body.language]
     return opts
 
 
@@ -1623,6 +1643,25 @@ def _assert_ingest_path_safe(target: Path) -> None:
         403,
         f"ingest 路徑必須在批准的目錄底下：{[str(r) for r in roots]} (override via ARKIV_INGEST_ROOTS env)",
     )
+
+
+@app.get("/api/ingest/engines")
+def ingest_engines(
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    """brick 4 — real options for the setup dialog's transcription pickers, so the
+    UI is driven by backend truth (config.WHISPER_GUARD_LAYERS) instead of a
+    hardcoded list that would drift. whisper_modes = quality presets 0-4;
+    languages = the curated forced-language set (None/omit = auto-detect)."""
+    modes = [
+        {"mode": k, "name": config.WHISPER_GUARD_LAYERS[k].get("name", str(k))}
+        for k in sorted(config.WHISPER_GUARD_LAYERS)
+    ]
+    return {
+        "whisper_modes": modes,
+        "default_mode": config.WHISPER_GUARD_DEFAULT_MODE,
+        "languages": _INGEST_LANGUAGES,
+    }
 
 
 @app.post("/api/ingest/scan")

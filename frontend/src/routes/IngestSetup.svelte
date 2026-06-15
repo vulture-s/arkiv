@@ -22,6 +22,11 @@
   // engine flags surfaced by S1a brick 1
   let opts = { skip_vision: false, refresh: false, recursive: false, skip_failed: false, no_embed: false }
   let maxFailures = 0
+  // brick 4 — real transcription pickers, options from /api/ingest/engines.
+  // '' = use the backend default (no flag sent), so unchanged callers stay default.
+  let engines = null
+  let whisperGuard = '' // '' = default preset; else mode int as string
+  let language = ''     // '' = auto-detect; else whisper code
 
   let manifest = null      // {video,audio,unsupported,total_size_mb}
   let total = 0, fresh = 0
@@ -45,6 +50,8 @@
     try {
       const body = { ...opts }
       if (maxFailures > 0) body.max_failures = Number(maxFailures)
+      if (whisperGuard !== '') body.whisper_guard = Number(whisperGuard)
+      if (language !== '') body.language = language
       await api.ingestWs(path.trim(), Number(limit) || 0, body)
       // hand off to the live progress route (the WS is already broadcasting)
       push('/ingest-live')
@@ -53,7 +60,8 @@
 
   // 2-phase DIT handoff: /offload sends the completed destination here as
   // #/ingest-setup?src=<path> so the user can ingest what they just offloaded.
-  onMount(() => {
+  onMount(async () => {
+    try { engines = await api.getIngestEngines() } catch (e) { /* picker falls back to default-only */ }
     const h = window.location.hash
     const qi = h.indexOf('?')
     if (qi === -1) return
@@ -114,12 +122,33 @@
           </div>
         </div>
 
-        <!-- design sections with no backend picker yet — shown, not faked -->
-        <div class="field deferred">
+        <!-- brick 4 — real transcription pickers (options from /api/ingest/engines) -->
+        <div class="field">
           <Eyebrow>Transcribe · whisper</Eyebrow>
-          <div class="pendrow"><Mono dim>model · languages · skip-if</Mono><span class="pend">picker pending · brick 4</span></div>
+          <div class="optrow">
+            <select class="ak-input sel" bind:value={whisperGuard} title="transcription quality preset">
+              <option value="">Default{engines ? ` (${(engines.whisper_modes.find((m) => m.mode === engines.default_mode) || {}).name})` : ''}</option>
+              {#each (engines?.whisper_modes ?? []) as m}
+                <option value={String(m.mode)}>{m.name}</option>
+              {/each}
+            </select>
+            <div class="optlabel"><span>Model · quality</span><Mono dim style="font-size:10px;">whisper guard preset（0 快 → 4 最準，預設 4）</Mono></div>
+          </div>
+          <div class="optrow">
+            <select class="ak-input sel" bind:value={language} title="force transcription language">
+              <option value="">Auto-detect</option>
+              {#each (engines?.languages ?? []) as l}
+                <option value={l.code}>{l.label} · {l.code}</option>
+              {/each}
+            </select>
+            <div class="optlabel"><span>Language</span><Mono dim style="font-size:10px;">強制語言（留 Auto = 自動偵測 / 預設提示）</Mono></div>
+          </div>
+        </div>
+
+        <!-- vision pickers still have no backend (model list / tag pool) — shown, not faked -->
+        <div class="field deferred">
           <Eyebrow>Vision tagging · ollama</Eyebrow>
-          <div class="pendrow"><Mono dim>model · tag pool · frames</Mono><span class="pend">picker pending · brick 4</span></div>
+          <div class="pendrow"><Mono dim>model · tag pool · frames</Mono><span class="pend">picker pending · brick 4b</span></div>
         </div>
       </div>
 
@@ -170,6 +199,8 @@
   .field { display: flex; flex-direction: column; gap: 10px; }
   .srcrow { display: flex; gap: 10px; align-items: flex-end; }
   .num { width: 80px; flex: 0 0 80px; }
+  .sel { flex: 0 0 196px; width: 196px; font-size: 11.5px; font-family: var(--ak-mono); background: transparent; color: var(--ink); border: 1px solid var(--rule-hi); border-radius: 0; padding: 6px 8px; cursor: pointer; }
+  .sel:focus { outline: none; border-color: var(--ink); }
 
   .optrow { display: flex; align-items: center; gap: 14px; }
   .optlabel { display: flex; flex-direction: column; gap: 1px; font-size: 12px; }
