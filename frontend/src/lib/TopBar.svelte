@@ -3,6 +3,7 @@
   import { push } from 'svelte-spa-router'
   import ArkivLogo from './ArkivLogo.svelte'
   import Mono from './Mono.svelte'
+  import { cycleTheme, themePref } from './prefs.js'
   export let crossProject = false
 </script>
 
@@ -30,8 +31,8 @@
     <button class="ak-btn">EDL</button>
     <button class="ak-btn">FCPXML</button>
     <div class="vrule"></div>
-    <button class="ak-btn" title="theme">◐</button>
-    <button class="ak-btn" title="settings">···</button>
+    <button class="ak-btn" title={`theme · ${$themePref}`} on:click={cycleTheme}>◐</button>
+    <button class="ak-btn" title="settings" on:click={() => push('/settings')}>···</button>
   </div>
 </div>
 

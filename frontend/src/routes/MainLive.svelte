@@ -14,8 +14,9 @@
   import Inspector from '../lib/Inspector.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
+  import { resolvedTheme } from '../lib/prefs.js'
 
-  const theme = 'dark'
+  $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
   let err = ''
   let items = []

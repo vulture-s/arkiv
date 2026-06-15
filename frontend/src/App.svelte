@@ -17,6 +17,8 @@
   import ChatLive from './routes/ChatLive.svelte'
   import SearchLive from './routes/SearchLive.svelte'
   import Offload from './routes/Offload.svelte'
+  import SettingsLive from './routes/SettingsLive.svelte'
+  import { resolvedTheme } from './lib/prefs.js'
 
   // Routes are added per overnight segment.
   //
@@ -34,6 +36,7 @@
     '/offload': Offload, // S4 — DIT offload (card → backup), ported from the /dit island into the SPA
     '/chat-live': ChatLive, // E2 — chat wired to live /api/chat
     '/search-live': SearchLive, // search wired to live /api/media?q=
+    '/settings': SettingsLive, // settings — live theme switcher + real system/about (engine config deferred)
 
     // ── design reference (Claude-design mock artboards; not the product) ──────
     '/_design/home': Home, // design scaffold kept for reference (was '/')
@@ -50,7 +53,7 @@
   }
 </script>
 
-<div class="ak-root" data-theme="dark">
+<div class="ak-root" data-theme={$resolvedTheme}>
   <Router {routes} />
 </div>
 

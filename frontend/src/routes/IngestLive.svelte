@@ -23,8 +23,9 @@
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
+  import { resolvedTheme } from '../lib/prefs.js'
 
-  const theme = 'dark'
+  $: theme = $resolvedTheme
   const BASE = import.meta.env?.VITE_API_URL ?? ''
   // FILE / PROBE / TRANSCRIBE / TAG / PROGRESS — SIZE+ETA dropped (no backend source).
   const cols = '1fr 76px 92px 76px 1.3fr'
