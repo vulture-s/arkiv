@@ -72,6 +72,11 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **ASC MHL v2 hash manifests** — `mhl.py create` / `verify` CLI emits real `urn:ASC:MHL:v2.0` with `xxh3` / `md5` / `sha1` / `sha256` / `c4`, directory + structure root hashes, chained `ascmhl_chain.xml`. Interop-verified with ASC reference impl 1.2 — drop-in for Silverstack / MediaVerify / Hedge / YoYotta workflows
 - **Multi-destination offload** — `offload.py --src <SD> --dst <A> --dst <B>` does chunked parallel copy + per-file hash verify + 3× retry on mismatch + atomic rename + sidecar-aware (XAVC / ARRI / RED / iPhone Live Photo). Resumable JSON state file — kill mid-copy and pending files pick up exactly where they stopped. Emits per-dst MHL v2
 - **Camera report CSV** — `camera_report.py` writes 20-col DIT-spec CSV (Reel / TC / Camera / Lens / ISO / Shutter / Aperture / WB / FPS / Codec / ...) for Resolve's `File → Import Metadata from CSV`. Day-summary footer aggregates clip count + runtime by camera / by card
+- **DIT Offload UI (`/dit`)** — browser control panel for card→backup offload: preview the destination layout, run with **live per-file progress streaming**, multi-destination + `xxh3` verify + ASC MHL v2. Never deletes the source card
+- **Offload organize policy** — `offload.py --organize "{date}/{camera}/{reel}"` files footage into a date/camera/reel tree (tokens: `{date}/{camera}/{reel}/{stem}/{ext}`, fs-safe, path-traversal guarded) — or leave it empty to mirror the source structure
+- **Card-watcher** — `offload.py --watch` auto-offloads on card insert (detects DCIM / media volumes), with re-insert / mount-flicker guard so a wobbling card never re-copies
+- **360 reprojection** — dual-fisheye `.insv` / `.360` clips are reprojected to **equirectangular** before vision tagging (FFmpeg `v360`), so on-frame text and events the raw fisheye hides become searchable (Phase 8.3b)
+- **Vision failure tolerance** — `ingest.py --max-failures N` / `--skip-failed` tolerate flaky per-frame vision on long unattended runs; failed frames are left empty for a later `--vision-only` resume (a whole-Ollama outage still halts fast)
 
 ## API Authentication
 
@@ -252,14 +257,22 @@ python embed.py --search "interview outdoor"
 
 ```bash
 # Ingest options
-python ingest.py --dir ./media --limit 10   # process first 10 files only
-python ingest.py --dir ./media --skip-vision # skip AI frame descriptions
-python ingest.py --dir ./media --refresh     # re-process already-indexed files
+python ingest.py --dir ./media --limit 10        # process first 10 files only
+python ingest.py --dir ./media --skip-vision     # skip AI frame descriptions
+python ingest.py --dir ./media --refresh         # re-process already-indexed files (re-extracts frames)
+python ingest.py --dir ./media --skip-failed     # tolerate flaky per-frame vision (overnight runs)
+python ingest.py --dir ./media --max-failures 20 # halt vision only after 20 cumulative frame failures
+python ingest.py --vision-only --dir ./media     # resume: only re-run vision on frames left empty
 
 # Index options
 python embed.py --rebuild                    # drop and rebuild from scratch
 
-# Auto-watch a folder for new media
+# DIT offload (card → backup; never deletes source)
+python offload.py --src /Volumes/CARD --dst /Volumes/Backup1 --dst /Volumes/Backup2
+python offload.py --src /Volumes/CARD --dst /Volumes/Backup --organize "{date}/{camera}/{reel}"
+python offload.py --watch --dst /Volumes/Backup # auto-offload on card insert
+
+# Auto-watch a folder for new media (ingest)
 python watch.py /path/to/footage
 python watch.py ~/Movies/rushes --interval 10
 
@@ -337,7 +350,7 @@ Yes — the native Python install is the primary workflow. Docker is optional fo
 
 **Q: What file formats are supported?**
 Video: `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.mts`
-360: `.insv` (Insta360), `.360` (GoPro Max) — indexed as raw fisheye
+360: `.insv` (Insta360), `.360` (GoPro Max) — dual-fisheye is reprojected to equirectangular before vision tagging (single-lens 360 footage is indexed as-is)
 Audio: `.wav`, `.mp3`, `.m4a`, `.aac`, `.flac`, `.ogg`
 Camera metadata (make/model/lens/timecode) is read from embedded EXIF **and** Sony XAVC NRT sidecar XML — so FX30/FX-series footage keeps its identity.
 

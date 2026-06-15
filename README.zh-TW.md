@@ -72,6 +72,11 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 - **ASC MHL v2 雜湊清單** — `mhl.py create` / `verify` CLI 產出真正的 `urn:ASC:MHL:v2.0` 格式，支援 `xxh3` / `md5` / `sha1` / `sha256` / `c4`，含 directory + structure root hash、鏈式 `ascmhl_chain.xml`。已跟 ASC 官方 reference impl 1.2 互通驗證 — 可直接接 Silverstack / MediaVerify / Hedge / YoYotta 工作流
 - **多目的地 offload** — `offload.py --src <SD> --dst <A> --dst <B>` chunked 平行 copy + 每檔 hash 驗證 + mismatch 3× retry + atomic rename + sidecar 感知（XAVC / ARRI / RED / iPhone Live Photo）。可恢復的 JSON state file — copy 一半 kill 掉，pending 檔案下次接著跑。每個 dst 結尾 emit MHL v2
 - **攝影日報 CSV** — `camera_report.py` 產 20 欄 DIT 規格 CSV（Reel / TC / Camera / Lens / ISO / Shutter / Aperture / WB / FPS / Codec / ...），可直接餵 Resolve 的「檔案 → 從 CSV 匯入詮釋資料」。Day-summary footer 統計片段數 + 時長（依攝影機 / 依記憶卡）
+- **DIT 轉存 UI（`/dit`）** — 瀏覽器控制台做記憶卡→備份轉存：預覽目的端排版、執行時**即時逐檔進度串流**、多目的地 + `xxh3` 校驗 + ASC MHL v2。**絕不刪來源卡**
+- **轉存歸檔規則** — `offload.py --organize "{date}/{camera}/{reel}"` 把素材歸進 日期/攝影機/Reel 樹狀（token：`{date}/{camera}/{reel}/{stem}/{ext}`，檔名安全、防路徑逃逸）；留空則鏡射原結構
+- **記憶卡監看** — `offload.py --watch` 插卡自動轉存（偵測 DCIM / 媒體卷宗），含重插 / 掛載抖動防護，晃動的卡不會重複複製
+- **360 重投影** — 雙魚眼 `.insv` / `.360` 在 vision tagging 前重投影成**等距柱狀（equirectangular）**（FFmpeg `v360`），讓原始魚眼藏住的畫面文字與事件變得可搜尋（Phase 8.3b）
+- **Vision 失敗容錯** — `ingest.py --max-failures N` / `--skip-failed` 容忍長時間無人值守時的零星幀 vision 失敗；失敗幀留空，之後可用 `--vision-only` 續跑（整個 Ollama 掛掉仍會快速停止）
 
 ## API 驗證
 
@@ -252,14 +257,22 @@ python embed.py --search "戶外訪談"
 
 ```bash
 # 匯入選項
-python ingest.py --dir ./media --limit 10   # 只處理前 10 個檔案
-python ingest.py --dir ./media --skip-vision # 跳過 AI 幀描述
-python ingest.py --dir ./media --refresh     # 重新處理已索引的檔案
+python ingest.py --dir ./media --limit 10        # 只處理前 10 個檔案
+python ingest.py --dir ./media --skip-vision     # 跳過 AI 幀描述
+python ingest.py --dir ./media --refresh         # 重新處理已索引的檔案（會重抽幀）
+python ingest.py --dir ./media --skip-failed     # 容忍零星幀 vision 失敗（無人值守過夜跑）
+python ingest.py --dir ./media --max-failures 20 # 累計 20 個幀失敗才停 vision
+python ingest.py --vision-only --dir ./media     # 續跑：只對留空的幀重跑 vision
 
 # 索引選項
 python embed.py --rebuild                    # 刪除並重建索引
 
-# 自動監看資料夾
+# DIT 轉存（記憶卡 → 備份；絕不刪來源）
+python offload.py --src /Volumes/CARD --dst /Volumes/Backup1 --dst /Volumes/Backup2
+python offload.py --src /Volumes/CARD --dst /Volumes/Backup --organize "{date}/{camera}/{reel}"
+python offload.py --watch --dst /Volumes/Backup # 插卡自動轉存
+
+# 自動監看資料夾（匯入）
 python watch.py /path/to/footage
 python watch.py ~/Movies/rushes --interval 10
 
@@ -335,7 +348,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 
 **Q：支援哪些檔案格式？**
 影片：`.mp4`、`.mov`、`.mkv`、`.avi`、`.webm`、`.m4v`、`.mts`
-360：`.insv`（Insta360）、`.360`（GoPro Max）— 以魚眼原狀索引
+360：`.insv`（Insta360）、`.360`（GoPro Max）— 雙魚眼會在 vision tagging 前重投影成等距柱狀（equirectangular）（單鏡頭 360 素材則以原狀索引）
 音訊：`.wav`、`.mp3`、`.m4a`、`.aac`、`.flac`、`.ogg`
 相機 metadata（機型/鏡頭/timecode）同時讀內嵌 EXIF **與** Sony XAVC NRT sidecar XML — FX30／FX 系列素材機型不會掉。
 
