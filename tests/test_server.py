@@ -118,6 +118,12 @@ def test_tag_stats_and_tag_catalog_endpoints(fastapi_client, sample_record):
     assert stats_data["total"] == 2
     assert stats_data["langs"] == {"en": 1, "zh": 1}
     assert stats_data["top_tags"][0]["name"] == "精選"
+    # real disk usage feeds the sidebar Storage footer (S3 — replaced a hardcoded
+    # placeholder). Best-effort, so it's either a well-formed dict or None.
+    disk = stats_data["disk"]
+    assert disk is None or (
+        disk["total_gb"] > 0 and 0 <= disk["pct"] <= 100 and disk["used_gb"] >= 0
+    )
 
     tags = fastapi_client.get("/api/tags")
     assert tags.status_code == 200

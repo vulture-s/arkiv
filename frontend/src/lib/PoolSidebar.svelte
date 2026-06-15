@@ -10,6 +10,7 @@
   export let onTag = null // (name) => void; live tag-click → filter
   export let liveCollections = null // [{key,title,count,items}]; null → section hidden
   export let onCollection = null // (collection) => void; click → filter to members
+  export let liveStorage = null // {pct, used_gb, total_gb} from /api/stats.disk; null → mock placeholder
 
   const MOCK_POOLS = [
     ['All media', 247],
@@ -21,6 +22,11 @@
   $: projects = liveProjects ?? PROJECTS
   $: pools = livePools ?? MOCK_POOLS
   $: tags = liveTags ?? TAGS
+  // Storage footer: real disk usage when wired (live), else the design placeholder.
+  const gb = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
+  $: storage = liveStorage
+    ? { pct: liveStorage.pct, label: `${gb(liveStorage.used_gb)} · ${gb(liveStorage.total_gb)} · disk` }
+    : { pct: 40, label: '4.8 TB · 12 TB · NAS' }
 </script>
 
 <aside class="pool">
@@ -83,10 +89,10 @@
   <section class="storage">
     <div class="strow">
       <Eyebrow>Storage</Eyebrow>
-      <Mono dim style="font-size:10px;">40%</Mono>
+      <Mono dim style="font-size:10px;">{storage.pct}%</Mono>
     </div>
-    <div class="bar"><div class="barfill"></div></div>
-    <Mono dim style="font-size:10.5px;margin-top:5px;letter-spacing:0.02em;">4.8 TB · 12 TB · NAS</Mono>
+    <div class="bar"><div class="barfill" style="width:{storage.pct}%;"></div></div>
+    <Mono dim style="font-size:10.5px;margin-top:5px;letter-spacing:0.02em;">{storage.label}</Mono>
   </section>
 </aside>
 
@@ -125,5 +131,5 @@
   .storage { border-top: 1px solid var(--rule); padding-top: 12px; }
   .strow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
   .bar { height: 2px; background: var(--surface-3); position: relative; }
-  .barfill { position: absolute; left: 0; top: 0; bottom: 0; width: 40%; background: var(--ink); }
+  .barfill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ink); transition: width 0.2s; }
 </style>

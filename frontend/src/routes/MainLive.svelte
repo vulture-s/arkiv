@@ -133,6 +133,8 @@
       ]
     : null
   $: liveProjects = stats ? [{ id: 'msr', name: '明燒肉', count: stats.total, active: true }] : null
+  // real disk usage for the sidebar Storage footer (replaces the mock placeholder)
+  $: liveStorage = stats?.disk ?? null
   // tag click → search that tag
   function onTagClick(name) {
     query = name
@@ -290,7 +292,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} onTag={onTagClick} onCollection={onCollectionClick} />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} onTag={onTagClick} onCollection={onCollectionClick} />
 
     <main class="center">
       <div class="toolrow">
