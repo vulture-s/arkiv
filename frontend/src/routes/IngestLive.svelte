@@ -43,8 +43,24 @@
   let rebuilding = false
   let err = ''
   let startedAt = 0 // ms — set when the run's 'start' event arrives (for elapsed)
-  let now = 0
+  let now = Date.now() // kept fresh by the 1s tick; seeded so countdowns never read 0
   let tick = null
+  // edge-state C1 (redesign essay 08) — auto-reconnect with backoff when the ws
+  // drops. The ingest runs as a detached server task and writes to the DB per
+  // file, so a dropped socket pauses only the live VIEW, not the work; reconnecting
+  // rejoins the broadcast. retry>0 means we've seen at least one close.
+  let retry = 0
+  const MAX_RETRY = 8
+  let reconnectAt = 0 // ms timestamp of the next auto attempt (0 = none scheduled)
+  let closedByUs = false // set on unmount so we don't reconnect a teardown
+  $: reconnectIn = reconnectAt && now ? Math.max(0, Math.ceil((reconnectAt - now) / 1000)) : 0
+  $: disconnected = conn === 'closed' && retry > 0 && !closedByUs
+
+  function scheduleReconnect() {
+    if (closedByUs || retry >= MAX_RETRY) { reconnectAt = 0; return }
+    const delaySec = Math.min(8, 2 ** Math.min(retry, 3)) // 2 → 4 → 8 → 8…
+    reconnectAt = Date.now() + delaySec * 1000
+  }
 
   // Canonical pipeline order (matches ingest.py _stage calls). probe→frames run
   // in phase 1 (file ends "done"); vision streams in a phase-2 pass, so a file can
@@ -81,8 +97,8 @@
       err = String(e)
       return
     }
-    ws.onopen = () => { conn = 'open' }
-    ws.onclose = () => { conn = 'closed' }
+    ws.onopen = () => { conn = 'open'; retry = 0; reconnectAt = 0 }
+    ws.onclose = () => { conn = 'closed'; retry += 1; scheduleReconnect() }
     ws.onerror = () => { conn = 'closed' }
     ws.onmessage = (ev) => {
       let msg
@@ -152,11 +168,22 @@
     }
   }
 
+  // Manual "Reconnect now" — also used by the auto-retry tick.
+  function reconnectNow() {
+    reconnectAt = 0
+    if (conn === 'open') return
+    connect()
+  }
+
   onMount(() => {
     connect()
-    tick = setInterval(() => { now = Date.now() }, 1000)
+    tick = setInterval(() => {
+      now = Date.now()
+      if (reconnectAt && now >= reconnectAt && conn === 'closed' && !closedByUs) reconnectNow()
+    }, 1000)
   })
   onDestroy(() => {
+    closedByUs = true
     ws && ws.close()
     tick && clearInterval(tick)
   })
@@ -216,6 +243,25 @@
     <Mono dim style="font-size:11px;">ws://…/ws/ingest · <span class:on={conn === 'open'} class:off={conn !== 'open'}>{conn.toUpperCase()}</span></Mono>
     <button class="ak-btn" on:click={() => push('/ingest-setup')}>New ingest →</button>
   </div>
+
+  {#if disconnected}
+    <div class="dbanner">
+      <div class="dbtext">
+        <div class="dbhead">
+          <Eyebrow style="color:var(--ink);">◇ STREAM DISCONNECTED</Eyebrow>
+          {#if retry < MAX_RETRY}
+            <Mono dim style="font-size:10px;">retry {retry} of {MAX_RETRY}{reconnectIn ? ` · next in 00:${String(reconnectIn).padStart(2, '0')}` : ' · reconnecting…'}</Mono>
+          {:else}
+            <Mono dim style="font-size:10px;">auto-retry gave up · reconnect manually</Mono>
+          {/if}
+        </div>
+        <Mono dim style="font-size:11px;line-height:1.5;display:block;margin-top:4px;">
+          The ingest keeps running on the server and writes each file to the library as it finishes — the dropped socket only pauses this live view. Reconnecting rejoins the stream.
+        </Mono>
+      </div>
+      <button class="ak-btn ak-btn--primary" on:click={reconnectNow}>Reconnect now</button>
+    </div>
+  {/if}
 
   <div class="split">
     <!-- LEFT -->
@@ -315,13 +361,18 @@
 </div>
 
 <style>
-  .artboard { width: 1400px; height: 900px; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
+  .artboard { width: 1400px; height: 900px; background: var(--bg); color: var(--ink); display: flex; flex-direction: column; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
   .quiet { color: var(--quiet); }
   .on { color: var(--cyan); }
   .off { color: var(--quiet); }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
-  .split { display: grid; grid-template-columns: 1fr 380px; min-height: 0; overflow: hidden; }
+  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; height: 52px; flex: 0 0 52px; }
+  /* edge-state C1 — disconnect banner (B&W + dashed; not the red reserved for
+     data-safety failures). ◇ glyph + ink top rule = the redesign's alert motif. */
+  .dbanner { flex: 0 0 auto; display: flex; align-items: center; gap: 28px; padding: 14px 40px; border-top: 1px solid var(--ink); border-bottom: 1px dashed var(--rule-hi); background: var(--surface); }
+  .dbtext { flex: 1; min-width: 0; }
+  .dbhead { display: flex; align-items: baseline; gap: 12px; }
+  .split { flex: 1; display: grid; grid-template-columns: 1fr 380px; min-height: 0; overflow: hidden; }
   .left { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--rule); }
   .hero { padding: 32px 40px 28px; border-bottom: 1px solid var(--rule); }
   .herohead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
