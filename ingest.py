@@ -42,6 +42,30 @@ VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts", ".mkv", ".avi", ".webm", ".insv", "
 PROXY_CODECS = codec.PROXY_CODECS
 logger = logging.getLogger(__name__)
 
+# ── WS per-stage progress (S1a brick 3) ──────────────────────────────────────
+# When driven by the WebSocket ingest (server.py sets ARKIV_STAGE_EVENTS=1) the
+# pipeline emits machine-readable JSON events, each on its own flushed line behind
+# a sentinel, so the line-buffered WS reader sees every stage in real time. Direct
+# CLI runs leave the flag unset and keep the compact inline `>probe` markers — the
+# existing human output (and its parsers) is unchanged.
+_STAGE_EVENTS = os.environ.get("ARKIV_STAGE_EVENTS") == "1"
+
+
+def _emit_progress(obj: Dict) -> None:
+    """One JSON progress event on its own flushed line (sentinel-prefixed). No-op
+    unless ARKIV_STAGE_EVENTS=1."""
+    if _STAGE_EVENTS:
+        print(f"__ARKIV__ {json.dumps(obj, ensure_ascii=False)}", flush=True)
+
+
+def _stage(marker: str, stage: str) -> None:
+    """Mark one pipeline stage: a structured event under the WS, or the compact
+    inline `>marker` for direct CLI use."""
+    if _STAGE_EVENTS:
+        _emit_progress({"t": "stage", "stage": stage})
+    else:
+        print(f" >{marker}", end="", flush=True)
+
 
 def _warm_up_vision_model():
     """Send a dummy request to ensure qwen3-vl:8b is loaded in VRAM."""
@@ -550,7 +574,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     If `existing` is provided (refresh mode), skip transcription and reuse existing
     transcript/lang — only re-run thumbnail + vision.
     """
-    print(" >probe", end="", flush=True)
+    _stage("probe", "probe")
     meta = probe(str(path))
     if meta is None:
         print(" [ffprobe failed]")
@@ -580,7 +604,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
 
     # Audio transcription (skip on refresh — reuse existing)
     if meta["has_audio"] and not existing:
-        print(" >whisper", end="", flush=True)
+        _stage("whisper", "transcribe")
         text, lang, segments, words = tr.transcribe(str(path))
         record["transcript"] = text if text is not None else ""
         record["lang"] = lang or None
@@ -597,7 +621,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # Thumbnail (video only, always extracted)
     is_video = path.suffix.lower() in VIDEO_EXT
     if is_video and meta["duration_s"] > 0:
-        print(" >thumb", end="", flush=True)
+        _stage("thumb", "thumbnail")
         thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh)
         # Only record a thumbnail when extraction succeeded — omitting the key on
         # failure preserves the prior value on refresh (H6) and leaves new rows
@@ -607,7 +631,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
 
     # Frame extraction (video only) — persistent thumbnails + DB records
     if is_video and meta["duration_s"] > 0:
-        print(" >frames", end="", flush=True)
+        _stage("frames", "frames")
         frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh)
         for frame in frame_data:
             if frame.get("thumbnail_path"):
@@ -616,7 +640,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
 
         # Vision description (optional)
         if not skip_vision and frame_data:
-            print(" >llava", end="", flush=True)
+            _stage("llava", "vision")
             frame_paths_for_vision = [
                 db.resolve_path(f["thumbnail_path"]) if f.get("thumbnail_path") else ""
                 for f in frame_data
@@ -628,7 +652,8 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
             # Also store legacy frame_tags for backwards compat
             record["frame_tags"] = vis.frames_to_json(frame_results)
 
-    print(" [OK]")
+    if not _STAGE_EVENTS:
+        print(" [OK]")
     return record
 
 
@@ -1261,7 +1286,10 @@ def main():
         if already and args.refresh:
             existing = _get_media_row_for_path(f)
 
-        print(f"[{i}/{len(files)}] {f.name}", end="", flush=True)
+        if _STAGE_EVENTS:
+            _emit_progress({"t": "file", "index": i, "total": len(files), "file": f.name, "status": "start"})
+        else:
+            print(f"[{i}/{len(files)}] {f.name}", end="", flush=True)
         file_start = _time.time()
         try:
             # Phase 1: always skip vision — will run in Phase 2
@@ -1335,6 +1363,7 @@ def main():
                 })
                 print(f"  [{file_elapsed:.1f}s | {dur/max(file_elapsed,1):.1f}x RT]")
                 ok += 1
+                _emit_progress({"t": "file", "index": i, "total": len(files), "file": f.name, "status": "phase1_done"})
             else:
                 failed += 1
         except Exception as e:
@@ -1364,7 +1393,10 @@ def main():
             if not video_frames:
                 continue
 
-            print(f"[{vi}/{len(phase1_results)}] {fname} >vision", end="", flush=True)
+            if _STAGE_EVENTS:
+                _emit_progress({"t": "stage", "stage": "vision", "file": fname})
+            else:
+                print(f"[{vi}/{len(phase1_results)}] {fname} >vision", end="", flush=True)
             v_start = _time.time()
             try:
                 frame_paths = [db.resolve_path(fd["thumbnail_path"]) for fd in video_frames]
