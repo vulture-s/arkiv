@@ -70,12 +70,20 @@ export const getCollections = (opts) => req('/api/collections', opts)
 export const chat = (prompt, conversationId = null, opts) =>
   req('/api/chat', { method: 'POST', body: { prompt, conversation_id: conversationId }, ...opts })
 
-// POST /api/ingest/ws {path, limit} — trigger ingest with WS progress.
-// Requires ingest_write (token-free on loopback; the dev proxy injects the
-// header). Goes through req() so a setToken() token is attached in direct
-// remote deployments — a raw fetch here would 401 once the endpoint required auth.
-export const ingestWs = (path, limit = 0, opts) =>
-  req('/api/ingest/ws', { method: 'POST', body: { path, limit }, ...opts })
+// POST /api/ingest/scan {path} — quick scan, no processing. Returns
+// {total, new, manifest:{video,audio,unsupported,total_size_mb}, files:[…]}.
+// Powers the setup dialog's MANIFEST panel. Requires ingest_write.
+export const scanMedia = (path, opts) =>
+  req('/api/ingest/scan', { method: 'POST', body: { path }, ...opts })
+
+// POST /api/ingest/ws {path, limit, …options} — trigger ingest with WS progress.
+// `options` forwards the engine flags the setup dialog exposes (skip_vision,
+// refresh, recursive, max_failures, skip_failed, no_embed); omitted keys keep
+// the backend defaults. Requires ingest_write (token-free on loopback; the dev
+// proxy injects the header). Goes through req() so a setToken() token is attached
+// in direct remote deployments — a raw fetch here would 401 once auth was required.
+export const ingestWs = (path, limit = 0, options = {}, opts) =>
+  req('/api/ingest/ws', { method: 'POST', body: { path, limit, ...options }, ...opts })
 
 // POST /api/embed/rebuild — drop + rebuild the ChromaDB semantic index from all
 // media (runs in the background). Requires ingest_write (token-free on loopback).

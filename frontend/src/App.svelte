@@ -13,6 +13,7 @@
   import Live from './routes/Live.svelte'
   import MainLive from './routes/MainLive.svelte'
   import IngestLive from './routes/IngestLive.svelte'
+  import IngestSetup from './routes/IngestSetup.svelte'
   import ChatLive from './routes/ChatLive.svelte'
   import SearchLive from './routes/SearchLive.svelte'
 
@@ -22,6 +23,7 @@
     '/home': Home, // design scaffold kept for reference (was '/')
     '/live': Live, // B1 — live API proof (reads running backend)
     '/main-live': MainLive, // B1 — main grid wired to live data
+    '/ingest-setup': IngestSetup, // S1b — ingest setup dialog (redesign op-01), wired to scan manifest + ingest options
     '/ingest-live': IngestLive, // B1+ — ingest progress wired to live ws
     '/chat-live': ChatLive, // E2 — chat wired to live /api/chat
     '/search-live': SearchLive, // search wired to live /api/media?q=
