@@ -1128,6 +1128,19 @@ def get_stats(
     """Aggregate stats for dashboard."""
     stats = db.get_stats()
     stats["rating"] = db.get_rating_stats()
+    # Real disk usage of the volume holding the arkiv data — feeds the sidebar's
+    # Storage footer (was a hardcoded "4.8 TB · 12 TB · 40%" placeholder). Best
+    # effort: a stat() failure (e.g. path vanished) must not 500 the dashboard.
+    try:
+        import shutil
+        du = shutil.disk_usage(config.DB_PATH.parent if config.DB_PATH else ROOT)
+        stats["disk"] = {
+            "used_gb": round(du.used / 1e9, 1),
+            "total_gb": round(du.total / 1e9, 1),
+            "pct": round(du.used / du.total * 100) if du.total else 0,
+        }
+    except Exception:
+        stats["disk"] = None
     # Screen quality-defect tags here too (Codex review P2) — index.html and any
     # stats-driven cloud read top_tags. Over-fetch then filter so we still get 10
     # real tags even if some of the top entries were noise.
