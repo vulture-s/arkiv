@@ -50,6 +50,10 @@ logger = logging.getLogger(__name__)
 # existing human output (and its parsers) is unchanged.
 _STAGE_EVENTS = os.environ.get("ARKIV_STAGE_EVENTS") == "1"
 
+# brick 4: per-run whisper language override (None = auto-detect / guard-layer
+# hint, the default). Set from --language in main(), read at the transcribe call.
+_LANGUAGE_OVERRIDE = None
+
 
 def _emit_progress(obj: Dict) -> None:
     """One JSON progress event on its own flushed line (sentinel-prefixed). No-op
@@ -605,7 +609,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # Audio transcription (skip on refresh — reuse existing)
     if meta["has_audio"] and not existing:
         _stage("whisper", "transcribe")
-        text, lang, segments, words = tr.transcribe(str(path))
+        text, lang, segments, words = tr.transcribe(str(path), language=_LANGUAGE_OVERRIDE)
         record["transcript"] = text if text is not None else ""
         record["lang"] = lang or None
         if segments:
@@ -1140,6 +1144,8 @@ def main():
         action="store_true",
         help="Phase 8.0c: 搬 legacy BASE_DIR/{media.db, thumbnails/, chroma_db/, proxies/} → BASE_DIR/.arkiv/",
     )
+    parser.add_argument("--whisper-guard", type=int, default=None, metavar="MODE", help="brick 4: transcription quality preset 0-4 (0 baseline … 4 +LLM polish, the default). Omit = config default / ARKIV_WHISPER_GUARD_LAYERS env.")
+    parser.add_argument("--language", default=None, metavar="LANG", help="brick 4: force whisper language code (zh/en/ja/ko); omit = auto-detect / preset hint.")
     parser.add_argument("--recursive", "-r", action="store_true", help="Recursively scan subdirectories")
     parser.add_argument("--db", default="", help="Path to SQLite DB (default: media.db next to ingest.py)")
     parser.add_argument("--no-embed", action="store_true", help="Skip building the vector index after ingest (default: auto-embed so search/chat work immediately)")
@@ -1148,6 +1154,15 @@ def main():
     parser.add_argument("--status", action="store_true", help="Phase 11.5e: print resource + queue status (--json for machine-readable)")
     parser.add_argument("--json", action="store_true", help="With --status: emit JSON instead of human-readable")
     args = parser.parse_args()
+
+    # brick 4: apply the per-run whisper preset + language override before any
+    # transcription. Guard-mode resolution keeps its env-wins precedence (an
+    # ARKIV_WHISPER_GUARD_LAYERS env still overrides the flag, as in the
+    # transcribe CLI); language is a direct override read at the transcribe call.
+    if args.whisper_guard is not None:
+        tr._apply_whisper_guard_mode(tr._resolve_whisper_guard_mode(args.whisper_guard))
+    global _LANGUAGE_OVERRIDE
+    _LANGUAGE_OVERRIDE = args.language or None
 
     # --dir validation: required only when actually ingesting
     maintenance_mode = (

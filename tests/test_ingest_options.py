@@ -32,3 +32,35 @@ def test_zero_max_failures_omits_flag():
     assert "--max-failures" not in server._ingest_cmd_opts(
         server.IngestRequest(path="/x", max_failures=0)
     )
+
+
+# ── brick 4: whisper guard preset + language ──────────────────────────────────
+
+def test_brick4_whisper_guard_and_language_map_to_flags():
+    body = server.IngestRequest(path="/x", whisper_guard=2, language="zh")
+    opts = server._ingest_cmd_opts(body)
+    assert opts[opts.index("--whisper-guard") + 1] == "2"
+    assert opts[opts.index("--language") + 1] == "zh"
+
+
+def test_brick4_defaults_omit_flags():
+    # None preset + None language = unchanged engine behaviour, no flags
+    opts = server._ingest_cmd_opts(server.IngestRequest(path="/x"))
+    assert "--whisper-guard" not in opts and "--language" not in opts
+
+
+def test_brick4_invalid_values_dropped():
+    # an out-of-range preset / unknown language code must not reach the CLI
+    opts = server._ingest_cmd_opts(
+        server.IngestRequest(path="/x", whisper_guard=99, language="xx")
+    )
+    assert "--whisper-guard" not in opts and "--language" not in opts
+
+
+def test_brick4_engines_endpoint_shape(fastapi_client):
+    r = fastapi_client.get("/api/ingest/engines")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["default_mode"] in {m["mode"] for m in data["whisper_modes"]}
+    assert data["whisper_modes"] and all("name" in m for m in data["whisper_modes"])
+    assert {lang["code"] for lang in data["languages"]} >= {"zh", "en"}

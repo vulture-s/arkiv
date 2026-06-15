@@ -76,6 +76,10 @@ export const chat = (prompt, conversationId = null, opts) =>
 export const scanMedia = (path, opts) =>
   req('/api/ingest/scan', { method: 'POST', body: { path }, ...opts })
 
+// GET /api/ingest/engines (brick 4) — real transcription picker options:
+// {whisper_modes:[{mode,name}], default_mode, languages:[{code,label}]}.
+export const getIngestEngines = (opts) => req('/api/ingest/engines', opts)
+
 // POST /api/ingest/ws {path, limit, …options} — trigger ingest with WS progress.
 // `options` forwards the engine flags the setup dialog exposes (skip_vision,
 // refresh, recursive, max_failures, skip_failed, no_embed); omitted keys keep
