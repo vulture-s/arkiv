@@ -18,7 +18,8 @@
 
   // Routes are added per overnight segment.
   const routes = {
-    '/': Home,
+    '/': MainLive, // g1 — default landing = live product (was Home token-proof scaffold)
+    '/home': Home, // design scaffold kept for reference (was '/')
     '/live': Live, // B1 — live API proof (reads running backend)
     '/main-live': MainLive, // B1 — main grid wired to live data
     '/ingest-live': IngestLive, // B1+ — ingest progress wired to live ws
@@ -33,7 +34,7 @@
     '/settings': Settings, // seg 7 — settings modal
     '/flows': Flows, // seg 8 — round-3 flows
     '/edge': Edge, // seg 9 — round-4 edge
-    // (insta360 — excluded, gated on 8.3a POC)
+    // 360 (.insv/.360): ingest reproject shipped (Phase 8.3b) — no dedicated SPA viewer route yet
   }
 </script>
 
