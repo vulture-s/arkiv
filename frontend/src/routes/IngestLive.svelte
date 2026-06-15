@@ -1,12 +1,24 @@
-<!-- B1+ / S1b — ingest progress wired to the live backend.
-     Connects ws://…/ws/ingest, triggers POST /api/ingest/ws, renders the real
-     broadcast stream. Since S1a brick 3 the protocol carries real per-stage
-     events ({type:"stage", stage, index, counts}, stage ∈ probe/transcribe/
-     thumbnail/frames/vision) on top of per-file start/done/skipped + start/
-     complete — so the queue shows each file's live stage + a real aggregate
-     stage breakdown. No faked sub-stages: every segment is a backend event. -->
+<!-- S1b — IngestLive, layout aligned to the Ingest mock (docs/design/redesign-2026
+     op-01 progress screen + frontend/src/routes/Ingest.svelte), wired to the real
+     /ws/ingest stream. Since S1a brick 3 the protocol carries per-stage events
+     ({type:"stage", stage, index, counts}, stage ∈ probe/transcribe/thumbnail/
+     frames/vision) on top of per-file start/done/skipped + start/complete.
+
+     Honest deviations from the mock (no backend source → not faked, per evidence
+     discipline + plan S1b deviation):
+       · GPU tile — PC-only (mini/Mac pipeline has none).
+       · THROUGHPUT / per-file ETA — backend emits no timing yet (brick 3 deferred).
+       · per-file SIZE — not in the WS events.
+       · log warn/error levels — WS carries no structured log level.
+     Queue rows only exist once a file starts (the backend names files as it
+     reaches them; not-yet-started files are an honest "N queued" count, not faked
+     rows). The mock's 5 internal stages map to its 3 user-facing columns:
+     PROBE=probe · TRANSCRIBE=transcribe · TAG=vision (thumbnail/frames roll into
+     the progress bar). Triggering lives in /ingest-setup (op-01); a compact
+     trigger stays here as the empty state for standalone use. -->
 <script>
   import { onMount, onDestroy } from 'svelte'
+  import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
@@ -14,6 +26,8 @@
 
   const theme = 'dark'
   const BASE = import.meta.env?.VITE_API_URL ?? ''
+  // FILE / PROBE / TRANSCRIBE / TAG / PROGRESS — SIZE+ETA dropped (no backend source).
+  const cols = '1fr 76px 92px 76px 1.3fr'
 
   let ws = null
   let conn = 'connecting' // connecting | open | closed
@@ -23,16 +37,25 @@
   let files = {} // index → {filename, status, stage}
   let stageCounts = {} // aggregate per-stage tally from the backend (counts dict)
   let complete = null // {ok, skipped, failed}
-
-  // Canonical pipeline order (matches ingest.py _stage calls). probe→frames run
-  // in phase 1 (file ends "done"); vision streams in a second phase-2 pass, so a
-  // file can receive a vision event after it already read "done" — handled below.
-  const STAGES = ['probe', 'transcribe', 'thumbnail', 'frames', 'vision']
-  const stageLabel = { probe: 'PROBE', transcribe: 'WHISPER', thumbnail: 'THUMB', frames: 'FRAMES', vision: 'VISION' }
-  let log = [] // [{t, text}]
+  let log = [] // [{t, stage, text}]
   let busy = false
   let rebuilding = false
   let err = ''
+  let startedAt = 0 // ms — set when the run's 'start' event arrives (for elapsed)
+  let now = 0
+  let tick = null
+
+  // Canonical pipeline order (matches ingest.py _stage calls). probe→frames run
+  // in phase 1 (file ends "done"); vision streams in a phase-2 pass, so a file can
+  // receive a vision event after it already read "done" — handled below.
+  const STAGES = ['probe', 'transcribe', 'thumbnail', 'frames', 'vision']
+  // Mock's 3 user-facing columns → canonical stage index.
+  const COLS = [
+    { head: 'PROBE', si: 0 },
+    { head: 'TRANSCRIBE', si: 1 },
+    { head: 'TAG', si: 4 },
+  ]
+  const stageText = { done: 'OK', running: 'RUN', queued: '·' }
 
   const wsUrl = () => {
     // /ws/ingest requires ingest_write; a WebSocket can't send an Authorization
@@ -44,9 +67,9 @@
     return api.appendToken(base)
   }
 
-  function pushLog(text) {
+  function pushLog(text, stage = '') {
     const t = new Date().toLocaleTimeString()
-    log = [{ t, text }, ...log].slice(0, 40)
+    log = [{ t, stage, text }, ...log].slice(0, 60)
   }
 
   function connect() {
@@ -68,6 +91,7 @@
         files = {}
         stageCounts = {}
         complete = null
+        startedAt = Date.now()
         pushLog(`start · ${total} files`)
       } else if (msg.type === 'file') {
         // Preserve any stage already recorded for this file (e.g. a vision event
@@ -83,7 +107,7 @@
         files[msg.index] = { ...prev, filename: prev.filename || msg.filename, stage: msg.stage }
         files = files // trigger reactivity
         if (msg.counts) stageCounts = msg.counts
-        pushLog(`[${msg.index}/${msg.total}] ${msg.filename} >${msg.stage}`)
+        pushLog(`${msg.filename}`, msg.stage)
       } else if (msg.type === 'complete') {
         complete = { ok: msg.ok, skipped: msg.skipped, failed: msg.failed }
         busy = false
@@ -127,17 +151,35 @@
     }
   }
 
-  onMount(connect)
-  onDestroy(() => ws && ws.close())
+  onMount(() => {
+    connect()
+    tick = setInterval(() => { now = Date.now() }, 1000)
+  })
+  onDestroy(() => {
+    ws && ws.close()
+    tick && clearInterval(tick)
+  })
 
   $: rows = Object.entries(files)
     .map(([i, f]) => ({ index: Number(i), ...f }))
     .sort((a, b) => a.index - b.index)
   $: doneCount = rows.filter((r) => r.status === 'done').length
   $: pct = total ? Math.round((doneCount / total) * 100) : 0
-  // The aggregate stage breakdown strip — only stages the backend has reported.
-  $: stageStrip = STAGES.filter((s) => stageCounts[s]).map((s) => ({ s, n: stageCounts[s] }))
-  const statusText = { transcribing: 'RUN', done: 'OK', skipped: 'SKIP' }
+  $: remaining = Math.max(0, total - rows.length)
+  $: active = busy || rows.length > 0 || complete
+  // Real aggregate metrics from the stage tally (mock's PROBED/TRANSCRIBED/TAGGED).
+  $: metrics = [
+    ['PROBED', stageCounts.probe || 0],
+    ['TRANSCRIBED', stageCounts.transcribe || 0],
+    ['TAGGED', stageCounts.vision || 0],
+  ]
+  $: elapsed = startedAt && now ? fmtDur(now - startedAt) : ''
+
+  function fmtDur(ms) {
+    const s = Math.floor(ms / 1000)
+    const m = Math.floor(s / 60)
+    return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+  }
 
   // Reached index in the canonical pipeline for a row: -1 (none) up to 4 (vision).
   // A "done" file (phase 1 complete) has cleared probe→frames even if its last
@@ -147,11 +189,21 @@
     if (r.status === 'done' && idx < 3) idx = 3 // probe..frames done in phase 1
     return idx
   }
-  function badge(r) {
-    if (r.status === 'done') return 'OK'
-    if (r.status === 'skipped') return 'SKIP'
-    if (r.stage) return stageLabel[r.stage] || r.stage.toUpperCase()
-    return statusText[r.status] || r.status
+  // Per-column state for the mock's 3 stage columns (PROBE/TRANSCRIBE/TAG).
+  function colState(si, r) {
+    if (r.status === 'skipped') return 'queued'
+    if (complete && r.status === 'done') return 'done' // run finished → all cleared
+    const R = reached(r)
+    if (R > si) return 'done'
+    if (R === si) return (r.status === 'done' && si < 4) ? 'done' : 'running'
+    return 'queued'
+  }
+  // Per-row progress from real stage progression (probe 20% … vision 100%).
+  function rowPct(r) {
+    if (r.status === 'skipped') return 100
+    if (complete && r.status === 'done') return 100
+    const R = reached(r)
+    return R < 0 ? 0 : Math.round(((R + 1) / STAGES.length) * 100)
   }
 </script>
 
@@ -161,71 +213,100 @@
     <Mono dim style="font-size:10px;">v0.9.2</Mono>
     <div class="grow"></div>
     <Mono dim style="font-size:11px;">ws://…/ws/ingest · <span class:on={conn === 'open'} class:off={conn !== 'open'}>{conn.toUpperCase()}</span></Mono>
+    <button class="ak-btn" on:click={() => push('/ingest-setup')}>New ingest →</button>
   </div>
 
   <div class="split">
+    <!-- LEFT -->
     <div class="left">
       <div class="hero">
         <div class="herohead">
           <Eyebrow>Ingest · live websocket</Eyebrow>
-          <Mono dim style="font-size:10.5px;">real /ws/ingest stream</Mono>
+          <Mono dim style="font-size:10.5px;">{#if startedAt}{elapsed} elapsed · real /ws/ingest{:else}real /ws/ingest stream{/if}</Mono>
         </div>
-        <div class="bignum-row">
-          <div class="ak-display bignum">{doneCount}<span class="quiet">/{total || '—'}</span></div>
-          <div class="trigger">
-            <input class="ak-input pathinput" placeholder="ingest 資料夾路徑（例 ~/Desktop/Test）" bind:value={path} disabled={busy} />
-            <div class="triggerrow">
-              <input class="ak-input limitinput" type="number" min="0" bind:value={limit} disabled={busy} title="limit (0=all)" />
-              <button class="ak-btn ak-btn--primary" on:click={trigger} disabled={busy || conn !== 'open'}>{busy ? 'running…' : 'Start ingest →'}</button>
-              <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title="重建 ChromaDB 向量索引（背景執行）— ingest 後或換 embedding 模型後使用">{rebuilding ? '排入中…' : '重建索引'}</button>
+
+        {#if active}
+          <div class="herobig">
+            <div class="ak-display bignum">{doneCount}<span class="quiet">/{total || '—'}</span></div>
+            <div class="herometa">
+              <Mono dim style="font-size:11px;letter-spacing:0.05em;">FILES PROCESSED</Mono>
+              <Mono style="font-size:13px;font-weight:500;display:block;margin-top:4px;">{path || '— folder import in progress —'}</Mono>
+              <Mono dim style="font-size:10.5px;display:block;margin-top:2px;">
+                {#if complete}done · ok={complete.ok} skip={complete.skipped} fail={complete.failed}
+                {:else}{remaining} queued · {rows.length} seen{/if}
+              </Mono>
             </div>
           </div>
-        </div>
-        {#if err}<Mono style="font-size:11px;color:var(--cyan);">{err}</Mono>{/if}
-        <div class="aggbar"><div class="aggfill" style="width:{pct}%;"></div></div>
-        {#if stageStrip.length}
-          <div class="stagestrip">
-            {#each stageStrip as { s, n }}
-              <span class="stagechip"><span class="sname">{stageLabel[s]}</span><span class="snum">{n}</span></span>
-            {/each}
+        {:else}
+          <!-- empty state: trigger here for standalone use (op-01 is the main path) -->
+          <div class="herobig">
+            <div class="ak-display bignum quiet">—</div>
+            <div class="trigger">
+              <input class="ak-input pathinput" placeholder="ingest 資料夾路徑（例 ~/Desktop/Test）" bind:value={path} disabled={busy} />
+              <div class="triggerrow">
+                <input class="ak-input limitinput" type="number" min="0" bind:value={limit} disabled={busy} title="limit (0=all)" />
+                <button class="ak-btn ak-btn--primary" on:click={trigger} disabled={busy || conn !== 'open'}>{busy ? 'running…' : 'Start ingest →'}</button>
+                <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title="重建 ChromaDB 向量索引（背景執行）">{rebuilding ? '排入中…' : '重建索引'}</button>
+              </div>
+            </div>
           </div>
         {/if}
+        {#if err}<Mono style="font-size:11px;color:var(--cyan);margin-top:8px;display:block;">{err}</Mono>{/if}
+
+        <div class="aggwrap">
+          <div class="aggrow"><Mono dim style="font-size:10px;">AGGREGATE</Mono><Mono style="font-size:11px;font-weight:600;color:var(--cyan);">{pct}%</Mono></div>
+          <div class="aggbar"><div class="aggfill" style="width:{pct}%;"></div><div class="aggmark" style="left:{pct}%;"></div></div>
+          <div class="metrics">
+            {#each metrics as [label, value]}
+              <div class="metric">
+                <Mono dim style="font-size:9.5px;letter-spacing:0.1em;display:block;margin-bottom:3px;">{label}</Mono>
+                <span class="metricval">{value}</span><Mono dim style="font-size:10px;margin-left:4px;">/ {total || '—'}</Mono>
+              </div>
+            {/each}
+          </div>
+        </div>
       </div>
 
       <div class="queue">
         <div class="qhead">
-          <Eyebrow>Queue {#if total}· {total} files{/if}</Eyebrow>
-          {#if complete}<Mono dim style="font-size:10.5px;">done · ok={complete.ok} skip={complete.skipped} fail={complete.failed}</Mono>{/if}
+          <Eyebrow>Queue {#if total}· {remaining} queued{/if}</Eyebrow>
+          {#if startedAt}<Mono dim style="font-size:10.5px;">{rows.length} of {total} started</Mono>{/if}
         </div>
         {#if rows.length === 0}
-          <div class="empty"><Mono dim>等待 ingest 觸發…（填路徑按 Start）</Mono></div>
+          <div class="empty"><Mono dim>等待 ingest 觸發…（填路徑按 Start，或用 New ingest）</Mono></div>
         {:else}
-          {#each rows as r (r.index)}
-            <div class="qrow" class:done={r.status === 'done'}>
-              <Mono dim style="font-size:10px;flex:0 0 36px;">{r.index}/{total}</Mono>
-              <Mono style="font-size:11.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{r.filename}</Mono>
-              {#if r.status !== 'skipped'}
-                <div class="pipe" title={STAGES.join(' → ')}>
-                  {#each STAGES as st, si}
-                    <span class="seg" class:fill={si <= reached(r)} class:active={r.stage === st && r.status !== 'done'} title={stageLabel[st]}></span>
-                  {/each}
-                </div>
-              {/if}
-              <span class="stage {r.status}" class:running={r.status === 'transcribing'}>{badge(r)}</span>
-            </div>
-          {/each}
+          <div class="qrow qheadrow" style="grid-template-columns:{cols};">
+            {#each ['FILE', 'PROBE', 'TRANSCRIBE', 'TAG', 'PROGRESS'] as h}<Mono dim style="font-size:9.5px;letter-spacing:0.1em;">{h}</Mono>{/each}
+          </div>
+          <div class="qrows">
+            {#each rows as r (r.index)}
+              <div class="qrow" class:done={r.status === 'done'} style="grid-template-columns:{cols};">
+                <Mono style="font-size:11.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{r.filename}</Mono>
+                {#each COLS as c}
+                  {@const st = r.status === 'skipped' ? 'skipped' : colState(c.si, r)}
+                  <span class="stage {st}">{r.status === 'skipped' ? 'SKIP' : stageText[st]}</span>
+                {/each}
+                <div class="pbar"><div class="pfill" class:full={rowPct(r) === 100} style="width:{rowPct(r)}%;"></div></div>
+              </div>
+            {/each}
+          </div>
         {/if}
       </div>
     </div>
 
+    <!-- RIGHT: log -->
     <div class="right">
       <div class="loghead">
-        <Eyebrow>Live log · ws</Eyebrow>
-        <span class="livedot" class:on={conn === 'open'}>● {conn === 'open' ? 'LIVE' : conn.toUpperCase()}</span>
+        <div class="logheadrow"><Eyebrow>Live log · ws stream</Eyebrow><span class="livedot" class:on={conn === 'open'}>● {conn === 'open' ? 'LIVE' : conn.toUpperCase()}</span></div>
+        <Mono dim style="font-size:10px;margin-top:4px;">{log.length} events</Mono>
       </div>
       <div class="logbody">
         {#each log as ln}
-          <div class="logline"><span class="logt">{ln.t}</span><span class="logmsg">{ln.text}</span></div>
+          <div class="logline">
+            <span class="logt">{ln.t}</span>
+            <span class="logstage">{ln.stage}</span>
+            <span class="logmsg">{ln.text}</span>
+          </div>
         {/each}
       </div>
     </div>
@@ -241,40 +322,44 @@
   .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
   .split { display: grid; grid-template-columns: 1fr 380px; min-height: 0; overflow: hidden; }
   .left { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--rule); }
-  .hero { padding: 32px 40px 24px; border-bottom: 1px solid var(--rule); }
-  .herohead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
-  .bignum-row { display: flex; align-items: flex-start; gap: 24px; }
-  .bignum { font-size: 72px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
-  .trigger { flex: 1; display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+  .hero { padding: 32px 40px 28px; border-bottom: 1px solid var(--rule); }
+  .herohead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .herobig { display: flex; align-items: baseline; gap: 18px; }
+  .bignum { font-size: 80px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
+  .herometa { flex: 1; }
+  .trigger { flex: 1; display: flex; flex-direction: column; gap: 8px; align-self: center; }
   .pathinput { font-size: 12px; }
   .triggerrow { display: flex; gap: 8px; align-items: center; }
   .limitinput { width: 70px; font-size: 12px; }
-  .aggbar { height: 4px; background: var(--surface-3); position: relative; margin-top: 22px; }
+  .aggwrap { margin-top: 22px; }
+  .aggrow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .aggbar { height: 4px; background: var(--surface-3); position: relative; }
   .aggfill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--cyan); transition: width 0.2s; }
-  .stagestrip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-  .stagechip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.08em; padding: 2px 7px; border: 1px solid var(--rule); color: var(--quiet); }
-  .stagechip .sname { color: var(--ink-2); }
-  .stagechip .snum { color: var(--cyan); font-weight: 700; }
-  .queue { flex: 1; padding: 14px 40px 20px; overflow: auto; }
+  .aggmark { position: absolute; top: -2px; width: 1px; height: 8px; background: var(--cyan); }
+  .metrics { display: flex; gap: 32px; margin-top: 14px; }
+  .metricval { font-family: var(--ak-mono); font-size: 18px; font-weight: 600; color: var(--ink); }
+  .queue { flex: 1; padding: 14px 40px 20px; overflow: hidden; display: flex; flex-direction: column; }
   .qhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
   .empty { padding: 30px 0; }
-  .qrow { display: flex; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--rule); }
-  .qrow.done { opacity: 0.6; }
-  .pipe { display: flex; gap: 3px; flex: 0 0 auto; }
-  .seg { width: 14px; height: 4px; background: var(--surface-3); transition: background 0.2s; }
-  .seg.fill { background: var(--ink-2); }
-  .seg.active { background: var(--cyan); animation: segpulse 1s ease-in-out infinite; }
-  @keyframes segpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-  .stage { font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.08em; padding: 2px 6px; border: 1px solid var(--rule); color: var(--quiet); flex: 0 0 auto; min-width: 52px; text-align: center; }
-  .stage.running { color: var(--cyan); border-color: var(--cyan); font-weight: 700; }
-  .stage.done { color: var(--ink); border-color: var(--ink); font-weight: 600; }
+  .qrow { display: grid; gap: 14px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--rule); }
+  .qrow.qheadrow { align-items: baseline; padding: 6px 0 8px; }
+  .qrow.done { opacity: 0.55; }
+  .qrows { flex: 1; overflow: auto; }
+  .stage { font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.08em; padding: 2px 6px; width: fit-content; text-align: center; line-height: 1.1; color: var(--quiet); font-weight: 400; border: 1px solid var(--rule); }
+  .stage.done { color: var(--ink); font-weight: 600; border-color: var(--ink); }
+  .stage.running { color: var(--cyan); font-weight: 700; border-color: var(--cyan); }
   .stage.skipped { color: var(--quiet); border-style: dashed; }
+  .pbar { position: relative; height: 3px; background: var(--surface-3); }
+  .pfill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--cyan); transition: width 0.2s; }
+  .pfill.full { background: var(--quiet); }
   .right { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-  .loghead { padding: 16px 20px 12px; border-bottom: 1px solid var(--rule); display: flex; justify-content: space-between; align-items: baseline; }
+  .loghead { padding: 16px 20px 12px; border-bottom: 1px solid var(--rule); }
+  .logheadrow { display: flex; justify-content: space-between; align-items: baseline; }
   .livedot { font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--quiet); }
   .livedot.on { color: var(--cyan); }
   .logbody { flex: 1; overflow: auto; padding: 14px 20px; display: flex; flex-direction: column; gap: 7px; }
   .logline { display: flex; gap: 8px; font-family: var(--ak-mono); font-size: 10.5px; line-height: 1.35; }
   .logt { color: var(--quiet); flex: 0 0 64px; }
+  .logstage { color: var(--quiet); flex: 0 0 64px; text-transform: uppercase; letter-spacing: 0.05em; }
   .logmsg { color: var(--ink-2); flex: 1; word-break: break-word; }
 </style>
