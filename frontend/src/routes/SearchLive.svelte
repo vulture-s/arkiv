@@ -23,6 +23,20 @@
   // so results outside the demo project aren't mislabeled (Codex review P3).
   let projectName = '目前專案'
 
+  // Media-type facet — wired to /api/media?media_type= (real backend filter; audit
+  // H14 made it apply on the semantic-search branch too). 'all' omits the param.
+  // The mock's "Transcript only / Tags only" facets are intentionally dropped:
+  // /api/media has no such toggle, and faking one would violate evidence discipline.
+  // Cross-project federation ("All projects") stays deferred — needs a populated
+  // ~/.arkiv-projects.json; we scope to the current project ("Current only").
+  let mediaType = 'all' // all | video | audio
+  let counts = { all: null, video: null, audio: null } // library totals for labels
+  const FACETS = [
+    { key: 'all', label: 'All' },
+    { key: 'video', label: 'Video' },
+    { key: 'audio', label: 'Audio' },
+  ]
+
   const fmtDur = (s) => {
     s = Math.round(s || 0)
     const m = Math.floor(s / 60), ss = s % 60
@@ -37,13 +51,33 @@
     return i === -1 ? { b: text, m: '', a: '' } : { b: text.slice(0, i), m: q, a: text.slice(i + q.length) }
   }
 
+  // Update the hash so a query+facet is shareable/reloadable (the existing ?q=
+  // seed plus the new ?type=). replaceState avoids spamming history per keystroke.
+  function syncHash() {
+    const p = new URLSearchParams()
+    if (query.trim()) p.set('q', query.trim())
+    if (mediaType !== 'all') p.set('type', mediaType)
+    const qs = p.toString()
+    history.replaceState(null, '', `#/search-live${qs ? '?' + qs : ''}`)
+  }
+
+  function setType(key) {
+    if (mediaType === key) return
+    mediaType = key
+    syncHash()
+    if (query.trim()) runSearch()
+  }
+
   async function runSearch() {
     const q = query.trim()
     if (!q) { state = 'idle'; results = []; total = 0; return }
     state = 'loading'
+    syncHash()
     const t0 = performance.now()
     try {
-      const r = await api.getMedia({ q, limit: 40 })
+      const params = { q, limit: 40 }
+      if (mediaType !== 'all') params.media_type = mediaType
+      const r = await api.getMedia(params)
       elapsedMs = Math.round(performance.now() - t0)
       total = r.total ?? (r.items || []).length
       results = (r.items || []).map((it) => ({
@@ -63,6 +97,19 @@
     }
   }
 
+  // Real library totals for the facet labels (mock shows "Video · 124"). Cheap —
+  // limit:1, we only read .total. Degrades silently to label-without-count.
+  async function loadCounts() {
+    const get = async (mt) => {
+      try {
+        const r = await api.getMedia(mt ? { media_type: mt, limit: 1 } : { limit: 1 })
+        return r.total ?? null
+      } catch { return null }
+    }
+    const [all, video, audio] = await Promise.all([get(null), get('video'), get('audio')])
+    counts = { all, video, audio }
+  }
+
   onMount(async () => {
     // label the result group from the active project registry, if any
     try {
@@ -70,11 +117,14 @@
       const name = r?.projects?.[0]?.name
       if (name) projectName = name
     } catch (e) { /* no registry → keep neutral label */ }
-    // seed from ?q= in the hash, e.g. #/search-live?q=餐廳
+    loadCounts()
+    // seed from the hash, e.g. #/search-live?q=餐廳&type=video
     const h = window.location.hash
     const qi = h.indexOf('?')
     if (qi !== -1) {
       const p = new URLSearchParams(h.slice(qi + 1))
+      const t = p.get('type')
+      if (t === 'video' || t === 'audio') mediaType = t
       const q = p.get('q')
       if (q) { query = q; runSearch() }
     }
@@ -103,6 +153,14 @@
         <button class="ak-btn" on:click={runSearch}>搜尋</button>
       </div>
       <div class="facets">
+        {#each FACETS as f}
+          <button class="facet" class:active={mediaType === f.key} on:click={() => setType(f.key)}>
+            {f.label}{#if counts[f.key] != null} · {counts[f.key]}{/if}
+          </button>
+        {/each}
+        <div class="fvrule"></div>
+        <button class="facet active" disabled title="跨專案聯邦搜尋待 ~/.arkiv-projects.json registry（暫未啟用）">Current only</button>
+        <div class="fvrule"></div>
         {#if state === 'ok'}
           <Mono dim style="font-size:10.5px;">{total} matches · {elapsedMs}ms · semantic + lexical</Mono>
         {:else if state === 'loading'}
@@ -173,6 +231,11 @@
   .queryrow { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
   .query { flex: 1; font-size: 20px; padding: 8px 4px; }
   .facets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .facet { font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 10px; background: transparent; color: var(--ink-2); border: 1px solid var(--rule); cursor: pointer; line-height: 1; }
+  .facet:hover:not(.active):not(:disabled) { border-color: var(--rule-hi); }
+  .facet.active { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
+  .facet:disabled { cursor: default; }
+  .fvrule { width: 1px; height: 14px; background: var(--rule); margin: 0 4px; }
   .results { flex: 1; overflow: auto; padding: 14px 64px 18px; }
   .rgroup { margin-bottom: 16px; }
   .ghead { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
