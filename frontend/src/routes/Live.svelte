@@ -6,6 +6,7 @@
   import * as api from '../lib/api.js'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Mono from '../lib/Mono.svelte'
+  import { resolvedTheme } from '../lib/prefs.js'
 
   let state = 'loading' // loading | ok | error
   let err = ''
@@ -27,7 +28,7 @@
   })
 </script>
 
-<div class="live ak-root" data-theme="dark">
+<div class="live ak-root" data-theme={$resolvedTheme}>
   <Eyebrow>B1 · live API proof — GET against running backend</Eyebrow>
   <h1 class="ak-display title">api.</h1>
 

@@ -11,8 +11,9 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Thumb from '../lib/Thumb.svelte'
+  import { resolvedTheme } from '../lib/prefs.js'
 
-  const theme = 'dark'
+  $: theme = $resolvedTheme
   let query = ''
   let state = 'idle' // idle | loading | ok | error
   let err = ''

@@ -8,8 +8,9 @@
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
+  import { resolvedTheme } from '../lib/prefs.js'
 
-  const theme = 'dark'
+  $: theme = $resolvedTheme
   let messages = [] // {role:'user'|'assistant', text, intent?, scenes?:[{id,name,thumb}]}
   let input = ''
   let busy = false

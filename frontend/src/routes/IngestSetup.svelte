@@ -15,6 +15,7 @@
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
+  import { resolvedTheme } from '../lib/prefs.js'
 
   let path = ''
   let limit = 0
@@ -69,7 +70,7 @@
   ]
 </script>
 
-<div class="artboard" data-theme="dark">
+<div class="artboard" data-theme={$resolvedTheme}>
   <div class="topbar">
     <ArkivLogo size={16} />
     <Mono dim style="font-size:10px;">v0.9.2</Mono>
