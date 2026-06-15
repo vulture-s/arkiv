@@ -91,6 +91,30 @@ export const ingestWs = (path, limit = 0, options = {}, opts) =>
 export const rebuildEmbedIndex = (opts) =>
   req('/api/embed/rebuild', { method: 'POST', ...opts })
 
+// ---- DIT offload (card → backup) ----
+// POST /api/offload/preview {src, organize?, include_heic?, limit?} → read-only
+// layout {src, count, organize, files:[{source, rel, size_mb}]}. videos_write.
+export const offloadPreview = (body, opts) =>
+  req('/api/offload/preview', { method: 'POST', body, ...opts })
+
+// POST /api/offload {src, dst:[…], organize?, include_heic?} → ndjson stream of
+// {type:"dst_start"|"file"|"done", …}. req() can't stream, so return the raw
+// Response for the caller to read line-by-line; auth header attached when set
+// (token-free on loopback). Throws ApiError on a non-OK status (e.g. bad path).
+export async function offloadRun(body, { signal } = {}) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (_token) headers['Authorization'] = `Bearer ${_token}`
+  const res = await fetch(`${BASE}/api/offload`, {
+    method: 'POST', headers, body: JSON.stringify(body), signal,
+  })
+  if (!res.ok) {
+    let detail = null
+    try { detail = await res.json() } catch { /* non-json */ }
+    throw new ApiError(res.status, '/api/offload', detail)
+  }
+  return res
+}
+
 // /api/media?limit&offset&projects&tag&rating  → {items, total, search}
 export const getMedia = (params = {}, opts) => req(`/api/media${qs(params)}`, opts)
 export const getMediaDetail = (id, opts) => req(`/api/media/${id}`, opts)

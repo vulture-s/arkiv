@@ -16,6 +16,7 @@
   import IngestSetup from './routes/IngestSetup.svelte'
   import ChatLive from './routes/ChatLive.svelte'
   import SearchLive from './routes/SearchLive.svelte'
+  import Offload from './routes/Offload.svelte'
 
   // Routes are added per overnight segment.
   const routes = {
@@ -25,6 +26,7 @@
     '/main-live': MainLive, // B1 — main grid wired to live data
     '/ingest-setup': IngestSetup, // S1b — ingest setup dialog (redesign op-01), wired to scan manifest + ingest options
     '/ingest-live': IngestLive, // B1+ — ingest progress wired to live ws
+    '/offload': Offload, // S4 — DIT offload (card → backup), ported from the /dit island into the SPA
     '/chat-live': ChatLive, // E2 — chat wired to live /api/chat
     '/search-live': SearchLive, // search wired to live /api/media?q=
     '/gallery': Gallery, // seg 1 — shared-primitive gallery

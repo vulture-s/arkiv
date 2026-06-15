@@ -9,6 +9,7 @@
      shown as disabled "picker pending" rows, never faked. Everything enabled here
      is fully wired to a real endpoint. -->
 <script>
+  import { onMount } from 'svelte'
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
@@ -48,6 +49,16 @@
       push('/ingest-live')
     } catch (e) { err = e.message; starting = false }
   }
+
+  // 2-phase DIT handoff: /offload sends the completed destination here as
+  // #/ingest-setup?src=<path> so the user can ingest what they just offloaded.
+  onMount(() => {
+    const h = window.location.hash
+    const qi = h.indexOf('?')
+    if (qi === -1) return
+    const src = new URLSearchParams(h.slice(qi + 1)).get('src')
+    if (src) { path = src; scan() }
+  })
 
   const TOGGLES = [
     ['skip_vision', 'Skip vision', '跳過 AI 視覺標註（只轉錄）'],

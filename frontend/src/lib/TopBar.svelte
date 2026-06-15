@@ -1,5 +1,6 @@
 <!-- Top bar: logo · search · all-projects toggle · actions. crossProject is bindable. -->
 <script>
+  import { push } from 'svelte-spa-router'
   import ArkivLogo from './ArkivLogo.svelte'
   import Mono from './Mono.svelte'
   export let crossProject = false
@@ -24,7 +25,8 @@
   </div>
 
   <div class="actions">
-    <button class="ak-btn ak-btn--primary">+ Ingest</button>
+    <button class="ak-btn ak-btn--primary" on:click={() => push('/ingest-setup')}>+ Ingest</button>
+    <button class="ak-btn" on:click={() => push('/offload')} title="DIT offload · card → backup">DIT</button>
     <button class="ak-btn">EDL</button>
     <button class="ak-btn">FCPXML</button>
     <div class="vrule"></div>
