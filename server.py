@@ -1541,6 +1541,28 @@ class ScanRequest(BaseModel):
     path: str
 
 MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".insv", ".360", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".insv", ".360"}
+AUDIO_EXTS = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
+assert VIDEO_EXTS | AUDIO_EXTS == MEDIA_EXTS  # the two must partition MEDIA_EXTS
+# camera raw / stills the ingest pipeline does not process — surfaced in the scan
+# manifest as "skipped" so the redesign's setup dialog (op-01) can show what will
+# not be ingested (e.g. a card of .mov clips + .crw stills).
+UNSUPPORTED_STILL_EXTS = {".crw", ".cr2", ".cr3", ".arw", ".nef", ".dng",
+                          ".raf", ".orf", ".rw2", ".heic", ".heif", ".tif", ".tiff"}
+
+
+def _build_scan_manifest(files: list, unsupp: dict) -> dict:
+    """Aggregate a scanned file list into op-01's MANIFEST panel: counts + sizes
+    by category (video / audio) plus the unsupported-stills skip count."""
+    def cat(exts: set) -> dict:
+        sub = [f for f in files if Path(f["name"]).suffix.lower() in exts]
+        return {"count": len(sub), "size_mb": round(sum(f["size_mb"] for f in sub), 1)}
+    return {
+        "video": cat(VIDEO_EXTS),
+        "audio": cat(AUDIO_EXTS),
+        "unsupported": {"count": sum(unsupp.values()), "by_ext": dict(sorted(unsupp.items()))},
+        "total_size_mb": round(sum(f["size_mb"] for f in files), 1),
+    }
 
 def _allowed_ingest_roots() -> list:
     """Approved roots for ingest scan / ingest endpoints.
@@ -1601,11 +1623,22 @@ def scan_media(
         raise HTTPException(400, "路徑不是有效的目錄")
     _assert_ingest_path_safe(target)
     files = []
+    unsupp: dict = {}  # ext -> count, for the MANIFEST "skipped" line
     for f in sorted(target.rglob("*")):
-        if f.suffix.lower() in MEDIA_EXTS:
+        if not f.is_file():
+            continue
+        ext = f.suffix.lower()
+        if ext in MEDIA_EXTS:
             already = db.is_processed(str(f)) if hasattr(db, 'is_processed') else False
             files.append({"name": f.name, "size_mb": round(f.stat().st_size / 1048576, 1), "path": str(f), "already": already})
-    return {"total": len(files), "new": sum(1 for f in files if not f["already"]), "files": files}
+        elif ext in UNSUPPORTED_STILL_EXTS:
+            unsupp[ext] = unsupp.get(ext, 0) + 1
+    return {
+        "total": len(files),
+        "new": sum(1 for f in files if not f["already"]),
+        "manifest": _build_scan_manifest(files, unsupp),
+        "files": files,
+    }
 
 @app.post("/api/ingest")
 def ingest_media(
