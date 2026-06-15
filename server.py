@@ -2854,6 +2854,9 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT, cwd=str(ROOT),
+        # brick 3: drive the structured per-stage progress protocol (own-line JSON
+        # events) instead of parsing the compact inline `>probe` human markers.
+        env={**os.environ, "ARKIV_STAGE_EVENTS": "1"},
         # audit M3: a single stdout line beyond the default 64KB reader limit
         # raises inside the read loop; give pathological log lines 1MB headroom.
         limit=2 ** 20,
@@ -2861,6 +2864,10 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
 
     ok, skipped, failed = 0, 0, 0
     last_total = limit or 0
+    # brick 3 structured-protocol state: the in-flight file (so a stage event can
+    # be attributed) + running per-stage tallies (PROBED/TRANSCRIBED/… aggregate).
+    cur_idx, cur_total, cur_file = 0, 0, ""
+    stage_counts: dict = {}
     # Filenames can contain spaces — match non-greedily up to the trailing " >"
     # / " ...[OK]" marker instead of \S+ (which truncated at the first space).
     file_re = re.compile(r"\[(\d+)/(\d+)\]\s+(SKIP\s+)?(.+?)\s+>")
@@ -2876,6 +2883,45 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
             if not text:
                 continue
             print(f"[ingest-ws] {text}", flush=True)
+
+            # Structured per-stage protocol (brick 3): ingest.py emits one JSON
+            # event per line behind the __ARKIV__ sentinel. This fully replaces the
+            # human-line regexes for normal files; SKIP lines still flow through
+            # file_re below. cur_* tracks the in-flight file so a bare stage event
+            # can be attributed to it.
+            if text.startswith("__ARKIV__ "):
+                try:
+                    ev = json.loads(text[len("__ARKIV__ "):])
+                except Exception:
+                    ev = None
+                if not isinstance(ev, dict):
+                    continue
+                t, status = ev.get("t"), ev.get("status")
+                if t == "file" and status == "start":
+                    cur_idx, cur_total, cur_file = int(ev.get("index", 0)), int(ev.get("total", 0)), ev.get("file", "")
+                    last_total = max(last_total, cur_total)
+                    await ingest_ws.broadcast({
+                        "type": "file", "index": cur_idx, "total": cur_total,
+                        "filename": cur_file, "status": "transcribing",
+                    })
+                elif t == "stage":
+                    st = ev.get("stage", "")
+                    stage_counts[st] = stage_counts.get(st, 0) + 1
+                    await ingest_ws.broadcast({
+                        "type": "stage", "stage": st,
+                        "index": cur_idx, "total": cur_total,
+                        "filename": ev.get("file") or cur_file,
+                        "counts": dict(stage_counts),
+                    })
+                elif t == "file" and status == "phase1_done":
+                    ok += 1
+                    last_total = max(last_total, int(ev.get("total", cur_total)))
+                    await ingest_ws.broadcast({
+                        "type": "file", "index": int(ev.get("index", cur_idx)),
+                        "total": int(ev.get("total", cur_total)),
+                        "filename": ev.get("file", cur_file), "status": "done",
+                    })
+                continue  # structured line fully handled — skip the human regexes
 
             # Parse progress lines like "[1/3] FX30.5365.MP4 >probe >whisper..."
             m = file_re.match(text)
