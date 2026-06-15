@@ -1506,6 +1506,36 @@ def export_metadata_csv_to(
 class IngestRequest(BaseModel):
     path: str
     limit: int = 0
+    # ingest.py engine options, surfaced so the redesign's ingest setup dialog
+    # (docs/design/redesign-2026 op-01) has a real backend to bind to. Each
+    # defaults to the pre-existing behaviour, so existing callers are unchanged.
+    skip_vision: bool = False
+    refresh: bool = False
+    recursive: bool = False
+    max_failures: int = 0
+    skip_failed: bool = False
+    no_embed: bool = False
+
+
+def _ingest_cmd_opts(body: "IngestRequest") -> list:
+    """Translate IngestRequest options into ingest.py CLI flags. Shared by the
+    REST (/api/ingest) and WebSocket (/api/ingest/ws) triggers so the two never
+    drift. --dir / --limit stay with the callers; this is only the extra knobs."""
+    opts: list = []
+    if body.skip_vision:
+        opts.append("--skip-vision")
+    if body.refresh:
+        opts.append("--refresh")
+    if body.recursive:
+        opts.append("--recursive")
+    if body.max_failures and body.max_failures > 0:
+        opts += ["--max-failures", str(int(body.max_failures))]
+    if body.skip_failed:
+        opts.append("--skip-failed")
+    if body.no_embed:
+        opts.append("--no-embed")
+    return opts
+
 
 class ScanRequest(BaseModel):
     path: str
@@ -1591,6 +1621,7 @@ def ingest_media(
     cmd = [sys.executable, str(ROOT / "ingest.py"), "--dir", str(target)]
     if body.limit > 0:
         cmd += ["--limit", str(body.limit)]
+    cmd += _ingest_cmd_opts(body)
     if not _acquire_ingest_slot():  # audit H3
         raise HTTPException(409, "已有匯入任務進行中，請稍候")
     try:
@@ -2772,13 +2803,15 @@ def _on_ingest_ws_done(task: "asyncio.Task") -> None:
         )
 
 
-async def _run_ingest_with_ws(target: Path, limit: int):
+async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = None):
     """Run ingest as a single subprocess, parse stdout for progress."""
     import re, sys
 
     cmd = [sys.executable, str(ROOT / "ingest.py"), "--dir", str(target)]
     if limit > 0:
         cmd += ["--limit", str(limit)]
+    if opts:
+        cmd += opts
 
     await ingest_ws.broadcast({"type": "start", "total": limit or 0})
 
@@ -2881,7 +2914,7 @@ async def ingest_media_ws(
     _assert_ingest_path_safe(target)
     if not _acquire_ingest_slot():  # audit H3 — shared single-flight with REST ingest/reingest
         raise HTTPException(409, "已有匯入進行中，請等待完成後再試")
-    task = asyncio.create_task(_run_ingest_with_ws(target, body.limit))
+    task = asyncio.create_task(_run_ingest_with_ws(target, body.limit, _ingest_cmd_opts(body)))
     _ingest_ws_tasks.add(task)
     task.add_done_callback(_on_ingest_ws_done)
     return {"ok": True, "message": "已開始匯入 — 連線 /ws/ingest 取得進度"}
