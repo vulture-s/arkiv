@@ -1,52 +1,106 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>arkiv · DIT Offload</title>
 <style>
+  /* ============================================================
+     Tokens are verbatim from frontend/src/app.css (the canonical
+     arkiv design system — "design-2026-05-27"). Brutalist editorial,
+     pure B&W, sharp corners. Cyan (#18b6dc) is sanctioned ONLY for
+     progress / ingest indicators — never as a focus / hover / fill
+     accent. This standalone page can't @fontsource-bundle, so the
+     display/mono faces fall back to system if not installed; the
+     token VALUES are what keep it aligned to the Svelte app.
+     ============================================================ */
   :root{
-    --bg:#0a0a0c; --surface:#141418; --surface2:#1b1b20; --line:#2a2a31;
-    --text:#e8e8ea; --dim:#8a8a93; --cyan:#18b6dc; --ok:#3ecf8e; --err:#e5604d;
+    --bg:#0a0a0c; --surface:#111114; --surface-2:#17171a; --surface-3:#1d1d20;
+    --rule:#26262a; --rule-hi:#3a3a3f;
+    --ink:#f3f2ee; --ink-2:#b6b5b0; --quiet:#6a6a6d; --quiet-2:#4a4a4e;
+    --invert:#f3f2ee; --invert-ink:#0a0a0c;
+    --cyan:#18b6dc; --cyan-quiet:#167a93;
+    --ak-display:'Archivo Black','Helvetica Now Display Black','Neue Haas Grotesk Display Black','Inter',sans-serif;
+    --ak-sans:'Inter','Noto Sans TC',system-ui,-apple-system,sans-serif;
+    --ak-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,monospace;
+    --radius-1:2px;
+    --grain-img:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-    font-family:Inter,-apple-system,"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.5}
-  .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace}
-  header{padding:22px 28px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:14px}
-  header h1{font-family:"Archivo Black",Inter,sans-serif;font-weight:900;font-size:19px;margin:0;letter-spacing:-.01em}
-  header .sub{color:var(--dim);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
-  main{max-width:1080px;margin:0 auto;padding:28px}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px;margin-bottom:20px}
-  label{display:block;color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 6px}
-  input[type=text]{width:100%;background:var(--surface2);border:1px solid var(--line);color:var(--text);
-    border-radius:7px;padding:10px 12px;font-size:13px;font-family:"JetBrains Mono",monospace}
-  input[type=text]:focus{outline:none;border-color:var(--cyan)}
-  .row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:var(--ak-sans);font-size:13px;line-height:1.45;
+    font-feature-settings:'ss01','cv11','tnum';font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    position:relative;isolation:isolate;min-height:100vh}
+  /* film grain — subtle photographic noise, no network, never blocks input */
+  body::before{content:'';position:fixed;inset:0;background-image:var(--grain-img);
+    background-size:200px 200px;pointer-events:none;z-index:1000;opacity:.045;mix-blend-mode:screen}
+  body > *{position:relative;z-index:1}
+  .mono{font-family:var(--ak-mono);font-feature-settings:'tnum';letter-spacing:0}
+
+  header{padding:24px 32px;border-bottom:1px solid var(--rule);display:flex;align-items:baseline;gap:14px}
+  header h1{font-family:var(--ak-display);font-weight:900;font-size:20px;margin:0;letter-spacing:-.04em}
+  header .sub{font-family:var(--ak-mono);color:var(--quiet);font-size:10px;
+    letter-spacing:.08em;text-transform:uppercase}
+
+  main{max-width:1080px;margin:0 auto;padding:24px}
+  /* 1px-frame panel motif, sharp corners (brutalist) */
+  .card{background:var(--surface);border:1px solid var(--rule);border-radius:0;padding:24px;margin-bottom:20px}
+
+  /* eyebrow label — mono, hairline, uppercase, quiet */
+  label{display:block;font-family:var(--ak-mono);color:var(--quiet);font-size:10px;
+    letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px}
+
+  /* ak-input — transparent, underline only, mono */
+  input[type=text]{width:100%;background:transparent;color:var(--ink);
+    border:none;border-bottom:1px solid var(--rule);border-radius:0;
+    padding:6px 0;font-size:12px;font-family:var(--ak-mono);outline:none}
+  input[type=text]:focus{border-bottom-color:var(--ink)}      /* ink, never cyan */
+  input[type=text]::placeholder{color:var(--quiet)}
+
+  .row{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px}
   .row > div{flex:1;min-width:240px}
   .dsts{display:flex;flex-direction:column;gap:8px}
-  .dst-line{display:flex;gap:8px}
-  .chk{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:13px;text-transform:none;letter-spacing:0}
-  button{font-family:Inter,sans-serif;font-size:13px;font-weight:600;border-radius:7px;padding:10px 18px;
-    border:1px solid var(--line);background:var(--surface2);color:var(--text);cursor:pointer}
-  button:hover{border-color:var(--cyan)}
-  button.primary{background:var(--cyan);border-color:var(--cyan);color:#062028}
-  button.ghost{padding:8px 12px}
-  button:disabled{opacity:.45;cursor:not-allowed}
-  .actions{display:flex;gap:12px;align-items:center;margin-top:6px}
-  .hint{color:var(--dim);font-size:12px;margin-top:10px}
-  table{width:100%;border-collapse:collapse;font-size:12.5px}
-  th{text-align:left;color:var(--dim);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
-    padding:8px 10px;border-bottom:1px solid var(--line)}
-  td{padding:7px 10px;border-bottom:1px solid var(--surface2);vertical-align:top}
-  td.rel{color:var(--cyan)}
-  .arrow{color:var(--dim);padding:0 4px}
-  .status{font-size:13px;margin-top:12px;min-height:20px}
-  .status.ok{color:var(--ok)} .status.err{color:var(--err)} .status.run{color:var(--cyan)}
-  pre{background:var(--surface2);border:1px solid var(--line);border-radius:7px;padding:12px;
-    font-size:11.5px;overflow:auto;max-height:280px;white-space:pre-wrap;color:var(--dim)}
-  .meta{color:var(--dim);font-size:12px;margin:0 0 12px}
-  .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:11px;color:var(--dim)}
+  .dst-line{display:flex;gap:8px;align-items:flex-end}
+  .chk{display:flex;align-items:center;gap:8px;font-family:var(--ak-sans);color:var(--ink-2);
+    font-size:12px;text-transform:none;letter-spacing:0;margin:0}
+
+  /* ak-btn — mono, uppercase, transparent, 1px border, sharp */
+  button{font-family:var(--ak-mono);font-size:12px;text-transform:uppercase;letter-spacing:.08em;
+    border-radius:0;padding:8px 14px;border:1px solid var(--rule-hi);
+    background:transparent;color:var(--ink);cursor:pointer;line-height:1}
+  button:hover{background:var(--surface-2);border-color:var(--ink)}   /* ink hover, never cyan */
+  button.primary{background:var(--invert);border-color:var(--invert);color:var(--invert-ink)}
+  button.primary:hover{background:var(--ink-2);border-color:var(--ink-2);color:var(--invert-ink)}
+  button.ghost{padding:6px 10px}
+  button:disabled{opacity:.4;cursor:not-allowed}
+
+  .actions{display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .hint{color:var(--quiet);font-size:12px;margin-top:12px;line-height:1.5}
+  .hint b{color:var(--ink-2);font-weight:600}
+
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{text-align:left;font-family:var(--ak-mono);color:var(--quiet);font-weight:400;font-size:10px;
+    letter-spacing:.08em;text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--rule)}
+  td{padding:7px 10px;border-bottom:1px solid var(--surface-2);vertical-align:top}
+  td.rel{color:var(--ink)}            /* destination path = ink, not a chromatic accent */
+  .arrow{color:var(--quiet);padding:0 4px}
+
+  /* status — pure B&W: weight + glyph carry state; running uses sanctioned cyan */
+  .status{font-size:13px;margin-top:14px;min-height:20px;font-family:var(--ak-mono)}
+  .status.ok{color:var(--ink);font-weight:700}
+  .status.err{color:var(--ink);font-weight:700;text-decoration:underline;
+    text-decoration-style:wavy;text-decoration-thickness:1px;text-underline-offset:3px}
+  .status.run{color:var(--cyan)}     /* progress indicator — sanctioned cyan */
+
+  pre{background:var(--surface-2);border:1px solid var(--rule);border-radius:0;padding:12px;
+    font-family:var(--ak-mono);font-size:11.5px;overflow:auto;max-height:280px;
+    white-space:pre-wrap;color:var(--ink-2)}
+  .meta{color:var(--quiet);font-size:12px;margin:0 0 12px}
+
+  /* hairline pill, sharp (radius-1) */
+  .pill{display:inline-block;border:1px solid var(--rule);border-radius:var(--radius-1);
+    padding:3px 9px;font-size:10px;letter-spacing:.04em;color:var(--quiet)}
 </style>
 </head>
 <body>
@@ -85,7 +139,7 @@
     </div>
     <div class="hint">Preview 只讀不複製（顯示每個檔的目的端路徑）。Run 才真的複製 + xxh3 校驗 + 產 ascMHL,<b>絕不刪來源卡</b>。</div>
     <div class="status" id="status"></div>
-    <div id="bar" style="display:none;height:6px;background:var(--surface2);border-radius:4px;margin-top:10px;overflow:hidden">
+    <div id="bar" style="display:none;height:6px;background:var(--surface-2);border-radius:0;margin-top:10px;overflow:hidden">
       <div id="barfill" style="height:100%;width:0;background:var(--cyan);transition:width .2s"></div>
     </div>
   </div>
