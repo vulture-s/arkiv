@@ -70,6 +70,15 @@ export const getCollections = (opts) => req('/api/collections', opts)
 export const chat = (prompt, conversationId = null, opts) =>
   req('/api/chat', { method: 'POST', body: { prompt, conversation_id: conversationId }, ...opts })
 
+// Chat history. Requires chat_read (token-free on loopback; remote sees only its
+// own conversations).
+// GET /api/chat/conversations?limit → {conversations:[{id,title,project_scope_json,created_at,updated_at}]}
+export const listConversations = (limit = 50, opts) =>
+  req(`/api/chat/conversations${qs({ limit })}`, opts)
+// GET /api/chat/history/{id}?limit → {conversation:{…}, messages:[{role,content,intent,scene_ids_json,…}]}
+export const getChatHistory = (id, limit = 200, opts) =>
+  req(`/api/chat/history/${id}${qs({ limit })}`, opts)
+
 // POST /api/ingest/scan {path} — quick scan, no processing. Returns
 // {total, new, manifest:{video,audio,unsupported,total_size_mb}, files:[…]}.
 // Powers the setup dialog's MANIFEST panel. Requires ingest_write.
@@ -186,11 +195,51 @@ export async function downloadFile(path, filename) {
 export const exportPath = (id, fmt) => `/api/media/${id}/export/${fmt}`
 export const exportTimelinePath = (ids, fmt) =>
   `/api/export/timeline/${fmt}?ids=${ids.join(',')}`
+// DaVinci Resolve metadata CSV (File → Import Metadata from CSV). ids optional
+// (CSV of media ids) → batch-scoped; omitted/empty → whole library.
+export const metadataCsvPath = (ids = null) =>
+  `/api/export/metadata-csv${ids && ids.length ? `?ids=${ids.join(',')}` : ''}`
 
 // ---- writes ----
 // note: backend PATCH writes BOTH rating + rating_note, so an omitted note
 // clears any existing note. Always pass the current note through to preserve it.
 export const setRating = (id, rating, note = null, opts) =>
   req(`/api/media/${id}/rating`, { method: 'PATCH', body: { rating, note }, ...opts })
+
+// ---- tag editing ----
+// POST /api/media/{id}/tags {name, source:'manual'} → {ok, tags:[{id,name,source}]}
+// Backend forces source='manual' for user-added tags (only vision mints 'auto').
+// Requires videos_write (token-free on loopback). Returns the full updated tag list.
+export const addTag = (id, name, opts) =>
+  req(`/api/media/${id}/tags`, { method: 'POST', body: { name }, ...opts })
+// DELETE /api/media/{id}/tags/{name} → {ok, tags:[...]}. Removes by name (any
+// source). encodeURIComponent so spaces / CJK tag names survive the path.
+export const removeTag = (id, name, opts) =>
+  req(`/api/media/${id}/tags/${encodeURIComponent(name)}`, { method: 'DELETE', ...opts })
+
+// ---- per-clip re-processing (all SYNCHRONOUS — the request blocks until done,
+// so callers must show a busy state; reingest can run up to ~10 min) ----
+// POST /api/media/{id}/retranscribe {language} → {ok, transcript_length, language}
+export const retranscribe = (id, language = 'zh', opts) =>
+  req(`/api/media/${id}/retranscribe`, { method: 'POST', body: { language }, ...opts })
+// POST /api/media/{id}/retry-vision → {ok, patched, still_empty, total_frames, message?}
+export const retryVision = (id, opts) =>
+  req(`/api/media/${id}/retry-vision`, { method: 'POST', ...opts })
+// POST /api/media/{id}/reingest → {ok, stdout, stderr}. 409 if an ingest is
+// already running (single-flight guard); 504 on the 10-min server timeout.
+export const reingest = (id, opts) =>
+  req(`/api/media/${id}/reingest`, { method: 'POST', ...opts })
+
+// ---- editing proxies ----
+// GET /api/proxy/status → {total, proxied, size_mb}
+export const getProxyStatus = (opts) => req('/api/proxy/status', opts)
+// POST /api/proxy/build → {message, queued}. Queues proxy generation for every
+// HEVC/ProRes without one; runs in the BACKGROUND (returns immediately, no
+// completion signal — re-poll getProxyStatus). Requires ingest_write.
+export const buildProxies = (opts) => req('/api/proxy/build', { method: 'POST', ...opts })
+// POST /api/proxy/build/{id} → {message, queued, media_id, filename?}. Builds
+// just one clip's proxy in the background.
+export const buildProxyOne = (id, opts) =>
+  req(`/api/proxy/build/${id}`, { method: 'POST', ...opts })
 
 export { ApiError }

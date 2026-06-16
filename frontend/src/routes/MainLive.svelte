@@ -52,6 +52,7 @@
 
   let liveTags = null
   let liveCollections = null
+  let engineLangs = null // [{code,label}] for the inspector's retranscribe picker
 
   // Multi-select for batch timeline export. Click order = sequence order on the
   // exported timeline (what the user picks first lands first in Resolve).
@@ -68,6 +69,15 @@
       await api.downloadFile(api.exportTimelinePath(picked, fmt), `arkiv-timeline.${fmt}`)
     } catch (e) {
       err = `匯出失敗: ${e.message}`
+    }
+  }
+  // DaVinci Resolve metadata CSV (auth-safe download). ids=null → whole library;
+  // ids=picked → just the selected clips (camera-report / DIT handoff deliverable).
+  async function exportMetadataCsv(ids = null) {
+    try {
+      await api.downloadFile(api.metadataCsvPath(ids), 'arkiv_davinci_metadata.csv')
+    } catch (e) {
+      err = `CSV 匯出失敗: ${e.message}`
     }
   }
   // single-clip export from the inspector (auth-safe download).
@@ -180,9 +190,17 @@
       if (d && d.id != null) { items = [toCard(d), ...items]; selectedId = sel }
     } catch (e) { /* unknown id → keep default selection */ }
   }
+  // Engine languages for the retranscribe picker — non-fatal (mock fallback in UI).
+  async function loadEngines() {
+    try {
+      const e = await api.getIngestEngines()
+      engineLangs = e?.languages || null
+    } catch (e) { /* picker falls back to its built-in zh/en list */ }
+  }
   onMount(async () => {
     await load()
     await selectFromParam()
+    loadEngines()
   })
 
   $: visible = items.filter((m) => {
@@ -267,6 +285,70 @@
     : null
   $: inspThumb = selected ? selected.thumb : null
   $: inspPath = detailLive ? detailLive.path : null
+  // tags: detail carries the quality-filtered tag list [{id,name,source}].
+  $: inspTags = detailLive ? (detailLive.tags || []) : null
+
+  // Tag editing. Both endpoints return the full updated tag list, so reconcile
+  // `detail.tags` from the response (reassign detail so detailLive recomputes).
+  async function addTag(name) {
+    const n = (name || '').trim()
+    if (!n || !selected) return
+    const id = selected.id
+    try {
+      const r = await api.addTag(id, n)
+      if (detail && detail.id === id) detail = { ...detail, tags: r.tags }
+    } catch (e) {
+      err = `加標籤失敗: ${e.message}`
+    }
+  }
+  async function removeTag(name) {
+    if (!selected) return
+    const id = selected.id
+    const prev = detail && detail.id === id ? detail.tags : null
+    // optimistic: drop it immediately, reconcile (or revert) when the call lands
+    if (detail && detail.id === id) {
+      detail = { ...detail, tags: (detail.tags || []).filter((t) => t.name !== name) }
+    }
+    try {
+      const r = await api.removeTag(id, name)
+      if (detail && detail.id === id) detail = { ...detail, tags: r.tags }
+    } catch (e) {
+      if (detail && detail.id === id && prev) detail = { ...detail, tags: prev }
+      err = `刪標籤失敗: ${e.message}`
+    }
+  }
+
+  // Per-clip re-processing. Returns {ok, message} for the inspector to surface;
+  // throws bubble up to the inspector's catch. Refetch detail on success so the
+  // transcript / vision / tags reflect the new run.
+  async function reprocess(action, opts = {}) {
+    if (!selected) return { ok: false, message: '未選取素材' }
+    const id = selected.id
+    if (action === 'retranscribe') {
+      const r = await api.retranscribe(id, opts.language || 'zh')
+      if (detailId === id) await fetchDetail(id)
+      return { ok: r.ok, message: `轉錄完成 · ${r.transcript_length} 字 · ${r.language}` }
+    }
+    if (action === 'retry-vision') {
+      const r = await api.retryVision(id)
+      if (detailId === id) await fetchDetail(id)
+      return {
+        ok: r.ok,
+        message: r.message || `視覺補上 ${r.patched}/${r.total_frames} 幀，剩 ${r.still_empty}`,
+      }
+    }
+    if (action === 'reingest') {
+      const r = await api.reingest(id)
+      if (detailId === id) await fetchDetail(id)
+      return { ok: r.ok, message: r.ok ? '完整重建完成' : '重建失敗（見後端 log）' }
+    }
+    if (action === 'proxy') {
+      // background build — returns immediately, no detail change to refetch
+      const r = await api.buildProxyOne(id)
+      return { ok: true, message: r.message || '已排入 proxy 生成（背景）' }
+    }
+    return { ok: false, message: `未知動作: ${action}` }
+  }
 
   // C — rating write. UI value → backend value (db.set_rating: good/ng/review/None).
   const RATING_MAP = { good: 'good', rev: 'review', ng: 'ng', none: null }
@@ -314,6 +396,11 @@
           href={query.trim() ? `#/search-live?q=${encodeURIComponent(query.trim())}` : '#/search-live'}
           title="排名檢視（score + 摘要）"
         >排名 →</a>
+        <button
+          class="ak-btn metacsv"
+          on:click={() => exportMetadataCsv(null)}
+          title="匯出整庫 metadata CSV（DaVinci Resolve）"
+        >CSV ↓</button>
         <FilterRow bind:activeFilter bind:activeRating />
         <ViewToggle bind:view />
       </div>
@@ -325,6 +412,7 @@
             {#each EXPORT_FMTS as fmt}
               <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}>{fmt.toUpperCase()}</button>
             {/each}
+            <button class="ak-btn expbtn" on:click={() => exportMetadataCsv(picked)} title="匯出所選 metadata CSV">CSV</button>
             <button class="ak-btn expbtn clear" on:click={clearPicks}>清除</button>
           </div>
         </div>
@@ -368,6 +456,12 @@
         transcriptLines={inspTranscript}
         frameDescriptions={inspFrames}
         frameScenes={inspScenes}
+        tags={inspTags}
+        onAddTag={selected ? addTag : null}
+        onRemoveTag={selected ? removeTag : null}
+        onReprocess={selected ? reprocess : null}
+        languages={engineLangs}
+        mediaLang={detailLive ? detailLive.lang : null}
         onExport={selected ? (fmt) => exportClip(selected.id, fmt, selected.name) : null}
         onRate={rate}
       />
@@ -384,6 +478,7 @@
   .projtitle { font-size: 28px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
   .livesearch { flex: 1; max-width: 360px; font-size: 12px; }
   .ranked { font-size: 10px; padding: 6px 10px; text-decoration: none; white-space: nowrap; }
+  .metacsv { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
   .mediagrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; padding: 22px; background: var(--rule); }
   .msg { padding: 40px 22px; display: flex; flex-direction: column; gap: 8px; }

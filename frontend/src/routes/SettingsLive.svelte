@@ -33,7 +33,32 @@
     sys = 'loading'
     try { stats = await api.getStats(); sys = 'ok' } catch { sys = 'error' }
   }
-  onMount(loadSystem)
+
+  // Editing proxies — status + background build (no completion signal, so we
+  // re-poll the status a couple of times after kicking a build off).
+  let proxy = null // {total, proxied, size_mb}
+  let proxyMsg = ''
+  let proxyBusy = false
+  async function loadProxy() {
+    try { proxy = await api.getProxyStatus() } catch { proxy = null }
+  }
+  async function runProxyBuild() {
+    if (proxyBusy) return
+    proxyBusy = true
+    proxyMsg = ''
+    try {
+      const r = await api.buildProxies()
+      proxyMsg = r.message || `已排入 ${r.queued} 個`
+      setTimeout(loadProxy, 2000)
+      setTimeout(loadProxy, 8000)
+    } catch (e) {
+      proxyMsg = `失敗: ${e.message}`
+    } finally {
+      proxyBusy = false
+    }
+  }
+
+  onMount(() => { loadSystem(); loadProxy() })
 
   const gb = (n) => (n == null ? '—' : n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
   $: disk = stats?.disk ?? null
@@ -117,6 +142,15 @@
                   {#if disk}<Mono style="font-size:12px;color:var(--ink);">{gb(disk.used_gb)} / {gb(disk.total_gb)} · {disk.pct}%</Mono>{:else}<Mono dim style="font-size:12px;">—</Mono>{/if}
                 </div>
               {/if}
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Proxies</Mono>
+                {#if proxy}<Mono style="font-size:12px;color:var(--ink);">{proxy.proxied}/{proxy.total} built · {proxy.size_mb} MB</Mono>{:else}<Mono dim style="font-size:12px;">—</Mono>{/if}
+              </div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Build proxies</Mono>
+                <div class="proxyctl">
+                  <button class="ak-btn" on:click={runProxyBuild} disabled={proxyBusy}>{proxyBusy ? '排入中…' : '生成缺漏 proxy'}</button>
+                  {#if proxyMsg}<Mono dim style="font-size:10.5px;">{proxyMsg}</Mono>{/if}
+                </div>
+              </div>
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Privacy</Mono><Mono dim style="font-size:11.5px;">Everything runs locally. Nothing leaves this machine.</Mono></div>
             </div>
           </section>
@@ -153,4 +187,5 @@
   .segbtn.on { background: var(--invert); color: var(--invert-ink); font-weight: 700; }
   .pend { font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--quiet-2); border: 1px dashed var(--rule-hi); padding: 2px 7px; width: fit-content; }
   .livedot { color: var(--cyan); font-size: 9px; }
+  .proxyctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 </style>
