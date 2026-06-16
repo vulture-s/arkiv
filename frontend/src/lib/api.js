@@ -221,4 +221,16 @@ export const retryVision = (id, opts) =>
 export const reingest = (id, opts) =>
   req(`/api/media/${id}/reingest`, { method: 'POST', ...opts })
 
+// ---- editing proxies ----
+// GET /api/proxy/status → {total, proxied, size_mb}
+export const getProxyStatus = (opts) => req('/api/proxy/status', opts)
+// POST /api/proxy/build → {message, queued}. Queues proxy generation for every
+// HEVC/ProRes without one; runs in the BACKGROUND (returns immediately, no
+// completion signal — re-poll getProxyStatus). Requires ingest_write.
+export const buildProxies = (opts) => req('/api/proxy/build', { method: 'POST', ...opts })
+// POST /api/proxy/build/{id} → {message, queued, media_id, filename?}. Builds
+// just one clip's proxy in the background.
+export const buildProxyOne = (id, opts) =>
+  req(`/api/proxy/build/${id}`, { method: 'POST', ...opts })
+
 export { ApiError }

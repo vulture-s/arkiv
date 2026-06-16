@@ -232,6 +232,11 @@
           {reBusy === 'reingest' ? '重建中…' : '完整重建'}
         </button>
       </div>
+      <div class="reprow">
+        <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
+          {reBusy === 'proxy' ? '排入中…' : '建立 proxy'}
+        </button>
+      </div>
       {#if reMsg}<Mono dim style="font-size:10px;line-height:1.45;display:block;">{reMsg}</Mono>{/if}
     </div>
   {/if}

@@ -342,6 +342,11 @@
       if (detailId === id) await fetchDetail(id)
       return { ok: r.ok, message: r.ok ? '完整重建完成' : '重建失敗（見後端 log）' }
     }
+    if (action === 'proxy') {
+      // background build — returns immediately, no detail change to refetch
+      const r = await api.buildProxyOne(id)
+      return { ok: true, message: r.message || '已排入 proxy 生成（背景）' }
+    }
     return { ok: false, message: `未知動作: ${action}` }
   }
 
