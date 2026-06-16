@@ -193,4 +193,15 @@ export const exportTimelinePath = (ids, fmt) =>
 export const setRating = (id, rating, note = null, opts) =>
   req(`/api/media/${id}/rating`, { method: 'PATCH', body: { rating, note }, ...opts })
 
+// ---- tag editing ----
+// POST /api/media/{id}/tags {name, source:'manual'} → {ok, tags:[{id,name,source}]}
+// Backend forces source='manual' for user-added tags (only vision mints 'auto').
+// Requires videos_write (token-free on loopback). Returns the full updated tag list.
+export const addTag = (id, name, opts) =>
+  req(`/api/media/${id}/tags`, { method: 'POST', body: { name }, ...opts })
+// DELETE /api/media/{id}/tags/{name} → {ok, tags:[...]}. Removes by name (any
+// source). encodeURIComponent so spaces / CJK tag names survive the path.
+export const removeTag = (id, name, opts) =>
+  req(`/api/media/${id}/tags/${encodeURIComponent(name)}`, { method: 'DELETE', ...opts })
+
 export { ApiError }

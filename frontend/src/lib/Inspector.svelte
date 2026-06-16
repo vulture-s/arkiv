@@ -19,7 +19,19 @@
   // (fmt) => void; triggers an authenticated download for this clip. When set,
   // the export buttons become live; null → mock screens keep the inert buttons.
   export let onExport = null
+  // Live tag editing. tags = [{id,name,source}] → renders the editable Tags block;
+  // null → no block (mock screens unchanged). onAddTag/onRemoveTag wire the writes.
+  export let tags = null
+  export let onAddTag = null // (name) => void
+  export let onRemoveTag = null // (name) => void
   let imgFailed = false
+  let tagInput = ''
+  function submitTag() {
+    const v = tagInput.trim()
+    if (!v || !onAddTag) return
+    onAddTag(v)
+    tagInput = ''
+  }
   const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
 
   const MOCK_TRANSCRIPT = [
@@ -70,6 +82,31 @@
       <Mono dim>SIZE</Mono><Mono>{media.size} · {media.dur}</Mono>
     </div>
   </div>
+
+  {#if tags}
+    <div class="block">
+      <Eyebrow style="margin-bottom:8px;">Tags</Eyebrow>
+      <div class="tagrow">
+        {#each tags as t (t.name)}
+          <span class="tagchip" class:auto={t.source === 'auto'}>
+            <span class="tagname">{t.name}</span>
+            {#if onRemoveTag}
+              <button class="tagx" title="移除標籤" on:click={() => onRemoveTag(t.name)}>×</button>
+            {/if}
+          </span>
+        {/each}
+        {#if tags.length === 0}
+          <Mono dim style="font-size:10.5px;">（無標籤）</Mono>
+        {/if}
+      </div>
+      {#if onAddTag}
+        <form class="tagadd" on:submit|preventDefault={submitTag}>
+          <input class="ak-input taginput" placeholder="加標籤…" bind:value={tagInput} />
+          <button class="ak-btn tagaddbtn" type="submit" disabled={!tagInput.trim()}>＋</button>
+        </form>
+      {/if}
+    </div>
+  {/if}
 
   <div class="block">
     <div class="blockhead">
@@ -199,6 +236,24 @@
   .line { display: flex; gap: 10px; }
   .ttext { color: var(--ink); }
   .ttext.hl { border-bottom: 1px solid var(--invert); padding-bottom: 1px; }
+  /* tags */
+  .tagrow { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tagchip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.03em;
+    padding: 2px 4px 2px 7px; border: 1px solid var(--rule-hi); color: var(--ink);
+    background: var(--surface-2);
+  }
+  .tagchip.auto { border-style: dashed; border-color: var(--rule); color: var(--ink-2); }
+  .tagchip .tagname { white-space: nowrap; }
+  .tagx {
+    appearance: none; background: transparent; border: none; cursor: pointer;
+    color: var(--ink-2); font-size: 13px; line-height: 1; padding: 0 2px;
+  }
+  .tagx:hover { color: var(--cyan); }
+  .tagadd { display: flex; gap: 6px; margin-top: 8px; }
+  .taginput { flex: 1; font-size: 11px; padding: 5px 8px; }
+  .tagaddbtn { flex: 0 0 auto; padding: 5px 10px; }
   .rate { padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
   .ratebtns { display: flex; gap: 4px; }
   .ratebtn {

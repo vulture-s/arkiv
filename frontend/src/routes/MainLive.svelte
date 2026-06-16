@@ -267,6 +267,38 @@
     : null
   $: inspThumb = selected ? selected.thumb : null
   $: inspPath = detailLive ? detailLive.path : null
+  // tags: detail carries the quality-filtered tag list [{id,name,source}].
+  $: inspTags = detailLive ? (detailLive.tags || []) : null
+
+  // Tag editing. Both endpoints return the full updated tag list, so reconcile
+  // `detail.tags` from the response (reassign detail so detailLive recomputes).
+  async function addTag(name) {
+    const n = (name || '').trim()
+    if (!n || !selected) return
+    const id = selected.id
+    try {
+      const r = await api.addTag(id, n)
+      if (detail && detail.id === id) detail = { ...detail, tags: r.tags }
+    } catch (e) {
+      err = `加標籤失敗: ${e.message}`
+    }
+  }
+  async function removeTag(name) {
+    if (!selected) return
+    const id = selected.id
+    const prev = detail && detail.id === id ? detail.tags : null
+    // optimistic: drop it immediately, reconcile (or revert) when the call lands
+    if (detail && detail.id === id) {
+      detail = { ...detail, tags: (detail.tags || []).filter((t) => t.name !== name) }
+    }
+    try {
+      const r = await api.removeTag(id, name)
+      if (detail && detail.id === id) detail = { ...detail, tags: r.tags }
+    } catch (e) {
+      if (detail && detail.id === id && prev) detail = { ...detail, tags: prev }
+      err = `刪標籤失敗: ${e.message}`
+    }
+  }
 
   // C — rating write. UI value → backend value (db.set_rating: good/ng/review/None).
   const RATING_MAP = { good: 'good', rev: 'review', ng: 'ng', none: null }
@@ -368,6 +400,9 @@
         transcriptLines={inspTranscript}
         frameDescriptions={inspFrames}
         frameScenes={inspScenes}
+        tags={inspTags}
+        onAddTag={selected ? addTag : null}
+        onRemoveTag={selected ? removeTag : null}
         onExport={selected ? (fmt) => exportClip(selected.id, fmt, selected.name) : null}
         onRate={rate}
       />
