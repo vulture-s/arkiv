@@ -204,4 +204,17 @@ export const addTag = (id, name, opts) =>
 export const removeTag = (id, name, opts) =>
   req(`/api/media/${id}/tags/${encodeURIComponent(name)}`, { method: 'DELETE', ...opts })
 
+// ---- per-clip re-processing (all SYNCHRONOUS — the request blocks until done,
+// so callers must show a busy state; reingest can run up to ~10 min) ----
+// POST /api/media/{id}/retranscribe {language} → {ok, transcript_length, language}
+export const retranscribe = (id, language = 'zh', opts) =>
+  req(`/api/media/${id}/retranscribe`, { method: 'POST', body: { language }, ...opts })
+// POST /api/media/{id}/retry-vision → {ok, patched, still_empty, total_frames, message?}
+export const retryVision = (id, opts) =>
+  req(`/api/media/${id}/retry-vision`, { method: 'POST', ...opts })
+// POST /api/media/{id}/reingest → {ok, stdout, stderr}. 409 if an ingest is
+// already running (single-flight guard); 504 on the 10-min server timeout.
+export const reingest = (id, opts) =>
+  req(`/api/media/${id}/reingest`, { method: 'POST', ...opts })
+
 export { ApiError }

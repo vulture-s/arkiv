@@ -52,6 +52,7 @@
 
   let liveTags = null
   let liveCollections = null
+  let engineLangs = null // [{code,label}] for the inspector's retranscribe picker
 
   // Multi-select for batch timeline export. Click order = sequence order on the
   // exported timeline (what the user picks first lands first in Resolve).
@@ -180,9 +181,17 @@
       if (d && d.id != null) { items = [toCard(d), ...items]; selectedId = sel }
     } catch (e) { /* unknown id → keep default selection */ }
   }
+  // Engine languages for the retranscribe picker — non-fatal (mock fallback in UI).
+  async function loadEngines() {
+    try {
+      const e = await api.getIngestEngines()
+      engineLangs = e?.languages || null
+    } catch (e) { /* picker falls back to its built-in zh/en list */ }
+  }
   onMount(async () => {
     await load()
     await selectFromParam()
+    loadEngines()
   })
 
   $: visible = items.filter((m) => {
@@ -300,6 +309,33 @@
     }
   }
 
+  // Per-clip re-processing. Returns {ok, message} for the inspector to surface;
+  // throws bubble up to the inspector's catch. Refetch detail on success so the
+  // transcript / vision / tags reflect the new run.
+  async function reprocess(action, opts = {}) {
+    if (!selected) return { ok: false, message: '未選取素材' }
+    const id = selected.id
+    if (action === 'retranscribe') {
+      const r = await api.retranscribe(id, opts.language || 'zh')
+      if (detailId === id) await fetchDetail(id)
+      return { ok: r.ok, message: `轉錄完成 · ${r.transcript_length} 字 · ${r.language}` }
+    }
+    if (action === 'retry-vision') {
+      const r = await api.retryVision(id)
+      if (detailId === id) await fetchDetail(id)
+      return {
+        ok: r.ok,
+        message: r.message || `視覺補上 ${r.patched}/${r.total_frames} 幀，剩 ${r.still_empty}`,
+      }
+    }
+    if (action === 'reingest') {
+      const r = await api.reingest(id)
+      if (detailId === id) await fetchDetail(id)
+      return { ok: r.ok, message: r.ok ? '完整重建完成' : '重建失敗（見後端 log）' }
+    }
+    return { ok: false, message: `未知動作: ${action}` }
+  }
+
   // C — rating write. UI value → backend value (db.set_rating: good/ng/review/None).
   const RATING_MAP = { good: 'good', rev: 'review', ng: 'ng', none: null }
   async function rate(uiRating) {
@@ -403,6 +439,9 @@
         tags={inspTags}
         onAddTag={selected ? addTag : null}
         onRemoveTag={selected ? removeTag : null}
+        onReprocess={selected ? reprocess : null}
+        languages={engineLangs}
+        mediaLang={detailLive ? detailLive.lang : null}
         onExport={selected ? (fmt) => exportClip(selected.id, fmt, selected.name) : null}
         onRate={rate}
       />

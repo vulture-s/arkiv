@@ -24,6 +24,11 @@
   export let tags = null
   export let onAddTag = null // (name) => void
   export let onRemoveTag = null // (name) => void
+  // Live re-processing. onReprocess = async (action, opts) => {ok, message};
+  // action ∈ 'retranscribe' | 'retry-vision' | 'reingest'. null → no block (mock).
+  export let onReprocess = null
+  export let languages = null // [{code,label}] for the retranscribe picker
+  export let mediaLang = null // current clip language → default selection
   let imgFailed = false
   let tagInput = ''
   function submitTag() {
@@ -32,6 +37,33 @@
     onAddTag(v)
     tagInput = ''
   }
+  // reprocess local state, reset when the selected clip changes
+  let reBusy = null // action currently running, or null
+  let reMsg = ''
+  let reLang = 'zh'
+  let lastMediaId = null
+  $: if (media && media.id !== lastMediaId) {
+    lastMediaId = media.id
+    reBusy = null
+    reMsg = ''
+    reLang = mediaLang || 'zh'
+  }
+  async function doReprocess(action) {
+    if (!onReprocess || reBusy) return
+    reBusy = action
+    reMsg = ''
+    try {
+      const opts = action === 'retranscribe' ? { language: reLang || 'zh' } : {}
+      const r = await onReprocess(action, opts)
+      reMsg = (r && r.message) || '完成'
+    } catch (e) {
+      reMsg = `失敗: ${(e && e.message) || e}`
+    } finally {
+      reBusy = null
+    }
+  }
+  const RE_LANGS = [{ code: 'zh', label: '中文' }, { code: 'en', label: 'English' }]
+  $: langOpts = languages && languages.length ? languages : RE_LANGS
   const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
 
   const MOCK_TRANSCRIPT = [
@@ -179,6 +211,31 @@
     </div>
   {/if}
 
+  {#if onReprocess}
+    <div class="block reproc">
+      <Eyebrow style="margin-bottom:8px;">Reprocess</Eyebrow>
+      <div class="reprow">
+        <select class="ak-input relang" bind:value={reLang} disabled={!!reBusy} title="重新轉錄語言">
+          {#each langOpts as l}
+            <option value={l.code}>{l.label || l.code}</option>
+          {/each}
+        </select>
+        <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('retranscribe')}>
+          {reBusy === 'retranscribe' ? '轉錄中…' : '重轉錄'}
+        </button>
+      </div>
+      <div class="reprow">
+        <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('retry-vision')}>
+          {reBusy === 'retry-vision' ? '分析中…' : '重試視覺'}
+        </button>
+        <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('reingest')}>
+          {reBusy === 'reingest' ? '重建中…' : '完整重建'}
+        </button>
+      </div>
+      {#if reMsg}<Mono dim style="font-size:10px;line-height:1.45;display:block;">{reMsg}</Mono>{/if}
+    </div>
+  {/if}
+
   <div class="rate">
     <Eyebrow>Rate</Eyebrow>
     <div class="ratebtns">
@@ -254,6 +311,12 @@
   .tagadd { display: flex; gap: 6px; margin-top: 8px; }
   .taginput { flex: 1; font-size: 11px; padding: 5px 8px; }
   .tagaddbtn { flex: 0 0 auto; padding: 5px 10px; }
+  /* reprocess */
+  .reproc { display: flex; flex-direction: column; gap: 6px; }
+  .reprow { display: flex; gap: 6px; }
+  .relang { flex: 0 0 auto; font-size: 11px; padding: 5px 6px; }
+  .rebtn { flex: 1; font-size: 10px; }
+  .rebtn:disabled { opacity: 0.5; cursor: default; }
   .rate { padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
   .ratebtns { display: flex; gap: 4px; }
   .ratebtn {
