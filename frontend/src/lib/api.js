@@ -186,6 +186,10 @@ export async function downloadFile(path, filename) {
 export const exportPath = (id, fmt) => `/api/media/${id}/export/${fmt}`
 export const exportTimelinePath = (ids, fmt) =>
   `/api/export/timeline/${fmt}?ids=${ids.join(',')}`
+// DaVinci Resolve metadata CSV (File → Import Metadata from CSV). ids optional
+// (CSV of media ids) → batch-scoped; omitted/empty → whole library.
+export const metadataCsvPath = (ids = null) =>
+  `/api/export/metadata-csv${ids && ids.length ? `?ids=${ids.join(',')}` : ''}`
 
 // ---- writes ----
 // note: backend PATCH writes BOTH rating + rating_note, so an omitted note

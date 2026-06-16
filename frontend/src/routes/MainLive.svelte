@@ -71,6 +71,15 @@
       err = `匯出失敗: ${e.message}`
     }
   }
+  // DaVinci Resolve metadata CSV (auth-safe download). ids=null → whole library;
+  // ids=picked → just the selected clips (camera-report / DIT handoff deliverable).
+  async function exportMetadataCsv(ids = null) {
+    try {
+      await api.downloadFile(api.metadataCsvPath(ids), 'arkiv_davinci_metadata.csv')
+    } catch (e) {
+      err = `CSV 匯出失敗: ${e.message}`
+    }
+  }
   // single-clip export from the inspector (auth-safe download).
   async function exportClip(id, fmt, name) {
     const stem = (name || `media_${id}`).replace(/\.[^.]+$/, '')
@@ -382,6 +391,11 @@
           href={query.trim() ? `#/search-live?q=${encodeURIComponent(query.trim())}` : '#/search-live'}
           title="排名檢視（score + 摘要）"
         >排名 →</a>
+        <button
+          class="ak-btn metacsv"
+          on:click={() => exportMetadataCsv(null)}
+          title="匯出整庫 metadata CSV（DaVinci Resolve）"
+        >CSV ↓</button>
         <FilterRow bind:activeFilter bind:activeRating />
         <ViewToggle bind:view />
       </div>
@@ -393,6 +407,7 @@
             {#each EXPORT_FMTS as fmt}
               <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}>{fmt.toUpperCase()}</button>
             {/each}
+            <button class="ak-btn expbtn" on:click={() => exportMetadataCsv(picked)} title="匯出所選 metadata CSV">CSV</button>
             <button class="ak-btn expbtn clear" on:click={clearPicks}>清除</button>
           </div>
         </div>
@@ -458,6 +473,7 @@
   .projtitle { font-size: 28px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
   .livesearch { flex: 1; max-width: 360px; font-size: 12px; }
   .ranked { font-size: 10px; padding: 6px 10px; text-decoration: none; white-space: nowrap; }
+  .metacsv { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
   .mediagrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; padding: 22px; background: var(--rule); }
   .msg { padding: 40px 22px; display: flex; flex-direction: column; gap: 8px; }
