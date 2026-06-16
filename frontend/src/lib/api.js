@@ -70,6 +70,15 @@ export const getCollections = (opts) => req('/api/collections', opts)
 export const chat = (prompt, conversationId = null, opts) =>
   req('/api/chat', { method: 'POST', body: { prompt, conversation_id: conversationId }, ...opts })
 
+// Chat history. Requires chat_read (token-free on loopback; remote sees only its
+// own conversations).
+// GET /api/chat/conversations?limit → {conversations:[{id,title,project_scope_json,created_at,updated_at}]}
+export const listConversations = (limit = 50, opts) =>
+  req(`/api/chat/conversations${qs({ limit })}`, opts)
+// GET /api/chat/history/{id}?limit → {conversation:{…}, messages:[{role,content,intent,scene_ids_json,…}]}
+export const getChatHistory = (id, limit = 200, opts) =>
+  req(`/api/chat/history/${id}${qs({ limit })}`, opts)
+
 // POST /api/ingest/scan {path} — quick scan, no processing. Returns
 // {total, new, manifest:{video,audio,unsupported,total_size_mb}, files:[…]}.
 // Powers the setup dialog's MANIFEST panel. Requires ingest_write.

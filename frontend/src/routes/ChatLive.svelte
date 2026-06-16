@@ -18,6 +18,52 @@
   let err = ''
   let mediaById = new Map() // id → {filename, thumb} for scene resolution
   let scroller
+  let conversations = [] // [{id, title, updated_at, …}] — past chats (newest first)
+
+  const fmtTime = (s) => (s || '').slice(5, 16).replace('T', ' ')
+  const parseSceneIds = (json) => {
+    if (!json) return []
+    try { const v = JSON.parse(json); return Array.isArray(v) ? v : [] } catch { return [] }
+  }
+
+  async function loadConversations() {
+    try {
+      const r = await api.listConversations()
+      conversations = r.conversations || []
+    } catch (e) { /* non-fatal — history sidebar just stays empty */ }
+  }
+
+  // Restore a past conversation: rebuild the thread from stored messages,
+  // resolving each assistant turn's scene_ids back to thumbnails. Sets convId
+  // so the next prompt continues this conversation.
+  async function openConversation(id) {
+    if (busy) return
+    err = ''
+    try {
+      const r = await api.getChatHistory(id)
+      convId = (r.conversation && r.conversation.id) || id
+      const rebuilt = []
+      for (const m of r.messages || []) {
+        if (m.role === 'user') {
+          rebuilt.push({ role: 'user', text: m.content })
+        } else {
+          const scenes = await resolveScenes(parseSceneIds(m.scene_ids_json))
+          rebuilt.push({ role: 'assistant', text: m.content || '', intent: m.intent, scenes })
+        }
+      }
+      messages = rebuilt
+      scrollDown()
+    } catch (e) {
+      err = e.status === 404 ? '找不到這個對話' : e.message
+    }
+  }
+
+  function newChat() {
+    if (busy) return
+    convId = null
+    messages = []
+    err = ''
+  }
 
   // Honest phrasing — chat finds candidate clips, it does NOT cut a final video.
   const suggestions = ['找生肉切割的鏡頭', '找店內空景的畫面', '哪些素材有餐廳']
@@ -86,9 +132,12 @@
     messages = [...messages, { role: 'user', text: prompt }]
     busy = true
     scrollDown()
+    const wasNew = convId == null
     try {
       const r = await api.chat(prompt, convId)
       convId = r.conversation_id || convId
+      // a brand-new conversation now exists server-side → refresh the sidebar
+      if (wasNew) loadConversations()
       const scenes = await resolveScenes(r.scene_ids)
       messages = [
         ...messages,
@@ -115,7 +164,7 @@
     }
   }
 
-  onMount(loadMediaIndex)
+  onMount(() => { loadMediaIndex(); loadConversations() })
 </script>
 
 <div class="artboard" data-theme={theme}>
@@ -127,6 +176,25 @@
   </div>
 
   <div class="body">
+    <aside class="convs">
+      <div class="convhead">
+        <Eyebrow>對話紀錄</Eyebrow>
+        <button class="ak-btn newchat" on:click={newChat} disabled={busy}>＋ 新對話</button>
+      </div>
+      <div class="convlist">
+        {#each conversations as c (c.id)}
+          <button class="convitem" class:active={c.id === convId} on:click={() => openConversation(c.id)} disabled={busy}>
+            <span class="convtitle">{c.title || '未命名對話'}</span>
+            <Mono dim style="font-size:9px;letter-spacing:0.04em;">{fmtTime(c.updated_at)}</Mono>
+          </button>
+        {/each}
+        {#if conversations.length === 0}
+          <Mono dim style="font-size:10.5px;padding:8px 2px;display:block;">尚無紀錄</Mono>
+        {/if}
+      </div>
+    </aside>
+
+    <div class="chatmain">
     <div class="thread" bind:this={scroller}>
       {#if messages.length === 0}
         <div class="empty">
@@ -185,6 +253,7 @@
       />
       <button class="ak-btn ak-btn--primary" on:click={() => send()} disabled={busy || !input.trim()}>送出 →</button>
     </div>
+    </div>
   </div>
 </div>
 
@@ -192,8 +261,25 @@
   .artboard { width: 1400px; height: 900px; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
   .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
-  .body { display: flex; flex-direction: column; min-height: 0; }
-  .thread { flex: 1; overflow: auto; padding: 24px 18%; display: flex; flex-direction: column; gap: 20px; }
+  .body { display: grid; grid-template-columns: 240px 1fr; min-height: 0; }
+  .convs { border-right: 1px solid var(--rule); display: flex; flex-direction: column; min-height: 0; }
+  .convhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--rule); }
+  .newchat { font-size: 9.5px; padding: 5px 8px; white-space: nowrap; }
+  .convlist { flex: 1; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+  .convitem {
+    display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+    text-align: left; padding: 8px 10px; background: transparent; border: none;
+    border-left: 2px solid transparent; cursor: pointer; font-family: inherit; width: 100%;
+  }
+  .convitem:hover { background: var(--surface-2); }
+  .convitem.active { border-left-color: var(--invert); background: var(--surface-2); }
+  .convitem:disabled { cursor: default; opacity: 0.6; }
+  .convtitle {
+    font-size: 12px; color: var(--ink); line-height: 1.3; width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chatmain { display: flex; flex-direction: column; min-height: 0; }
+  .thread { flex: 1; overflow: auto; padding: 24px 10%; display: flex; flex-direction: column; gap: 20px; }
   .empty { display: flex; flex-direction: column; gap: 10px; padding-top: 40px; }
   .emptytitle { font-size: var(--fs-display-sm); color: var(--ink); margin: 4px 0; }
   .suggest { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; align-items: flex-start; }
@@ -216,6 +302,6 @@
     background: transparent; cursor: pointer; appearance: none;
   }
   .exp:hover { color: var(--ink); border-color: var(--ink); }
-  .composer { border-top: 1px solid var(--rule); padding: 16px 18%; display: flex; gap: 10px; align-items: center; }
+  .composer { border-top: 1px solid var(--rule); padding: 16px 10%; display: flex; gap: 10px; align-items: center; }
   .chatinput { flex: 1; font-size: 13px; }
 </style>
