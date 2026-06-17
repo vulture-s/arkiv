@@ -3377,6 +3377,18 @@ def serve_index():
     return _load_index()
 
 
+@app.get("/legacy", response_class=HTMLResponse)
+def serve_legacy():
+    """Old Tailwind UI, kept reachable alongside the new SPA during the cutover
+    bake — an escape hatch / side-by-side comparison view while the SPA earns
+    trust. Always the legacy page, regardless of ARKIV_UI or whether dist exists.
+    Retired in Phase 3 once the SPA is confirmed."""
+    legacy = ROOT / "index.html"
+    if legacy.exists():
+        return legacy.read_text(encoding="utf-8")
+    raise HTTPException(404, "legacy UI removed")
+
+
 # Built SPA assets (frontend/dist/assets/*-<hash>.js|css, referenced as /assets/…
 # by the built index.html). Mounted only when the build exists, so a fresh clone
 # without `npm run build` still boots and falls back to the legacy page at "/".

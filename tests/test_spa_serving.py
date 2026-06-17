@@ -50,3 +50,15 @@ def test_root_route_serves_spa_end_to_end(fastapi_client, server_module, tmp_pat
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
     assert 'id="app"' in r.text
+
+
+def test_legacy_route_serves_old_ui(fastapi_client, server_module, tmp_path, monkeypatch):
+    # /legacy is the cutover escape hatch — always the old Tailwind page, even when
+    # the SPA is built and the default (no ARKIV_UI). Identified by the absence of
+    # the SPA shell's id="app".
+    monkeypatch.setattr(server_module, "FRONTEND_DIST", _fake_dist(tmp_path))
+    monkeypatch.delenv("ARKIV_UI", raising=False)
+    r = fastapi_client.get("/legacy")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert 'id="app"' not in r.text
