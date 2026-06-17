@@ -17,6 +17,7 @@ from typing import Any, List, Literal, Optional, Set
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 import admin
@@ -145,6 +146,8 @@ app.add_middleware(
 )
 
 ROOT = Path(__file__).parent
+# Built Svelte SPA (frontend/dist). Gitignored — produced by `npm run build`.
+FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 # Serve thumbnails through an AUTHED route (create dir if missing so it always
 # works). Honor ARKIV_THUMBNAILS_DIR (via config.THUMBNAILS_DIR) instead of
@@ -3286,11 +3289,20 @@ def _rebuild_embeddings():
 
 # ── Serve Frontend ───────────────────────────────────────────────────────────
 
-# Dev mode: always read fresh index.html (no cache)
+# Serve the built Svelte SPA (frontend/dist/index.html) when present. The SPA is
+# hash-routed (svelte-spa-router) so "/" is the only HTML entry the browser ever
+# requests — no catch-all fallback needed; /assets/* is a StaticFiles mount below.
+# Auto-falls back to the legacy Tailwind index.html when the build is absent (a
+# fresh clone before `npm run build`); ARKIV_UI=legacy forces it (rollback hatch).
+# Read fresh each request (no cache), matching the previous dev behaviour.
 def _load_index() -> str:
-    index = ROOT / "index.html"
-    if index.exists():
-        return index.read_text(encoding="utf-8")
+    if os.environ.get("ARKIV_UI", "").lower() != "legacy":
+        spa = FRONTEND_DIST / "index.html"
+        if spa.exists():
+            return spa.read_text(encoding="utf-8")
+    legacy = ROOT / "index.html"
+    if legacy.exists():
+        return legacy.read_text(encoding="utf-8")
     return "<h1>arkiv</h1><p>index.html not found</p>"
 
 class OpenFileRequest(BaseModel):  # audit M22: malformed JSON → clean 422, not a raw 500
@@ -3363,3 +3375,11 @@ def client_log(body: ClientLogRequest):
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
     return _load_index()
+
+
+# Built SPA assets (frontend/dist/assets/*-<hash>.js|css, referenced as /assets/…
+# by the built index.html). Mounted only when the build exists, so a fresh clone
+# without `npm run build` still boots and falls back to the legacy page at "/".
+# Registered last → never shadows the explicit /api, /thumbnails, /dit routes.
+if (FRONTEND_DIST / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="spa-assets")
