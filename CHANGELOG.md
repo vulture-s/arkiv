@@ -1,6 +1,15 @@
 # Changelog
 ## Unreleased
 
+## v0.9.2 - 2026-06-17
+
+### Added
+- **New Svelte UI is now the default at `/`; the old Tailwind UI moves to `/legacy` (cutover Phase 1+2, #78).** `server.py` serves the built SPA from `frontend/dist` with a `/assets` mount; it auto-falls back to the legacy page when no build is present, and `ARKIV_UI=legacy` forces the old page. `install.sh` and the `Dockerfile` (new `node:20` build stage) now run `npm run build`, so a fresh clone / image ships the new UI. The old UI stays reachable at `/legacy` as an escape hatch during the cutover bake. Hash-routed SPA → no server-side fallback needed.
+- **Tier 1 backend-parity features wired into the new UI (#78).** Inline tag editing (add/remove); per-clip re-processing (retranscribe / retry-vision / reingest); editing-proxy build + status (whole-library and per-clip); DaVinci Resolve metadata CSV export (whole-library and current selection); and a chat-history sidebar that lists past conversations and restores their threads.
+
+### Notes
+- Tier 2 backend capabilities are not yet wired into the new UI (in/out position save, chapters, export-to-path, remotion-props, open-file, project federation, pool view, admin tokens, cache ops, analytics breakdowns). They remain reachable via the API and the `/legacy` UI; tracked in #78.
+
 ### Performance
 - **DIT `--organize` / preview now probe metadata in one ExifTool spawn, not one per file.** `_probe_camera_meta` spawned ExifTool per file, so a 400-clip card preview/offload paid ~400 process spawns (tens of seconds of pure spawn overhead). Extracted `_exiftool_batch()` (a single `exiftool -json …file1 …file2 …fileN` call keyed by `SourceFile`) + `_probe_camera_meta_batch()`; `preview_layout()` and `_ensure_file_records()` batch-probe up the whole file list once. The Sony XAVC sidecar / mtime fallbacks still run per file (cheap, no subprocess). The single-file `_probe_camera_meta` (card-watch) is unchanged in behaviour.
 
