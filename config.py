@@ -106,12 +106,31 @@ OLLAMA_EMBED_MODEL = os.getenv(
     "ARKIV_OLLAMA_EMBED_MODEL",
     os.getenv("ARKIV_EMBED_MODEL", "bge-m3"),
 )
+# Default vision model. qwen2.5-vl:7b, NOT qwen3-vl:8b: Qwen3-VL's vision path
+# (DeepStack / interleaved-MRoPE) is ~10x slower than Qwen2.5-VL under Ollama and
+# frequently offloads the vision encoder to CPU — measured ~60s/frame vs ~8s/frame
+# on an M2 Max for the same frames (Ollama issues #12854 / #12882 / #14548). At
+# ~2000 frames that's the difference between ~30h and ~3.5h, at comparable tag
+# quality. Override with ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b for the higher
+# ceiling once Ollama fixes the regression.
 OLLAMA_VISION_MODEL = os.getenv(
     "ARKIV_OLLAMA_VISION_MODEL",
-    os.getenv("ARKIV_VISION_MODEL", "qwen3-vl:8b"),
+    os.getenv("ARKIV_VISION_MODEL", "qwen2.5vl:7b"),
 )
 EMBED_MODEL = OLLAMA_EMBED_MODEL
 VISION_MODEL = OLLAMA_VISION_MODEL
+
+# Lighter model retried on frames the primary leaves empty (issue #48 vision
+# resilience). Configurable, and skipped gracefully when not installed (the frame
+# is left empty for a later --vision-only retry) instead of erroring per frame.
+# install.sh pulls it so the fallback path works out of the box. Previously this
+# was hardcoded — and inconsistently: ingest used minicpm-v, the server used
+# moondream2, and install.sh pulled neither, so every fresh install's fallback
+# 404'd silently.
+OLLAMA_VISION_FALLBACK_MODEL = os.getenv(
+    "ARKIV_OLLAMA_VISION_FALLBACK_MODEL", "minicpm-v:latest"
+)
+VISION_FALLBACK_MODEL = OLLAMA_VISION_FALLBACK_MODEL
 
 # Cap the vision model's context window so it fits in GPU VRAM. qwen3-vl's
 # default context balloons the model to ~28 GB, which on a 12 GB GPU (e.g.

@@ -7,6 +7,8 @@ import importlib
 
 import pytest
 
+import config
+
 
 @pytest.fixture
 def ingest_mod(tmp_db, monkeypatch):
@@ -46,7 +48,7 @@ def _probe_seq(*results):
 # --------------------------------------------------------------------------
 def test_proceeds_immediately_when_under_threshold(ingest_mod):
     sleeps = []
-    probe = _probe_seq({"backend": "apple", "system_mem_pct": 0.4, "models_known": True, "models_loaded": ["qwen3-vl:8b"]})
+    probe = _probe_seq({"backend": "apple", "system_mem_pct": 0.4, "models_known": True, "models_loaded": [config.VISION_MODEL]})
     ingest_mod._ensure_vision_ready(_probe=probe, _sleep=sleeps.append)
     assert sleeps == []  # no backoff
     assert ingest_mod._test_calls["warmup"] == 0  # model already loaded
@@ -56,9 +58,9 @@ def test_backs_off_then_proceeds(ingest_mod):
     sleeps = []
     # busy, busy, then clear
     probe = _probe_seq(
-        {"backend": "apple", "system_mem_pct": 0.95, "models_known": True, "models_loaded": ["qwen3-vl:8b"]},
-        {"backend": "apple", "system_mem_pct": 0.95, "models_known": True, "models_loaded": ["qwen3-vl:8b"]},
-        {"backend": "apple", "system_mem_pct": 0.4, "models_known": True, "models_loaded": ["qwen3-vl:8b"]},
+        {"backend": "apple", "system_mem_pct": 0.95, "models_known": True, "models_loaded": [config.VISION_MODEL]},
+        {"backend": "apple", "system_mem_pct": 0.95, "models_known": True, "models_loaded": [config.VISION_MODEL]},
+        {"backend": "apple", "system_mem_pct": 0.4, "models_known": True, "models_loaded": [config.VISION_MODEL]},
     )
     ingest_mod._ensure_vision_ready(max_wait_s=120, _probe=probe, _sleep=sleeps.append)
     assert len(sleeps) == 2  # waited twice before clearing
@@ -68,7 +70,7 @@ def test_backs_off_then_proceeds(ingest_mod):
 
 def test_proceeds_after_max_wait_even_if_busy(ingest_mod):
     sleeps = []
-    probe = _probe_seq({"backend": "apple", "system_mem_pct": 0.99, "models_known": True, "models_loaded": ["qwen3-vl:8b"]})
+    probe = _probe_seq({"backend": "apple", "system_mem_pct": 0.99, "models_known": True, "models_loaded": [config.VISION_MODEL]})
     # max_wait small -> total backoff is STRICTLY bounded by max_wait (Codex
     # SHOULD-FIX: clamp each sleep to the remaining budget, no overshoot).
     ingest_mod._ensure_vision_ready(max_wait_s=5, _probe=probe, _sleep=sleeps.append)
@@ -94,7 +96,7 @@ def test_warms_up_when_model_not_loaded(ingest_mod):
 
 
 def test_skips_warmup_when_model_loaded(ingest_mod):
-    probe = _probe_seq({"backend": "apple", "system_mem_pct": 0.3, "models_known": True, "models_loaded": ["qwen3-vl:8b"]})
+    probe = _probe_seq({"backend": "apple", "system_mem_pct": 0.3, "models_known": True, "models_loaded": [config.VISION_MODEL]})
     ingest_mod._ensure_vision_ready(_probe=probe, _sleep=lambda s: None)
     assert ingest_mod._test_calls["warmup"] == 0
 

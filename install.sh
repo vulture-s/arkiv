@@ -154,7 +154,12 @@ echo "Pulling Ollama models (this may take a while)..."
 ollama serve &>/dev/null &
 sleep 2
 ollama pull bge-m3 2>/dev/null && echo -e "  ${GREEN}✓${NC} bge-m3 (embeddings)" || echo -e "  ${YELLOW}⏭${NC} bge-m3 (pull later)"
-ollama pull qwen3-vl:8b 2>/dev/null && echo -e "  ${GREEN}✓${NC} qwen3-vl:8b (vision)" || echo -e "  ${YELLOW}⏭${NC} qwen3-vl:8b (pull later)"
+# Vision = qwen2.5vl:7b (config.py default). NOT qwen3-vl:8b — it's ~10x slower
+# under Ollama (vision-path regression, ~60s vs ~8s/frame on M2 Max).
+ollama pull qwen2.5vl:7b 2>/dev/null && echo -e "  ${GREEN}✓${NC} qwen2.5vl:7b (vision)" || echo -e "  ${YELLOW}⏭${NC} qwen2.5vl:7b (pull later)"
+# Vision fallback (config.VISION_FALLBACK_MODEL) — retried on frames the primary
+# leaves empty. Without it, that resilience path 404s.
+ollama pull minicpm-v 2>/dev/null && echo -e "  ${GREEN}✓${NC} minicpm-v (vision fallback)" || echo -e "  ${YELLOW}⏭${NC} minicpm-v (pull later)"
 ollama pull qwen2.5:14b 2>/dev/null && echo -e "  ${GREEN}✓${NC} qwen2.5:14b (chat)" || echo -e "  ${YELLOW}⏭${NC} qwen2.5:14b (pull later — needed for chat)"
 
 echo ""

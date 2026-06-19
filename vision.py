@@ -11,6 +11,28 @@ from llm import vision
 
 OLLAMA_URL = f"{config.OLLAMA_URL}/api/generate"
 VISION_MODEL = config.VISION_MODEL
+
+_model_avail_cache: Dict[str, bool] = {}
+
+
+def model_available(name: str) -> bool:
+    """True if `name` is installed in the local Ollama (matched by tag or base
+    name). Cached per process. Lets the fallback path skip cleanly when its model
+    isn't pulled instead of erroring (404) once per failed frame."""
+    if not name:
+        return False
+    if name in _model_avail_cache:
+        return _model_avail_cache[name]
+    avail = False
+    try:
+        r = requests.get(f"{config.OLLAMA_URL}/api/tags", timeout=5)
+        installed = {m.get("name", "") for m in r.json().get("models", [])}
+        base = name.split(":")[0]
+        avail = name in installed or any(n.split(":")[0] == base for n in installed)
+    except Exception:
+        avail = False
+    _model_avail_cache[name] = avail
+    return avail
 PROMPT = (
     "請用繁體中文分析這個影片畫面，回傳嚴格的 JSON 格式（不要加 markdown 標記）：\n"
     "{\n"

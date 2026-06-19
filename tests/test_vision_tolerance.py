@@ -70,6 +70,9 @@ def _install_fake_vision(ing, monkeypatch):
                 out.append({"description": "desc:" + ps, "tags": ["t"]})
         return out
     monkeypatch.setattr(ing.vis, "describe_frames", fake)
+    # The fallback path now gates on model availability; treat it as installed so
+    # the rescue logic runs deterministically without a live Ollama (CI has none).
+    monkeypatch.setattr(ing.vis, "model_available", lambda name: True)
 
 
 def test_fallback_rescues_transient_not_persistent(ing, monkeypatch):
