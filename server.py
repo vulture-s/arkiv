@@ -1941,9 +1941,11 @@ def retry_vision(
     results = vis.describe_frames(frame_paths)
     failed = [i for i, r in enumerate(results) if r.get("error") or not r.get("description")]
 
-    # Phase 2: fallback to lighter model for failed frames
-    if failed:
-        fallback_model = "moondream2:latest"
+    # Phase 2: fallback to lighter model for failed frames. Config-driven (unified
+    # with ingest.py) and skipped gracefully when the fallback model isn't
+    # installed, instead of 404-ing once per failed frame.
+    if failed and config.VISION_FALLBACK_MODEL and vis.model_available(config.VISION_FALLBACK_MODEL):
+        fallback_model = config.VISION_FALLBACK_MODEL
         # audit M9: hold the lock across save/swap/restore so a concurrent
         # retry-vision can't snapshot the fallback as "original" and restore it
         # as the permanent primary model.

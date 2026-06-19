@@ -734,17 +734,23 @@ def _describe_frames_with_fallback(frame_paths):
     frame_results = vis.describe_frames(frame_paths)
     failed_indices = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
     if failed_indices:
-        print(f" [Phase 1: {len(failed_indices)} failed, trying fallback]", end="", flush=True)
-        fallback_model = "minicpm-v:latest"
-        original_model = vis.VISION_MODEL
-        try:
-            vis.VISION_MODEL = fallback_model
-            retry_results = vis.describe_frames([frame_paths[i] for i in failed_indices])
-            for idx, retry_r in zip(failed_indices, retry_results):
-                if retry_r.get("description") and not retry_r.get("error"):
-                    frame_results[idx] = retry_r
-        finally:
-            vis.VISION_MODEL = original_model
+        fallback_model = config.VISION_FALLBACK_MODEL
+        if not fallback_model or not vis.model_available(fallback_model):
+            # Graceful: don't hammer Ollama with a 404 per failed frame for a
+            # fallback model that isn't installed — leave them empty for a later
+            # --vision-only retry (issue #48 tolerance still applies).
+            print(f" [Phase 1: {len(failed_indices)} failed, fallback '{fallback_model or 'none'}' 未安裝 → 跳過]", end="", flush=True)
+        else:
+            print(f" [Phase 1: {len(failed_indices)} failed, trying fallback {fallback_model}]", end="", flush=True)
+            original_model = vis.VISION_MODEL
+            try:
+                vis.VISION_MODEL = fallback_model
+                retry_results = vis.describe_frames([frame_paths[i] for i in failed_indices])
+                for idx, retry_r in zip(failed_indices, retry_results):
+                    if retry_r.get("description") and not retry_r.get("error"):
+                        frame_results[idx] = retry_r
+            finally:
+                vis.VISION_MODEL = original_model
     still_failed = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
     return frame_results, still_failed
 

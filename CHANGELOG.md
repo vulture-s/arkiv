@@ -1,6 +1,13 @@
 # Changelog
 ## Unreleased
 
+### Changed
+- **Default vision model is now `qwen2.5vl:7b` (was `qwen3-vl:8b`).** Qwen3-VL's vision path (DeepStack / interleaved-MRoPE) runs ~10x slower than Qwen2.5-VL under Ollama and often offloads the vision encoder to CPU — measured **~60s/frame vs ~8s/frame on an M2 Max** for identical frames (Ollama issues #12854 / #12882 / #14548). At ~2000 frames that's ~30h vs ~3.5h, at comparable tag quality (spot-checked). Override with `ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b` for the higher ceiling once the Ollama regression is fixed.
+
+### Fixed
+- **Vision fallback no longer 404s on every fresh install.** The Phase-2 fallback model was hardcoded — and inconsistently (`ingest.py` used `minicpm-v`, `server.py` used `moondream2`) — while `install.sh` pulled neither, so the issue-#48 resilience path silently 404'd per failed frame and left those frames empty. Now: a single configurable `ARKIV_OLLAMA_VISION_FALLBACK_MODEL` (default `minicpm-v:latest`) used by both paths, pulled by `install.sh`, and **skipped gracefully** (logged once, frame left for a later `--vision-only` retry) when the model isn't installed instead of erroring per frame.
+- **`install.sh` pulls the right models** for the new defaults: `qwen2.5vl:7b` (vision) + `minicpm-v` (fallback), alongside `bge-m3` + `qwen2.5:14b`.
+
 ## v0.9.2 - 2026-06-17
 
 ### Added
