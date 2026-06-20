@@ -6,6 +6,13 @@
   import Waveform from './Waveform.svelte'
   export let media
   export let theme = 'dark'
+  // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
+  // so show a drag-to-look sphere viewer instead of the flat still. The viewer
+  // (three.js, ~600KB) is lazy-loaded only when a 360 clip is first opened, so the
+  // main bundle isn't bloated for the common non-360 case.
+  $: is360 = /\.(insv|360)$/i.test((media && media.name) || '')
+  let Pano360 = null
+  $: if (is360 && !Pano360) import('./Pano360.svelte').then((m) => (Pano360 = m.default))
   // Live overrides — all default to mock behaviour so mock screens are unchanged.
   export let thumbUrl = null // real <img> when set, else abstract Thumb
   export let pathLabel = null // file path string; null → mock /vol/... path
@@ -89,7 +96,9 @@
   </div>
 
   <div class="preview">
-    {#if thumbUrl && !imgFailed}
+    {#if is360 && thumbUrl && !imgFailed}
+      {#if Pano360}<svelte:component this={Pano360} src={thumbUrl} />{:else}<div class="panoload"><Mono dim style="font-size:11px;">360 · loading…</Mono></div>{/if}
+    {:else if thumbUrl && !imgFailed}
       <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
     {:else}
       <Thumb seed={media.id} kind={media.kind} {theme} />
@@ -282,6 +291,7 @@
     border-bottom: 1px solid var(--rule);
   }
   .previmg { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .panoload { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--surface-2); }
   .scrim {
     position: absolute; left: 0; right: 0; bottom: 0; height: 40%;
     background-image: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent); pointer-events: none;
