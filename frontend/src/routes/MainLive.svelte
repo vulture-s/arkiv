@@ -143,7 +143,8 @@
         ['Unrated', stats.rating?.unrated ?? 0],
       ]
     : null
-  $: liveProjects = stats ? [{ id: 'msr', name: '明燒肉', count: stats.total, active: true }] : null
+  $: projectName = (stats && stats.project) || '素材庫'
+  $: liveProjects = stats ? [{ id: 'proj', name: projectName, count: stats.total, active: true }] : null
   // real disk usage for the sidebar Storage footer (replaces the mock placeholder)
   $: liveStorage = stats?.disk ?? null
   // tag click → search that tag
@@ -380,14 +381,14 @@
     <main class="center">
       <div class="toolrow">
         <div class="proj">
-          <div class="ak-display projtitle">明燒肉</div>
+          <div class="ak-display projtitle">{projectName}</div>
           <Mono dim style="font-size:11px;margin-top:5px;letter-spacing:0.04em;">
             {#if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB · live{:else}loading…{/if}
           </Mono>
         </div>
         <input
           class="ak-input livesearch"
-          placeholder="搜尋（語意 + 關鍵字）… 試 餐廳 / 吧檯 / 燈光"
+          placeholder="搜尋（語意 + 關鍵字）…"
           bind:value={query}
           on:keydown={(e) => e.key === 'Enter' && runSearch()}
         />
