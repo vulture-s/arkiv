@@ -22,6 +22,11 @@
   $: projects = liveProjects ?? PROJECTS
   $: pools = livePools ?? MOCK_POOLS
   $: tags = liveTags ?? TAGS
+  // Cap the cloud so a long tail (74+ on a real library) doesn't bury the useful
+  // ones. Tags arrive sorted by count desc, so the top slice is the most-used.
+  const TAG_CAP = 24
+  let showAllTags = false
+  $: visibleTags = showAllTags ? tags : tags.slice(0, TAG_CAP)
   // Storage footer: real disk usage when wired (live), else the design placeholder.
   const gb = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
   $: storage = liveStorage
@@ -75,13 +80,19 @@
   {/if}
 
   <section class="tagsec">
-    <Eyebrow style="margin-bottom:10px;">Tags · auto</Eyebrow>
+    <Eyebrow style="margin-bottom:10px;">Tags · auto · {tags.length}</Eyebrow>
     <div class="tags">
-      {#each tags as t (t.name)}
+      {#each visibleTags as t (t.name)}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
         <span class="tag" class:clickable={onTag} on:click={() => onTag && onTag(t.name)}>{t.name} <span class="tagcount">{t.count}</span></span>
       {/each}
     </div>
+    {#if tags.length > TAG_CAP}
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+      <span class="moretag" on:click={() => (showAllTags = !showAllTags)}>
+        {showAllTags ? '收合' : `+${tags.length - TAG_CAP} 更多`}
+      </span>
+    {/if}
   </section>
 
   <div class="spacer"></div>
@@ -127,6 +138,11 @@
   }
   .tagcount { color: var(--quiet); }
   .tag.clickable:hover { border-color: var(--ink); color: var(--ink); }
+  .moretag {
+    display: inline-block; margin-top: 8px; font-family: var(--ak-mono);
+    font-size: 10.5px; color: var(--quiet); cursor: pointer;
+  }
+  .moretag:hover { color: var(--ink); }
   .spacer { flex: 1; }
   .storage { border-top: 1px solid var(--rule); padding-top: 12px; }
   .strow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }

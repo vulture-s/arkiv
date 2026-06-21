@@ -63,3 +63,22 @@ def test_guard_accepts_reasonable_merge():
     raw = ["生肉", "魚肉", "肉類", "脂肪層", "生魚", "切片"]
     out = tq.guard_canonical(raw, ["肉類", "脂肪層", "切片"])
     assert out == ["肉類", "脂肪層", "切片"]  # all ⊂ raw, not over-merged
+
+
+# ── merge_tag_records: global tag-cloud aggregation ─────────────────────────
+def test_merge_tag_records_collapses_variant_and_sums_counts():
+    recs = [
+        {"name": "人群", "count": 15},
+        {"name": "人羣", "count": 9},   # 羣→群 variant of the above
+        {"name": "跑步", "count": 17},
+        {"name": "模糊", "count": 3},   # noise, dropped
+    ]
+    out = tq.merge_tag_records(recs)
+    names = {r["name"]: r["count"] for r in out}
+    assert names == {"跑步": 17, "人群": 24}  # variants merged, noise gone
+    assert out[0]["name"] == "人群"  # sorted by merged count desc (24 > 17)
+
+
+def test_merge_tag_records_handles_missing_count():
+    out = tq.merge_tag_records([{"name": "餐廳"}, {"name": "餐廳", "count": 2}])
+    assert out == [{"name": "餐廳", "count": 2}]
