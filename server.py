@@ -940,6 +940,13 @@ def get_media_detail(
     top = set(tag_quality.rank_media_tags(rec.get("frame_tags_parsed") or []))
     all_tags = tag_quality.filter_tag_records(db.get_tags(media_id))
     rec["tags"] = [t for t in all_tags if t["name"] in top] if top else all_tags
+    # Optional LLM-canonicalized tag list (populated by `ingest.py --canonicalize-tags`).
+    # Returned alongside raw tags so the UI can toggle raw ↔ canonical; null until run.
+    if rec.get("canonical_tags"):
+        try:
+            rec["canonical_tags"] = json.loads(rec["canonical_tags"])
+        except Exception:
+            rec["canonical_tags"] = None
     return rec
 
 

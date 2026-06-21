@@ -201,6 +201,11 @@ def init_db():
             # Phase: persist ffprobe codec so Phase 3 proxy decisions don't
             # re-probe the whole library each ingest (H1).
             ("codec", "TEXT"),
+            # Optional LLM-canonicalized media tag list (JSON array). Stored
+            # SEPARATELY from the raw vision tags (never overwrites them) so the
+            # UI can toggle raw ↔ canonical; populated on demand by the re-tag
+            # command, NULL until then.
+            ("canonical_tags", "TEXT"),
         ]:
             _add_column_if_missing(conn, "media", col, typ)  # audit L10
         for col, typ in [
@@ -503,6 +508,17 @@ def get_record_by_id(media_id: int) -> Optional[Dict]:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM media WHERE id=?", (media_id,)).fetchone()
         return dict(row) if row else None
+
+
+def set_canonical_tags(media_id: int, tags: list) -> None:
+    """Store the LLM-canonicalized tag list (JSON) for a media. Separate from the
+    raw vision tags — never touches frame_tags / the tags table."""
+    import json as _json
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE media SET canonical_tags=? WHERE id=?",
+            (_json.dumps(tags, ensure_ascii=False), media_id),
+        )
 
 
 def get_stats() -> Dict:

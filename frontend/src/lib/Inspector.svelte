@@ -31,6 +31,18 @@
   export let tags = null
   export let onAddTag = null // (name) => void
   export let onRemoveTag = null // (name) => void
+  // LLM-canonicalized tag list (string[]) — semantic-deduped (生肉/生魚→肉類).
+  // When present, a toggle switches the Tags block raw ⇄ canonical; default
+  // canonical (the cleaner view) unless the user flipped it (persisted).
+  export let canonicalTags = null
+  let showCanonical =
+    typeof localStorage === 'undefined' || localStorage.getItem('arkiv.tagview') !== 'raw'
+  function toggleTagView() {
+    showCanonical = !showCanonical
+    try { localStorage.setItem('arkiv.tagview', showCanonical ? 'canonical' : 'raw') } catch (e) { /* private mode */ }
+  }
+  $: hasCanon = !!(canonicalTags && canonicalTags.length)
+  $: useCanon = hasCanon && showCanonical
   // Live re-processing. onReprocess = async (action, opts) => {ok, message};
   // action ∈ 'retranscribe' | 'retry-vision' | 'reingest'. null → no block (mock).
   export let onReprocess = null
@@ -124,27 +136,40 @@
     </div>
   </div>
 
-  {#if tags}
+  {#if tags || hasCanon}
     <div class="block">
-      <Eyebrow style="margin-bottom:8px;">Tags</Eyebrow>
-      <div class="tagrow">
-        {#each tags as t (t.name)}
-          <span class="tagchip" class:auto={t.source === 'auto'}>
-            <span class="tagname">{t.name}</span>
-            {#if onRemoveTag}
-              <button class="tagx" title="移除標籤" on:click={() => onRemoveTag(t.name)}>×</button>
-            {/if}
-          </span>
-        {/each}
-        {#if tags.length === 0}
-          <Mono dim style="font-size:10.5px;">（無標籤）</Mono>
+      <div class="blockhead">
+        <Eyebrow>Tags</Eyebrow>
+        {#if hasCanon}
+          <button class="tagtoggle" on:click={toggleTagView} title="原始 vision tags ⇄ LLM 精簡（語意去重）">
+            {useCanon ? '精簡' : '原始'} ⇄
+          </button>
         {/if}
       </div>
-      {#if onAddTag}
-        <form class="tagadd" on:submit|preventDefault={submitTag}>
-          <input class="ak-input taginput" placeholder="加標籤…" bind:value={tagInput} />
-          <button class="ak-btn tagaddbtn" type="submit" disabled={!tagInput.trim()}>＋</button>
-        </form>
+      {#if useCanon}
+        <div class="tagrow">
+          {#each canonicalTags as t}<span class="tagchip canon">{t}</span>{/each}
+        </div>
+      {:else if tags}
+        <div class="tagrow">
+          {#each tags as t (t.name)}
+            <span class="tagchip" class:auto={t.source === 'auto'}>
+              <span class="tagname">{t.name}</span>
+              {#if onRemoveTag}
+                <button class="tagx" title="移除標籤" on:click={() => onRemoveTag(t.name)}>×</button>
+              {/if}
+            </span>
+          {/each}
+          {#if tags.length === 0}
+            <Mono dim style="font-size:10.5px;">（無標籤）</Mono>
+          {/if}
+        </div>
+        {#if onAddTag}
+          <form class="tagadd" on:submit|preventDefault={submitTag}>
+            <input class="ak-input taginput" placeholder="加標籤…" bind:value={tagInput} />
+            <button class="ak-btn tagaddbtn" type="submit" disabled={!tagInput.trim()}>＋</button>
+          </form>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -317,6 +342,13 @@
     background: var(--surface-2);
   }
   .tagchip.auto { border-style: dashed; border-color: var(--rule); color: var(--ink-2); }
+  .tagchip.canon { border-color: var(--invert); }
+  .tagtoggle {
+    appearance: none; background: transparent; border: 1px solid var(--rule);
+    font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.06em;
+    color: var(--ink-2); padding: 2px 6px; cursor: pointer;
+  }
+  .tagtoggle:hover { color: var(--ink); border-color: var(--ink); }
   .tagchip .tagname { white-space: nowrap; }
   .tagx {
     appearance: none; background: transparent; border: none; cursor: pointer;
