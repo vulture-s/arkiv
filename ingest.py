@@ -1168,6 +1168,131 @@ def _run_canonicalize_tags(args):
     print("Done. {0} processed, {1} changed, {2} failed.".format(processed, changed, failed))
 
 
+# ── Library-level alias-map proposal (embed → cluster → LLM judge → review) ──
+_ALIAS_JUDGE_PROMPT = (
+    "以下是一組語意相近的標籤候選。請判斷哪些是「同義或同概念」該合併、哪些其實是不同概念要分開。"
+    "每個要合併的概念，從候選清單裡選一個最通用的詞當代表(pref)，其餘同義詞放 alts。"
+    "不同概念各自獨立；若整組其實都不同概念就回空陣列。"
+    "**只能用清單裡出現的詞，絕對不可創造新詞，也不要把不同距離/不同事物硬合(例：路跑≠馬拉松)**。"
+    "回傳 {\"groups\":[{\"pref\":\"...\",\"alts\":[\"...\"]}]}，只輸出 JSON。\n候選標籤："
+)
+
+
+def _cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _cluster_by_cosine(names, vectors, threshold):
+    """Union-find: tags within `threshold` cosine of each other land in one group.
+    Returns candidate groups of size >= 2 (loose on purpose — the LLM is the real
+    gate that splits/rejects; clustering only needs high recall to not miss pairs)."""
+    n = len(names)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _cosine(vectors[i], vectors[j]) >= threshold:
+                parent[find(i)] = find(j)
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(names[i])
+    return [g for g in groups.values() if len(g) >= 2]
+
+
+def _run_propose_aliases(args):
+    """Propose a library-level tag alias map. Pulls the global tag cloud (already
+    variant-merged + noise-filtered), embeds every tag with bge-m3, clusters by
+    cosine to PROPOSE near-synonym groups, then asks the local chat LLM to judge
+    each cluster (pick a preferred term, confirm true synonyms, split distinct
+    concepts). Guards every group against invention. Writes a reviewable proposal
+    to .arkiv/tag_aliases.proposed.json — NOT applied until you review +
+    --apply-aliases. Non-destructive: raw tags are never touched."""
+    import json as _json
+    import llm
+    import vectordb
+    threshold = getattr(args, "alias_threshold", 0.80) or 0.80
+    records = tag_quality.merge_tag_records(db.get_all_tag_names())
+    names = [r["name"] for r in records]
+    print("Propose aliases: {0} distinct tags, cosine threshold {1}".format(len(names), threshold))
+    if len(names) < 2:
+        print("Too few tags — nothing to propose.")
+        return
+    try:
+        vectors = vectordb.embed_batch(names)
+    except Exception as e:
+        print("  batch embed failed ({0}) → per-tag embed".format(e))
+        vectors = [llm.embed(t) for t in names]
+    clusters = _cluster_by_cosine(names, vectors, threshold)
+    print("  {0} candidate clusters (size>=2) → LLM judging".format(len(clusters)))
+    out_groups = []
+    for cl in clusters:
+        cl_set = set(cl)
+        try:
+            resp = llm.chat(_ALIAS_JUDGE_PROMPT + _json.dumps(cl, ensure_ascii=False), json_mode=True)
+            proposed = _json.loads(resp["text"]).get("groups", [])
+        except Exception as e:
+            print("  cluster {0}: LLM 失敗 ({1}) → 跳過".format(cl, e))
+            continue
+        for g in proposed:
+            pref = tag_quality.canonicalize(g.get("pref") or "")
+            alts = [tag_quality.canonicalize(a) for a in (g.get("alts") or [])]
+            # guard: pref + every alt must be a real tag from THIS cluster (no
+            # invention, no cross-cluster bleed); need >=1 alt or there's no merge.
+            alts = [a for a in alts if a and a in cl_set and a != pref]
+            if pref in cl_set and alts:
+                out_groups.append({"pref": pref, "alts": alts})
+                # A group folding many alts is the over-merge risk — flag it so
+                # review scrutinizes (馬拉松≠路跑 class errors). Human gate decides.
+                warn = " ⚠ 多，請複查" if len(alts) >= 5 else ""
+                print("    {0}  ←  {1}{2}".format(pref, "/".join(alts), warn))
+    payload = {"version": 1, "groups": out_groups}
+    config.TAG_ALIASES_PROPOSED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.TAG_ALIASES_PROPOSED_PATH.write_text(
+        _json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    merged = sum(len(g["alts"]) for g in out_groups)
+    print("\nProposed {0} merge groups (folds {1} tags) → {2}".format(
+        len(out_groups), merged, config.TAG_ALIASES_PROPOSED_PATH))
+    print("Review/edit that file, then: python ingest.py --apply-aliases")
+
+
+def _run_apply_aliases(args):
+    """Activate the reviewed proposal: validate shape, then copy
+    tag_aliases.proposed.json → tag_aliases.json (the live map /api/tags reads).
+    Reversible — delete tag_aliases.json to restore the unfolded cloud."""
+    import json as _json
+    src = config.TAG_ALIASES_PROPOSED_PATH
+    if not src.exists():
+        print("No proposal at {0}. Run --propose-aliases first.".format(src))
+        return
+    try:
+        data = _json.loads(src.read_text(encoding="utf-8"))
+        groups = data.get("groups", [])
+        clean = []
+        for g in groups:
+            pref = (g.get("pref") or "").strip()
+            alts = [a.strip() for a in (g.get("alts") or []) if a and a.strip() and a.strip() != pref]
+            if pref and alts:
+                clean.append({"pref": pref, "alts": alts})
+    except (ValueError, OSError) as e:
+        print("Proposal malformed ({0}) — not applying.".format(e))
+        return
+    config.TAG_ALIASES_PATH.write_text(
+        _json.dumps({"version": 1, "groups": clean}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print("Applied {0} alias groups → {1}".format(len(clean), config.TAG_ALIASES_PATH))
+    print("Tag cloud will fold on next /api/tags (map auto-reloads on file change).")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ingest media files into SQLite DB")
     parser.add_argument("--dir", help="Media directory to scan (required unless --migrate-* / --regenerate-proxies / --vision-only)")
@@ -1176,6 +1301,9 @@ def main():
     parser.add_argument("--refresh", action="store_true", help="Re-process already-indexed files — re-extracts thumbnail + frames (not reusing cached ones, so changed extraction logic like 360 reproject re-applies) + re-runs vision (issue #53)")
     parser.add_argument("--vision-only", action="store_true", help="Only run vision on frames with empty descriptions (resume after halt)")
     parser.add_argument("--canonicalize-tags", action="store_true", help="Populate media.canonical_tags via one LLM semantic-merge per media (生肉/生魚/肉類→肉類). Non-destructive (raw tags untouched, stored separately for the UI toggle). Skips media already canonicalized. No --dir / no re-vision needed.")
+    parser.add_argument("--propose-aliases", action="store_true", help="Library-level tag dedup: embed the global tag cloud (bge-m3) → cluster near-synonyms → LLM judges each group (运动会/比赛→赛事) → writes a REVIEWABLE proposal to .arkiv/tag_aliases.proposed.json. Not applied until --apply-aliases. Non-destructive.")
+    parser.add_argument("--apply-aliases", action="store_true", help="Activate the reviewed proposal: copy tag_aliases.proposed.json → tag_aliases.json (the live map /api/tags folds the cloud by). Reversible — delete tag_aliases.json to restore.")
+    parser.add_argument("--alias-threshold", type=float, default=0.80, metavar="F", help="With --propose-aliases: cosine threshold for clustering candidate synonyms (default 0.80 — bge-m3 is anisotropic so related terms all score high; below ~0.75 every tag collapses into one blob. Raise toward 0.85 for tighter groups).")
     parser.add_argument("--max-failures", type=int, default=0, metavar="N", help="issue #48: tolerate N cumulative failed frames before halting vision (0=halt on first, the default). Failed frames are left empty for a later --vision-only retry.")
     parser.add_argument("--skip-failed", action="store_true", help="issue #48: never halt on individual frame vision failures — skip them (left empty for retry), report at end. Recommended for large unattended/overnight runs. A whole-Ollama outage still halts fast.")
     parser.add_argument(
@@ -1223,6 +1351,7 @@ def main():
         args.migrate_storage or args.migrate_relative
         or args.regenerate_proxies or args.regenerate_thumbnails or args.vision_only
         or args.canonicalize_tags
+        or args.propose_aliases or args.apply_aliases
         or bool(args.queue) or args.status
     )
     if not maintenance_mode and not args.dir:
@@ -1240,7 +1369,7 @@ def main():
 
     # Phase 8.0e: pre-flight storage check before any pipeline work.
     # Skip for maintenance modes (they're the tools that fix broken state).
-    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status or args.canonicalize_tags):
+    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status or args.canonicalize_tags or args.propose_aliases or args.apply_aliases):
         import health
         ok_pf, errors_pf = health.preflight_paths()
         if not ok_pf:
@@ -1282,6 +1411,14 @@ def main():
     # ── Canonicalize tags: LLM semantic-merge into media.canonical_tags ──
     if args.canonicalize_tags:
         _run_canonicalize_tags(args)
+        return
+
+    # ── Library-level alias map: propose / apply (global tag-cloud dedup) ──
+    if args.propose_aliases:
+        _run_propose_aliases(args)
+        return
+    if args.apply_aliases:
+        _run_apply_aliases(args)
         return
 
     # Warm up models before batch processing

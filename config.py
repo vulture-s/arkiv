@@ -71,6 +71,10 @@ THUMBNAILS_DIR = _validate_writable_path(
 PROXIES_DIR = _validate_writable_path(
     Path(os.getenv("ARKIV_PROXIES_DIR", str(_ARKIV_DIR / "proxies"))), "ARKIV_PROXIES_DIR"
 )
+# Reviewed library tag alias map (tag_aliases.py) + its proposal staging file.
+# Plain JSON in the project data dir — reviewable, version-controllable, per-project.
+TAG_ALIASES_PATH = _ARKIV_DIR / "tag_aliases.json"
+TAG_ALIASES_PROPOSED_PATH = _ARKIV_DIR / "tag_aliases.proposed.json"
 
 # Auth bootstrap (auth-tokens-1b handover).
 ARKIV_ADMIN_BOOTSTRAP_TOKEN = os.getenv("ARKIV_ADMIN_BOOTSTRAP_TOKEN", "").strip()

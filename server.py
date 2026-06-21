@@ -30,6 +30,7 @@ import db
 import federation
 import projects as project_registry
 import smart_collections
+import tag_aliases
 import tag_quality
 
 
@@ -1167,8 +1168,10 @@ def get_all_tags(
     _tok: dict = Depends(require_scopes("videos_read")),
 ):
     """All unique tag names with counts. Quality-defect tags (模糊/低解析度…)
-    are screened out — see tag_quality. Pass include_noise=1 to bypass."""
-    return tag_quality.filter_tag_records(db.get_all_tag_names())
+    are screened out, variant-char spellings (人群/人羣) merged (tag_quality), then
+    near-synonyms folded to their preferred label via the reviewed alias map
+    (tag_aliases) — a no-op until `ingest --propose-aliases`/`--apply-aliases`."""
+    return tag_aliases.fold_records(tag_quality.merge_tag_records(db.get_all_tag_names()))
 
 
 def _thumb_url(thumbnail_path):

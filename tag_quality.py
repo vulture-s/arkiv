@@ -51,6 +51,9 @@ _CHAR_VARIANTS = str.maketrans({
     "檯": "台",   # 吧檯 → 吧台
     "裏": "裡",   # 裏 → 裡
     "着": "著",   # 着 → 著
+    "羣": "群",   # 人羣 → 人群 (VLM mixes the 羣/群 variant across frames)
+    "牀": "床",   # 牀 → 床
+    "麪": "麵",   # 麪 → 麵
 })
 
 
@@ -101,6 +104,33 @@ def filter_tags(tags: Iterable[str]) -> List[str]:
 def filter_tag_records(records: Iterable[Dict]) -> List[Dict]:
     """Drop noise from a list of {name, count, ...} tag dicts (e.g. /api/tags)."""
     return [r for r in records if r.get("name") and not is_noise(r["name"])]
+
+
+def merge_tag_records(records: Iterable[Dict]) -> List[Dict]:
+    """Build the global tag cloud: drop noise, collapse variant-char spellings to
+    one canonical name, and SUM their counts (人群 + 人羣 → one row, count merged).
+
+    SQL `GROUP BY name` keeps variant spellings as separate rows; this re-aggregates
+    on the canonicalized name so the cloud shows one chip per word with the true
+    total. Output is sorted by merged count desc (stable on first-seen for ties).
+    """
+    merged: Dict[str, int] = {}
+    order: Dict[str, int] = {}
+    seq = 0
+    for r in records or []:
+        name = canonicalize(r.get("name") or "")
+        if not name or is_noise(name):
+            continue
+        try:
+            cnt = int(r.get("count") or 0)
+        except (TypeError, ValueError):
+            cnt = 0
+        if name not in order:
+            order[name] = seq
+            seq += 1
+        merged[name] = merged.get(name, 0) + cnt
+    ranked = sorted(merged, key=lambda n: (-merged[n], order[n]))
+    return [{"name": n, "count": merged[n]} for n in ranked]
 
 
 # Per-media tag count. Industry DAMs (Canto/Adobe) cap auto-tags to avoid noise —
