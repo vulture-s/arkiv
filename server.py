@@ -1148,6 +1148,10 @@ def get_stats(
     # stats-driven cloud read top_tags. Over-fetch then filter so we still get 10
     # real tags even if some of the top entries were noise.
     stats["top_tags"] = tag_quality.filter_tag_records(db.get_top_tags(40))[:10]
+    # Real project name (basename of PROJECT_ROOT) so the UI shows the loaded
+    # library instead of a hardcoded demo name. Multi-library installs (one .arkiv
+    # per project) each report their own name.
+    stats["project"] = config.PROJECT_ROOT.name if config.PROJECT_ROOT else None
     return stats
 
 
