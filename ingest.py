@@ -1219,7 +1219,7 @@ def _run_propose_aliases(args):
     import json as _json
     import llm
     import vectordb
-    threshold = getattr(args, "alias_threshold", 0.62) or 0.62
+    threshold = getattr(args, "alias_threshold", 0.80) or 0.80
     records = tag_quality.merge_tag_records(db.get_all_tag_names())
     names = [r["name"] for r in records]
     print("Propose aliases: {0} distinct tags, cosine threshold {1}".format(len(names), threshold))
@@ -1250,7 +1250,10 @@ def _run_propose_aliases(args):
             alts = [a for a in alts if a and a in cl_set and a != pref]
             if pref in cl_set and alts:
                 out_groups.append({"pref": pref, "alts": alts})
-                print("    {0}  ←  {1}".format(pref, "/".join(alts)))
+                # A group folding many alts is the over-merge risk — flag it so
+                # review scrutinizes (馬拉松≠路跑 class errors). Human gate decides.
+                warn = " ⚠ 多，請複查" if len(alts) >= 5 else ""
+                print("    {0}  ←  {1}{2}".format(pref, "/".join(alts), warn))
     payload = {"version": 1, "groups": out_groups}
     config.TAG_ALIASES_PROPOSED_PATH.parent.mkdir(parents=True, exist_ok=True)
     config.TAG_ALIASES_PROPOSED_PATH.write_text(
@@ -1300,7 +1303,7 @@ def main():
     parser.add_argument("--canonicalize-tags", action="store_true", help="Populate media.canonical_tags via one LLM semantic-merge per media (生肉/生魚/肉類→肉類). Non-destructive (raw tags untouched, stored separately for the UI toggle). Skips media already canonicalized. No --dir / no re-vision needed.")
     parser.add_argument("--propose-aliases", action="store_true", help="Library-level tag dedup: embed the global tag cloud (bge-m3) → cluster near-synonyms → LLM judges each group (运动会/比赛→赛事) → writes a REVIEWABLE proposal to .arkiv/tag_aliases.proposed.json. Not applied until --apply-aliases. Non-destructive.")
     parser.add_argument("--apply-aliases", action="store_true", help="Activate the reviewed proposal: copy tag_aliases.proposed.json → tag_aliases.json (the live map /api/tags folds the cloud by). Reversible — delete tag_aliases.json to restore.")
-    parser.add_argument("--alias-threshold", type=float, default=0.62, metavar="F", help="With --propose-aliases: cosine threshold for clustering candidate synonyms (default 0.62; lower = looser proposals, the LLM is the real gate).")
+    parser.add_argument("--alias-threshold", type=float, default=0.80, metavar="F", help="With --propose-aliases: cosine threshold for clustering candidate synonyms (default 0.80 — bge-m3 is anisotropic so related terms all score high; below ~0.75 every tag collapses into one blob. Raise toward 0.85 for tighter groups).")
     parser.add_argument("--max-failures", type=int, default=0, metavar="N", help="issue #48: tolerate N cumulative failed frames before halting vision (0=halt on first, the default). Failed frames are left empty for a later --vision-only retry.")
     parser.add_argument("--skip-failed", action="store_true", help="issue #48: never halt on individual frame vision failures — skip them (left empty for retry), report at end. Recommended for large unattended/overnight runs. A whole-Ollama outage still halts fast.")
     parser.add_argument(
