@@ -84,7 +84,9 @@
     <div class="tags">
       {#each visibleTags as t (t.name)}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-        <span class="tag" class:clickable={onTag} on:click={() => onTag && onTag(t.name)}>{t.name} <span class="tagcount">{t.count}</span></span>
+        <span class="tag" class:clickable={onTag} class:folded={t.aliases && t.aliases.length}
+          title={t.aliases && t.aliases.length ? `含別名：${t.aliases.join('、')}` : null}
+          on:click={() => onTag && onTag(t.name)}>{t.name} <span class="tagcount">{t.count}</span></span>
       {/each}
     </div>
     {#if tags.length > TAG_CAP}
@@ -138,6 +140,8 @@
   }
   .tagcount { color: var(--quiet); }
   .tag.clickable:hover { border-color: var(--ink); color: var(--ink); }
+  /* folded = absorbed near-synonyms via the alias map; subtle dotted underline. */
+  .tag.folded { border-style: dashed; }
   .moretag {
     display: inline-block; margin-top: 8px; font-family: var(--ak-mono);
     font-size: 10.5px; color: var(--quiet); cursor: pointer;
