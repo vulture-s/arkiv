@@ -288,6 +288,8 @@
   $: inspPath = detailLive ? detailLive.path : null
   // tags: detail carries the quality-filtered tag list [{id,name,source}].
   $: inspTags = detailLive ? (detailLive.tags || []) : null
+  // LLM-canonicalized tags (string[]) when the canonicalize pass has run; null otherwise.
+  $: inspCanonTags = detailLive ? (detailLive.canonical_tags || null) : null
 
   // Tag editing. Both endpoints return the full updated tag list, so reconcile
   // `detail.tags` from the response (reassign detail so detailLive recomputes).
@@ -458,6 +460,7 @@
         frameDescriptions={inspFrames}
         frameScenes={inspScenes}
         tags={inspTags}
+        canonicalTags={inspCanonTags}
         onAddTag={selected ? addTag : null}
         onRemoveTag={selected ? removeTag : null}
         onReprocess={selected ? reprocess : null}
