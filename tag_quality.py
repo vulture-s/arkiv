@@ -42,15 +42,34 @@ def is_noise(tag: str) -> bool:
     return any(sub in tag for sub in _NOISE_SUBSTRINGS)
 
 
+# CJK variant-character normalization. The VLM writes the same word with variant
+# Traditional chars across frames (吧台 vs 吧檯) — exact dedup keeps both as
+# separate tags. Map the variant char → one canonical so they collapse. CONSERVATIVE:
+# only TRUE same-word character variants, never semantic merges (生肉/生魚 is the
+# LLM-canonicalization pass's job, not this). Extend as real variants surface.
+_CHAR_VARIANTS = str.maketrans({
+    "檯": "台",   # 吧檯 → 吧台
+    "裏": "裡",   # 裏 → 裡
+    "着": "著",   # 着 → 著
+})
+
+
+def canonicalize(tag: str) -> str:
+    """Trim + normalize variant characters so variant spellings of one word
+    collapse on dedup (吧台/吧檯 → 吧台)."""
+    return (tag or "").strip().translate(_CHAR_VARIANTS)
+
+
 def filter_tags(tags: Iterable[str]) -> List[str]:
     """Drop quality-defect tags, preserving order, de-duplicating."""
     seen = set()
     out = []
     for t in tags:
-        if not t or is_noise(t) or t in seen:
+        c = canonicalize(t)
+        if not c or is_noise(c) or c in seen:
             continue
-        seen.add(t)
-        out.append(t)
+        seen.add(c)
+        out.append(c)
     return out
 
 
@@ -87,9 +106,9 @@ def rank_media_tags(frames: Iterable[Dict], top_n: int = DEFAULT_TOP_N) -> List[
         except (TypeError, ValueError):
             focus = 3.0
         for t in fr.get("tags") or []:
+            t = canonicalize(str(t))
             if not t or is_noise(t):
                 continue
-            t = str(t)
             if t not in order:
                 order[t] = seq
                 seq += 1
