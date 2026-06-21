@@ -60,6 +60,31 @@ def canonicalize(tag: str) -> str:
     return (tag or "").strip().translate(_CHAR_VARIANTS)
 
 
+def guard_canonical(raw: List[str], proposed: Iterable[str], min_keep_ratio: float = 0.34) -> List[str]:
+    """Sanitize an LLM tag-canonicalization proposal against the raw tag list.
+
+    The LLM semantic merge (生肉/生魚/肉類 → 肉類) is non-deterministic and can
+    (a) invent words not in the source (生食) or (b) over-merge / drop distinct
+    tags. This makes it SAFE: keep only proposed tags that actually existed in
+    raw (no invention), dedup preserving order, and if the merge collapses the
+    list below `min_keep_ratio` of the raw count (over-aggressive), reject it and
+    return raw unchanged. Combined with non-destructive storage + the UI toggle,
+    the worst case is "no change", never "tags destroyed".
+    """
+    raw_dedup = list(dict.fromkeys(canonicalize(t) for t in raw if t))
+    raw_set = set(raw_dedup)
+    seen = set()
+    out = []
+    for t in proposed:
+        t = canonicalize(t)
+        if t and t in raw_set and t not in seen:
+            seen.add(t)
+            out.append(t)
+    if not out or len(out) < max(1, int(len(raw_set) * min_keep_ratio)):
+        return raw_dedup  # over-merge / empty → keep raw
+    return out
+
+
 def filter_tags(tags: Iterable[str]) -> List[str]:
     """Drop quality-defect tags, preserving order, de-duplicating."""
     seen = set()

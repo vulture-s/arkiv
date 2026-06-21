@@ -43,3 +43,23 @@ def test_rank_media_tags_does_not_merge_distinct_concepts():
     frames = [{"tags": ["室內", "餐廳", "刀"], "focus_score": 3}]
     ranked = tq.rank_media_tags(frames)
     assert set(["室內", "餐廳", "刀"]).issubset(set(ranked))
+
+
+# ── guard_canonical: sanitize an LLM merge proposal ─────────────────────────
+def test_guard_strips_invented_words():
+    raw = ["生肉", "魚肉", "肉類", "生魚"]
+    # LLM invented 生食 (not in raw) + picked 肉類 (in raw)
+    assert tq.guard_canonical(raw, ["肉類", "生食"]) == ["肉類"]
+
+
+def test_guard_rejects_over_merge_falls_back_to_raw():
+    raw = ["手套", "生肉", "刀", "切割", "食品", "處理"]
+    # collapsing 6 distinct down to 1 is over-aggressive → keep raw
+    out = tq.guard_canonical(raw, ["食品"])
+    assert out == list(dict.fromkeys(raw))
+
+
+def test_guard_accepts_reasonable_merge():
+    raw = ["生肉", "魚肉", "肉類", "脂肪層", "生魚", "切片"]
+    out = tq.guard_canonical(raw, ["肉類", "脂肪層", "切片"])
+    assert out == ["肉類", "脂肪層", "切片"]  # all ⊂ raw, not over-merged

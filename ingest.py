@@ -22,6 +22,7 @@ import codec
 import config
 import db
 import frames as frm
+import tag_quality
 import transcribe as tr
 import vision as vis
 
@@ -1121,6 +1122,52 @@ def _migrate_storage():
     print(f"         rm -rf {arkiv_dir} && tar xzf {backup_path} -C {base}")
 
 
+_CANON_PROMPT = (
+    "以下是同一支影片的標籤，可能有同義詞或同概念不同詞（例：生肉/生魚/肉類、夜間/夜景）。"
+    "請把同義或同概念的合併成一個，**只能從原標籤清單裡選一個最通用的詞代表，"
+    "絕對不可創造清單以外的新詞**；不同概念一律保留。回傳 {\"tags\":[...]}，只輸出 JSON。\n原標籤："
+)
+
+
+def _run_canonicalize_tags(args):
+    """Populate media.canonical_tags via one LLM semantic-merge per media. Reads
+    the raw vision tags (rank_media_tags over frame_tags), asks the chat model to
+    merge synonyms picking only existing words, guards the result (no invention /
+    no over-merge → falls back to raw), and stores it SEPARATELY from the raw
+    tags. Skips media already canonicalized. No re-vision, no footage needed."""
+    import json as _json
+    import llm
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, frame_tags FROM media WHERE frame_tags IS NOT NULL AND canonical_tags IS NULL"
+        ).fetchall()
+    print("Canonicalize tags: {0} media pending".format(len(rows)))
+    processed = changed = failed = 0
+    for r in rows:
+        try:
+            frames = _json.loads(r["frame_tags"]) or []
+        except Exception:
+            continue
+        raw = tag_quality.rank_media_tags(frames)
+        if not raw:
+            db.set_canonical_tags(r["id"], [])
+            continue
+        try:
+            resp = llm.chat(_CANON_PROMPT + _json.dumps(raw, ensure_ascii=False), json_mode=True)
+            proposed = _json.loads(resp["text"]).get("tags", [])
+        except Exception as e:
+            failed += 1
+            print("  media {0}: LLM 失敗 ({1}) → 跳過".format(r["id"], e))
+            continue
+        clean = tag_quality.guard_canonical(raw, proposed)
+        db.set_canonical_tags(r["id"], clean)
+        processed += 1
+        if clean != raw:
+            changed += 1
+            print("  media {0}: {1} → {2}".format(r["id"], raw, clean))
+    print("Done. {0} processed, {1} changed, {2} failed.".format(processed, changed, failed))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ingest media files into SQLite DB")
     parser.add_argument("--dir", help="Media directory to scan (required unless --migrate-* / --regenerate-proxies / --vision-only)")
@@ -1128,6 +1175,7 @@ def main():
     parser.add_argument("--skip-vision", action="store_true", help="Skip llava frame description")
     parser.add_argument("--refresh", action="store_true", help="Re-process already-indexed files — re-extracts thumbnail + frames (not reusing cached ones, so changed extraction logic like 360 reproject re-applies) + re-runs vision (issue #53)")
     parser.add_argument("--vision-only", action="store_true", help="Only run vision on frames with empty descriptions (resume after halt)")
+    parser.add_argument("--canonicalize-tags", action="store_true", help="Populate media.canonical_tags via one LLM semantic-merge per media (生肉/生魚/肉類→肉類). Non-destructive (raw tags untouched, stored separately for the UI toggle). Skips media already canonicalized. No --dir / no re-vision needed.")
     parser.add_argument("--max-failures", type=int, default=0, metavar="N", help="issue #48: tolerate N cumulative failed frames before halting vision (0=halt on first, the default). Failed frames are left empty for a later --vision-only retry.")
     parser.add_argument("--skip-failed", action="store_true", help="issue #48: never halt on individual frame vision failures — skip them (left empty for retry), report at end. Recommended for large unattended/overnight runs. A whole-Ollama outage still halts fast.")
     parser.add_argument(
@@ -1174,6 +1222,7 @@ def main():
     maintenance_mode = (
         args.migrate_storage or args.migrate_relative
         or args.regenerate_proxies or args.regenerate_thumbnails or args.vision_only
+        or args.canonicalize_tags
         or bool(args.queue) or args.status
     )
     if not maintenance_mode and not args.dir:
@@ -1191,7 +1240,7 @@ def main():
 
     # Phase 8.0e: pre-flight storage check before any pipeline work.
     # Skip for maintenance modes (they're the tools that fix broken state).
-    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status):
+    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status or args.canonicalize_tags):
         import health
         ok_pf, errors_pf = health.preflight_paths()
         if not ok_pf:
@@ -1228,6 +1277,11 @@ def main():
         halted = _run_vision_only(args)
         if halted:
             sys.exit(1)  # halt mid-patch must not report success to cron/watch
+        return
+
+    # ── Canonicalize tags: LLM semantic-merge into media.canonical_tags ──
+    if args.canonicalize_tags:
+        _run_canonicalize_tags(args)
         return
 
     # Warm up models before batch processing
