@@ -81,10 +81,18 @@
     }
   }
   // single-clip export from the inspector (auth-safe download).
-  async function exportClip(id, fmt, name) {
+  async function exportClip(id, fmt, name, trim = null) {
     const stem = (name || `media_${id}`).replace(/\.[^.]+$/, '')
+    // trim = {in_s, out_s?} from the inspector IN/OUT points → backend trims the export
+    let path = api.exportPath(id, fmt)
+    if (trim && (trim.in_s != null || trim.out_s != null)) {
+      const q = []
+      if (trim.in_s != null) q.push(`in_s=${trim.in_s}`)
+      if (trim.out_s != null) q.push(`out_s=${trim.out_s}`)
+      path += `?${q.join('&')}`
+    }
     try {
-      await api.downloadFile(api.exportPath(id, fmt), `${stem}.${fmt}`)
+      await api.downloadFile(path, `${stem}.${fmt}`)
     } catch (e) {
       err = `匯出失敗: ${e.message}`
     }
@@ -486,7 +494,7 @@
         onReprocess={selected ? reprocess : null}
         languages={engineLangs}
         mediaLang={detailLive ? detailLive.lang : null}
-        onExport={selected ? (fmt) => exportClip(selected.id, fmt, selected.name) : null}
+        onExport={selected ? (fmt, trim) => exportClip(selected.id, fmt, selected.name, trim) : null}
         onRate={rate}
       />
     {/if}
