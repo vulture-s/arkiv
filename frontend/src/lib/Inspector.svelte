@@ -220,8 +220,8 @@
 
   <div class="block transcript">
     <div class="blockhead">
-      <Eyebrow>Transcript · zh-Hant</Eyebrow>
-      <Mono dim style="font-size:9.5px;">whisper-large · 98.2%</Mono>
+      <Eyebrow>Transcript{mediaLang ? ` · ${mediaLang}` : ''}</Eyebrow>
+      <Mono dim style="font-size:9.5px;">{lines.length} 段</Mono>
     </div>
     <div class="lines">
       {#if lines.length === 0}
@@ -342,7 +342,11 @@
 <style>
   .inspector {
     border-left: 1px solid var(--rule); display: flex; flex-direction: column;
-    min-height: 0; overflow: hidden;
+    /* the WHOLE inspector scrolls — preview + metadata + waveform + transcript +
+       scenes + tags + reprocess + rate can exceed the viewport, and the bottom
+       (rate buttons) was being clipped under overflow:hidden with no way to reach
+       it. The transcript no longer scrolls internally; the panel scrolls as one. */
+    min-height: 0; overflow-y: auto;
   }
   .header { padding: 18px 18px 16px; border-bottom: 1px solid var(--rule); }
   .fname {
@@ -369,10 +373,10 @@
   .block { padding: 14px 18px; border-bottom: 1px solid var(--rule); }
   .metagrid { display: grid; grid-template-columns: 64px 1fr; row-gap: 4px; column-gap: 12px; font-size: 11.5px; }
   .blockhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-  /* flex column + min-height:0 lets .lines scroll inside the inspector instead of
-     clipping a long transcript (was overflow:hidden → couldn't scroll the subs). */
-  .transcript { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .lines { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; overflow-y: auto; min-height: 0; padding-right: 4px; }
+  /* transcript flows naturally now — the whole inspector scrolls (see .inspector),
+     so a long transcript extends the panel and is reached by scrolling it. */
+  .transcript { }
+  .lines { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; padding-right: 4px; }
   .line { display: flex; gap: 10px; }
   .line.seekable { cursor: pointer; }
   .line.seekable:hover .ttext { color: var(--invert); }
