@@ -70,6 +70,11 @@ _vision_fallback_lock = _threading.Lock()
 _embed_rebuild_lock = _threading.Lock()
 _embed_rebuild_active = False
 
+# Phase 9.6d: project-wide batch retranscribe (single-flight + progress poll).
+_retranscribe_lock = _threading.Lock()
+_retranscribe_active = False
+_retranscribe_progress = {"total": 0, "done": 0, "failed": 0, "current": None, "running": False, "backup": None}
+
 # ── WebSocket connection manager ────────────────────────────────────────────
 _MAX_WS_CONNECTIONS = 32  # cap concurrent progress listeners (DoS guard)
 
@@ -3397,6 +3402,110 @@ def recorrect_revert(
     """Restore transcripts from a recorrect backup (latest if unspecified)."""
     _assert_same_site(request)
     return corrections.revert(body.backup)
+
+
+# ── Phase 9.6d: project-wide batch retranscribe (2a) ─────────────────────────
+
+class RetranscribeAllRequest(BaseModel):
+    language: Optional[str] = None
+    backup: bool = True
+
+
+@app.post("/api/retranscribe-all")
+def retranscribe_all(
+    body: RetranscribeAllRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
+    """Re-run Whisper across the whole project (the 2a upgrade path: only needed
+    when a term was mis-heard so badly that find→replace can't recover it). Each
+    clip's transcribe hot-reads the project vocabulary + correction-dictionary
+    pre-terms, so the new hotwords take effect. Long-running → single-flight
+    background task; poll GET /api/retranscribe-all/status. Snapshots transcripts
+    to the shared correction-backups first (RP-4 — restorable via the same
+    revert)."""
+    _assert_same_site(request)
+    global _retranscribe_active
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT id, path FROM media WHERE has_audio=1").fetchall()
+    targets = [(r["id"], r["path"]) for r in rows]
+    if not targets:
+        return {"queued": 0, "message": "沒有含音訊的素材可重轉錄"}
+    with _retranscribe_lock:  # refuse concurrent batch runs (mirrors embed M8)
+        if _retranscribe_active:
+            raise HTTPException(409, "批次重轉錄已在進行中，請稍候")
+        _retranscribe_active = True
+        _retranscribe_progress.update({
+            "total": len(targets), "done": 0, "failed": 0,
+            "current": None, "running": True, "backup": None,
+        })
+    background_tasks.add_task(_run_retranscribe_all, targets, body.language, body.backup)
+    return {"queued": len(targets)}
+
+
+def _run_retranscribe_all(targets, language, backup):
+    """Background worker: re-transcribe each target, preserving the single-clip
+    guard (never blank a good transcript on an empty/failed decode — audit H1)."""
+    global _retranscribe_active
+    import transcribe as tr
+    try:
+        if backup:
+            rows = []
+            with db.get_conn() as conn:
+                for mid, _ in targets:
+                    r = conn.execute(
+                        "SELECT id, transcript, segments_json, words_json FROM media WHERE id=?",
+                        (mid,),
+                    ).fetchone()
+                    if r:
+                        rows.append(dict(r))
+            if rows:
+                _retranscribe_progress["backup"] = corrections._write_backup(
+                    rows, [{"op": "retranscribe-all", "language": language}]
+                )
+        for mid, path in targets:
+            _retranscribe_progress["current"] = mid
+            media_path = _resolve_media_path(path or "")
+            if not Path(media_path).exists():
+                _retranscribe_progress["failed"] += 1
+                _retranscribe_progress["done"] += 1
+                continue
+            try:
+                text, lang, segments, words = tr.transcribe(media_path, language=language)
+            except Exception:
+                _retranscribe_progress["failed"] += 1
+                _retranscribe_progress["done"] += 1
+                continue
+            rec = db.get_record_by_id(mid) or {}
+            # refuse to overwrite a good transcript with nothing (H1)
+            if not (text or "").strip() and (rec.get("transcript") or "").strip():
+                _retranscribe_progress["failed"] += 1
+                _retranscribe_progress["done"] += 1
+                continue
+            with db.get_conn() as conn:
+                conn.execute(
+                    "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
+                    (
+                        text,
+                        lang or language,
+                        json.dumps(segments, ensure_ascii=False) if segments else None,
+                        json.dumps(words, ensure_ascii=False) if words else None,
+                        mid,
+                    ),
+                )
+            _retranscribe_progress["done"] += 1
+    finally:
+        _retranscribe_progress["running"] = False
+        _retranscribe_progress["current"] = None
+        with _retranscribe_lock:
+            _retranscribe_active = False
+
+
+@app.get("/api/retranscribe-all/status")
+def retranscribe_all_status(_tok: dict = Depends(require_scopes("projects_read"))):
+    """Poll batch-retranscribe progress {total, done, failed, current, running, backup}."""
+    return dict(_retranscribe_progress)
 
 
 # ── Serve Frontend ───────────────────────────────────────────────────────────
