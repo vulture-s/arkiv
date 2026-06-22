@@ -15,6 +15,13 @@
   $: if (is360 && !Pano360) import('./Pano360.svelte').then((m) => (Pano360 = m.default))
   // Live overrides — all default to mock behaviour so mock screens are unchanged.
   export let thumbUrl = null // real <img> when set, else abstract Thumb
+  // Real stream URL (api.streamUrl) → the preview becomes a playable <video>/<audio>
+  // element instead of a static poster. This is the actual playback the
+  // mock-derived inspector was missing (the old .controls overlay was a fake
+  // scrubber on a still image). null → poster/placeholder behaviour unchanged.
+  export let videoSrc = null
+  $: useVideo = !!videoSrc && !is360 && !!media && media.kind !== 'audio'
+  $: useAudio = !!videoSrc && !!media && media.kind === 'audio'
   export let pathLabel = null // file path string; null → mock /vol/... path
   export let transcriptLines = null // [[tc,text,hl],...]; null → mock lines
   export let frameDescriptions = null // string[]; when set, render a Vision block
@@ -107,23 +114,34 @@
     </Mono>
   </div>
 
-  <div class="preview">
+  <div class="preview" class:hasplayer={useVideo || useAudio}>
     {#if is360 && thumbUrl && !imgFailed}
       {#if Pano360}<svelte:component this={Pano360} src={thumbUrl} />{:else}<div class="panoload"><Mono dim style="font-size:11px;">360 · loading…</Mono></div>{/if}
+    {:else if useVideo}
+      <!-- svelte-ignore a11y-media-has-caption -->
+      <video class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+    {:else if useAudio}
+      {#if thumbUrl && !imgFailed}
+        <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
+      {/if}
+      <audio class="prevaudio" controls preload="metadata" src={videoSrc}></audio>
     {:else if thumbUrl && !imgFailed}
       <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
     {:else}
       <Thumb seed={media.id} kind={media.kind} {theme} />
     {/if}
-    <div class="scrim"></div>
-    <div class="controls">
-      <Mono style="font-size:11px;color:#f3f2ee;">00:00:42</Mono>
-      <div class="track">
-        <div class="trackfill"></div>
-        <div class="trackhead"></div>
+    {#if !useVideo && !useAudio}
+      <!-- mock/poster fallback only: fake scrubber overlay (no real player wired) -->
+      <div class="scrim"></div>
+      <div class="controls">
+        <Mono style="font-size:11px;color:#f3f2ee;">00:00:42</Mono>
+        <div class="track">
+          <div class="trackfill"></div>
+          <div class="trackhead"></div>
+        </div>
+        <Mono style="font-size:11px;color:#f3f2ee;">{media.dur}</Mono>
       </div>
-      <Mono style="font-size:11px;color:#f3f2ee;">{media.dur}</Mono>
-    </div>
+    {/if}
   </div>
 
   <div class="block">
@@ -316,6 +334,9 @@
     border-bottom: 1px solid var(--rule);
   }
   .previmg { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* the real player: contain (don't crop footage) on black; audio sits at the bottom */
+  video.previmg { object-fit: contain; background: #000; }
+  .prevaudio { position: absolute; left: 12px; right: 12px; bottom: 12px; width: auto; }
   .panoload { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--surface-2); }
   .scrim {
     position: absolute; left: 0; right: 0; bottom: 0; height: 40%;
