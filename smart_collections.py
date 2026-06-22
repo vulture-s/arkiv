@@ -17,9 +17,10 @@ Consumes the shape returned by db helpers (see media_signal()).
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import geo
 
@@ -59,6 +60,11 @@ class Collection:
     boosters: Sequence[Booster] = field(default_factory=tuple)
     # Weight of the base tag-overlap signal (rest of score comes from boosters).
     tag_weight: float = 1.0
+    # Optional STRUCTURAL membership: a predicate on the raw media row (rating,
+    # processed_at, has_audio…) instead of tag overlap. When set, membership is
+    # purely predicate(row) and tags are ignored — this is how domain-agnostic
+    # collections (待審查 / 最近匯入) work for ANY project, not a hardcoded vocab.
+    predicate: Optional[Callable[[Dict[str, Any]], bool]] = None
 
 
 def media_signal(media: Dict[str, Any]) -> Dict[str, Any]:
@@ -153,6 +159,9 @@ def _booster_applies(b: Booster, sig: Dict[str, Any]) -> bool:
 
 def score_collection(media: Dict[str, Any], col: Collection) -> float:
     """Score a media item against one collection. 0.0 = no signal / hard-rejected."""
+    # Structural collections: membership is the predicate, not tag overlap.
+    if col.predicate is not None:
+        return 1.0 if col.predicate(media) else 0.0
     sig = media_signal(media)
 
     # Hard filters (membership gates).
@@ -203,27 +212,47 @@ def classify(media: Dict[str, Any], collections: Sequence[Collection]) -> List[D
 
 # ── Tier-1 definitions — Hevin's real shooting archetypes ────────────────────
 # Tags are arkiv's qwen3-vl Chinese vocabulary (verified against ingested data).
+_RECENT_DAYS = 14
+
+
+def _is_unrated(m: Dict[str, Any]) -> bool:
+    """No editorial rating yet → belongs in the review queue."""
+    r = m.get("rating")
+    return r is None or (isinstance(r, str) and r.strip() == "")
+
+
+def _recently_ingested(m: Dict[str, Any]) -> bool:
+    """processed_at within the last _RECENT_DAYS — project-agnostic 'new arrivals'."""
+    ts = m.get("processed_at")
+    if not ts:
+        return False
+    try:
+        t = _dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_dt.timezone.utc)
+    return (_dt.datetime.now(_dt.timezone.utc) - t).days <= _RECENT_DAYS
+
+
+# Tier-1 collections are now DOMAIN-AGNOSTIC structural buckets that hold for any
+# project (the old food-specific 食材特寫/店內空景 were hardcoded for one shoot and
+# mis-classified e.g. cable-making clips via the 切割 tag). Topical/auto-derived
+# and per-project collections are deferred (B + C).
 DEFAULT_COLLECTIONS: List[Collection] = [
     Collection(
-        key="food_closeup",
-        title="食材特寫",
-        category="content",
-        tags=["生肉", "肉類", "肉品", "生豬肉", "生魚", "三文魚", "切割", "切片", "切痕",
-              "脂肪層", "食材", "食品處理", "肉類加工", "砧板", "廚房"],
-        boosters=(
-            Booster(boost=0.15, any_tags=["切割", "切片", "切痕"]),
-            Booster(boost=0.10, any_tags=["手套", "紫色手套", "手部操作"]),
-        ),
+        key="recent",
+        title="最近匯入",
+        category="status",
+        tags=(),
+        predicate=_recently_ingested,
     ),
     Collection(
-        key="interior_establishing",
-        title="店內空景",
-        category="content",
-        tags=["餐廳", "咖啡館", "吧檯", "室內", "座椅", "燈光", "低光", "條紋牆面", "幾何結構"],
-        boosters=(
-            Booster(boost=0.15, content_types=["Establishing"]),
-            Booster(boost=0.10, atmospheres=["舒適", "幽暗"]),
-        ),
+        key="needs_review",
+        title="待審查",
+        category="status",
+        tags=(),
+        predicate=_is_unrated,
     ),
     Collection(
         key="unusable",

@@ -1,8 +1,9 @@
-"""Unit tests for smart collections engine (collections.py).
+"""Unit tests for smart collections engine (smart_collections.py).
 
-Fixtures are the REAL qwen3-vl tags from the 5 明燒肉 clips ingested 2026-05-31
-(verified against .arkiv/project.db), so expected memberships are ground truth:
-  C3742 → 店內空景   C3747/C3750/C3756 → 食材特寫   C3811 → 廢鏡
+Tier-1 collections are now DOMAIN-AGNOSTIC structural buckets (待審查 / 最近匯入 /
+廢鏡) so any project classifies correctly — the old hardcoded food vocab
+(食材特寫/店內空景) mis-filed non-food projects (cable-making's 切割 tag). The
+qwen3-vl tag fixtures (C37xx) still exercise the tag engine + media_signal.
 """
 from __future__ import annotations
 
@@ -47,64 +48,73 @@ def _keys(media):
     return {r["key"] for r in sc.classify(media, COLS)}
 
 
-# ── ground-truth membership ──────────────────────────────────────────────────
-def test_interior_clip_joins_interior_collection():
-    assert "interior_establishing" in _keys(C3742)
+# ── structural collection membership (domain-agnostic Tier-1) ────────────────
+# The Tier-1 collections are now project-agnostic structural buckets (待審查 /
+# 最近匯入 / 廢鏡), NOT the old hardcoded food vocab — so a non-food project
+# (e.g. cable-making) is never mis-filed into 食材特寫.
+def _now_iso():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
-def test_meat_clips_join_food_collection():
-    for clip in (C3747, C3750, C3756):
-        assert "food_closeup" in _keys(clip), clip["tags"]
+def test_unrated_clip_joins_needs_review():
+    assert "needs_review" in _keys({"duration_s": 5, "has_audio": 1, "tags": [], "rating": None})
+
+
+def test_rated_clip_not_in_needs_review():
+    assert "needs_review" not in _keys(
+        {"duration_s": 5, "has_audio": 1, "tags": [], "rating": "good"})
+
+
+def test_recent_clip_joins_recent():
+    assert "recent" in _keys(
+        {"duration_s": 5, "tags": [], "rating": "good", "processed_at": _now_iso()})
+
+
+def test_old_clip_not_in_recent():
+    assert "recent" not in _keys(
+        {"duration_s": 5, "tags": [], "rating": "good", "processed_at": "2000-01-01T00:00:00+00:00"})
 
 
 def test_unusable_clip_joins_unusable_collection():
     assert "unusable" in _keys(C3811)
 
 
-# ── separation (no false positives across the obvious divides) ───────────────
-def test_interior_clip_not_in_food():
-    assert "food_closeup" not in _keys(C3742)
+def test_clip_can_belong_to_multiple_structural_collections():
+    # non-exclusive membership: unrated AND recent → both buckets
+    keys = _keys({"duration_s": 5, "tags": [], "rating": None, "processed_at": _now_iso()})
+    assert {"needs_review", "recent"} <= keys
 
 
-def test_meat_clip_not_in_interior():
-    assert "interior_establishing" not in _keys(C3747)
-
-
-# ── scoring mechanics ────────────────────────────────────────────────────────
-def test_no_tag_overlap_scores_zero():
-    blank = {"duration_s": 5, "has_audio": 1, "tags": ["航空", "雲海", "日出"], "frames": []}
+# ── scoring mechanics (tag engine, exercised via 廢鏡 + ad-hoc collections) ────
+def test_no_defect_tags_not_unusable():
+    # content tags but no quality-defect tags, rated + old → joins NOTHING
+    blank = {"duration_s": 5, "has_audio": 1, "tags": ["航空", "雲海", "日出"],
+             "rating": "good", "processed_at": "2000-01-01T00:00:00+00:00"}
     assert sc.classify(blank, COLS) == []
 
 
 def test_score_below_threshold_excluded():
-    # a single weak tag hit stays under MIN_CONFIDENCE without boosters
+    # a single weak tag hit stays under MIN_CONFIDENCE without boosters (ad-hoc col)
+    col = sc.Collection(key="t", title="t", category="c",
+                        tags=["室內", "吧檯", "座椅", "燈光", "低光", "餐廳"])
     weak = {"duration_s": 5, "has_audio": 1, "tags": ["室內"], "frames": []}
-    interior = next(c for c in COLS if c.key == "interior_establishing")
-    s = sc.score_collection(weak, interior)
-    assert s < sc.MIN_CONFIDENCE
+    assert sc.score_collection(weak, col) < sc.MIN_CONFIDENCE
 
 
 def test_booster_raises_score():
-    interior = next(c for c in COLS if c.key == "interior_establishing")
-    # same tags, but C3742 has Establishing frames → booster fires
-    base = {"duration_s": 6, "has_audio": 1,
-            "tags": ["餐廳", "咖啡館", "吧檯", "室內"], "frames": []}
-    boosted = dict(base, frames=[{"content_type": "Establishing", "atmosphere": "舒適"}])
-    assert sc.score_collection(boosted, interior) > sc.score_collection(base, interior)
+    # boosters lift a tag-based score (ad-hoc col, project-neutral)
+    col = sc.Collection(key="t", title="t", category="c", tags=["吧檯", "室內", "座椅"],
+                        boosters=(sc.Booster(boost=0.2, content_types=["Establishing"]),))
+    base = {"duration_s": 6, "has_audio": 1, "tags": ["吧檯", "室內", "座椅"], "frames": []}
+    boosted = dict(base, frames=[{"content_type": "Establishing"}])
+    assert sc.score_collection(boosted, col) > sc.score_collection(base, col)
 
 
 def test_classify_sorted_desc():
-    rows = sc.classify(C3747, COLS)
+    rows = sc.classify(C3811, COLS)
     scores = [r["score"] for r in rows]
     assert scores == sorted(scores, reverse=True)
-
-
-def test_non_exclusive_membership_possible():
-    # C3756 is both 食材 (三文魚/切片/肉類) and has 模糊 — but 模糊 alone is 1 weak
-    # hit for 廢鏡, should stay under threshold → only food. Asserts non-exclusivity
-    # is allowed yet threshold still gates.
-    keys = _keys(C3756)
-    assert "food_closeup" in keys
 
 
 # ── media_signal normalization ───────────────────────────────────────────────
