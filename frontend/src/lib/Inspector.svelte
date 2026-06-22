@@ -123,6 +123,7 @@
   export let languages = null // [{code,label}] for the retranscribe picker
   export let mediaLang = null // current clip language → default selection
   let imgFailed = false
+  let showMore = false // reveal the ancillary (成品輔助) export group
   let tagInput = ''
   function submitTag() {
     const v = tagInput.trim()
@@ -395,19 +396,30 @@
         >{label}</button>
       {/each}
     </div>
+    <!-- primary exports = footage→edit handoff (Resolve). Per the scope spec,
+         finished-product-adjacent formats (Remotion / YouTube chapters) are NOT
+         here — they're demoted to the ancillary "更多" group below. -->
     <div class="exports">
       {#if onExport}
         {#each EXPORT_FMTS as fmt}
           <button class="ak-btn exp" on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{trimArgs ? ' ✂' : ''}</button>
         {/each}
-        {#if onChapters}<button class="ak-btn exp" on:click={() => onChapters('youtube')} title="YouTube 章節（場景時間軸）">章節</button>{/if}
-        {#if onRemotion}<button class="ak-btn exp" on:click={onRemotion} title="Remotion 字幕 props（逐字時間戳）">Remotion</button>{/if}
       {:else}
         <button class="ak-btn exp">EDL</button>
         <button class="ak-btn exp">FCPXML</button>
         <button class="ak-btn exp">SRT</button>
       {/if}
     </div>
+    {#if onChapters || onRemotion}
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+      <span class="moreexp" on:click={() => (showMore = !showMore)}>{showMore ? '成品輔助 ▴' : '更多 · 成品輔助 ▾'}</span>
+      {#if showMore}
+        <div class="exports sub">
+          {#if onChapters}<button class="ak-btn exp ghost" on:click={() => onChapters('youtube')} title="YouTube 章節文字（成品輔助，非 arkiv 核心）">YT 章節</button>{/if}
+          {#if onRemotion}<button class="ak-btn exp ghost" on:click={onRemotion} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion</button>{/if}
+        </div>
+      {/if}
+    {/if}
     {#if onReveal}
       <button class="ak-btn reveal" on:click={onReveal} title="在 Finder / 檔案總管中顯示原始檔">⊙ 在 Finder 顯示</button>
     {/if}
@@ -433,6 +445,12 @@
     border-bottom: 1px solid var(--rule);
   }
   .reveal { font-size: 11px; padding: 4px 10px; margin-top: 8px; width: 100%; }
+  /* ancillary export disclosure (成品輔助) — visually secondary to the primary row */
+  .moreexp { display: inline-block; margin-top: 8px; font-size: 10.5px; color: var(--quiet); cursor: pointer; }
+  .moreexp:hover { color: var(--ink); }
+  .exports.sub { margin-top: 6px; }
+  .exp.ghost { font-size: 10.5px; color: var(--quiet); border-style: dashed; }
+  .exp.ghost:hover { color: var(--ink); }
   .inout { display: flex; gap: 6px; margin-top: 8px; }
   .io { font-size: 10.5px; padding: 3px 8px; }
   .io.clr { color: var(--quiet); }
