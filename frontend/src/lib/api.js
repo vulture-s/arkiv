@@ -89,6 +89,28 @@ export const scanMedia = (path, opts) =>
 // {whisper_modes:[{mode,name}], default_mode, languages:[{code,label}]}.
 export const getIngestEngines = (opts) => req('/api/ingest/engines', opts)
 
+// ---- correction dictionary (Phase 9.6) ----
+// One per-project dictionary, two paths: pre-rules feed the Whisper hotword
+// list; post-rules batch-rewrite stored transcripts (recorrect).
+// GET → {rules:[{from,to,scope,pre,post}]}
+export const getCorrections = (opts) => req('/api/corrections', opts)
+// PUT replaces the whole dictionary → {ok, rules, count}
+export const putCorrections = (rules, opts) =>
+  req('/api/corrections', { method: 'PUT', body: { rules }, ...opts })
+// POST recorrect, dry-run by default — preview only, writes nothing.
+// → {dry_run:true, rules:[{from,to,scope,hits}], media_affected, total_hits, affected:[…]}
+export const recorrectPreview = (opts) =>
+  req('/api/recorrect', { method: 'POST', ...opts })
+// Apply (dry_run=0); rebuild=1 chains the embedding rebuild.
+// → {dry_run:false, media_updated, total_hits, backup, embed_rebuild_started}
+export const recorrectApply = (rebuild = false, opts) =>
+  req(`/api/recorrect${qs({ dry_run: 0, rebuild: rebuild ? 1 : 0 })}`, { method: 'POST', ...opts })
+// GET → {backups:[name]} (newest first)
+export const getRecorrectBackups = (opts) => req('/api/recorrect/backups', opts)
+// POST restore from a backup (latest if name omitted) → {restored, backup}
+export const recorrectRevert = (backup = null, opts) =>
+  req('/api/recorrect/revert', { method: 'POST', body: { backup }, ...opts })
+
 // POST /api/ingest/ws {path, limit, …options} — trigger ingest with WS progress.
 // `options` forwards the engine flags the setup dialog exposes (skip_vision,
 // refresh, recursive, max_failures, skip_failed, no_embed); omitted keys keep

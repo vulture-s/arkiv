@@ -18,9 +18,10 @@
   import { themePref, resolvedTheme } from '../lib/prefs.js'
 
   const VERSION = 'v0.9.2'
-  let section = 'appearance' // appearance | engine | system
+  let section = 'appearance' // appearance | vocab | engine | system
   const nav = [
     ['appearance', 'Appearance'],
+    ['vocab', 'Vocabulary'],
     ['engine', 'Engine'],
     ['system', 'System · about'],
   ]
@@ -82,7 +83,61 @@
     } catch (e) { cacheMsg = `失敗: ${e.message}` } finally { cacheBusy = false }
   }
 
-  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache() })
+  // Correction dictionary (Phase 9.6) — one per-project dictionary, two paths:
+  // pre-rules feed the Whisper hotword list; post-rules batch-rewrite stored
+  // transcripts (recorrect). Editor here writes .arkiv/corrections.json.
+  let rules = [] // [{from,to,scope,pre,post}]
+  let vocabMsg = ''
+  let vocabBusy = false
+  let preview = null // dry-run result {media_affected,total_hits,rules:[{from,to,scope,hits}]}
+  let applyResult = null // {media_updated,total_hits,backup,embed_rebuild_started}
+  let backups = []
+  let doRebuild = false
+  const normRule = (r) => ({ from: r.from || '', to: r.to || '', scope: r.scope || 'global', pre: !!r.pre, post: r.post !== false })
+  async function loadVocab() {
+    try { rules = ((await api.getCorrections()).rules || []).map(normRule) } catch { rules = [] }
+    try { backups = (await api.getRecorrectBackups()).backups || [] } catch { backups = [] }
+  }
+  function addRule() { rules = [...rules, { from: '', to: '', scope: 'global', pre: false, post: true }]; preview = null }
+  function removeRule(i) { rules = rules.filter((_, j) => j !== i); preview = null }
+  async function saveVocab() {
+    if (vocabBusy) return
+    vocabBusy = true; vocabMsg = ''
+    try {
+      const res = await api.putCorrections(rules.filter((r) => (r.from || '').trim()))
+      rules = (res.rules || []).map(normRule)
+      vocabMsg = `已存 ${res.count} 條規則`
+      preview = null
+    } catch (e) { vocabMsg = `失敗: ${e.message}` } finally { vocabBusy = false }
+  }
+  async function runPreview() {
+    if (vocabBusy) return
+    vocabBusy = true; vocabMsg = ''; applyResult = null
+    try { preview = await api.recorrectPreview() }
+    catch (e) { vocabMsg = `預覽失敗: ${e.message}` } finally { vocabBusy = false }
+  }
+  async function runApply() {
+    if (vocabBusy) return
+    vocabBusy = true; vocabMsg = ''
+    try {
+      applyResult = await api.recorrectApply(doRebuild)
+      preview = null
+      backups = (await api.getRecorrectBackups()).backups || []
+      vocabMsg = `已套用：更新 ${applyResult.media_updated} 筆、${applyResult.total_hits} 處替換`
+    } catch (e) { vocabMsg = `套用失敗: ${e.message}` } finally { vocabBusy = false }
+  }
+  async function runRevert() {
+    if (vocabBusy) return
+    vocabBusy = true; vocabMsg = ''
+    try {
+      const r = await api.recorrectRevert()
+      applyResult = null
+      vocabMsg = r.error ? `還原失敗: ${r.error}` : `已還原 ${r.restored} 筆（${r.backup}）`
+      backups = (await api.getRecorrectBackups()).backups || []
+    } catch (e) { vocabMsg = `還原失敗: ${e.message}` } finally { vocabBusy = false }
+  }
+
+  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab() })
 
   const gb = (n) => (n == null ? '—' : n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
   const mb = (n) => (n == null ? '—' : n >= 1000 ? `${(n / 1000).toFixed(1)} GB` : `${Math.round(n)} MB`)
@@ -140,6 +195,68 @@
                 <span class="pend">px-layout · not adjustable yet</span>
               </div>
             </div>
+          </section>
+        {:else if section === 'vocab'}
+          <section>
+            <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">CORRECTION DICTIONARY · 校正字典</Eyebrow>
+              <div class="ak-display fstitle">Vocabulary</div>
+              <div class="fsdesc">一本 per-project 字典，兩條路徑：<b>pre</b> 把 <code>to</code> 詞餵 Whisper hotword（轉錄前防聽錯）；<b>post</b> 把 <code>from→to</code> 套到已存逐字稿（批次校正，秒級修整庫搜尋召回、不碰音訊）。寫入 <code>.arkiv/corrections.json</code>。</div>
+            </div>
+
+            <div class="vrules">
+              <div class="vhead"><span>FROM</span><span>TO</span><span>SCOPE</span><span>PRE</span><span>POST</span><span></span></div>
+              {#each rules as r, i}
+                <div class="crow">
+                  <input class="vin" bind:value={r.from} placeholder="富田" />
+                  <input class="vin" bind:value={r.to} placeholder="Furutech" />
+                  <select class="vsel" bind:value={r.scope}>
+                    <option value="global">global</option>
+                    <option value="word">word</option>
+                    <option value="line">line</option>
+                  </select>
+                  <input class="vcb" type="checkbox" bind:checked={r.pre} title="餵 hotword（轉錄前）" />
+                  <input class="vcb" type="checkbox" bind:checked={r.post} title="套已存逐字稿（轉錄後）" />
+                  <button class="vx" on:click={() => removeRule(i)} title="移除">✕</button>
+                </div>
+              {/each}
+              {#if !rules.length}<div class="vempty">尚無規則 — 點下方「新增規則」。</div>{/if}
+            </div>
+
+            <div class="vctl">
+              <button class="ak-btn" on:click={addRule}>+ 新增規則</button>
+              <button class="ak-btn" on:click={saveVocab} disabled={vocabBusy}>儲存字典</button>
+            </div>
+
+            <div class="vdiv"></div>
+
+            <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">BATCH RECORRECT · 批次套用</Eyebrow>
+              <div class="fsdesc">把 <b>post</b> 規則套到整個專案已存的逐字稿（transcript + 時間軸 segments 同步改）。<b>預覽不寫入</b>；套用前自動備份，可還原。</div>
+            </div>
+            <div class="vctl">
+              <button class="ak-btn" on:click={runPreview} disabled={vocabBusy}>預覽命中</button>
+              <label class="vchk"><input class="vcb" type="checkbox" bind:checked={doRebuild} /> 套用後重建向量索引</label>
+              <button class="ak-btn" on:click={runApply} disabled={vocabBusy || !preview || !preview.total_hits}>套用校正</button>
+              {#if backups.length}<button class="ak-btn" on:click={runRevert} disabled={vocabBusy}>還原最近一次</button>{/if}
+            </div>
+
+            {#if preview}
+              <div class="vresult">
+                <Mono style="font-size:12px;color:var(--ink);">預覽：{preview.media_affected} 筆素材 · {preview.total_hits} 處替換</Mono>
+                {#each preview.rules.filter((x) => x.hits) as x}
+                  <Mono dim style="font-size:11px;">· {x.from} → {x.to || '(刪除)'} [{x.scope}] ×{x.hits}</Mono>
+                {/each}
+                {#if !preview.total_hits}<Mono dim style="font-size:11px;">沒有命中（post 關閉、或無 transcript 含這些詞）。先「儲存字典」再預覽。</Mono>{/if}
+              </div>
+            {/if}
+            {#if applyResult}
+              <div class="vresult">
+                <Mono style="font-size:12px;color:var(--ink);">✓ 已套用：更新 {applyResult.media_updated} 筆 · {applyResult.total_hits} 處{applyResult.embed_rebuild_started ? ' · 向量索引重建中' : ''}</Mono>
+                {#if applyResult.backup}<Mono dim style="font-size:11px;">備份 {applyResult.backup} — 可還原</Mono>{/if}
+              </div>
+            {/if}
+            {#if vocabMsg}<div class="vmsg"><Mono dim style="font-size:11px;">{vocabMsg}</Mono></div>{/if}
           </section>
         {:else if section === 'engine'}
           <section>
@@ -233,4 +350,23 @@
   .pend { font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--quiet-2); border: 1px dashed var(--rule-hi); padding: 2px 7px; width: fit-content; }
   .livedot { color: var(--cyan); font-size: 9px; }
   .proxyctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  /* correction dictionary (Phase 9.6c) */
+  .vrules { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .vhead, .crow { display: grid; grid-template-columns: 1fr 1fr 88px 36px 36px 28px; align-items: center; gap: 8px; }
+  .vhead { font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.08em; color: var(--quiet-2); padding: 0 2px; }
+  .vhead span { text-align: center; }
+  .vhead span:nth-child(1), .vhead span:nth-child(2) { text-align: left; }
+  .vin { font-family: inherit; font-size: 13px; color: var(--ink); background: transparent; border: 1px solid var(--rule); padding: 6px 9px; outline: none; }
+  .vin:focus { border-color: var(--invert); }
+  .vsel { font-family: var(--ak-mono); font-size: 10.5px; color: var(--ink); background: transparent; border: 1px solid var(--rule); padding: 5px 4px; outline: none; }
+  .vcb { justify-self: center; accent-color: var(--invert); cursor: pointer; }
+  .vx { background: transparent; border: none; color: var(--quiet-2); cursor: pointer; font-size: 12px; padding: 4px; }
+  .vx:hover { color: var(--cyan); }
+  .vempty { font-size: 12px; color: var(--quiet); padding: 8px 2px; }
+  .vctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .vchk { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-2); cursor: pointer; }
+  .vdiv { height: 1px; background: var(--rule); margin: 20px 0 16px; }
+  .vresult { display: flex; flex-direction: column; gap: 3px; margin-top: 12px; padding: 10px 12px; box-shadow: inset 0 0 0 1px var(--rule); }
+  .vmsg { margin-top: 8px; }
 </style>
