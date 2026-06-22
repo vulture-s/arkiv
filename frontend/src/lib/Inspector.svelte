@@ -79,6 +79,12 @@
   // (fmt) => void; triggers an authenticated download for this clip. When set,
   // the export buttons become live; null → mock screens keep the inert buttons.
   export let onExport = null
+  // Extra clip actions (live only): onChapters(format) downloads YouTube chapters,
+  // onRemotion() downloads Remotion caption props, onReveal() reveals the source
+  // file in Finder/Explorer. null → button hidden (mock screens unchanged).
+  export let onChapters = null
+  export let onRemotion = null
+  export let onReveal = null
   // Live tag editing. tags = [{id,name,source}] → renders the editable Tags block;
   // null → no block (mock screens unchanged). onAddTag/onRemoveTag wire the writes.
   export let tags = null
@@ -379,12 +385,17 @@
         {#each EXPORT_FMTS as fmt}
           <button class="ak-btn exp" on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{trimArgs ? ' ✂' : ''}</button>
         {/each}
+        {#if onChapters}<button class="ak-btn exp" on:click={() => onChapters('youtube')} title="YouTube 章節（場景時間軸）">章節</button>{/if}
+        {#if onRemotion}<button class="ak-btn exp" on:click={onRemotion} title="Remotion 字幕 props（逐字時間戳）">Remotion</button>{/if}
       {:else}
         <button class="ak-btn exp">EDL</button>
         <button class="ak-btn exp">FCPXML</button>
         <button class="ak-btn exp">SRT</button>
       {/if}
     </div>
+    {#if onReveal}
+      <button class="ak-btn reveal" on:click={onReveal} title="在 Finder / 檔案總管中顯示原始檔">⊙ 在 Finder 顯示</button>
+    {/if}
   </div>
 </aside>
 
@@ -406,6 +417,7 @@
     position: relative; aspect-ratio: 16 / 9; background: var(--surface-2);
     border-bottom: 1px solid var(--rule);
   }
+  .reveal { font-size: 11px; padding: 4px 10px; margin-top: 8px; width: 100%; }
   .inout { display: flex; gap: 6px; margin-top: 8px; }
   .io { font-size: 10.5px; padding: 3px 8px; }
   .io.clr { color: var(--quiet); }

@@ -97,6 +97,22 @@
       err = `匯出失敗: ${e.message}`
     }
   }
+  const _stem = (id, name) => (name || `media_${id}`).replace(/\.[^.]+$/, '')
+  async function exportChapters(id, name, format = 'youtube') {
+    try {
+      const r = await api.getChapters(id, format)
+      api.downloadText(r.chapters || '', `${_stem(id, name)}.chapters.txt`)
+    } catch (e) { err = `章節匯出失敗: ${e.message}` }
+  }
+  async function exportRemotion(id, name) {
+    try {
+      const r = await api.getRemotionProps(id)
+      api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
+    } catch (e) { err = `Remotion 匯出失敗: ${e.message}` }
+  }
+  async function revealFile(path) {
+    try { await api.openFile(path, true) } catch (e) { err = `在 Finder 顯示失敗: ${e.message}` }
+  }
 
   async function load() {
     state = 'loading'
@@ -495,6 +511,9 @@
         languages={engineLangs}
         mediaLang={detailLive ? detailLive.lang : null}
         onExport={selected ? (fmt, trim) => exportClip(selected.id, fmt, selected.name, trim) : null}
+        onChapters={selected ? (fmt) => exportChapters(selected.id, selected.name, fmt) : null}
+        onRemotion={selected ? () => exportRemotion(selected.id, selected.name) : null}
+        onReveal={inspPath ? () => revealFile(inspPath) : null}
         onRate={rate}
       />
     {/if}
