@@ -233,7 +233,7 @@
 
 <style>
   /* error red — the LOCKED exception to the B&W palette, failures only */
-  .artboard { --danger: #e0563a; width: 1400px; height: 900px; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
+  .artboard { --danger: #e0563a; width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
   .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
 

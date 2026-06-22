@@ -246,6 +246,20 @@
   }
   $: if (selected && selected.id !== detailId) fetchDetail(selected.id)
 
+  // Real audio waveform peaks (0..1) from the backend ffmpeg endpoint — fetched
+  // per clip, passed to the inspector's <Waveform>. Replaces the old mock sin bars.
+  let wavePeaks = null
+  let waveId = null
+  async function fetchWaveform(id) {
+    waveId = id; wavePeaks = null
+    try {
+      const w = await api.getWaveform(id)
+      if (waveId === id) wavePeaks = (w && w.peaks) || null
+    } catch (e) { if (waveId === id) wavePeaks = null }
+  }
+  $: if (selected && selected.id !== waveId) fetchWaveform(selected.id)
+  $: inspPeaks = waveId === (selected && selected.id) ? wavePeaks : null
+
   const secToTc = (s) => {
     s = Math.round(s || 0)
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
@@ -258,7 +272,7 @@
   $: detailLive = detail && detail.id === (selected && selected.id) ? detail : null
   // transcript: segments_json = [{start,end,text}, ...]
   $: inspTranscript = detailLive
-    ? (parseJson(detailLive.segments_json) || []).map((sg) => [secToTc(sg.start), sg.text, false])
+    ? (parseJson(detailLive.segments_json) || []).map((sg) => [secToTc(sg.start), sg.text, false, sg.start])
     : null
   // vision: frame_tags_parsed = [{description, tags, ...}, ...]
   $: inspFrames = detailLive
@@ -457,8 +471,10 @@
       <Inspector
         media={inspectorMedia}
         {theme}
+        live={true}
         thumbUrl={inspThumb}
         videoSrc={inspVideoSrc}
+        peaks={inspPeaks}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
         frameDescriptions={inspFrames}
@@ -478,7 +494,7 @@
 </div>
 
 <style>
-  .artboard { width: 1400px; height: 900px; position: relative; display: grid; grid-template-rows: 52px 1fr; background: var(--bg); color: var(--ink); overflow: hidden; margin: 0 auto; }
+  .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; position: relative; display: grid; grid-template-rows: 52px 1fr; background: var(--bg); color: var(--ink); overflow: hidden; margin: 0 auto; }
   .body { display: grid; grid-template-columns: 220px 1fr 340px; min-height: 0; }
   .center { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   .toolrow { display: flex; align-items: center; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--rule); }

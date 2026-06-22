@@ -22,6 +22,24 @@
   export let videoSrc = null
   $: useVideo = !!videoSrc && !is360 && !!media && media.kind !== 'audio'
   $: useAudio = !!videoSrc && !!media && media.kind === 'audio'
+  // Real audio waveform peaks (0..1) from the backend; null → flat fallback.
+  export let peaks = null
+  // The player element (video or audio) — bound so clicking a transcript line or
+  // the waveform seeks playback, and so the waveform playhead tracks currentTime.
+  let playerEl = null
+  let playProgress = 0 // 0..1 playhead position, driven by the player's timeupdate
+  function seekTo(t) {
+    if (playerEl && typeof t === 'number' && !Number.isNaN(t)) {
+      playerEl.currentTime = t
+      playerEl.play && playerEl.play().catch(() => {})
+    }
+  }
+  function onTimeUpdate() {
+    if (playerEl && playerEl.duration) playProgress = playerEl.currentTime / playerEl.duration
+  }
+  function seekFraction(frac) {
+    if (playerEl && playerEl.duration) seekTo(frac * playerEl.duration)
+  }
   export let pathLabel = null // file path string; null → mock /vol/... path
   export let transcriptLines = null // [[tc,text,hl],...]; null → mock lines
   export let frameDescriptions = null // string[]; when set, render a Vision block
@@ -98,8 +116,15 @@
     ['00:24', '氧氣比想像中還少，海拔 4800。', false],
     ['00:36', '車架被打到變形，但人沒事。', false],
   ]
-  $: lines = transcriptLines ?? MOCK_TRANSCRIPT
-  $: pathStr = pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`
+  // `live` (set by the real product) makes empty states HONEST — an empty
+  // transcript shows 「無語音」, an absent path shows the filename — instead of the
+  // design-mock placeholders. The /_design/* mock screens leave live=false so they
+  // stay populated for reference.
+  export let live = false
+  $: lines = live ? (transcriptLines ?? []) : (transcriptLines ?? MOCK_TRANSCRIPT)
+  $: pathStr = live
+    ? (pathLabel ?? media.name)
+    : (pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`)
   const rateBtns = [['good', 'Good'], ['rev', 'Review'], ['ng', 'N·G'], ['none', '—']]
 </script>
 
@@ -119,22 +144,23 @@
       {#if Pano360}<svelte:component this={Pano360} src={thumbUrl} />{:else}<div class="panoload"><Mono dim style="font-size:11px;">360 · loading…</Mono></div>{/if}
     {:else if useVideo}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
     {:else if useAudio}
       {#if thumbUrl && !imgFailed}
         <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
       {/if}
-      <audio class="prevaudio" controls preload="metadata" src={videoSrc}></audio>
+      <audio bind:this={playerEl} on:timeupdate={onTimeUpdate} class="prevaudio" controls preload="metadata" src={videoSrc}></audio>
     {:else if thumbUrl && !imgFailed}
       <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
     {:else}
       <Thumb seed={media.id} kind={media.kind} {theme} />
     {/if}
-    {#if !useVideo && !useAudio}
-      <!-- mock/poster fallback only: fake scrubber overlay (no real player wired) -->
+    {#if !useVideo && !useAudio && !live}
+      <!-- design-mock only: fake scrubber overlay. In live (no player available)
+           the poster shows alone — no faked playback chrome. -->
       <div class="scrim"></div>
       <div class="controls">
-        <Mono style="font-size:11px;color:#f3f2ee;">00:00:42</Mono>
+        <Mono style="font-size:11px;color:#f3f2ee;">{media.dur}</Mono>
         <div class="track">
           <div class="trackfill"></div>
           <div class="trackhead"></div>
@@ -195,22 +221,24 @@
   <div class="block">
     <div class="blockhead">
       <Eyebrow>Waveform</Eyebrow>
-      <Mono dim style="font-size:9.5px;">IN 00:05 · OUT 00:42</Mono>
+      <Mono dim style="font-size:9.5px;">{media.dur}</Mono>
     </div>
-    <Waveform />
+    <Waveform {peaks} progress={playProgress} on:seek={(e) => seekFraction(e.detail)} />
   </div>
 
   <div class="block transcript">
     <div class="blockhead">
-      <Eyebrow>Transcript · zh-Hant</Eyebrow>
-      <Mono dim style="font-size:9.5px;">whisper-large · 98.2%</Mono>
+      <Eyebrow>Transcript{mediaLang ? ` · ${mediaLang}` : ''}</Eyebrow>
+      <Mono dim style="font-size:9.5px;">{lines.length} 段</Mono>
     </div>
     <div class="lines">
       {#if lines.length === 0}
         <Mono dim style="font-size:11px;">（無語音 · no speech detected）</Mono>
       {:else}
-        {#each lines as [tc, text, hl]}
-          <div class="line">
+        {#each lines as [tc, text, hl, t]}
+          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <div class="line" class:seekable={typeof t === 'number' && (useVideo || useAudio)}
+            on:click={() => (typeof t === 'number') && seekTo(t)}>
             <Mono dim style="font-size:10.5px;flex:0 0 36px;">{tc}</Mono>
             <span class="ttext" class:hl>{text}</span>
           </div>
@@ -322,7 +350,11 @@
 <style>
   .inspector {
     border-left: 1px solid var(--rule); display: flex; flex-direction: column;
-    min-height: 0; overflow: hidden;
+    /* the WHOLE inspector scrolls — preview + metadata + waveform + transcript +
+       scenes + tags + reprocess + rate can exceed the viewport, and the bottom
+       (rate buttons) was being clipped under overflow:hidden with no way to reach
+       it. The transcript no longer scrolls internally; the panel scrolls as one. */
+    min-height: 0; overflow-y: auto;
   }
   .header { padding: 18px 18px 16px; border-bottom: 1px solid var(--rule); }
   .fname {
@@ -349,9 +381,13 @@
   .block { padding: 14px 18px; border-bottom: 1px solid var(--rule); }
   .metagrid { display: grid; grid-template-columns: 64px 1fr; row-gap: 4px; column-gap: 12px; font-size: 11.5px; }
   .blockhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-  .transcript { flex: 1; overflow: hidden; }
-  .lines { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; }
+  /* transcript flows naturally now — the whole inspector scrolls (see .inspector),
+     so a long transcript extends the panel and is reached by scrolling it. */
+  .transcript { }
+  .lines { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; padding-right: 4px; }
   .line { display: flex; gap: 10px; }
+  .line.seekable { cursor: pointer; }
+  .line.seekable:hover .ttext { color: var(--invert); }
   .ttext { color: var(--ink); }
   .ttext.hl { border-bottom: 1px solid var(--invert); padding-bottom: 1px; }
   /* tags */

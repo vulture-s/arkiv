@@ -161,7 +161,7 @@
 </div>
 
 <style>
-  .artboard { width: 1400px; height: 900px; background: var(--bg); color: var(--ink); position: relative; overflow: hidden; margin: 0 auto; }
+  .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); position: relative; overflow: hidden; margin: 0 auto; }
   .scrim { position: absolute; inset: 0; background: rgba(10, 10, 12, 0.55); }
 
   .modal { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 960px; height: 640px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--invert); display: grid; grid-template-rows: 56px 1fr; }
