@@ -22,14 +22,23 @@
   export let videoSrc = null
   $: useVideo = !!videoSrc && !is360 && !!media && media.kind !== 'audio'
   $: useAudio = !!videoSrc && !!media && media.kind === 'audio'
-  // The player element (video or audio) — bound so clicking a transcript line
-  // seeks playback to that timecode.
+  // Real audio waveform peaks (0..1) from the backend; null → flat fallback.
+  export let peaks = null
+  // The player element (video or audio) — bound so clicking a transcript line or
+  // the waveform seeks playback, and so the waveform playhead tracks currentTime.
   let playerEl = null
+  let playProgress = 0 // 0..1 playhead position, driven by the player's timeupdate
   function seekTo(t) {
     if (playerEl && typeof t === 'number' && !Number.isNaN(t)) {
       playerEl.currentTime = t
       playerEl.play && playerEl.play().catch(() => {})
     }
+  }
+  function onTimeUpdate() {
+    if (playerEl && playerEl.duration) playProgress = playerEl.currentTime / playerEl.duration
+  }
+  function seekFraction(frac) {
+    if (playerEl && playerEl.duration) seekTo(frac * playerEl.duration)
   }
   export let pathLabel = null // file path string; null → mock /vol/... path
   export let transcriptLines = null // [[tc,text,hl],...]; null → mock lines
@@ -128,12 +137,12 @@
       {#if Pano360}<svelte:component this={Pano360} src={thumbUrl} />{:else}<div class="panoload"><Mono dim style="font-size:11px;">360 · loading…</Mono></div>{/if}
     {:else if useVideo}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video bind:this={playerEl} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
     {:else if useAudio}
       {#if thumbUrl && !imgFailed}
         <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
       {/if}
-      <audio bind:this={playerEl} class="prevaudio" controls preload="metadata" src={videoSrc}></audio>
+      <audio bind:this={playerEl} on:timeupdate={onTimeUpdate} class="prevaudio" controls preload="metadata" src={videoSrc}></audio>
     {:else if thumbUrl && !imgFailed}
       <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
     {:else}
@@ -204,9 +213,9 @@
   <div class="block">
     <div class="blockhead">
       <Eyebrow>Waveform</Eyebrow>
-      <Mono dim style="font-size:9.5px;">IN 00:05 · OUT 00:42</Mono>
+      <Mono dim style="font-size:9.5px;">{media.dur}</Mono>
     </div>
-    <Waveform />
+    <Waveform {peaks} progress={playProgress} on:seek={(e) => seekFraction(e.detail)} />
   </div>
 
   <div class="block transcript">

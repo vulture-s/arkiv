@@ -246,6 +246,20 @@
   }
   $: if (selected && selected.id !== detailId) fetchDetail(selected.id)
 
+  // Real audio waveform peaks (0..1) from the backend ffmpeg endpoint — fetched
+  // per clip, passed to the inspector's <Waveform>. Replaces the old mock sin bars.
+  let wavePeaks = null
+  let waveId = null
+  async function fetchWaveform(id) {
+    waveId = id; wavePeaks = null
+    try {
+      const w = await api.getWaveform(id)
+      if (waveId === id) wavePeaks = (w && w.peaks) || null
+    } catch (e) { if (waveId === id) wavePeaks = null }
+  }
+  $: if (selected && selected.id !== waveId) fetchWaveform(selected.id)
+  $: inspPeaks = waveId === (selected && selected.id) ? wavePeaks : null
+
   const secToTc = (s) => {
     s = Math.round(s || 0)
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
@@ -459,6 +473,7 @@
         {theme}
         thumbUrl={inspThumb}
         videoSrc={inspVideoSrc}
+        peaks={inspPeaks}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
         frameDescriptions={inspFrames}
