@@ -361,7 +361,7 @@
 </div>
 
 <style>
-  .artboard { width: 1400px; height: 900px; background: var(--bg); color: var(--ink); display: flex; flex-direction: column; overflow: hidden; margin: 0 auto; }
+  .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: flex; flex-direction: column; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
   .quiet { color: var(--quiet); }
   .on { color: var(--cyan); }
