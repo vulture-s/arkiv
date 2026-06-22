@@ -1,6 +1,9 @@
 # Changelog
 ## Unreleased
 
+### Added
+- **Per-project correction dictionary + batch recorrect (Phase 9.6b).** A `.arkiv/corrections.json` dictionary of `{from, to, scope, pre, post}` rules drives two paths from one source: `pre` terms feed the Whisper hotword list (`initial_prompt`, hot-read like `vocabulary.txt`), and `post` rules batch-rewrite **already-stored** transcripts — fixing the whole backlog's search recall in seconds without re-running audio. Endpoints: `GET/PUT /api/corrections`, `POST /api/recorrect` (defaults to dry-run preview — writes nothing; `dry_run=0` applies, `rebuild=1` chains the embedding rebuild), `GET /api/recorrect/backups`, `POST /api/recorrect/revert`. CLI: `python recorrect.py --dry-run | --apply [--rebuild] | --revert [NAME]`. **RP-4 safe**: preview-first, and every apply writes a timestamped backup restorable via revert. The recorrect **syncs `segments_json` alongside the transcript blob** (else search/SRT drift), and `words_json` gets whole-token renames. Scope `word` guards against bleeding into a longer token (a `松→鬆` rule never touches `馬拉松`). Operates on the active project. 16 tests in `tests/test_corrections.py`; full suite 608 passed / 5 skipped.
+
 ### Changed
 - **Default vision model is now `qwen2.5vl:7b` (was `qwen3-vl:8b`).** Qwen3-VL's vision path (DeepStack / interleaved-MRoPE) runs ~10x slower than Qwen2.5-VL under Ollama and often offloads the vision encoder to CPU — measured **~60s/frame vs ~8s/frame on an M2 Max** for identical frames (Ollama issues #12854 / #12882 / #14548). At ~2000 frames that's ~30h vs ~3.5h, at comparable tag quality (spot-checked). Override with `ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b` for the higher ceiling once the Ollama regression is fixed.
 

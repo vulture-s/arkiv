@@ -268,6 +268,14 @@ def _custom_terms() -> list:
                         terms.append(line)
         except OSError:
             pass  # missing / unreadable file is non-fatal — just use env terms
+    # Phase 9.6: the per-project correction dictionary is one source for two
+    # paths — its pre-flagged `to` terms feed the hotword list here (the same
+    # rows also drive post-hoc recorrect). Hot-read per call like vocabulary.txt.
+    try:
+        import corrections
+        terms.extend(corrections.hotword_terms())
+    except Exception:
+        pass  # dictionary is optional — never block transcription on it
     seen = set()
     out = []
     for t in terms:
