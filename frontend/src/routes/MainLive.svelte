@@ -81,13 +81,37 @@
     }
   }
   // single-clip export from the inspector (auth-safe download).
-  async function exportClip(id, fmt, name) {
+  async function exportClip(id, fmt, name, trim = null) {
     const stem = (name || `media_${id}`).replace(/\.[^.]+$/, '')
+    // trim = {in_s, out_s?} from the inspector IN/OUT points → backend trims the export
+    let path = api.exportPath(id, fmt)
+    if (trim && (trim.in_s != null || trim.out_s != null)) {
+      const q = []
+      if (trim.in_s != null) q.push(`in_s=${trim.in_s}`)
+      if (trim.out_s != null) q.push(`out_s=${trim.out_s}`)
+      path += `?${q.join('&')}`
+    }
     try {
-      await api.downloadFile(api.exportPath(id, fmt), `${stem}.${fmt}`)
+      await api.downloadFile(path, `${stem}.${fmt}`)
     } catch (e) {
       err = `匯出失敗: ${e.message}`
     }
+  }
+  const _stem = (id, name) => (name || `media_${id}`).replace(/\.[^.]+$/, '')
+  async function exportChapters(id, name, format = 'youtube') {
+    try {
+      const r = await api.getChapters(id, format)
+      api.downloadText(r.chapters || '', `${_stem(id, name)}.chapters.txt`)
+    } catch (e) { err = `章節匯出失敗: ${e.message}` }
+  }
+  async function exportRemotion(id, name) {
+    try {
+      const r = await api.getRemotionProps(id)
+      api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
+    } catch (e) { err = `Remotion 匯出失敗: ${e.message}` }
+  }
+  async function revealFile(path) {
+    try { await api.openFile(path, true) } catch (e) { err = `在 Finder 顯示失敗: ${e.message}` }
   }
 
   async function load() {
@@ -486,7 +510,10 @@
         onReprocess={selected ? reprocess : null}
         languages={engineLangs}
         mediaLang={detailLive ? detailLive.lang : null}
-        onExport={selected ? (fmt) => exportClip(selected.id, fmt, selected.name) : null}
+        onExport={selected ? (fmt, trim) => exportClip(selected.id, fmt, selected.name, trim) : null}
+        onChapters={selected ? (fmt) => exportChapters(selected.id, selected.name, fmt) : null}
+        onRemotion={selected ? () => exportRemotion(selected.id, selected.name) : null}
+        onReveal={inspPath ? () => revealFile(inspPath) : null}
         onRate={rate}
       />
     {/if}

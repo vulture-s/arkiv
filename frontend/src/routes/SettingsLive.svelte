@@ -58,10 +58,41 @@
     }
   }
 
-  onMount(() => { loadSystem(); loadProxy() })
+  // Analytics breakdowns (real /api/duration-by-lang + /api/size-by-ext)
+  let durLang = null // [{lang, total_s, count}]
+  let sizeExt = null // [{ext, total_mb, count}]
+  async function loadAnalytics() {
+    try { durLang = await api.durationByLang() } catch { durLang = null }
+    try { sizeExt = await api.sizeByExt() } catch { sizeExt = null }
+  }
+  // Cache management (info + targeted clear)
+  let cache = null // {caches:{name:{size_mb,count?}}, total_mb}
+  let cacheMsg = ''
+  let cacheBusy = false
+  async function loadCache() {
+    try { cache = await api.cacheInfo() } catch { cache = null }
+  }
+  async function runClearCache(target) {
+    if (cacheBusy) return
+    cacheBusy = true; cacheMsg = ''
+    try {
+      const r = await api.clearCache(target)
+      cacheMsg = r.message || `已清除 ${target}`
+      setTimeout(loadCache, 800)
+    } catch (e) { cacheMsg = `失敗: ${e.message}` } finally { cacheBusy = false }
+  }
+
+  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache() })
 
   const gb = (n) => (n == null ? '—' : n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
+  const mb = (n) => (n == null ? '—' : n >= 1000 ? `${(n / 1000).toFixed(1)} GB` : `${Math.round(n)} MB`)
+  const hms = (s) => {
+    s = Math.round(s || 0)
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
+    return h ? `${h}h ${m}m` : `${m}m`
+  }
   $: disk = stats?.disk ?? null
+  $: cacheRows = cache?.caches ? Object.entries(cache.caches) : []
 </script>
 
 <div class="artboard" data-theme={$resolvedTheme}>
@@ -149,6 +180,20 @@
                 <div class="proxyctl">
                   <button class="ak-btn" on:click={runProxyBuild} disabled={proxyBusy}>{proxyBusy ? '排入中…' : '生成缺漏 proxy'}</button>
                   {#if proxyMsg}<Mono dim style="font-size:10.5px;">{proxyMsg}</Mono>{/if}
+                </div>
+              </div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">語言時長</Mono>
+                {#if durLang && durLang.length}<Mono style="font-size:12px;color:var(--ink);">{durLang.slice(0, 4).map((d) => `${d.lang} ${hms(d.total_s)}`).join(' · ')}</Mono>{:else}<Mono dim style="font-size:12px;">—</Mono>{/if}
+              </div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">格式容量</Mono>
+                {#if sizeExt && sizeExt.length}<Mono style="font-size:12px;color:var(--ink);">{sizeExt.slice(0, 4).map((s) => `${s.ext || '?'} ${mb(s.total_mb)}`).join(' · ')}</Mono>{:else}<Mono dim style="font-size:12px;">—</Mono>{/if}
+              </div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">快取</Mono>
+                <div class="proxyctl">
+                  <Mono style="font-size:12px;color:var(--ink);">{mb(cache?.total_mb)}</Mono>
+                  <button class="ak-btn" on:click={() => runClearCache('app')} disabled={cacheBusy}>清 app 快取</button>
+                  <button class="ak-btn" on:click={() => runClearCache('all')} disabled={cacheBusy}>清全部</button>
+                  {#if cacheMsg}<Mono dim style="font-size:10.5px;">{cacheMsg}</Mono>{/if}
                 </div>
               </div>
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Privacy</Mono><Mono dim style="font-size:11.5px;">Everything runs locally. Nothing leaves this machine.</Mono></div>

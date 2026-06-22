@@ -34,12 +34,40 @@
       playerEl.play && playerEl.play().catch(() => {})
     }
   }
+  let mediaDuration = 0 // seconds, from the player once metadata loads
   function onTimeUpdate() {
-    if (playerEl && playerEl.duration) playProgress = playerEl.currentTime / playerEl.duration
+    if (playerEl && playerEl.duration) {
+      mediaDuration = playerEl.duration
+      playProgress = playerEl.currentTime / playerEl.duration
+    }
   }
   function seekFraction(frac) {
     if (playerEl && playerEl.duration) seekTo(frac * playerEl.duration)
   }
+  // IN/OUT trim points (seconds). The backend export accepts ?in_s&out_s, so a
+  // set range exports just that sub-clip (EDL/SRT/FCPXML). Set at the playhead.
+  let inSec = null
+  let outSec = null
+  function setIn() {
+    if (!playerEl) return
+    inSec = playerEl.currentTime
+    if (outSec != null && outSec <= inSec) outSec = null
+  }
+  function setOut() {
+    if (!playerEl) return
+    outSec = playerEl.currentTime
+    if (inSec != null && inSec >= outSec) inSec = null
+  }
+  function clearInOut() { inSec = null; outSec = null }
+  const _tc = (s) => {
+    if (s == null) return '—'
+    s = Math.max(0, Math.round(s))
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+  }
+  $: inFrac = inSec != null && mediaDuration ? inSec / mediaDuration : null
+  $: outFrac = outSec != null && mediaDuration ? outSec / mediaDuration : null
+  // export args: include the trim window only when a real range is set
+  $: trimArgs = (inSec != null || outSec != null) ? { in_s: inSec ?? 0, out_s: outSec ?? undefined } : null
   export let pathLabel = null // file path string; null → mock /vol/... path
   export let transcriptLines = null // [[tc,text,hl],...]; null → mock lines
   export let frameDescriptions = null // string[]; when set, render a Vision block
@@ -51,6 +79,12 @@
   // (fmt) => void; triggers an authenticated download for this clip. When set,
   // the export buttons become live; null → mock screens keep the inert buttons.
   export let onExport = null
+  // Extra clip actions (live only): onChapters(format) downloads YouTube chapters,
+  // onRemotion() downloads Remotion caption props, onReveal() reveals the source
+  // file in Finder/Explorer. null → button hidden (mock screens unchanged).
+  export let onChapters = null
+  export let onRemotion = null
+  export let onReveal = null
   // Live tag editing. tags = [{id,name,source}] → renders the editable Tags block;
   // null → no block (mock screens unchanged). onAddTag/onRemoveTag wire the writes.
   export let tags = null
@@ -91,6 +125,9 @@
     reBusy = null
     reMsg = ''
     reLang = mediaLang || 'zh'
+    inSec = null
+    outSec = null
+    mediaDuration = 0
   }
   async function doReprocess(action) {
     if (!onReprocess || reBusy) return
@@ -221,9 +258,19 @@
   <div class="block">
     <div class="blockhead">
       <Eyebrow>Waveform</Eyebrow>
-      <Mono dim style="font-size:9.5px;">{media.dur}</Mono>
+      <Mono dim style="font-size:9.5px;">IN {_tc(inSec)} · OUT {_tc(outSec)}</Mono>
     </div>
-    <Waveform {peaks} progress={playProgress} on:seek={(e) => seekFraction(e.detail)} />
+    <Waveform {peaks} progress={playProgress} {inFrac} {outFrac} on:seek={(e) => seekFraction(e.detail)} />
+    {#if useVideo || useAudio}
+      <div class="inout">
+        <button class="ak-btn io" on:click={setIn} title="設 IN（目前播放位置）">設 IN</button>
+        <button class="ak-btn io" on:click={setOut} title="設 OUT（目前播放位置）">設 OUT</button>
+        {#if inSec != null || outSec != null}
+          <button class="ak-btn io clr" on:click={clearInOut} title="清除 IN/OUT">清除</button>
+          <Mono dim style="font-size:9.5px;margin-left:auto;align-self:center;">匯出將套用此區間</Mono>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <div class="block transcript">
@@ -336,14 +383,19 @@
     <div class="exports">
       {#if onExport}
         {#each EXPORT_FMTS as fmt}
-          <button class="ak-btn exp" on:click={() => onExport(fmt)}>{fmt.toUpperCase()}</button>
+          <button class="ak-btn exp" on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{trimArgs ? ' ✂' : ''}</button>
         {/each}
+        {#if onChapters}<button class="ak-btn exp" on:click={() => onChapters('youtube')} title="YouTube 章節（場景時間軸）">章節</button>{/if}
+        {#if onRemotion}<button class="ak-btn exp" on:click={onRemotion} title="Remotion 字幕 props（逐字時間戳）">Remotion</button>{/if}
       {:else}
         <button class="ak-btn exp">EDL</button>
         <button class="ak-btn exp">FCPXML</button>
         <button class="ak-btn exp">SRT</button>
       {/if}
     </div>
+    {#if onReveal}
+      <button class="ak-btn reveal" on:click={onReveal} title="在 Finder / 檔案總管中顯示原始檔">⊙ 在 Finder 顯示</button>
+    {/if}
   </div>
 </aside>
 
@@ -365,6 +417,10 @@
     position: relative; aspect-ratio: 16 / 9; background: var(--surface-2);
     border-bottom: 1px solid var(--rule);
   }
+  .reveal { font-size: 11px; padding: 4px 10px; margin-top: 8px; width: 100%; }
+  .inout { display: flex; gap: 6px; margin-top: 8px; }
+  .io { font-size: 10.5px; padding: 3px 8px; }
+  .io.clr { color: var(--quiet); }
   .previmg { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* the real player: contain (don't crop footage) on black; audio sits at the bottom */
   video.previmg { object-fit: contain; background: #000; }

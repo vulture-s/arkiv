@@ -1301,6 +1301,14 @@ def _run_apply_aliases(args):
 
 
 def main():
+    # Windows: the console codepage (cp950 on zh-TW) can't encode chars the CLI
+    # prints (⚠, →, emoji) → UnicodeEncodeError crashes mid-run. Force UTF-8 on
+    # stdout/stderr so progress output is robust on every platform.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(description="Ingest media files into SQLite DB")
     parser.add_argument("--dir", help="Media directory to scan (required unless --migrate-* / --regenerate-proxies / --vision-only)")
     parser.add_argument("--limit", type=int, default=0, help="Max files to process (0=all)")

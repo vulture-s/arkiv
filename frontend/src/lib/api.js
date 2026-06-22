@@ -195,6 +195,36 @@ export async function downloadFile(path, filename) {
 export const exportPath = (id, fmt) => `/api/media/${id}/export/${fmt}`
 export const exportTimelinePath = (ids, fmt) =>
   `/api/export/timeline/${fmt}?ids=${ids.join(',')}`
+
+// ---- chapters / remotion / reveal-in-finder / cache / analytics ----
+// /api/media/{id}/chapters?format=youtube|ffmetadata → {chapters: text, count}
+export const getChapters = (id, format = 'youtube', opts) =>
+  req(`/api/media/${id}/chapters?format=${format}`, opts)
+// /api/media/{id}/remotion-props → word-level caption props (JSON)
+export const getRemotionProps = (id, opts) => req(`/api/media/${id}/remotion-props`, opts)
+// POST /api/open-file {path, reveal} → reveal in Finder/Explorer (reveal=true) or open
+export const openFile = (path, reveal = true, opts) =>
+  req('/api/open-file', { method: 'POST', body: { path, reveal }, ...opts })
+// /api/cache/info → {caches:{...}}; POST /api/cache/clear?target=app|thumbnails|chromadb|waveforms|all
+export const cacheInfo = (opts) => req('/api/cache/info', opts)
+export const clearCache = (target = 'app', opts) =>
+  req(`/api/cache/clear?target=${target}`, { method: 'POST', ...opts })
+// analytics breakdowns
+export const durationByLang = (opts) => req('/api/duration-by-lang', opts)
+export const sizeByExt = (opts) => req('/api/size-by-ext', opts)
+
+// Save an in-memory string as a downloaded file (chapters text / remotion json).
+export function downloadText(text, filename, mime = 'text/plain') {
+  const blob = new Blob([text], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+}
 // DaVinci Resolve metadata CSV (File → Import Metadata from CSV). ids optional
 // (CSV of media ids) → batch-scoped; omitted/empty → whole library.
 export const metadataCsvPath = (ids = null) =>
