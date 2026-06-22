@@ -1202,7 +1202,8 @@ def list_collections(
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT id, filename, thumbnail_path, duration_s, has_audio, "
-            "frame_tags, content_type, atmosphere, energy, gps_lat, gps_lon "
+            "frame_tags, content_type, atmosphere, energy, gps_lat, gps_lon, "
+            "rating, processed_at "
             "FROM media ORDER BY id"
         ).fetchall()
     for rec in (dict(r) for r in rows):
