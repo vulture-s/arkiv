@@ -22,6 +22,15 @@
   export let videoSrc = null
   $: useVideo = !!videoSrc && !is360 && !!media && media.kind !== 'audio'
   $: useAudio = !!videoSrc && !!media && media.kind === 'audio'
+  // The player element (video or audio) — bound so clicking a transcript line
+  // seeks playback to that timecode.
+  let playerEl = null
+  function seekTo(t) {
+    if (playerEl && typeof t === 'number' && !Number.isNaN(t)) {
+      playerEl.currentTime = t
+      playerEl.play && playerEl.play().catch(() => {})
+    }
+  }
   export let pathLabel = null // file path string; null → mock /vol/... path
   export let transcriptLines = null // [[tc,text,hl],...]; null → mock lines
   export let frameDescriptions = null // string[]; when set, render a Vision block
@@ -119,12 +128,12 @@
       {#if Pano360}<svelte:component this={Pano360} src={thumbUrl} />{:else}<div class="panoload"><Mono dim style="font-size:11px;">360 · loading…</Mono></div>{/if}
     {:else if useVideo}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+      <video bind:this={playerEl} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
     {:else if useAudio}
       {#if thumbUrl && !imgFailed}
         <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
       {/if}
-      <audio class="prevaudio" controls preload="metadata" src={videoSrc}></audio>
+      <audio bind:this={playerEl} class="prevaudio" controls preload="metadata" src={videoSrc}></audio>
     {:else if thumbUrl && !imgFailed}
       <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
     {:else}
@@ -209,8 +218,10 @@
       {#if lines.length === 0}
         <Mono dim style="font-size:11px;">（無語音 · no speech detected）</Mono>
       {:else}
-        {#each lines as [tc, text, hl]}
-          <div class="line">
+        {#each lines as [tc, text, hl, t]}
+          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <div class="line" class:seekable={typeof t === 'number' && (useVideo || useAudio)}
+            on:click={() => (typeof t === 'number') && seekTo(t)}>
             <Mono dim style="font-size:10.5px;flex:0 0 36px;">{tc}</Mono>
             <span class="ttext" class:hl>{text}</span>
           </div>
@@ -349,9 +360,13 @@
   .block { padding: 14px 18px; border-bottom: 1px solid var(--rule); }
   .metagrid { display: grid; grid-template-columns: 64px 1fr; row-gap: 4px; column-gap: 12px; font-size: 11.5px; }
   .blockhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-  .transcript { flex: 1; overflow: hidden; }
-  .lines { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; }
+  /* flex column + min-height:0 lets .lines scroll inside the inspector instead of
+     clipping a long transcript (was overflow:hidden → couldn't scroll the subs). */
+  .transcript { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .lines { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; overflow-y: auto; min-height: 0; padding-right: 4px; }
   .line { display: flex; gap: 10px; }
+  .line.seekable { cursor: pointer; }
+  .line.seekable:hover .ttext { color: var(--invert); }
   .ttext { color: var(--ink); }
   .ttext.hl { border-bottom: 1px solid var(--invert); padding-bottom: 1px; }
   /* tags */

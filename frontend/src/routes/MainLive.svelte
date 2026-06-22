@@ -258,7 +258,7 @@
   $: detailLive = detail && detail.id === (selected && selected.id) ? detail : null
   // transcript: segments_json = [{start,end,text}, ...]
   $: inspTranscript = detailLive
-    ? (parseJson(detailLive.segments_json) || []).map((sg) => [secToTc(sg.start), sg.text, false])
+    ? (parseJson(detailLive.segments_json) || []).map((sg) => [secToTc(sg.start), sg.text, false, sg.start])
     : null
   // vision: frame_tags_parsed = [{description, tags, ...}, ...]
   $: inspFrames = detailLive
