@@ -985,7 +985,14 @@ def _regenerate_thumbnails():
     size_before = _dir_size_bytes(config.THUMBNAILS_DIR)
     ok, failed = 0, 0
     for idx, rec in enumerate(videos, 1):
-        src = db.resolve_path(rec["path"])
+        try:
+            src = db.resolve_path(rec["path"])
+        except ValueError:
+            # Poisoned/cross-OS row whose path escapes PROJECT_ROOT — treat as a
+            # missing source and skip, never crash the whole regen pass.
+            print(f"  [{idx}/{len(videos)}] id={rec['id']}: unresolvable path, skipping")
+            failed += 1
+            continue
         if not Path(src).exists():
             print(f"  [{idx}/{len(videos)}] id={rec['id']}: source missing, skipping")
             failed += 1
