@@ -215,12 +215,15 @@ def test_resolve_path_rejects_traversal_outside_project_root():
 
 
 def test_resolve_path_passes_through_inside_root_and_absolute():
+    import sys
     db = importlib.import_module("db")
-    # Relative inside root → joined absolute path under PROJECT_ROOT
+    # Relative inside root → joined absolute path under PROJECT_ROOT. Stored
+    # rel-paths are POSIX (to_relative.as_posix), but the RESOLVED absolute path
+    # is OS-native (it's handed to open()/streaming), so compare separator-agnostically.
     inside = db.resolve_path("media/clip.mp4")
-    assert inside.endswith("media/clip.mp4")
-    # Absolute path passed through as-is (legacy rows)
-    abs_path = "/tmp/some_clip.mp4"
+    assert inside.replace("\\", "/").endswith("media/clip.mp4")
+    # Absolute path passed through as-is (legacy rows) — OS-native absolute form.
+    abs_path = "C:\\tmp\\some_clip.mp4" if sys.platform == "win32" else "/tmp/some_clip.mp4"
     assert db.resolve_path(abs_path) == abs_path
     # Empty stays empty (idempotent)
     assert db.resolve_path("") == ""
