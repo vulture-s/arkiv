@@ -111,6 +111,14 @@ export const getRecorrectBackups = (opts) => req('/api/recorrect/backups', opts)
 export const recorrectRevert = (backup = null, opts) =>
   req('/api/recorrect/revert', { method: 'POST', body: { backup }, ...opts })
 
+// Batch retranscribe (2a, Phase 9.6d) — re-run Whisper across the whole project
+// so new hotwords take effect. Long-running + single-flight; poll status.
+// → {queued} | 409 if already running
+export const retranscribeAll = (backup = true, language = null, opts) =>
+  req('/api/retranscribe-all', { method: 'POST', body: { backup, language }, ...opts })
+// → {total, done, failed, current, running, backup}
+export const retranscribeAllStatus = (opts) => req('/api/retranscribe-all/status', opts)
+
 // POST /api/ingest/ws {path, limit, …options} — trigger ingest with WS progress.
 // `options` forwards the engine flags the setup dialog exposes (skip_vision,
 // refresh, recursive, max_failures, skip_failed, no_embed); omitted keys keep

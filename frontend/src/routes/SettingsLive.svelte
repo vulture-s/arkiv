@@ -10,7 +10,7 @@
        · System — REAL: version + backend reachability + library totals + disk,
          from /api/stats. -->
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import Mono from '../lib/Mono.svelte'
@@ -137,6 +137,29 @@
     } catch (e) { vocabMsg = `還原失敗: ${e.message}` } finally { vocabBusy = false }
   }
 
+  // Batch retranscribe (2a, 9.6d) — heavy upgrade path: re-runs Whisper across
+  // the whole project so new hotwords take effect. Poll status while running.
+  let retr = null // {total, done, failed, current, running, backup}
+  let retrTimer = null
+  async function pollRetr() {
+    try {
+      retr = await api.retranscribeAllStatus()
+      if (retr && retr.running) retrTimer = setTimeout(pollRetr, 1500)
+      else { backups = (await api.getRecorrectBackups()).backups || [] }
+    } catch { /* ignore poll error */ }
+  }
+  async function runRetranscribeAll() {
+    if (retr && retr.running) return
+    vocabMsg = ''
+    try {
+      const r = await api.retranscribeAll(true)
+      if (!r.queued) { vocabMsg = r.message || '沒有可重轉錄的素材'; return }
+      retr = { total: r.queued, done: 0, failed: 0, current: null, running: true, backup: null }
+      pollRetr()
+    } catch (e) { vocabMsg = e.status === 409 ? '批次重轉錄已在進行中' : `重轉錄失敗: ${e.message}` }
+  }
+  onDestroy(() => { if (retrTimer) clearTimeout(retrTimer) })
+
   onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab() })
 
   const gb = (n) => (n == null ? '—' : n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
@@ -257,6 +280,18 @@
               </div>
             {/if}
             {#if vocabMsg}<div class="vmsg"><Mono dim style="font-size:11px;">{vocabMsg}</Mono></div>{/if}
+
+            <div class="vdiv"></div>
+            <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">BATCH RETRANSCRIBE · 批次重轉錄（2a · 升級）</Eyebrow>
+              <div class="fsdesc">重跑整庫 Whisper，讓新加的 hotword 生效——<b>慢、耗資源</b>，只在某詞被聽成完全不同的東西、批次校正救不回時才用。重轉前自動備份，可還原。</div>
+            </div>
+            <div class="vctl">
+              <button class="ak-btn" on:click={runRetranscribeAll} disabled={retr && retr.running}>{retr && retr.running ? '重轉錄中…' : '批次重轉錄'}</button>
+              {#if retr}
+                <Mono dim style="font-size:11px;">{retr.done}/{retr.total} 完成{retr.failed ? ` · ${retr.failed} 失敗` : ''}{retr.running ? '…' : ' · 完成'}</Mono>
+              {/if}
+            </div>
           </section>
         {:else if section === 'engine'}
           <section>
