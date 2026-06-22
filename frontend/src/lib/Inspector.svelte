@@ -59,6 +59,21 @@
     if (inSec != null && inSec >= outSec) inSec = null
   }
   function clearInOut() { inSec = null; outSec = null }
+  // Waveform marker drag → set IN/OUT directly (no need to scrub the playhead there)
+  function onTrim(e) {
+    if (!mediaDuration) return
+    const t = e.detail.frac * mediaDuration
+    if (e.detail.which === 'in') {
+      inSec = t
+      if (outSec != null && outSec <= inSec) outSec = null
+    } else {
+      outSec = t
+      if (inSec != null && inSec >= outSec) inSec = null
+    }
+  }
+  function onLoadedMeta() {
+    if (playerEl && playerEl.duration) mediaDuration = playerEl.duration
+  }
   const _tc = (s) => {
     if (s == null) return '—'
     s = Math.max(0, Math.round(s))
@@ -181,12 +196,12 @@
       {#if Pano360}<svelte:component this={Pano360} src={thumbUrl} />{:else}<div class="panoload"><Mono dim style="font-size:11px;">360 · loading…</Mono></div>{/if}
     {:else if useVideo}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
     {:else if useAudio}
       {#if thumbUrl && !imgFailed}
         <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
       {/if}
-      <audio bind:this={playerEl} on:timeupdate={onTimeUpdate} class="prevaudio" controls preload="metadata" src={videoSrc}></audio>
+      <audio bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} class="prevaudio" controls preload="metadata" src={videoSrc}></audio>
     {:else if thumbUrl && !imgFailed}
       <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
     {:else}
@@ -260,7 +275,7 @@
       <Eyebrow>Waveform</Eyebrow>
       <Mono dim style="font-size:9.5px;">IN {_tc(inSec)} · OUT {_tc(outSec)}</Mono>
     </div>
-    <Waveform {peaks} progress={playProgress} {inFrac} {outFrac} on:seek={(e) => seekFraction(e.detail)} />
+    <Waveform {peaks} progress={playProgress} {inFrac} {outFrac} on:seek={(e) => seekFraction(e.detail)} on:trim={onTrim} />
     {#if useVideo || useAudio}
       <div class="inout">
         <button class="ak-btn io" on:click={setIn} title="設 IN（目前播放位置）">設 IN</button>
