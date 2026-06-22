@@ -1626,7 +1626,9 @@ def _allowed_ingest_roots() -> list:
     """
     custom = os.environ.get("ARKIV_INGEST_ROOTS", "").strip()
     if custom:
-        return [Path(p).expanduser().resolve() for p in custom.split(":") if p.strip()]
+        # os.pathsep, not ':' — Windows uses ';' AND ':' appears in drive letters
+        # (C:\...), so splitting on ':' shredded every Windows path.
+        return [Path(p).expanduser().resolve() for p in custom.split(os.pathsep) if p.strip()]
     home = Path.home()
     roots = [
         config.PROJECT_ROOT.resolve() if config.PROJECT_ROOT else None,
@@ -1641,10 +1643,16 @@ def _allowed_ingest_roots() -> list:
         try:
             for vol in volumes.iterdir():
                 if vol.is_dir():
-                    roots.append(vol.resolve())
+                    resolved = vol.resolve()
+                    # Skip a volume that resolves to the filesystem root (e.g.
+                    # /Volumes/Macintosh HD → '/'): allowing '/' makes the J1
+                    # bound a no-op — every path is then "under an approved root".
+                    if str(resolved) != resolved.anchor:
+                        roots.append(resolved)
         except OSError:
             pass
-    return [r for r in roots if r is not None]
+    # Final guard: never allow a bare filesystem/drive root through (defeats J1).
+    return [r for r in roots if r is not None and str(r) != r.anchor]
 
 
 def _assert_ingest_path_safe(target: Path) -> None:
@@ -2083,7 +2091,18 @@ def reingest_media(
 # ── Cache Management ──────────────────────────────────────────────────────────
 
 def _dir_size_mb(p: Path) -> int:
-    return round(sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 1048576)
+    total = 0
+    for f in p.rglob("*"):
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+        except OSError:
+            # Skip un-stattable entries so a cache-size estimate never 500s. On
+            # Windows the HF cache's snapshots/ are symlinks into blobs/ that
+            # raise WinError 448 when symlink support is off — one bad link must
+            # not crash /api/cache/info.
+            continue
+    return round(total / 1048576)
 
 
 @app.get("/api/cache/info")

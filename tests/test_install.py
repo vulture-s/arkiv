@@ -7,14 +7,30 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _imported_top_level(py_file: Path) -> set:
-    """Top-level module names this file imports (absolute imports only)."""
+    """Top-level module names this file imports (absolute imports only).
+
+    Imports inside a `try:` block are EXCLUDED — those are intentionally-optional
+    deps guarded by `except ImportError` (e.g. health.py's `import mlx`, which is
+    Apple-Silicon only and absent on Windows/Linux). They can't crash a fresh
+    install, so flagging them as "unresolved" is a false positive."""
     tree = ast.parse(py_file.read_text(encoding="utf-8"))
+    guarded = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            for stmt in node.body:
+                for sub in ast.walk(stmt):
+                    if isinstance(sub, (ast.Import, ast.ImportFrom)):
+                        guarded.add(id(sub))
     names = set()
     for node in ast.walk(tree):
+        if id(node) in guarded:
+            continue
         if isinstance(node, ast.Import):
             names.update(a.name.split(".")[0] for a in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
@@ -61,6 +77,12 @@ def test_install_copies_first_party_package_dirs():
     )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="install.sh is the POSIX (mac/Linux/NAS) installer — its bash copy loop "
+    "with `cp -R` and POSIX paths isn't the Windows install path (arkiv on Windows "
+    "installs via venv directly). Nothing to assert about install.sh here.",
+)
 def test_package_copy_actually_ships_packages_not_tests(tmp_path):
     """Functional proof (Codex SHOULD-FIX): run install.sh's package-copy loop
     against a synthetic source tree and assert a first-party package dir lands

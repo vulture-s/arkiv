@@ -35,16 +35,28 @@ def _check_config_loads(env_overrides):
     return result.returncode, result.stderr
 
 
-@pytest.mark.parametrize(
-    "env_var,bad_path",
+# OS-native system roots — the denylist is platform-specific (config picks the
+# POSIX or Windows set), so the bad paths must match the running OS.
+_BAD_PATHS = (
     [
+        ("ARKIV_PROXIES_DIR", r"C:\Windows\arkiv-proxies"),
+        ("ARKIV_THUMBNAILS_DIR", r"C:\Program Files\arkiv"),
+        ("ARKIV_DB_PATH", r"C:\ProgramData\arkiv.db"),
+        ("ARKIV_CHROMA_PATH", r"C:\Program Files (x86)\arkiv-chroma"),
+        ("ARKIV_PROJECT_ROOT", r"C:\Windows\System32\arkiv"),
+    ]
+    if sys.platform == "win32"
+    else [
         ("ARKIV_PROXIES_DIR", "/etc/arkiv-proxies"),
         ("ARKIV_THUMBNAILS_DIR", "/usr/local/share/arkiv"),
         ("ARKIV_DB_PATH", "/var/log/arkiv.db"),
         ("ARKIV_CHROMA_PATH", "/Library/arkiv-chroma"),
         ("ARKIV_PROJECT_ROOT", "/System/arkiv"),
-    ],
+    ]
 )
+
+
+@pytest.mark.parametrize("env_var,bad_path", _BAD_PATHS)
 def test_config_rejects_writable_path_under_system_root(tmp_path, env_var, bad_path):
     code, stderr = _check_config_loads({env_var: bad_path})
     assert code != 0, f"expected failure but config loaded with {env_var}={bad_path}"

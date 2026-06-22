@@ -11,23 +11,36 @@ BASE_DIR = Path(__file__).parent
 # arkiv write generated proxy mp4 files into /etc on every HEVC ingest. Same
 # risk for THUMBNAILS_DIR / CHROMA_PATH / DB_PATH (any operator-tunable
 # writable path). Hard-fail when env override resolves under a system root.
-_SYSTEM_DIR_DENYLIST = (
+_POSIX_SYSTEM_DENYLIST = (
     "/etc", "/usr", "/bin", "/sbin", "/sys", "/proc", "/dev",
     "/var/log", "/var/run", "/Library", "/System",
     "/private/etc", "/private/var/log", "/private/var/run",
 )
+# Windows system roots — same intent (never let an env override clobber the OS).
+_WINDOWS_SYSTEM_DENYLIST = (
+    r"C:\Windows", r"C:\Program Files", r"C:\Program Files (x86)", r"C:\ProgramData",
+)
+_SYSTEM_DIR_DENYLIST = _WINDOWS_SYSTEM_DENYLIST if os.name == "nt" else _POSIX_SYSTEM_DENYLIST
+
+
+def _is_under(child: Path, prefix: str) -> bool:
+    """True if `child` is at/under `prefix`. Uses os.path.normcase so the match is
+    case-insensitive on Windows (C:\\WINDOWS == C:\\Windows) and separator-normal."""
+    try:
+        c = os.path.normcase(os.path.normpath(str(child)))
+        p = os.path.normcase(os.path.normpath(str(Path(prefix))))
+    except (TypeError, ValueError):
+        return False
+    return c == p or c.startswith(p + os.sep)
 
 
 def _validate_writable_path(path: Path, env_var: str) -> Path:
     canonical = path.expanduser().resolve()
     for prefix in _SYSTEM_DIR_DENYLIST:
-        try:
-            canonical.relative_to(prefix)
-        except ValueError:
-            continue
-        raise ValueError(
-            f"{env_var} 不可指向系統目錄：{canonical}（matched {prefix}; denylist={_SYSTEM_DIR_DENYLIST}）"
-        )
+        if _is_under(canonical, prefix):
+            raise ValueError(
+                f"{env_var} 不可指向系統目錄：{canonical}（matched {prefix}; denylist={_SYSTEM_DIR_DENYLIST}）"
+            )
     return path
 
 

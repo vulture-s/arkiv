@@ -2,7 +2,10 @@
 category + unsupported-stills skip count). Pure aggregation over the scan."""
 
 
-def test_scan_manifest_categorizes_and_sizes(fastapi_client, tmp_path):
+def test_scan_manifest_categorizes_and_sizes(fastapi_client, tmp_path, monkeypatch):
+    # The scan endpoint allowlists ingest roots (J1). pytest's tmp_path isn't
+    # under the default roots (esp. on Windows: AppData\Local\Temp), so approve it.
+    monkeypatch.setenv("ARKIV_INGEST_ROOTS", str(tmp_path))
     card = tmp_path / "card"; (card / "DCIM").mkdir(parents=True)
     (card / "DCIM" / "A001.MP4").write_bytes(b"v" * (2 * 1048576))   # 2 MB video
     (card / "DCIM" / "A002.MOV").write_bytes(b"v" * (1 * 1048576))   # 1 MB video
@@ -24,7 +27,8 @@ def test_scan_manifest_categorizes_and_sizes(fastapi_client, tmp_path):
     assert m["total_size_mb"] == 3.5               # video+audio only, stills not counted
 
 
-def test_scan_manifest_empty_dir(fastapi_client, tmp_path):
+def test_scan_manifest_empty_dir(fastapi_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("ARKIV_INGEST_ROOTS", str(tmp_path))
     d = tmp_path / "empty"; d.mkdir()
     m = fastapi_client.post("/api/ingest/scan", json={"path": str(d)}).json()["manifest"]
     assert m["video"]["count"] == 0 and m["audio"]["count"] == 0
