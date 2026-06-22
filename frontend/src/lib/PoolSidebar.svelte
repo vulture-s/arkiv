@@ -112,7 +112,10 @@
 <style>
   .pool {
     border-right: 1px solid var(--rule); padding: 20px 14px 14px 16px;
-    display: flex; flex-direction: column; gap: 20px; min-height: 0; overflow: hidden;
+    /* scroll the whole sidebar — projects + pools + collections + tag cloud +
+       storage can exceed the viewport; overflow:hidden clipped the bottom with
+       no way to reach it (same bug as the inspector). */
+    display: flex; flex-direction: column; gap: 20px; min-height: 0; overflow-y: auto;
   }
   .col { display: flex; flex-direction: column; }
   .proj {
