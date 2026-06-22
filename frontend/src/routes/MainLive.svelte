@@ -471,6 +471,7 @@
       <Inspector
         media={inspectorMedia}
         {theme}
+        live={true}
         thumbUrl={inspThumb}
         videoSrc={inspVideoSrc}
         peaks={inspPeaks}

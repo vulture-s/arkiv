@@ -116,8 +116,15 @@
     ['00:24', '氧氣比想像中還少，海拔 4800。', false],
     ['00:36', '車架被打到變形，但人沒事。', false],
   ]
-  $: lines = transcriptLines ?? MOCK_TRANSCRIPT
-  $: pathStr = pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`
+  // `live` (set by the real product) makes empty states HONEST — an empty
+  // transcript shows 「無語音」, an absent path shows the filename — instead of the
+  // design-mock placeholders. The /_design/* mock screens leave live=false so they
+  // stay populated for reference.
+  export let live = false
+  $: lines = live ? (transcriptLines ?? []) : (transcriptLines ?? MOCK_TRANSCRIPT)
+  $: pathStr = live
+    ? (pathLabel ?? media.name)
+    : (pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`)
   const rateBtns = [['good', 'Good'], ['rev', 'Review'], ['ng', 'N·G'], ['none', '—']]
 </script>
 
@@ -148,11 +155,12 @@
     {:else}
       <Thumb seed={media.id} kind={media.kind} {theme} />
     {/if}
-    {#if !useVideo && !useAudio}
-      <!-- mock/poster fallback only: fake scrubber overlay (no real player wired) -->
+    {#if !useVideo && !useAudio && !live}
+      <!-- design-mock only: fake scrubber overlay. In live (no player available)
+           the poster shows alone — no faked playback chrome. -->
       <div class="scrim"></div>
       <div class="controls">
-        <Mono style="font-size:11px;color:#f3f2ee;">00:00:42</Mono>
+        <Mono style="font-size:11px;color:#f3f2ee;">{media.dur}</Mono>
         <div class="track">
           <div class="trackfill"></div>
           <div class="trackhead"></div>
