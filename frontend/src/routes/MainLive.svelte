@@ -285,6 +285,9 @@
       })()
     : null
   $: inspThumb = selected ? selected.thumb : null
+  // Real playback stream for the inspector player (loopback = token-free; remote
+  // carries ?token). Inspector turns this into a <video>/<audio> element.
+  $: inspVideoSrc = selected ? api.streamUrl(selected.id) : null
   $: inspPath = detailLive ? detailLive.path : null
   // tags: detail carries the quality-filtered tag list [{id,name,source}].
   $: inspTags = detailLive ? (detailLive.tags || []) : null
@@ -455,6 +458,7 @@
         media={inspectorMedia}
         {theme}
         thumbUrl={inspThumb}
+        videoSrc={inspVideoSrc}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
         frameDescriptions={inspFrames}
