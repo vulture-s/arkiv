@@ -21,6 +21,42 @@ def test_canonicalize_collapses_variant_chars():
     assert tq.canonicalize("餐廳") == "餐廳"  # unaffected
 
 
+def test_canonicalize_simplified_to_traditional():
+    # the big cross-project dedup win: Simplified leaks collapse to Traditional
+    assert tq.canonicalize("电子") == "電子"
+    assert tq.canonicalize("电线") == "電線"
+    assert tq.canonicalize("维修") == "維修"
+    assert tq.canonicalize("鉗子") == "鉗子"   # already Traditional, unaffected
+
+
+def test_simplified_and_traditional_dedup_together():
+    out = tq.filter_tags(["电子", "電子", "电线", "電線", "维修"])
+    assert out == ["電子", "電線", "維修"]  # S/T pairs collapse
+
+
+def test_is_noise_drops_json_artifacts_and_english_scene_words():
+    assert tq.is_noise("}")          # JSON-fallback parse artifact
+    assert tq.is_noise("{")
+    assert tq.is_noise("、")          # pure punctuation
+    assert tq.is_noise("day")        # leaked English scene word
+    assert tq.is_noise("Interior")   # case-insensitive
+    assert not tq.is_noise("LED")    # useful ASCII tag — kept
+    assert not tq.is_noise("USB")
+    assert not tq.is_noise("工具")
+
+
+def test_filter_tag_records_canonicalizes_and_dedups():
+    recs = [
+        {"name": "电子", "source": "auto"},
+        {"name": "電子", "source": "auto"},   # S/T dup of above
+        {"name": "}", "source": "auto"},      # artifact
+        {"name": "day", "source": "auto"},    # english leak
+        {"name": "鉗子", "source": "auto"},
+    ]
+    out = tq.filter_tag_records(recs)
+    assert [r["name"] for r in out] == ["電子", "鉗子"]
+
+
 def test_filter_tags_dedupes_including_variants():
     out = tq.filter_tags(["吧台", "吧檯", "餐廳", "餐廳", "模糊"])
     assert out == ["吧台", "餐廳"]  # 吧檯→吧台 merged, exact dup dropped, noise dropped

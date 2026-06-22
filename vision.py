@@ -131,7 +131,13 @@ def describe_frames(frame_paths: List[str]) -> List[Dict]:
 def _normalize_result(parsed: Dict) -> Dict:
     result = _empty_result()
     result["description"] = parsed.get("description", "")
-    result["tags"] = parsed.get("tags", []) or []
+    # Sanitize at the source: drop empty / pure-punctuation tags (e.g. the bare
+    # "}" the JSON-fallback parser leaks) so they never enter the DB. Read-side
+    # filtering (tag_quality.is_noise) also screens them, this just keeps storage clean.
+    result["tags"] = [
+        t.strip() for t in (parsed.get("tags") or [])
+        if isinstance(t, str) and t.strip() and re.search(r"[一-鿿0-9A-Za-z]", t)
+    ]
     for field in _VISION_FIELDS:
         result[field] = parsed.get(field)
     return result
