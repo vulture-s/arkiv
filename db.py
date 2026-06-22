@@ -62,11 +62,18 @@ def get_conn():
 
 
 def to_relative(abs_path: str) -> str:
-    """Absolute path -> relative to PROJECT_ROOT. Idempotent."""
+    """Absolute path -> relative to PROJECT_ROOT, stored POSIX-style. Idempotent.
+
+    Cross-platform: relative paths are persisted with forward slashes on EVERY
+    OS (`.as_posix()`), so a DB written on Windows and a DB written on mac/NAS
+    agree. Without this, str(WindowsPath('media/clip.mp4')) == 'media\\clip.mp4',
+    and a PC opening a NAS DB that mac wrote saw every file as unprocessed
+    (backslash rel != stored forward-slash rel) → whole-library re-ingest. No-op
+    on POSIX (str == as_posix there)."""
     if not abs_path:
         return abs_path
     try:
-        return str(Path(abs_path).relative_to(_config.PROJECT_ROOT))
+        return Path(abs_path).relative_to(_config.PROJECT_ROOT).as_posix()
     except ValueError:
         return abs_path
 
@@ -85,7 +92,14 @@ def resolve_path(rel_path: str) -> str:
     """
     if not rel_path:
         return rel_path
+    # Defense-in-depth: a row written by a pre-fix Windows ingest may hold
+    # backslashes ('media\\clip.mp4'). On POSIX that's a literal filename, not a
+    # path — normalize so such legacy rows still resolve cross-OS. New writes are
+    # already forward-slash (to_relative.as_posix). Skip if it's a real absolute
+    # Windows path (drive-letter), which Path handles natively.
     path_obj = Path(rel_path)
+    if not path_obj.is_absolute() and "\\" in rel_path:
+        path_obj = Path(rel_path.replace("\\", "/"))
     if path_obj.is_absolute():
         return str(path_obj)
     project_root = _config.PROJECT_ROOT.resolve()
