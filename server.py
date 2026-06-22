@@ -2083,7 +2083,18 @@ def reingest_media(
 # ── Cache Management ──────────────────────────────────────────────────────────
 
 def _dir_size_mb(p: Path) -> int:
-    return round(sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 1048576)
+    total = 0
+    for f in p.rglob("*"):
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+        except OSError:
+            # Skip un-stattable entries so a cache-size estimate never 500s. On
+            # Windows the HF cache's snapshots/ are symlinks into blobs/ that
+            # raise WinError 448 when symlink support is off — one bad link must
+            # not crash /api/cache/info.
+            continue
+    return round(total / 1048576)
 
 
 @app.get("/api/cache/info")
