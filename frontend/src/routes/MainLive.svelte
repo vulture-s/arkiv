@@ -9,6 +9,7 @@
   import TopBar from '../lib/TopBar.svelte'
   import PoolSidebar from '../lib/PoolSidebar.svelte'
   import MediaCard from '../lib/MediaCard.svelte'
+  import Rating from '../lib/Rating.svelte'
   import FilterRow from '../lib/FilterRow.svelte'
   import ViewToggle from '../lib/ViewToggle.svelte'
   import Inspector from '../lib/Inspector.svelte'
@@ -35,6 +36,8 @@
     return `00:${p(m)}:${p(ss)}`
   }
   const fmtSize = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`)
+  // date column for list view — just the YYYY-MM-DD slice of processed_at
+  const fmtDate = (iso) => (iso ? String(iso).slice(0, 10) : '—')
 
   // backend rating value (good/ng/review/null) → UI value (good/ng/rev/none).
   const ratingToUi = (r) => (r === 'review' ? 'rev' : r || 'none')
@@ -469,6 +472,46 @@
           <div class="msg"><Mono style="color:var(--cyan);">ERROR: {err}</Mono></div>
         {:else if visible.length === 0}
           <div class="msg"><Eyebrow>No media</Eyebrow><Mono dim>ingest 一些素材,或清搜尋。</Mono></div>
+        {:else if view === 'list'}
+          <table class="medialist">
+            <thead>
+              <tr>
+                <th class="c-chk"></th>
+                <th class="c-thumb"></th>
+                <th class="c-name">檔名</th>
+                <th>評分</th>
+                <th class="num">解析度</th>
+                <th class="num">時長</th>
+                <th class="num">容量</th>
+                <th class="num">匯入日期</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each visible as m (m.id)}
+                <tr
+                  class:sel={m.id === selectedId}
+                  on:click={() => (selectedId = m.id)}
+                >
+                  <td class="c-chk">
+                    <input
+                      type="checkbox"
+                      checked={pickedSet.has(m.id)}
+                      on:click|stopPropagation={() => togglePick(m.id)}
+                    />
+                  </td>
+                  <td class="c-thumb">
+                    {#if m.thumb}<img src={m.thumb} alt="" />{:else}<div class="lthumbph" class:audio={m.kind === 'audio'}></div>{/if}
+                  </td>
+                  <td class="c-name" title={m.name}>{m.name}</td>
+                  <td><Rating value={m.rating} /></td>
+                  <td class="num mono">{m._raw?.width && m._raw?.height ? `${m._raw.width}×${m._raw.height}` : '—'}</td>
+                  <td class="num mono">{m.dur}</td>
+                  <td class="num mono">{m.size}</td>
+                  <td class="num mono dim">{fmtDate(m._raw?.processed_at)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         {:else}
           <div class="mediagrid">
             {#each visible as m (m.id)}
@@ -532,6 +575,31 @@
   .metacsv { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
   .mediagrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; padding: 22px; background: var(--rule); }
+
+  /* G1 list view */
+  .medialist { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .medialist thead th {
+    position: sticky; top: 0; z-index: 1; background: var(--bg);
+    text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--rule);
+    font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--quiet-2); font-weight: 400; white-space: nowrap;
+  }
+  .medialist th.num, .medialist td.num { text-align: right; }
+  .medialist tbody tr { cursor: pointer; border-bottom: 1px solid var(--rule); }
+  .medialist tbody tr:hover { background: var(--rule); }
+  .medialist tbody tr.sel { background: var(--invert); color: var(--invert-ink); }
+  .medialist td { padding: 7px 14px; vertical-align: middle; white-space: nowrap; }
+  .medialist td.c-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; width: 100%; }
+  .medialist td.mono { font-family: var(--ak-mono); font-size: 11px; }
+  .medialist td.dim { color: var(--quiet); }
+  .medialist tr.sel td.dim { color: var(--invert-ink); }
+  .c-chk { width: 28px; }
+  .c-thumb { width: 56px; }
+  .medialist td.c-thumb img, .medialist td.c-thumb .lthumbph {
+    width: 44px; height: 25px; object-fit: cover; display: block; background: var(--rule-hi);
+  }
+  .lthumbph.audio { background: repeating-linear-gradient(90deg, var(--rule-hi) 0 2px, transparent 2px 4px); }
+
   .msg { padding: 40px 22px; display: flex; flex-direction: column; gap: 8px; }
   .exportbar {
     display: flex; align-items: center; justify-content: space-between; gap: 14px;

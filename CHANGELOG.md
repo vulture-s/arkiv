@@ -2,6 +2,7 @@
 ## Unreleased
 
 ### Added
+- **List view in the main browser (Phase 9.7 G1).** The Grid/List toggle is now wired: List renders a real table (thumbnail · filename · rating · resolution · duration · size · ingest date) with row-select, selection highlight, and multi-select checkboxes — same selection/pick state as the grid. Columns are drawn from the existing light-list payload; camera/lens columns from the design are deferred (not carried by the list query). Grid remains the default.
 - **VTT subtitle export in the inspector (Phase 9.7 G3).** The export row now offers VTT alongside EDL / FCPXML / SRT (the backend already produced WebVTT — the button was just missing). Honours the IN/OUT trim window like the other subtitle exports.
 - **Tag-source breakdown in the inspector (Phase 9.7 G8).** The Tags section header shows `N AUTO · N MANUAL`, surfacing how many tags came from vision vs were hand-added — matching the design SSOT. Reads the existing `tags.source` field; no schema change.
 - **Correction-dictionary editor in Settings (Phase 9.6c).** Settings → **Vocabulary**: edit the per-project dictionary (rule table `from → to · scope · pre · post`), then batch-recorrect from the same panel — `預覽命中` (dry-run) → `套用校正` (gated on a preview with hits) with an optional vector-rebuild, plus `還原最近一次`. The dictionary is the unified vocab UI — its `pre` toggle is the hotword function, so no separate `vocabulary.txt` editor is needed.
