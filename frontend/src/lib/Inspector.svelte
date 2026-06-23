@@ -85,6 +85,12 @@
   $: trimArgs = (inSec != null || outSec != null) ? { in_s: inSec ?? 0, out_s: outSec ?? undefined } : null
   export let pathLabel = null // file path string; null → mock /vol/... path
   export let transcriptLines = null // [[tc,text,hl],...]; null → mock lines
+  // G2: per-language transcript tabs. transcriptLangs = [{lang, active}]; viewLang
+  // = which one's lines are shown; callbacks switch the view / set the active.
+  export let transcriptLangs = null
+  export let viewLang = null
+  export let onViewLang = null // (lang) => void — view a language (no activate)
+  export let onActivateLang = null // (lang) => void — make it the active transcript
   export let frameDescriptions = null // string[]; when set, render a Vision block
   // Richer per-frame vision metadata for the scene timeline. When set, supersedes
   // frameDescriptions. [{tc?, description, content_type, atmosphere, energy,
@@ -299,9 +305,24 @@
 
   <div class="block transcript">
     <div class="blockhead">
-      <Eyebrow>Transcript{mediaLang ? ` · ${mediaLang}` : ''}</Eyebrow>
+      <Eyebrow>Transcript</Eyebrow>
       <Mono dim style="font-size:9.5px;">{lines.length} 段</Mono>
     </div>
+    {#if transcriptLangs && transcriptLangs.length}
+      <div class="langtabs">
+        {#each transcriptLangs as lt}
+          <button
+            class="langtab"
+            class:on={lt.lang === viewLang}
+            title={lt.active ? '主要（被搜尋／匯出）' : '檢視此語言'}
+            on:click={() => onViewLang && onViewLang(lt.lang)}
+          >{(lt.lang || '?').toUpperCase()}{lt.active ? ' ●' : ''}</button>
+        {/each}
+        {#if onActivateLang && viewLang && transcriptLangs.find((l) => l.lang === viewLang && !l.active)}
+          <button class="langset" on:click={() => onActivateLang(viewLang)}>設為主要</button>
+        {/if}
+      </div>
+    {/if}
     <div class="lines">
       {#if lines.length === 0}
         <Mono dim style="font-size:11px;">（無語音 · no speech detected）</Mono>
@@ -482,6 +503,19 @@
   /* transcript flows naturally now — the whole inspector scrolls (see .inspector),
      so a long transcript extends the panel and is reached by scrolling it. */
   .transcript { }
+  .langtabs { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+  .langtab {
+    appearance: none; background: transparent; border: 1px solid var(--rule);
+    font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.06em;
+    color: var(--ink-2); padding: 3px 8px; cursor: pointer; line-height: 1;
+  }
+  .langtab.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); font-weight: 700; }
+  .langset {
+    appearance: none; background: transparent; border: 1px dashed var(--rule-hi);
+    font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--quiet); padding: 3px 8px; cursor: pointer; margin-left: 4px;
+  }
+  .langset:hover { color: var(--ink); }
   .lines { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; padding-right: 4px; }
   .line { display: flex; gap: 10px; }
   .line.seekable { cursor: pointer; }

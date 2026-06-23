@@ -1934,18 +1934,79 @@ def retranscribe_media(
     # refuse to overwrite a good transcript with nothing (audit H1).
     if not (text or "").strip() and (rec.get("transcript") or "").strip():
         raise HTTPException(422, "transcribe 回空，拒絕覆寫既有逐字稿（可能是音訊擷取失敗）")
+    active_lang = lang or body.language
+    seg_json = json.dumps(segments, ensure_ascii=False) if segments else None
+    words_json = json.dumps(words, ensure_ascii=False) if words else None
+    with db.get_conn() as conn:
+        # G2: archive the OUTGOING transcript first so retranscribing into a
+        # different language preserves the previous one (else zh→en would lose zh).
+        if (rec.get("transcript") or "").strip() and rec.get("lang"):
+            db.upsert_transcript(media_id, rec["lang"], rec.get("transcript"),
+                                 rec.get("segments_json"), rec.get("words_json"), _conn=conn)
+        conn.execute(
+            "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
+            (text, active_lang, seg_json, words_json, media_id),
+        )
+        # archive the new active language too (its row mirrors media.*).
+        db.upsert_transcript(media_id, active_lang, text, seg_json, words_json, _conn=conn)
+    return {"ok": True, "transcript_length": len(text), "language": active_lang}
+
+
+class ActivateLangRequest(BaseModel):
+    lang: str
+
+
+@app.get("/api/media/{media_id}/transcripts")
+def list_transcripts(media_id: int, _tok: dict = Depends(require_scopes("videos_read"))):
+    """All archived transcript languages for a clip (Phase 9.7 G2). The active
+    language (media.lang) shows the LIVE media.* content; others show their
+    archived content. Lazily backfills the active language on first read so
+    pre-feature / ingest-created transcripts appear without an explicit retranscribe."""
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到")
+    active_lang = rec.get("lang")
+    rows = db.get_transcripts(media_id)
+    have = {r["lang"] for r in rows}
+    if (rec.get("transcript") or "").strip() and active_lang and active_lang not in have:
+        db.upsert_transcript(media_id, active_lang, rec.get("transcript"),
+                             rec.get("segments_json"), rec.get("words_json"))
+        rows = db.get_transcripts(media_id)
+    for r in rows:
+        if r["lang"] == active_lang:
+            # the active row mirrors the live cache (authoritative for search/export)
+            r["transcript"] = rec.get("transcript")
+            r["segments_json"] = rec.get("segments_json")
+            r["words_json"] = rec.get("words_json")
+            r["active"] = True
+        else:
+            r["active"] = False
+    return {"active_lang": active_lang, "transcripts": rows}
+
+
+@app.post("/api/media/{media_id}/transcript/activate")
+def activate_transcript(
+    media_id: int,
+    body: ActivateLangRequest,
+    request: Request,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
+    """Make an archived language the active transcript (Phase 9.7 G2) — copies it
+    into media.* so search / export / subtitles use it. The previously-active
+    language stays archived and switchable."""
+    _assert_same_site(request)
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到")
+    row = db.get_transcript(media_id, body.lang)
+    if not row:
+        raise HTTPException(404, "該語言尚無轉錄")
     with db.get_conn() as conn:
         conn.execute(
             "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
-            (
-                text,
-                lang or body.language,  # store the detected language, not just the hint
-                json.dumps(segments, ensure_ascii=False) if segments else None,
-                json.dumps(words, ensure_ascii=False) if words else None,
-                media_id,
-            )
+            (row["transcript"], row["lang"], row["segments_json"], row["words_json"], media_id),
         )
-    return {"ok": True, "transcript_length": len(text), "language": lang or body.language}
+    return {"ok": True, "active_lang": body.lang}
 
 
 @app.post("/api/media/{media_id}/retry-vision")
@@ -2064,6 +2125,17 @@ def reingest_media(
     media_path = _resolve_media_path(rec.get("path", ""))
     if not Path(media_path).exists():
         raise HTTPException(400, f"找不到媒體檔案：{media_path}")
+    # G2/G7: a fresh ingest re-runs Whisper and overwrites media.transcript — which
+    # would silently destroy a hand-corrected transcript (e.g. via the 9.6b
+    # correction dictionary). Snapshot the current transcript into the per-language
+    # archive first, so it survives and can be reactivated. (This is the real core
+    # of the retracted "conflict merge UI" gap — non-destructive + restorable, the
+    # arkiv RP-4 way, instead of asking the user to merge field-by-field.)
+    if (rec.get("transcript") or "").strip() and rec.get("lang"):
+        db.upsert_transcript(
+            media_id, rec["lang"], rec["transcript"],
+            rec.get("segments_json"), rec.get("words_json"),
+        )
     import subprocess, sys
     if not _acquire_ingest_slot():  # audit H3 — don't run concurrently with another ingest
         raise HTTPException(409, "已有匯入任務進行中，請稍候")
@@ -3483,17 +3555,21 @@ def _run_retranscribe_all(targets, language, backup):
                 _retranscribe_progress["failed"] += 1
                 _retranscribe_progress["done"] += 1
                 continue
+            _al = lang or language
+            _sj = json.dumps(segments, ensure_ascii=False) if segments else None
+            _wj = json.dumps(words, ensure_ascii=False) if words else None
             with db.get_conn() as conn:
                 conn.execute(
                     "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
                     (
                         text,
-                        lang or language,
-                        json.dumps(segments, ensure_ascii=False) if segments else None,
-                        json.dumps(words, ensure_ascii=False) if words else None,
+                        _al,
+                        _sj,
+                        _wj,
                         mid,
                     ),
                 )
+                db.upsert_transcript(mid, _al, text, _sj, _wj, _conn=conn)  # G2 archive
             _retranscribe_progress["done"] += 1
     finally:
         _retranscribe_progress["running"] = False
