@@ -117,6 +117,9 @@
   }
   $: hasCanon = !!(canonicalTags && canonicalTags.length)
   $: useCanon = hasCanon && showCanonical
+  // G8: tag-source breakdown for the section header (auto = vision, manual = hand-added)
+  $: autoCount = tags ? tags.filter((t) => t.source === 'auto').length : 0
+  $: manualCount = tags ? tags.filter((t) => t.source !== 'auto').length : 0
   // Live re-processing. onReprocess = async (action, opts) => {ok, message};
   // action ∈ 'retranscribe' | 'retry-vision' | 'reingest'. null → no block (mock).
   export let onReprocess = null
@@ -161,7 +164,7 @@
   }
   const RE_LANGS = [{ code: 'zh', label: '中文' }, { code: 'en', label: 'English' }]
   $: langOpts = languages && languages.length ? languages : RE_LANGS
-  const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
+  const EXPORT_FMTS = ['edl', 'fcpxml', 'srt', 'vtt']
 
   const MOCK_TRANSCRIPT = [
     ['00:05', '我們從上海一路騎到拉薩，第十七天。', false],
@@ -237,11 +240,16 @@
     <div class="block">
       <div class="blockhead">
         <Eyebrow>Tags</Eyebrow>
-        {#if hasCanon}
-          <button class="tagtoggle" on:click={toggleTagView} title="原始 vision tags ⇄ LLM 精簡（語意去重）">
-            {useCanon ? '精簡' : '原始'} ⇄
-          </button>
-        {/if}
+        <div class="taghead-right">
+          {#if tags && (autoCount || manualCount)}
+            <Mono dim style="font-size:9.5px;letter-spacing:0.06em;">{autoCount} AUTO · {manualCount} MANUAL</Mono>
+          {/if}
+          {#if hasCanon}
+            <button class="tagtoggle" on:click={toggleTagView} title="原始 vision tags ⇄ LLM 精簡（語意去重）">
+              {useCanon ? '精簡' : '原始'} ⇄
+            </button>
+          {/if}
+        </div>
       </div>
       {#if useCanon}
         <div class="tagrow">
@@ -408,6 +416,7 @@
         <button class="ak-btn exp">EDL</button>
         <button class="ak-btn exp">FCPXML</button>
         <button class="ak-btn exp">SRT</button>
+        <button class="ak-btn exp">VTT</button>
       {/if}
     </div>
     {#if onChapters || onRemotion}
@@ -489,6 +498,7 @@
   }
   .tagchip.auto { border-style: dashed; border-color: var(--rule); color: var(--ink-2); }
   .tagchip.canon { border-color: var(--invert); }
+  .taghead-right { display: flex; align-items: center; gap: 10px; }
   .tagtoggle {
     appearance: none; background: transparent; border: 1px solid var(--rule);
     font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.06em;
