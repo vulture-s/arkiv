@@ -273,6 +273,27 @@
   }
   $: if (selected && selected.id !== detailId) fetchDetail(selected.id)
 
+  // G2: per-language transcripts for the inspector's language tabs.
+  let transcriptsData = null // {active_lang, transcripts:[{lang, segments_json, active}]}
+  let transcriptsId = null
+  let viewLang = null
+  async function fetchTranscripts(id) {
+    transcriptsId = id; transcriptsData = null; viewLang = null
+    try {
+      const d = await api.getTranscripts(id)
+      if (transcriptsId === id) { transcriptsData = d; viewLang = d.active_lang }
+    } catch { if (transcriptsId === id) transcriptsData = null }
+  }
+  $: if (selected && selected.id !== transcriptsId) fetchTranscripts(selected.id)
+  function onViewLang(lang) { viewLang = lang }
+  async function onActivateLang(lang) {
+    if (!selected) return
+    try {
+      await api.activateTranscript(selected.id, lang)
+      await Promise.all([fetchDetail(selected.id), fetchTranscripts(selected.id)])
+    } catch (e) { err = `切換主要語言失敗: ${e.message}` }
+  }
+
   // Real audio waveform peaks (0..1) from the backend ffmpeg endpoint — fetched
   // per clip, passed to the inspector's <Waveform>. Replaces the old mock sin bars.
   let wavePeaks = null
@@ -297,9 +318,16 @@
     try { return JSON.parse(v) } catch { return null }
   }
   $: detailLive = detail && detail.id === (selected && selected.id) ? detail : null
-  // transcript: segments_json = [{start,end,text}, ...]
-  $: inspTranscript = detailLive
-    ? (parseJson(detailLive.segments_json) || []).map((sg) => [secToTc(sg.start), sg.text, false, sg.start])
+  // G2: language tabs + the segments of whichever language is being viewed.
+  $: tdLive = transcriptsData && transcriptsId === (selected && selected.id) ? transcriptsData : null
+  $: transcriptLangs = tdLive ? tdLive.transcripts.map((t) => ({ lang: t.lang, active: !!t.active })) : null
+  // transcript: show the viewed language's segments_json when tabs are loaded,
+  // else fall back to the live detail's active transcript.
+  $: _displaySegs = (tdLive && viewLang)
+    ? (parseJson((tdLive.transcripts.find((t) => t.lang === viewLang) || {}).segments_json) || [])
+    : (detailLive ? (parseJson(detailLive.segments_json) || []) : null)
+  $: inspTranscript = _displaySegs
+    ? _displaySegs.map((sg) => [secToTc(sg.start), sg.text, false, sg.start])
     : null
   // vision: frame_tags_parsed = [{description, tags, ...}, ...]
   $: inspFrames = detailLive
@@ -374,6 +402,7 @@
     if (action === 'retranscribe') {
       const r = await api.retranscribe(id, opts.language || 'zh')
       if (detailId === id) await fetchDetail(id)
+      await fetchTranscripts(id)  // G2: surface the (possibly new) language as a tab
       return { ok: r.ok, message: `轉錄完成 · ${r.transcript_length} 字 · ${r.language}` }
     }
     if (action === 'retry-vision') {
@@ -544,6 +573,10 @@
         peaks={inspPeaks}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
+        {transcriptLangs}
+        {viewLang}
+        {onViewLang}
+        {onActivateLang}
         frameDescriptions={inspFrames}
         frameScenes={inspScenes}
         tags={inspTags}

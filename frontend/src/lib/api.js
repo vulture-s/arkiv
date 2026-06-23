@@ -119,6 +119,13 @@ export const retranscribeAll = (backup = true, language = null, opts) =>
 // → {total, done, failed, current, running, backup}
 export const retranscribeAllStatus = (opts) => req('/api/retranscribe-all/status', opts)
 
+// ---- per-language transcripts (Phase 9.7 G2) ----
+// → {active_lang, transcripts:[{lang, transcript, segments_json, words_json, active}]}
+export const getTranscripts = (id, opts) => req(`/api/media/${id}/transcripts`, opts)
+// Make an archived language the active (indexed/exported) transcript → {ok, active_lang}
+export const activateTranscript = (id, lang, opts) =>
+  req(`/api/media/${id}/transcript/activate`, { method: 'POST', body: { lang }, ...opts })
+
 // POST /api/ingest/ws {path, limit, …options} — trigger ingest with WS progress.
 // `options` forwards the engine flags the setup dialog exposes (skip_vision,
 // refresh, recursive, max_failures, skip_failed, no_embed); omitted keys keep

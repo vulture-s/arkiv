@@ -314,11 +314,28 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_jobs_status_priority "
             "ON jobs(status, priority, created_at)"
         )
+        # Phase 9.7 G2: per-language transcript archive. media.transcript/lang/
+        # segments_json/words_json stay the ACTIVE transcript (what search indexes
+        # + exports use); this table keeps every transcribed language so a
+        # retranscribe in another language no longer destroys the previous one.
+        # One row per (media_id, lang); the active language's row mirrors media.*.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS transcripts (
+                id            INTEGER PRIMARY KEY,
+                media_id      INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                lang          TEXT NOT NULL,
+                transcript    TEXT,
+                segments_json TEXT,
+                words_json    TEXT,
+                updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(media_id, lang)
+            )
+        """)
         # audit M6: PRAGMA foreign_keys was never enabled before, so orphan
         # child rows accumulated (e.g. scopes of revoked tokens, tags/frames of
         # deleted media). Clear them once here so the now-active enforcement in
         # get_conn() doesn't start failing writes against legacy inconsistency.
-        _known_child_tables = {"tags", "frames", "access_token_scopes", "chat_messages"}
+        _known_child_tables = {"tags", "frames", "access_token_scopes", "chat_messages", "transcripts"}
         try:
             violations = conn.execute("PRAGMA foreign_key_check").fetchall()
         except sqlite3.Error:
@@ -522,6 +539,50 @@ def get_record_by_id(media_id: int) -> Optional[Dict]:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM media WHERE id=?", (media_id,)).fetchone()
         return dict(row) if row else None
+
+
+# ── Phase 9.7 G2: per-language transcript archive ────────────────────────────
+
+def upsert_transcript(media_id, lang, transcript, segments_json, words_json, _conn=None):
+    """Archive a transcript for (media_id, lang). Overwrites that language's row
+    only — other languages are untouched. Pass _conn to join an open transaction."""
+    if not lang:
+        return
+    sql = (
+        "INSERT INTO transcripts (media_id, lang, transcript, segments_json, words_json, updated_at) "
+        "VALUES (?,?,?,?,?, datetime('now')) "
+        "ON CONFLICT(media_id, lang) DO UPDATE SET "
+        "transcript=excluded.transcript, segments_json=excluded.segments_json, "
+        "words_json=excluded.words_json, updated_at=excluded.updated_at"
+    )
+    params = (media_id, lang, transcript, segments_json, words_json)
+    if _conn is not None:
+        _conn.execute(sql, params)
+    else:
+        with get_conn() as conn:
+            conn.execute(sql, params)
+
+
+def get_transcripts(media_id) -> List[Dict]:
+    """All archived language versions for a media, newest-updated first."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT lang, transcript, segments_json, words_json, updated_at "
+            "FROM transcripts WHERE media_id=? ORDER BY updated_at DESC, lang",
+            (media_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_transcript(media_id, lang) -> Optional[Dict]:
+    """One archived language version, or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT lang, transcript, segments_json, words_json, updated_at "
+            "FROM transcripts WHERE media_id=? AND lang=?",
+            (media_id, lang),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def set_canonical_tags(media_id: int, tags: list) -> None:
