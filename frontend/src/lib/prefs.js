@@ -48,3 +48,26 @@ export const resolvedTheme = derived(
 export function cycleTheme() {
   themePref.update((t) => (t === 'dark' ? 'light' : t === 'light' ? 'system' : 'dark'))
 }
+
+// ── UI scale (Phase 9.7 G4) ──────────────────────────────────────────────────
+// The layout is px-based, so a root font-size has no effect (why this was long
+// deferred). CSS `zoom` scales the whole rendered tree regardless of px/rem and
+// is supported in WebKit (Tauri/WKWebView) + Chromium — so it's the honest way
+// to make a real, working UI-scale control. Type density (independent spacing)
+// stays deferred: px spacing won't reflow from a density class.
+const SCALE_KEY = 'arkiv.uiScale'
+export const SCALE_MIN = 0.8
+export const SCALE_MAX = 1.4
+function readScale() {
+  try {
+    const v = parseFloat(localStorage.getItem(SCALE_KEY))
+    return v >= SCALE_MIN && v <= SCALE_MAX ? v : 1.0
+  } catch {
+    return 1.0
+  }
+}
+export const uiScale = writable(readScale())
+uiScale.subscribe((v) => {
+  try { localStorage.setItem(SCALE_KEY, String(v)) } catch { /* private mode / quota */ }
+  try { document.documentElement.style.zoom = String(v) } catch { /* SSR / no DOM */ }
+})

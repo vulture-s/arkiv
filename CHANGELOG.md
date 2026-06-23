@@ -2,6 +2,7 @@
 ## Unreleased
 
 ### Added
+- **UI scale control in Settings → Appearance (Phase 9.7 G4).** A real, persisted scale slider (80–140%) — long deferred because the layout is px-based (a root font-size does nothing). Implemented via CSS `zoom` on the document root, which scales the whole tree regardless of px/rem and is supported in WebKit (Tauri/WKWebView) + Chromium. Persists to localStorage and re-applies on load; a 重設 button returns to 100%. Type density stays honestly disabled (px spacing won't reflow from a density class).
 - **List view in the main browser (Phase 9.7 G1).** The Grid/List toggle is now wired: List renders a real table (thumbnail · filename · rating · resolution · duration · size · ingest date) with row-select, selection highlight, and multi-select checkboxes — same selection/pick state as the grid. Columns are drawn from the existing light-list payload; camera/lens columns from the design are deferred (not carried by the list query). Grid remains the default.
 - **VTT subtitle export in the inspector (Phase 9.7 G3).** The export row now offers VTT alongside EDL / FCPXML / SRT (the backend already produced WebVTT — the button was just missing). Honours the IN/OUT trim window like the other subtitle exports.
 - **Tag-source breakdown in the inspector (Phase 9.7 G8).** The Tags section header shows `N AUTO · N MANUAL`, surfacing how many tags came from vision vs were hand-added — matching the design SSOT. Reads the existing `tags.source` field; no schema change.

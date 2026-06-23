@@ -15,7 +15,7 @@
   import * as api from '../lib/api.js'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
-  import { themePref, resolvedTheme } from '../lib/prefs.js'
+  import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
 
   const VERSION = 'v0.9.2'
   let section = 'appearance' // appearance | vocab | engine | system
@@ -209,13 +209,17 @@
                   {/each}
                 </div>
               </div>
-              <div class="frow disabled">
+              <div class="frow">
                 <Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">UI scale</Mono>
-                <span class="pend">px-layout · not adjustable yet</span>
+                <div class="scalectl">
+                  <input class="scalerange" type="range" min={SCALE_MIN} max={SCALE_MAX} step="0.05" bind:value={$uiScale} />
+                  <Mono style="font-size:11px;color:var(--ink);min-width:38px;">{Math.round($uiScale * 100)}%</Mono>
+                  <button class="ak-btn" on:click={() => uiScale.set(1)} disabled={$uiScale === 1}>重設</button>
+                </div>
               </div>
               <div class="frow disabled">
                 <Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Type density</Mono>
-                <span class="pend">px-layout · not adjustable yet</span>
+                <span class="pend">px-layout · spacing not reflowable yet</span>
               </div>
             </div>
           </section>
@@ -385,6 +389,8 @@
   .pend { font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--quiet-2); border: 1px dashed var(--rule-hi); padding: 2px 7px; width: fit-content; }
   .livedot { color: var(--cyan); font-size: 9px; }
   .proxyctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .scalectl { display: flex; align-items: center; gap: 12px; }
+  .scalerange { width: 180px; accent-color: var(--invert); cursor: pointer; }
 
   /* correction dictionary (Phase 9.6c) */
   .vrules { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
