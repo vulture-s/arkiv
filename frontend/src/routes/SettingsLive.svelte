@@ -18,14 +18,67 @@
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
 
   const VERSION = 'v0.9.2'
-  let section = 'appearance' // appearance | vocab | engine | system
+  // G5 step ①: nav expanded to the design's tab set. Real-backed tabs are
+  // interactive; tabs without backend (vision/export) show honest pending rows.
+  let section = 'general'
   const nav = [
-    ['appearance', 'Appearance'],
-    ['vocab', 'Vocabulary'],
-    ['engine', 'Engine'],
+    ['general', 'General'],
+    ['transcription', 'Transcription'],
+    ['vision', 'Vision tagging'],
+    ['export', 'Export defaults'],
+    ['storage', 'Storage · proxy'],
+    ['projects', 'Projects'],
+    ['advanced', 'Advanced'],
     ['system', 'System · about'],
   ]
   const themeOpts = [['dark', 'Dark'], ['light', 'Light'], ['system', 'System']]
+
+  // Transcription engines (brick 4, PR #77) — real whisper quality presets +
+  // forced-language set. We display the available options + current default; the
+  // per-ingest picker lives in IngestSetup. Persisting a库-wide default = step ②.
+  let engines = null // {whisper_modes:[{mode,name}], default_mode, languages:[{code,label}]}
+  async function loadEngines() {
+    try { engines = await api.getIngestEngines() } catch { engines = null }
+  }
+
+  // Project registry — full CRUD (projects_read/write, token-free on loopback).
+  let projects = [] // [{name, path, added_at, last_indexed_at, tags, source}]
+  let projHealth = {} // name -> status string ("ok" | …)
+  let projMsg = ''
+  let projBusy = false
+  let newName = '', newPath = '', newTags = ''
+  async function loadProjects() {
+    try { projects = (await api.getProjects()).projects || [] } catch { projects = [] }
+    try {
+      const h = await api.getProjectsHealth()
+      projHealth = Object.fromEntries((h.projects || []).map((p) => [p.name, p.status]))
+    } catch { projHealth = {} }
+  }
+  async function addProj() {
+    if (projBusy) return
+    const name = newName.trim(), path = newPath.trim()
+    if (!name || !path) { projMsg = '名稱與路徑都要填'; return }
+    projBusy = true; projMsg = ''
+    try {
+      await api.addProject({ name, path, tags: newTags.split(',').map((t) => t.trim()).filter(Boolean) })
+      newName = ''; newPath = ''; newTags = ''
+      await loadProjects()
+      projMsg = `已加入 ${name}`
+    } catch (e) { projMsg = e.status === 409 ? `已存在同名專案：${name}` : `失敗: ${e.message}` }
+    finally { projBusy = false }
+  }
+  async function delProj(name) {
+    if (projBusy) return
+    projBusy = true; projMsg = ''
+    try { await api.deleteProject(name); await loadProjects(); projMsg = `已移除 ${name}` }
+    catch (e) { projMsg = `失敗: ${e.message}` } finally { projBusy = false }
+  }
+  async function syncProj() {
+    if (projBusy) return
+    projBusy = true; projMsg = ''
+    try { await api.syncProjects(); await loadProjects(); projMsg = '已同步索引時間' }
+    catch (e) { projMsg = `失敗: ${e.message}` } finally { projBusy = false }
+  }
 
   // System panel — real backend state.
   let sys = 'loading' // loading | ok | error
@@ -160,7 +213,9 @@
   }
   onDestroy(() => { if (retrTimer) clearTimeout(retrTimer) })
 
-  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab() })
+  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab(); loadEngines(); loadProjects() })
+
+  const shortDate = (s) => (s ? String(s).slice(0, 10) : '—')
 
   const gb = (n) => (n == null ? '—' : n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
   const mb = (n) => (n == null ? '—' : n >= 1000 ? `${(n / 1000).toFixed(1)} GB` : `${Math.round(n)} MB`)
@@ -192,11 +247,11 @@
       </nav>
 
       <div class="form">
-        {#if section === 'appearance'}
+        {#if section === 'general'}
           <section>
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">THEME · INTERFACE</Eyebrow>
-              <div class="ak-display fstitle">Appearance</div>
+              <div class="ak-display fstitle">General</div>
               <div class="fsdesc">vulture.s editorial. Theme applies across the whole app and persists. System follows your OS.</div>
             </div>
             <div class="frows">
@@ -223,11 +278,11 @@
               </div>
             </div>
           </section>
-        {:else if section === 'vocab'}
+        {:else if section === 'advanced'}
           <section>
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">CORRECTION DICTIONARY · 校正字典</Eyebrow>
-              <div class="ak-display fstitle">Vocabulary</div>
+              <div class="ak-display fstitle">Advanced</div>
               <div class="fsdesc">一本 per-project 字典，兩條路徑：<b>pre</b> 把 <code>to</code> 詞餵 Whisper hotword（轉錄前防聽錯）；<b>post</b> 把 <code>from→to</code> 套到已存逐字稿（批次校正，秒級修整庫搜尋召回、不碰音訊）。寫入 <code>.arkiv/corrections.json</code>。</div>
             </div>
 
@@ -297,38 +352,67 @@
               {/if}
             </div>
           </section>
-        {:else if section === 'engine'}
+        {:else if section === 'transcription'}
           <section>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">WHISPER · OLLAMA · RESOLVE</Eyebrow>
-              <div class="ak-display fstitle">Engine</div>
-              <div class="fsdesc">Transcription / vision models and export defaults are chosen per ingest. In-app pickers have no API yet (brick 4).</div>
+              <Eyebrow style="margin-bottom:4px;">WHISPER · GUARD PRESETS</Eyebrow>
+              <div class="ak-display fstitle">Transcription</div>
+              <div class="fsdesc">轉錄品質預設（whisper-guard 0–4）與強制語言，每次匯入於 setup 對話框選。此處顯示可用選項 + 目前預設；設成全庫預設＝下一步（settings 表）。</div>
+            </div>
+            {#if engines}
+              <div class="frows">
+                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Quality presets</Mono>
+                  <div class="chips">
+                    {#each engines.whisper_modes as m}
+                      <span class="chip" class:chipon={m.mode === engines.default_mode}>{m.mode} · {m.name}{m.mode === engines.default_mode ? ' ●' : ''}</span>
+                    {/each}
+                  </div>
+                </div>
+                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Languages</Mono>
+                  <div class="chips">
+                    {#each engines.languages as l}<span class="chip">{l.label} · {l.code}</span>{/each}
+                    <span class="chip">auto-detect</span>
+                  </div>
+                </div>
+                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Current default</Mono><Mono style="font-size:12px;color:var(--ink);">preset {engines.default_mode} · 語言自動偵測</Mono></div>
+              </div>
+            {:else}
+              <span class="pend">engines endpoint unreachable</span>
+            {/if}
+          </section>
+        {:else if section === 'vision'}
+          <section>
+            <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">VLM · TAG POOL</Eyebrow>
+              <div class="ak-display fstitle">Vision tagging</div>
+              <div class="fsdesc">畫面標籤的視覺模型與標籤池設定。後端待補（brick 4b：vision-model 清單來源、tag pool 概念、frames 取樣未定）— 不造假可調控制項。</div>
             </div>
             <div class="frows">
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Transcription</Mono><span class="pend">model picker pending · brick 4</span></div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Vision tagging</Mono><span class="pend">model + tag pool pending · brick 4</span></div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Export defaults</Mono><span class="pend">EDL fps / proxy pending · brick 4</span></div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Vision model</Mono><span class="pend">picker pending · brick 4b</span></div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Tag pool · confidence</Mono><span class="pend">no config endpoint yet</span></div>
             </div>
           </section>
-        {:else}
+        {:else if section === 'export'}
           <section>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">RUNTIME</Eyebrow>
-              <div class="ak-display fstitle">System</div>
+              <Eyebrow style="margin-bottom:4px;">EDL · FCPXML · PROXY</Eyebrow>
+              <div class="ak-display fstitle">Export defaults</div>
+              <div class="fsdesc">匯出預設（EDL fps、proxy 解析度、drop-frame）。後端待補——目前匯出參數每次呼叫帶入、無持久預設（需 settings 表）。</div>
             </div>
             <div class="frows">
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Version</Mono><Mono style="font-size:12px;color:var(--ink);">arkiv {VERSION}</Mono></div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Backend</Mono>
-                {#if sys === 'loading'}<Mono dim style="font-size:12px;">checking…</Mono>
-                {:else if sys === 'ok'}<Mono style="font-size:12px;color:var(--ink);"><span class="livedot">●</span> online</Mono>
-                {:else}<Mono style="font-size:12px;color:var(--cyan);">unreachable</Mono>{/if}
-              </div>
-              {#if sys === 'ok' && stats}
-                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Library</Mono><Mono style="font-size:12px;color:var(--ink);">{stats.total} media · {Math.round((stats.total_size_mb || 0) / 1024)} GB indexed</Mono></div>
-                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Disk</Mono>
-                  {#if disk}<Mono style="font-size:12px;color:var(--ink);">{gb(disk.used_gb)} / {gb(disk.total_gb)} · {disk.pct}%</Mono>{:else}<Mono dim style="font-size:12px;">—</Mono>{/if}
-                </div>
-              {/if}
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">EDL frame rate</Mono><span class="pend">default pending · no settings store</span></div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Proxy resolution</Mono><span class="pend">default pending</span></div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Drop frame</Mono><span class="pend">default pending</span></div>
+            </div>
+          </section>
+        {:else if section === 'storage'}
+          <section>
+            <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">PROXY · CACHE · BREAKDOWN</Eyebrow>
+              <div class="ak-display fstitle">Storage · proxy</div>
+              <div class="fsdesc">編輯用 proxy 狀態與生成、快取清理，以及庫的語言時長 / 格式容量分布。</div>
+            </div>
+            <div class="frows">
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Proxies</Mono>
                 {#if proxy}<Mono style="font-size:12px;color:var(--ink);">{proxy.proxied}/{proxy.total} built · {proxy.size_mb} MB</Mono>{:else}<Mono dim style="font-size:12px;">—</Mono>{/if}
               </div>
@@ -352,6 +436,64 @@
                   {#if cacheMsg}<Mono dim style="font-size:10.5px;">{cacheMsg}</Mono>{/if}
                 </div>
               </div>
+            </div>
+          </section>
+        {:else if section === 'projects'}
+          <section>
+            <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">PROJECT REGISTRY · 專案註冊表</Eyebrow>
+              <div class="ak-display fstitle">Projects</div>
+              <div class="fsdesc">跨庫專案登記——加入 / 移除 / 同步索引時間。寫入 <code>~/.arkiv-projects.json</code>。健康狀態來自 <code>/api/projects/health</code>。</div>
+            </div>
+
+            <div class="ptable">
+              <div class="phead"><span>NAME</span><span>PATH</span><span>INDEXED</span><span>HEALTH</span><span></span></div>
+              {#each projects as p}
+                <div class="prow">
+                  <span class="pname">{p.name}</span>
+                  <span class="ppath" title={p.path}>{p.path}</span>
+                  <Mono dim style="font-size:10.5px;">{shortDate(p.last_indexed_at)}</Mono>
+                  <span class="phealth" class:ok={projHealth[p.name] === 'ok'}>{projHealth[p.name] || '—'}</span>
+                  <button class="vx" on:click={() => delProj(p.name)} disabled={projBusy} title="移除">✕</button>
+                </div>
+              {/each}
+              {#if !projects.length}<div class="vempty">尚無註冊專案 — 下方加入第一個。</div>{/if}
+            </div>
+
+            <div class="vdiv"></div>
+            <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">ADD PROJECT · 加入</Eyebrow>
+            </div>
+            <div class="paddrow">
+              <input class="vin" bind:value={newName} placeholder="專案名稱" />
+              <input class="vin" bind:value={newPath} placeholder="/Volumes/… 路徑" />
+              <input class="vin" bind:value={newTags} placeholder="tags（逗號分隔，可空）" />
+            </div>
+            <div class="vctl">
+              <button class="ak-btn" on:click={addProj} disabled={projBusy}>+ 加入專案</button>
+              <button class="ak-btn" on:click={syncProj} disabled={projBusy}>同步索引時間</button>
+              {#if projMsg}<Mono dim style="font-size:11px;">{projMsg}</Mono>{/if}
+            </div>
+          </section>
+        {:else}
+          <section>
+            <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">RUNTIME</Eyebrow>
+              <div class="ak-display fstitle">System</div>
+            </div>
+            <div class="frows">
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Version</Mono><Mono style="font-size:12px;color:var(--ink);">arkiv {VERSION}</Mono></div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Backend</Mono>
+                {#if sys === 'loading'}<Mono dim style="font-size:12px;">checking…</Mono>
+                {:else if sys === 'ok'}<Mono style="font-size:12px;color:var(--ink);"><span class="livedot">●</span> online</Mono>
+                {:else}<Mono style="font-size:12px;color:var(--cyan);">unreachable</Mono>{/if}
+              </div>
+              {#if sys === 'ok' && stats}
+                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Library</Mono><Mono style="font-size:12px;color:var(--ink);">{stats.total} media · {Math.round((stats.total_size_mb || 0) / 1024)} GB indexed</Mono></div>
+                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Disk</Mono>
+                  {#if disk}<Mono style="font-size:12px;color:var(--ink);">{gb(disk.used_gb)} / {gb(disk.total_gb)} · {disk.pct}%</Mono>{:else}<Mono dim style="font-size:12px;">—</Mono>{/if}
+                </div>
+              {/if}
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Privacy</Mono><Mono dim style="font-size:11.5px;">Everything runs locally. Nothing leaves this machine.</Mono></div>
             </div>
           </section>
@@ -410,4 +552,20 @@
   .vdiv { height: 1px; background: var(--rule); margin: 20px 0 16px; }
   .vresult { display: flex; flex-direction: column; gap: 3px; margin-top: 12px; padding: 10px 12px; box-shadow: inset 0 0 0 1px var(--rule); }
   .vmsg { margin-top: 8px; }
+
+  /* G5 transcription engines (read-only chips) */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--ink-2); border: 1px solid var(--rule); padding: 3px 8px; line-height: 1.2; }
+  .chip.chipon { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
+
+  /* G5 project registry table */
+  .ptable { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .phead, .prow { display: grid; grid-template-columns: 1.2fr 2fr 78px 64px 28px; align-items: center; gap: 10px; }
+  .phead { font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.08em; color: var(--quiet-2); padding: 0 2px; }
+  .prow { padding: 5px 2px; border-bottom: 1px solid var(--rule); }
+  .pname { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ppath { font-family: var(--ak-mono); font-size: 10.5px; color: var(--quiet); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .phealth { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--quiet-2); }
+  .phealth.ok { color: var(--cyan); }
+  .paddrow { display: grid; grid-template-columns: 1.2fr 2fr 1.4fr; gap: 8px; margin-bottom: 12px; }
 </style>
