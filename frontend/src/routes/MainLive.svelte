@@ -607,7 +607,11 @@
   .ranked { font-size: 10px; padding: 6px 10px; text-decoration: none; white-space: nowrap; }
   .metacsv { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
-  .mediagrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; padding: 22px; background: var(--rule); }
+  /* G9: prototype card width = 198px (runtime-measured from the 1400px design canvas).
+     repeat(4,1fr) ballooned cards on wide windows (310px @1920) and squeezed them on
+     narrow (168px @1280). auto-fill holds the design rhythm and reflows column count;
+     auto-fill (not auto-fit) so a sparse last row keeps card size instead of stretching. */
+  .mediagrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(198px, 1fr)); gap: 1px; padding: 22px; background: var(--rule); }
 
   /* G1 list view */
   .medialist { width: 100%; border-collapse: collapse; font-size: 12.5px; }
