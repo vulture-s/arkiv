@@ -60,6 +60,13 @@ const qs = (params = {}) => {
 export const getStats = (opts) => req('/api/stats', opts)
 export const getProjects = (opts) => req('/api/projects', opts)
 export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
+// ---- project registry mutations (projects_write; token-free on loopback) ----
+// POST /api/projects {name, path, tags} → project dict (409 if name exists).
+export const addProject = (body, opts) => req('/api/projects', { method: 'POST', body, ...opts })
+// DELETE /api/projects/{name} → removed project dict (404 if unknown).
+export const deleteProject = (name, opts) => req(`/api/projects/${encodeURIComponent(name)}`, { method: 'DELETE', ...opts })
+// POST /api/projects/sync → {projects, total} (refresh last_indexed_at from DB).
+export const syncProjects = (opts) => req('/api/projects/sync', { method: 'POST', ...opts })
 export const getTags = (opts) => req('/api/tags', opts)
 // /api/collections → {collections:[{key,title,category,count,items:[{id,filename,thumb,score}]}], total}
 export const getCollections = (opts) => req('/api/collections', opts)
