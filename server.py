@@ -2687,6 +2687,61 @@ def _fcpxml_rational(fps: float):
     return "1", str(round(fps))
 
 
+class BatchExportRequest(BaseModel):
+    # Phase 12.4: zip several clips' per-clip exports (one subtitle/transcript
+    # file each). For a single stitched timeline use /api/export/timeline.
+    ids: List[int]
+    fmt: str = "srt"
+
+
+@app.post("/api/export/batch")
+def export_batch(
+    body: BatchExportRequest,
+    _tok: dict = Depends(require_scopes("media_read")),
+):
+    """Bundle the per-clip export (`/api/media/{id}/export/{fmt}`) of many clips
+    into one .zip — one file per clip. Reuses the single-clip builder verbatim so
+    the formats + content stay identical. Missing ids are skipped."""
+    import io
+    import zipfile
+
+    fmt = (body.fmt or "").lower()
+    allowed = {"txt", "srt", "vtt", "edl", "edl-markers", "fcpxml"}
+    if fmt not in allowed:
+        raise HTTPException(422, "unsupported fmt: {0} (use {1})".format(fmt, "/".join(sorted(allowed))))
+    if not body.ids:
+        raise HTTPException(422, "ids must be a non-empty list")
+
+    ext = "edl" if fmt == "edl-markers" else fmt
+    buf = io.BytesIO()
+    used: dict = {}
+    written = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for mid in body.ids:
+            rec = db.get_record_by_id(mid)
+            if not rec:
+                continue
+            resp = export_media(media_id=mid, fmt=fmt, _tok=_tok)  # _tok is gate-only
+            content = resp.body if isinstance(resp.body, (bytes, bytearray)) else str(resp.body).encode("utf-8")
+            stem = (rec.get("filename") or "media_{0}".format(mid)).rsplit(".", 1)[0]
+            arcname = "{0}.{1}".format(stem, ext)
+            # de-collide duplicate stems so no file is silently overwritten
+            n = used.get(arcname, 0)
+            used[arcname] = n + 1
+            if n:
+                arcname = "{0}_{1}.{2}".format(stem, n, ext)
+            zf.writestr(arcname, content)
+            written += 1
+    if written == 0:
+        raise HTTPException(404, "none of the requested ids exist")
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="arkiv-export.zip"'},
+    )
+
+
 @app.get("/api/export/timeline/{fmt}")
 def export_timeline(
     fmt: str,
