@@ -102,7 +102,7 @@ elif [ -f "$SRC/server.py" ]; then
         case "$(basename "$d")" in tests|.venv) continue ;; esac
         cp -R "$d" "$INSTALL_DIR"/
     done
-    for f in index.html requirements.txt .env.example smoke-test.sh install.sh uninstall.sh arkiv.command LICENSE README.md; do
+    for f in requirements.txt .env.example smoke-test.sh install.sh uninstall.sh arkiv.command LICENSE README.md; do
         [ -f "$SRC/$f" ] && cp "$SRC/$f" "$INSTALL_DIR/"
     done
 else

@@ -10,13 +10,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import urllib.request
 from pathlib import Path
 from typing import Any, List, Literal, Optional, Set
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
@@ -1868,13 +1867,11 @@ def offload_run(
     return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 
-@app.get("/dit", response_class=HTMLResponse)
+@app.get("/dit")
 def serve_dit():
-    """DIT Offload control panel (separate from the main search UI)."""
-    page = ROOT / "dit-offload.html"
-    if page.exists():
-        return page.read_text(encoding="utf-8")
-    return "<h1>arkiv DIT</h1><p>dit-offload.html not found</p>"
+    """Legacy DIT path — the standalone dit-offload.html island was ported into
+    the SPA (Svelte cutover Phase 3). Redirect old bookmarks to the SPA route."""
+    return RedirectResponse(url="/#/offload", status_code=308)
 
 
 # ── Re-transcribe ─────────────────────────────────────────────────────────────
@@ -3168,43 +3165,9 @@ async def ingest_media_ws(
     return {"ok": True, "message": "已開始匯入 — 連線 /ws/ingest 取得進度"}
 
 
-# ── Tailwind CDN proxy (cached locally so Tauri WKWebView never blocks) ────────
-_TAILWIND_CDN_URL = "https://cdn.tailwindcss.com"
-_tailwind_js: Optional[bytes] = None
-
-def _fetch_tailwind() -> bytes:
-    """Download Tailwind CDN JS once and cache on disk. Skip empty cache files."""
-    cache_path = ROOT / "tailwind.cdn.js"
-    if cache_path.exists() and cache_path.stat().st_size > 1000:
-        return cache_path.read_bytes()
-    try:
-        req = urllib.request.Request(_TAILWIND_CDN_URL,
-                                     headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = r.read()
-        if len(data) > 1000:
-            cache_path.write_bytes(data)
-            return data
-    except Exception as e:
-        print(f"[arkiv] Tailwind CDN download failed: {e}")
-    return b"/* tailwind cdn unavailable */"
-
-# Pre-fetch at import time (runs before uvicorn starts serving)
-_tailwind_js = _fetch_tailwind()
-
-@app.get("/tailwind.cdn.js")
-def serve_tailwind():
-    return Response(content=_tailwind_js, media_type="text/javascript",
-                    headers={"Cache-Control": "public, max-age=86400"})
-
-
-@app.get("/tailwind-static.css")
-def serve_tailwind_static():
-    css_path = ROOT / "tailwind-static.css"
-    if css_path.exists():
-        return Response(content=css_path.read_bytes(), media_type="text/css",
-                        headers={"Cache-Control": "no-cache"})
-    return Response(content=b"/* tailwind-static.css not found */", media_type="text/css")
+# (Svelte cutover Phase 3) The Tailwind CDN proxy + /tailwind-static.css routes
+# were only consumed by the retired legacy index.html — removed with it. The
+# Svelte SPA ships its own bundled CSS under /assets.
 
 
 # ── Video Streaming ──────────────────────────────────────────────────────────
@@ -3586,21 +3549,23 @@ def retranscribe_all_status(_tok: dict = Depends(require_scopes("projects_read")
 
 # ── Serve Frontend ───────────────────────────────────────────────────────────
 
-# Serve the built Svelte SPA (frontend/dist/index.html) when present. The SPA is
-# hash-routed (svelte-spa-router) so "/" is the only HTML entry the browser ever
-# requests — no catch-all fallback needed; /assets/* is a StaticFiles mount below.
-# Auto-falls back to the legacy Tailwind index.html when the build is absent (a
-# fresh clone before `npm run build`); ARKIV_UI=legacy forces it (rollback hatch).
-# Read fresh each request (no cache), matching the previous dev behaviour.
+# Serve the built Svelte SPA (frontend/dist/index.html). The SPA is hash-routed
+# (svelte-spa-router) so "/" is the only HTML entry the browser ever requests —
+# no catch-all fallback needed; /assets/* is a StaticFiles mount below. Read fresh
+# each request (no cache), matching the previous dev behaviour.
+#
+# Svelte cutover Phase 3 (2026-06-26): the legacy Tailwind index.html + the
+# ARKIV_UI=legacy escape hatch are retired — the SPA is the only UI. A missing
+# build now surfaces a clear "run npm run build" message instead of silently
+# falling back to a page that no longer exists.
 def _load_index() -> str:
-    if os.environ.get("ARKIV_UI", "").lower() != "legacy":
-        spa = FRONTEND_DIST / "index.html"
-        if spa.exists():
-            return spa.read_text(encoding="utf-8")
-    legacy = ROOT / "index.html"
-    if legacy.exists():
-        return legacy.read_text(encoding="utf-8")
-    return "<h1>arkiv</h1><p>index.html not found</p>"
+    spa = FRONTEND_DIST / "index.html"
+    if spa.exists():
+        return spa.read_text(encoding="utf-8")
+    return (
+        "<h1>arkiv</h1><p>UI build not found. Run "
+        "<code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code>.</p>"
+    )
 
 class OpenFileRequest(BaseModel):  # audit M22: malformed JSON → clean 422, not a raw 500
     path: str
@@ -3674,21 +3639,13 @@ def serve_index():
     return _load_index()
 
 
-@app.get("/legacy", response_class=HTMLResponse)
-def serve_legacy():
-    """Old Tailwind UI, kept reachable alongside the new SPA during the cutover
-    bake — an escape hatch / side-by-side comparison view while the SPA earns
-    trust. Always the legacy page, regardless of ARKIV_UI or whether dist exists.
-    Retired in Phase 3 once the SPA is confirmed."""
-    legacy = ROOT / "index.html"
-    if legacy.exists():
-        return legacy.read_text(encoding="utf-8")
-    raise HTTPException(404, "legacy UI removed")
+# (Svelte cutover Phase 3) The /legacy route + the old Tailwind index.html it
+# served are retired — the SPA is the only UI now.
 
 
 # Built SPA assets (frontend/dist/assets/*-<hash>.js|css, referenced as /assets/…
-# by the built index.html). Mounted only when the build exists, so a fresh clone
-# without `npm run build` still boots and falls back to the legacy page at "/".
+# by the built index.html). Mounted only when the build exists; without it "/"
+# returns a clear "run npm run build" message instead.
 # Registered last → never shadows the explicit /api, /thumbnails, /dit routes.
 if (FRONTEND_DIST / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="spa-assets")
