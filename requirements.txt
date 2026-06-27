@@ -21,6 +21,11 @@ soundfile>=0.12
 # backpressure and the `arkiv status` memory readout.
 psutil>=5.9
 
+# Folder watcher (Phase 11.2) — soft dependency: watch.py falls back to a
+# polling scan when watchdog is absent (e.g. the NAS), so this just upgrades the
+# watcher to event-driven FSEvents/inotify where available.
+watchdog>=3.0
+
 # Speech pre-processing
 silero-vad>=6.0
 whisper-guard>=0.3   # 4-layer anti-hallucination text filter (was vendored; now PyPI)
