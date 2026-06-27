@@ -30,6 +30,7 @@ import corrections
 import db
 import federation
 import projects as project_registry
+import settings as settings_store
 import smart_collections
 import tag_aliases
 import tag_quality
@@ -640,6 +641,76 @@ def projects_health(
     return {"projects": projects, "total": len(projects), "ok": ok_count}
 
 
+# --- Phase 9.7 G5②: persisted settings (curated key/value overrides) ---
+
+def _resolve_settings_scope(scope: str) -> str:
+    """Validate the scope param. 'global' is the library-wide default; any other
+    value must be a known project root (registry or the current PROJECT_ROOT) —
+    we never let an arbitrary string become a scope row, so the table can't be
+    used as free-form key/value storage."""
+    if not scope or scope == settings_store.GLOBAL_SCOPE:
+        return settings_store.GLOBAL_SCOPE
+    known = {str(config.PROJECT_ROOT)}
+    try:
+        known.update(p.path for p in project_registry.list_registry_projects())
+    except project_registry.RegistryError:
+        pass
+    if scope not in known:
+        raise HTTPException(status_code=400, detail="unknown settings scope: {0}".format(scope))
+    return scope
+
+
+@app.get("/api/settings")
+def get_settings(
+    scope: str = "global",
+    _tok: dict = Depends(require_scopes("projects_read")),
+):
+    """Effective settings (default ← global ← project) + metadata per key."""
+    resolved = _resolve_settings_scope(scope)
+    project = None if resolved == settings_store.GLOBAL_SCOPE else resolved
+    return {"scope": resolved, "settings": settings_store.describe(project=project)}
+
+
+class SettingsUpdate(BaseModel):
+    scope: str = "global"
+    values: dict
+
+
+@app.put("/api/settings")
+def put_settings(
+    body: SettingsUpdate,
+    _tok: dict = Depends(require_scopes("admin")),
+):
+    """Persist a batch of overrides at the given scope. Validate-all-then-write:
+    a single bad key/value rejects the whole batch (422), nothing is stored."""
+    resolved = _resolve_settings_scope(body.scope)
+    try:
+        written = settings_store.put(body.values, scope=resolved)
+    except settings_store.SettingError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    project = None if resolved == settings_store.GLOBAL_SCOPE else resolved
+    return {
+        "scope": resolved,
+        "written": written,
+        "settings": settings_store.describe(project=project),
+    }
+
+
+@app.delete("/api/settings/{key}")
+def reset_setting(
+    key: str,
+    scope: str = "global",
+    _tok: dict = Depends(require_scopes("admin")),
+):
+    """Drop one override so the key falls back to the next layer down."""
+    resolved = _resolve_settings_scope(scope)
+    try:
+        settings_store.reset(key, scope=resolved)
+    except settings_store.SettingError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"scope": resolved, "reset": key}
+
+
 @app.get("/api/media/position/{media_id}")
 def media_position(
     media_id: int,
@@ -917,6 +988,102 @@ def list_media(
         rec["tags"] = tags_by_id.get(rec["id"], [])
 
     return {"items": records, "total": total, "search": False}
+
+
+class StructuredQuery(BaseModel):
+    # Phase 9.7 G6: structured query — AND/OR over typed field conditions, with
+    # an optional semantic (vector) leg. `conditions` is validated by
+    # query_builder.compile_spec; we keep the model permissive and let the
+    # builder raise the precise error.
+    match: str = "all"
+    conditions: List[dict]
+    limit: int = 50
+    offset: int = 0
+    sort: str = "date"
+
+
+def _structured_sort_key(sort: str):
+    if sort == "duration":
+        return lambda r: (r.get("duration_s") or 0), True
+    if sort == "size":
+        return lambda r: (r.get("size_mb") or 0), True
+    if sort == "name":
+        return lambda r: (r.get("filename") or "").lower(), False
+    # default: most recent first
+    return lambda r: (r.get("processed_at") or ""), True
+
+
+@app.post("/api/search/query")
+def structured_query(
+    body: StructuredQuery,
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    """Structured query: typed field conditions combined by AND/OR, with an
+    optional semantic leg run through the vector index. Returns the same
+    `{items, total, search}` shape as /api/media so the UI can reuse renderers."""
+    import query_builder
+
+    try:
+        compiled = query_builder.compile_spec(
+            {"match": body.match, "conditions": body.conditions}
+        )
+    except query_builder.QueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    where, params = compiled["where"], compiled["params"]
+    terms, match = compiled["semantic_terms"], compiled["match"]
+    warning = None
+
+    sql_ids = None
+    if where:
+        with db.get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id FROM media WHERE " + where, params
+            ).fetchall()
+        sql_ids = {r["id"] for r in rows}
+
+    sem_ids = None
+    if terms:
+        import vectordb as vdb
+        sets = []
+        for term in terms:
+            try:
+                raw = vdb.search(term, n_results=2000)
+                sets.append({int(r["media_id"]) for r in raw})
+            except Exception as exc:  # Ollama down / dim mismatch → degrade, flag it
+                _logging.getLogger(__name__).warning(
+                    "structured query semantic leg failed: %s", exc
+                )
+                warning = "semantic search unavailable (some terms ignored)"
+                sets.append(set())
+        if sets:
+            sem_ids = set.intersection(*sets) if match == "all" else set.union(*sets)
+
+    if sql_ids is not None and sem_ids is not None:
+        final_ids = (sql_ids & sem_ids) if match == "all" else (sql_ids | sem_ids)
+    elif sql_ids is not None:
+        final_ids = sql_ids
+    else:
+        final_ids = sem_ids or set()
+
+    records = _get_light_records_by_ids(list(final_ids))
+    keyfn, reverse = _structured_sort_key(body.sort)
+    records.sort(key=keyfn, reverse=reverse)
+
+    total = len(records)
+    offset = max(0, body.offset)
+    limit = max(1, min(500, body.limit))
+    items = records[offset:offset + limit]
+    tags_by_id = _get_tags_bulk([rec["id"] for rec in items])
+    for rec in items:
+        _resolve_record(rec)
+        rec["tags"] = tags_by_id.get(rec["id"], [])
+
+    resp = {"items": items, "total": total, "search": True, "structured": True}
+    if warning:
+        resp["search_degraded"] = True
+        resp["warning"] = warning
+    return resp
 
 
 @app.get("/api/media/{media_id}")
@@ -1506,7 +1673,9 @@ def export_metadata_csv(
 
 
 class MetadataCsvExportRequest(BaseModel):
-    dest: str
+    # dest optional: when omitted/blank, fall back to the persisted
+    # export.default_dir setting (Phase 9.7 G5③) + a default filename.
+    dest: Optional[str] = None
     ids: Optional[list] = None  # batch-scoped variant; None = full library
 
 
@@ -1523,7 +1692,18 @@ def export_metadata_csv_to(
     所以 Tauri front-end 用 dialog.save 拿 path 後 POST 來這裡，由 server 直接寫
     檔；browser 端則繼續用 GET + blob download。
     body.ids 給時為 batch-scoped；不給為整庫匯出。"""
-    dest = Path(body.dest).expanduser().resolve()
+    # Phase 9.7 G5③: resolve dest from the request, else the persisted
+    # export.default_dir setting (+ a default filename). A bare directory also
+    # gets the default filename appended.
+    raw_dest = (body.dest or "").strip()
+    if not raw_dest:
+        default_dir = settings_store.effective("export.default_dir")
+        if not default_dir:
+            raise HTTPException(400, "no dest provided and export.default_dir is unset")
+        raw_dest = str(Path(default_dir) / "arkiv-metadata.csv")
+    dest = Path(raw_dest).expanduser().resolve()
+    if dest.is_dir() or raw_dest.endswith(("/", "\\")):
+        dest = dest / "arkiv-metadata.csv"
     _assert_export_dest_safe(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     media_ids = None
@@ -1689,9 +1869,17 @@ def ingest_engines(
         {"mode": k, "name": config.WHISPER_GUARD_LAYERS[k].get("name", str(k))}
         for k in sorted(config.WHISPER_GUARD_LAYERS)
     ]
+    # Phase 9.7 G5③: the dialog's defaults come from the persisted settings
+    # (library default), falling back to config. These are genuinely consumed —
+    # IngestSetup pre-fills its pickers from them, and the vision model/num_ctx
+    # are what an ingest run actually uses (ingest.py reads settings.effective).
     return {
         "whisper_modes": modes,
-        "default_mode": config.WHISPER_GUARD_DEFAULT_MODE,
+        "default_mode": settings_store.effective("transcription.default_mode"),
+        "default_language": settings_store.effective("transcription.default_language"),
+        "default_recursive": settings_store.effective("ingest.recursive"),
+        "vision_model": settings_store.effective("vision.model"),
+        "vision_num_ctx": settings_store.effective("vision.num_ctx"),
         "languages": _INGEST_LANGUAGES,
     }
 

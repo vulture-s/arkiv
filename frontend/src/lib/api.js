@@ -183,6 +183,18 @@ export const getMediaTags = (id, opts) => req(`/api/media/${id}/tags`, opts)
 export const search = (q, params = {}, opts) =>
   req(`/api/search/all${qs({ q, ...params })}`, opts)
 
+// G6 — structured query (typed conditions, AND/OR, optional semantic leg)
+export const structuredQuery = (body, opts) =>
+  req('/api/search/query', { method: 'POST', body, ...opts })
+
+// G5② — persisted settings (curated overrides; default ← global ← project)
+export const getSettings = (scope = 'global', opts) =>
+  req(`/api/settings${qs({ scope })}`, opts)
+export const putSettings = (values, scope = 'global', opts) =>
+  req('/api/settings', { method: 'PUT', body: { scope, values }, ...opts })
+export const resetSetting = (key, scope = 'global', opts) =>
+  req(`/api/settings/${encodeURIComponent(key)}${qs({ scope })}`, { method: 'DELETE', ...opts })
+
 // ---- asset URLs (no fetch — for <img>/<video src>) ----
 // Thumbnails are served by a static mount at /thumbnails/<basename>, NOT a
 // per-id route. /api/media items carry `thumbnail_path` (absolute fs path);

@@ -73,9 +73,13 @@ def _stage(marker: str, stage: str) -> None:
 
 
 def _warm_up_vision_model():
-    """Send a dummy request to ensure qwen3-vl:8b is loaded in VRAM."""
+    """Send a dummy request to ensure the vision model is loaded in VRAM."""
     import urllib.request
-    model = config.VISION_MODEL
+    import settings as _settings
+    # Warm up the SAME model + num_ctx the real calls will use (settings library
+    # default, falling back to config) — otherwise warm-up and run diverge.
+    model = _settings.vision_model()
+    num_ctx = _settings.vision_num_ctx()
     print(f"  Warming up vision model ({model})...", end="", flush=True)
     try:
         payload = json.dumps({
@@ -83,11 +87,11 @@ def _warm_up_vision_model():
             "prompt": "hi",
             "stream": False,
             # Load with the same capped context the real vision calls use
-            # (config.OLLAMA_VISION_NUM_CTX). Warming up at the model's default
+            # (settings vision.num_ctx). Warming up at the model's default
             # context first balloons VRAM and leaves the model CPU-offloaded
             # even after the real calls reload it — keep them consistent so the
             # model lands 100% on GPU from the first frame.
-            "options": {"num_predict": 1, "num_ctx": config.OLLAMA_VISION_NUM_CTX},
+            "options": {"num_predict": 1, "num_ctx": num_ctx},
         }).encode()
         req = urllib.request.Request(
             f"{config.OLLAMA_URL}/api/generate",
@@ -173,7 +177,8 @@ def _ensure_vision_ready(max_wait_s=None, _probe=None, _sleep=None):
         decision, reason = rp.decide(result)
     if decision == "WAIT":
         print(f"  [backpressure] still busy after {max_wait_s:.0f}s — proceeding anyway (sensor, not gate)")
-    if not rp.is_model_loaded(result, config.VISION_MODEL):
+    import settings as _settings
+    if not rp.is_model_loaded(result, _settings.vision_model()):
         _warm_up_vision_model()
     return result
 

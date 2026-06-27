@@ -61,7 +61,13 @@
   // 2-phase DIT handoff: /offload sends the completed destination here as
   // #/ingest-setup?src=<path> so the user can ingest what they just offloaded.
   onMount(async () => {
-    try { engines = await api.getIngestEngines() } catch (e) { /* picker falls back to default-only */ }
+    try {
+      engines = await api.getIngestEngines()
+      // G5③ — pre-fill the dialog from the persisted library defaults so the
+      // operator's Settings choices are honored as the starting point here.
+      if (engines && engines.default_language) language = engines.default_language
+      if (engines && typeof engines.default_recursive === 'boolean') opts.recursive = engines.default_recursive
+    } catch (e) { /* picker falls back to default-only */ }
     const h = window.location.hash
     const qi = h.indexOf('?')
     if (qi === -1) return
