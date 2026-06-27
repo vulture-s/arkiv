@@ -5,7 +5,7 @@
   "identifier": "com.hevin.arkiv",
   "build": {
     "devUrl": "http://localhost:8501",
-    "frontendDist": "../index.html"
+    "frontendDist": "../frontend/dist"
   },
   "app": {
     "withGlobalTauri": true,

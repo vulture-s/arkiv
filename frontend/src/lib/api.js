@@ -60,6 +60,13 @@ const qs = (params = {}) => {
 export const getStats = (opts) => req('/api/stats', opts)
 export const getProjects = (opts) => req('/api/projects', opts)
 export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
+// ---- project registry mutations (projects_write; token-free on loopback) ----
+// POST /api/projects {name, path, tags} → project dict (409 if name exists).
+export const addProject = (body, opts) => req('/api/projects', { method: 'POST', body, ...opts })
+// DELETE /api/projects/{name} → removed project dict (404 if unknown).
+export const deleteProject = (name, opts) => req(`/api/projects/${encodeURIComponent(name)}`, { method: 'DELETE', ...opts })
+// POST /api/projects/sync → {projects, total} (refresh last_indexed_at from DB).
+export const syncProjects = (opts) => req('/api/projects/sync', { method: 'POST', ...opts })
 export const getTags = (opts) => req('/api/tags', opts)
 // /api/collections → {collections:[{key,title,category,count,items:[{id,filename,thumb,score}]}], total}
 export const getCollections = (opts) => req('/api/collections', opts)
@@ -175,6 +182,18 @@ export const getMediaTags = (id, opts) => req(`/api/media/${id}/tags`, opts)
 // /api/search/all?q&projects&tag
 export const search = (q, params = {}, opts) =>
   req(`/api/search/all${qs({ q, ...params })}`, opts)
+
+// G6 — structured query (typed conditions, AND/OR, optional semantic leg)
+export const structuredQuery = (body, opts) =>
+  req('/api/search/query', { method: 'POST', body, ...opts })
+
+// G5② — persisted settings (curated overrides; default ← global ← project)
+export const getSettings = (scope = 'global', opts) =>
+  req(`/api/settings${qs({ scope })}`, opts)
+export const putSettings = (values, scope = 'global', opts) =>
+  req('/api/settings', { method: 'PUT', body: { scope, values }, ...opts })
+export const resetSetting = (key, scope = 'global', opts) =>
+  req(`/api/settings/${encodeURIComponent(key)}${qs({ scope })}`, { method: 'DELETE', ...opts })
 
 // ---- asset URLs (no fetch — for <img>/<video src>) ----
 // Thumbnails are served by a static mount at /thumbnails/<basename>, NOT a

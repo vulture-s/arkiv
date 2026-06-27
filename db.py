@@ -331,6 +331,21 @@ def init_db():
                 UNIQUE(media_id, lang)
             )
         """)
+        # Phase 9.7 G5②: persisted settings overrides. config.py holds the
+        # baked-in defaults; this table stores only what the operator has
+        # explicitly changed. scope='global' is the library-wide default; a
+        # scope set to a PROJECT_ROOT path overrides global for that project.
+        # The effective value for a key = default ← global row ← project row.
+        # Only curated keys (settings.SETTINGS_SCHEMA) are ever written here.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                scope      TEXT NOT NULL DEFAULT 'global',
+                key        TEXT NOT NULL,
+                value      TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(scope, key)
+            )
+        """)
         # audit M6: PRAGMA foreign_keys was never enabled before, so orphan
         # child rows accumulated (e.g. scopes of revoked tokens, tags/frames of
         # deleted media). Clear them once here so the now-active enforcement in

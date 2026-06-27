@@ -147,9 +147,14 @@ def _call_vision(img_path, prompt, max_retries=2):
     """Send image to Ollama vision, return raw response text."""
     with open(img_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
+    # Phase 9.7 G5③: honor the operator's library default (settings table),
+    # falling back to config.VISION_MODEL / num_ctx when unset (behavior-preserving).
+    import settings as _settings
+    eff_model = _settings.vision_model()
+    eff_num_ctx = _settings.vision_num_ctx()
     for attempt in range(max_retries):
         try:
-            resp = vision(prompt=prompt, image_b64=b64, model=VISION_MODEL)
+            resp = vision(prompt=prompt, image_b64=b64, model=eff_model, num_ctx=eff_num_ctx)
             raw = resp.get("text", "").strip()
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw)
