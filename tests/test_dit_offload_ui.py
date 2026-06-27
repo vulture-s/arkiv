@@ -53,11 +53,12 @@ def test_offload_run_empty_dst_400(fastapi_client, tmp_path):
     assert r.status_code == 400
 
 
-def test_dit_page_served(fastapi_client):
-    r = fastapi_client.get("/dit")
-    assert r.status_code == 200
-    assert "DIT OFFLOAD" in r.text
-    assert "/api/offload/preview" in r.text  # the page actually wires the endpoint
+def test_dit_redirects_to_spa_offload(fastapi_client):
+    # Svelte cutover Phase 3: the standalone /dit island was ported into the SPA;
+    # the old path now 308-redirects to the SPA offload route.
+    r = fastapi_client.get("/dit", follow_redirects=False)
+    assert r.status_code == 308
+    assert r.headers["location"] == "/#/offload"
 
 
 def test_offload_preview_limit_clamped(fastapi_client, tmp_path):
