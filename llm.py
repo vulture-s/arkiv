@@ -90,8 +90,11 @@ def vision(
     image_b64: str,
     model: Optional[str] = None,
     provider: Provider = Provider.OLLAMA,
+    num_ctx: Optional[int] = None,
 ) -> Dict[str, Any]:
     model = model or OLLAMA_VISION_MODEL
+    if num_ctx is None:
+        num_ctx = OLLAMA_VISION_NUM_CTX
     start = time.time()
     response = _ollama_post(
         "/api/generate",
@@ -100,7 +103,7 @@ def vision(
             "prompt": prompt,
             "images": [image_b64],
             "stream": False,
-            "options": {"num_ctx": OLLAMA_VISION_NUM_CTX},
+            "options": {"num_ctx": num_ctx},
         },
         timeout=300,
     )

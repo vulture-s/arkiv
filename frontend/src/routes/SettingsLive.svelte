@@ -41,6 +41,34 @@
     try { engines = await api.getIngestEngines() } catch { engines = null }
   }
 
+  // G5②③ — persisted settings (default ← global ← project). These are REAL:
+  // vision.model / vision.num_ctx are read by the ingest run (vision.py /
+  // ingest.py warm-up); export.default_dir is the fallback dest for the
+  // server-write CSV export. We only expose controls that are genuinely consumed.
+  let settingsList = []     // describe() output
+  let settingsBusy = false
+  let settingsMsg = ''
+  let visModel = '', visNumCtx = 16384, expDir = ''  // local edit buffers
+  function settingMeta(key) { return settingsList.find((s) => s.key === key) || null }
+  async function loadSettings() {
+    try { settingsList = (await api.getSettings()).settings || [] } catch { settingsList = [] }
+    const vm = settingMeta('vision.model'); if (vm) visModel = vm.value
+    const vc = settingMeta('vision.num_ctx'); if (vc) visNumCtx = vc.value
+    const ed = settingMeta('export.default_dir'); if (ed) expDir = ed.value
+  }
+  async function saveSetting(values) {
+    settingsBusy = true; settingsMsg = ''
+    try { await api.putSettings(values); await loadSettings(); settingsMsg = '已儲存 ✓' }
+    catch (e) { settingsMsg = '儲存失敗：' + (e?.body?.detail || e.message) }
+    finally { settingsBusy = false }
+  }
+  async function resetSettingKey(key) {
+    settingsBusy = true; settingsMsg = ''
+    try { await api.resetSetting(key); await loadSettings(); settingsMsg = '已重設為預設 ✓' }
+    catch (e) { settingsMsg = '重設失敗：' + (e?.body?.detail || e.message) }
+    finally { settingsBusy = false }
+  }
+
   // Project registry — full CRUD (projects_read/write, token-free on loopback).
   let projects = [] // [{name, path, added_at, last_indexed_at, tags, source}]
   let projHealth = {} // name -> status string ("ok" | …)
@@ -213,7 +241,7 @@
   }
   onDestroy(() => { if (retrTimer) clearTimeout(retrTimer) })
 
-  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab(); loadEngines(); loadProjects() })
+  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab(); loadEngines(); loadProjects(); loadSettings() })
 
   const shortDate = (s) => (s ? String(s).slice(0, 10) : '—')
 
@@ -281,8 +309,26 @@
         {:else if section === 'advanced'}
           <section>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">CORRECTION DICTIONARY · 校正字典</Eyebrow>
+              <Eyebrow style="margin-bottom:4px;">EFFECTIVE SETTINGS · 生效設定</Eyebrow>
               <div class="ak-display fstitle">Advanced</div>
+              <div class="fsdesc">所有持久化設定的<b>生效值</b>與來源（<code>default</code> = config 預設／<code>global</code> = 全庫覆寫）。可從這裡一鍵重設任一覆寫回預設。</div>
+            </div>
+            {#if settingsList.length}
+              <div class="settbl">
+                <div class="settbl-h"><span>KEY</span><span>VALUE</span><span>SOURCE</span><span></span></div>
+                {#each settingsList as s}
+                  <div class="settbl-r">
+                    <span class="setk" title={s.label}>{s.key}</span>
+                    <span class="setv">{s.value === '' ? '—' : s.value}</span>
+                    <span class="srctag" class:srcset={s.source !== 'default'}>{s.source}</span>
+                    <span>{#if s.source !== 'default'}<button class="vx" title="重設為預設" on:click={() => resetSettingKey(s.key)} disabled={settingsBusy}>↺</button>{/if}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            <div class="fshead" style="margin-top:24px;">
+              <Eyebrow style="margin-bottom:4px;">CORRECTION DICTIONARY · 校正字典</Eyebrow>
+              <div class="ak-display fstitle" style="font-size:15px;">Correction dictionary</div>
               <div class="fsdesc">一本 per-project 字典，兩條路徑：<b>pre</b> 把 <code>to</code> 詞餵 Whisper hotword（轉錄前防聽錯）；<b>post</b> 把 <code>from→to</code> 套到已存逐字稿（批次校正，秒級修整庫搜尋召回、不碰音訊）。寫入 <code>.arkiv/corrections.json</code>。</div>
             </div>
 
@@ -383,26 +429,55 @@
         {:else if section === 'vision'}
           <section>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">VLM · TAG POOL</Eyebrow>
+              <Eyebrow style="margin-bottom:4px;">VLM · LIBRARY DEFAULT</Eyebrow>
               <div class="ak-display fstitle">Vision tagging</div>
-              <div class="fsdesc">畫面標籤的視覺模型與標籤池設定。後端待補（brick 4b：vision-model 清單來源、tag pool 概念、frames 取樣未定）— 不造假可調控制項。</div>
+              <div class="fsdesc">視覺模型與 context window 的全庫預設。<strong>真實生效</strong>：每次 ingest 的 vision 標註與 warm-up 都讀這裡（未設＝沿用 config 預設）。Tag pool 約束仍待後端（brick 4b），不造假。</div>
             </div>
             <div class="frows">
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Vision model</Mono><span class="pend">picker pending · brick 4b</span></div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Tag pool · confidence</Mono><span class="pend">no config endpoint yet</span></div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Vision model</Mono>
+                <div class="setctl">
+                  <input class="ak-input" bind:value={visModel} placeholder="qwen2.5vl:7b" spellcheck="false" />
+                  {#if settingMeta('vision.model')}<span class="srctag">{settingMeta('vision.model').source}</span>{/if}
+                </div>
+              </div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Context window (num_ctx)</Mono>
+                <div class="setctl">
+                  <input class="ak-input num" type="number" min="512" max="131072" bind:value={visNumCtx} />
+                  {#if settingMeta('vision.num_ctx')}<span class="srctag">{settingMeta('vision.num_ctx').source}</span>{/if}
+                </div>
+              </div>
+              <div class="frow"><span></span>
+                <div class="setctl">
+                  <button class="ak-btn" on:click={() => saveSetting({ 'vision.model': visModel, 'vision.num_ctx': Number(visNumCtx) })} disabled={settingsBusy}>儲存全庫預設</button>
+                  <button class="ak-btn" on:click={() => { resetSettingKey('vision.model'); resetSettingKey('vision.num_ctx') }} disabled={settingsBusy}>重設</button>
+                  {#if settingsMsg}<span class="setmsg">{settingsMsg}</span>{/if}
+                </div>
+              </div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Tag pool · confidence</Mono><span class="pend">no config endpoint yet · brick 4b</span></div>
             </div>
           </section>
         {:else if section === 'export'}
           <section>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">EDL · FCPXML · PROXY</Eyebrow>
+              <Eyebrow style="margin-bottom:4px;">EXPORT · DEFAULT DEST</Eyebrow>
               <div class="ak-display fstitle">Export defaults</div>
-              <div class="fsdesc">匯出預設（EDL fps、proxy 解析度、drop-frame）。後端待補——目前匯出參數每次呼叫帶入、無持久預設（需 settings 表）。</div>
+              <div class="fsdesc">預設匯出資料夾。<strong>真實生效</strong>：server-write CSV 匯出（Tauri 存檔路徑）未指定時落這個目錄。EDL fps / proxy 解析度 / drop-frame 仍每次呼叫帶入、無持久預設（待後端）。</div>
             </div>
             <div class="frows">
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">EDL frame rate</Mono><span class="pend">default pending · no settings store</span></div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Proxy resolution</Mono><span class="pend">default pending</span></div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Drop frame</Mono><span class="pend">default pending</span></div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Default export dir</Mono>
+                <div class="setctl">
+                  <input class="ak-input" bind:value={expDir} placeholder="~/Desktop/arkiv-exports（空＝瀏覽器下載）" spellcheck="false" />
+                  {#if settingMeta('export.default_dir')}<span class="srctag">{settingMeta('export.default_dir').source}</span>{/if}
+                </div>
+              </div>
+              <div class="frow"><span></span>
+                <div class="setctl">
+                  <button class="ak-btn" on:click={() => saveSetting({ 'export.default_dir': expDir })} disabled={settingsBusy}>儲存</button>
+                  <button class="ak-btn" on:click={() => resetSettingKey('export.default_dir')} disabled={settingsBusy}>重設</button>
+                  {#if settingsMsg}<span class="setmsg">{settingsMsg}</span>{/if}
+                </div>
+              </div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">EDL frame rate · proxy · drop-frame</Mono><span class="pend">default pending · per-call only</span></div>
             </div>
           </section>
         {:else if section === 'storage'}
@@ -530,6 +605,20 @@
   .segbtn.on { background: var(--invert); color: var(--invert-ink); font-weight: 700; }
   .pend { font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--quiet-2); border: 1px dashed var(--rule-hi); padding: 2px 7px; width: fit-content; }
   .livedot { color: var(--cyan); font-size: 9px; }
+  /* G5②③ settings controls */
+  .setctl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .setctl .ak-input { min-width: 220px; }
+  .setctl .ak-input.num { min-width: 110px; }
+  .setmsg { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--cyan); }
+  .srctag { font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--quiet-2); border: 1px solid var(--rule); padding: 1px 6px; }
+  .srctag.srcset { color: var(--cyan); border-color: var(--cyan); }
+  .settbl { display: flex; flex-direction: column; border: 1px solid var(--rule); }
+  .settbl-h, .settbl-r { display: grid; grid-template-columns: 1.6fr 1.4fr 0.7fr 32px; align-items: center; gap: 10px; padding: 7px 10px; }
+  .settbl-h { font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.08em; color: var(--quiet-2); border-bottom: 1px solid var(--rule); }
+  .settbl-r { border-bottom: 1px solid var(--rule-lo, var(--rule)); }
+  .settbl-r:last-child { border-bottom: none; }
+  .setk { font-family: var(--ak-mono); font-size: 11px; color: var(--ink-2); }
+  .setv { font-family: var(--ak-mono); font-size: 11px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .proxyctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .scalectl { display: flex; align-items: center; gap: 12px; }
   .scalerange { width: 180px; accent-color: var(--invert); cursor: pointer; }

@@ -137,6 +137,7 @@
     <ArkivLogo size={16} />
     <Mono dim style="font-size:10px;">live</Mono>
     <div class="grow"></div>
+    <a class="ak-btn" href="#/query-live">⊞ query builder</a>
     <a class="ak-btn" href="#/main-live">← back to grid</a>
   </div>
 
