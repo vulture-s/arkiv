@@ -2564,6 +2564,30 @@ def _start_tc_seconds(rec: dict, clip_fps: float) -> float:
     return 0.0
 
 
+def _attachment_headers(stem: str, ext: str) -> dict:
+    """Content-Disposition for a download, safe for non-ASCII (e.g. CJK) filenames.
+
+    Starlette encodes response headers as latin-1, so a raw
+    f'attachment; filename="{stem}.{ext}"' whose stem contains CJK characters
+    raises UnicodeEncodeError → 500 (broke batch + single-clip export for every
+    中日韓-named clip). Per RFC 6266/5987 we emit an ASCII-only `filename`
+    fallback (non-ASCII + quote/backslash → "_") plus a percent-encoded
+    `filename*` carrying the real UTF-8 name, which every modern client — and the
+    Tauri WKWebView — prefers."""
+    from urllib.parse import quote
+
+    name = f"{stem}.{ext}"
+    ascii_fallback = _re.sub(r'[^\x20-\x7e]|["\\]', "_", name)
+    # safe="" so a "/" in the name is percent-encoded too — RFC 5987 ext-value
+    # forbids a raw "/" (not an attr-char), and quote()'s default leaves it bare.
+    return {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_fallback}"; '
+            f"filename*=UTF-8''{quote(name, safe='')}"
+        )
+    }
+
+
 @app.get("/api/media/{media_id}/export/{fmt}")
 def export_media(
     media_id: int,
@@ -2627,7 +2651,7 @@ def export_media(
         return HTMLResponse(
             content=content,
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.txt"'},
+            headers=_attachment_headers(stem, "txt"),
         )
 
     if fmt == "srt":
@@ -2652,7 +2676,7 @@ def export_media(
         return HTMLResponse(
             content=srt,
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.srt"'},
+            headers=_attachment_headers(stem, "srt"),
         )
 
     if fmt == "vtt":
@@ -2672,7 +2696,7 @@ def export_media(
         return HTMLResponse(
             content=vtt,
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.vtt"'},
+            headers=_attachment_headers(stem, "vtt"),
         )
 
     if fmt in ("edl", "edl-markers"):
@@ -2731,7 +2755,7 @@ def export_media(
         return HTMLResponse(
             content=edl,
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.edl"'},
+            headers=_attachment_headers(stem, "edl"),
         )
 
     if fmt == "fcpxml":
@@ -2825,7 +2849,7 @@ def export_media(
         return HTMLResponse(
             content=fcpxml,
             media_type="application/xml; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.fcpxml"'},
+            headers=_attachment_headers(stem, "fcpxml"),
         )
 
     raise HTTPException(400, f"不支援的格式：{fmt}。請使用 srt/vtt/txt/edl/edl-markers/fcpxml")
