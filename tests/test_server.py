@@ -184,6 +184,28 @@ def test_export_cjk_filename_does_not_crash_header(fastapi_client, sample_record
     assert names == ["黑沙灘.srt"]
 
 
+def test_export_filename_resists_header_injection(fastapi_client, sample_record):
+    """A filename carrying CR/LF or a quote must not split the response header or
+    inject a second Content-Disposition — CR/LF/`"`/`\\` are neutralized in the
+    ASCII fallback and percent-encoded in filename*."""
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/evil.mp4",
+        filename='a\r\nSet-Cookie: x=1"; filename="evil.mp4',
+        duration_s=8,
+        transcript="x",
+        lang="zh",
+    ))
+    resp = fastapi_client.get("/api/media/1/export/srt")
+    assert resp.status_code == 200
+    cd = resp.headers["content-disposition"]
+    # Single physical header line, latin-1-safe, no raw CR/LF leaked through.
+    cd.encode("latin-1")
+    assert "\r" not in cd and "\n" not in cd
+    # The only Set-Cookie the client sees must not come from our filename.
+    assert "set-cookie" not in {k.lower() for k in resp.headers}
+
+
 def _insert_media_with_segments(sample_record):
     import json as _json
     db = importlib.import_module("db")

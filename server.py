@@ -2578,10 +2578,12 @@ def _attachment_headers(stem: str, ext: str) -> dict:
 
     name = f"{stem}.{ext}"
     ascii_fallback = _re.sub(r'[^\x20-\x7e]|["\\]', "_", name)
+    # safe="" so a "/" in the name is percent-encoded too — RFC 5987 ext-value
+    # forbids a raw "/" (not an attr-char), and quote()'s default leaves it bare.
     return {
         "Content-Disposition": (
             f'attachment; filename="{ascii_fallback}"; '
-            f"filename*=UTF-8''{quote(name)}"
+            f"filename*=UTF-8''{quote(name, safe='')}"
         )
     }
 
