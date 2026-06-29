@@ -136,7 +136,9 @@ def test_export_endpoints_cover_supported_formats_and_current_json_gap(fastapi_c
     srt = fastapi_client.get("/api/media/1/export/srt")
     assert srt.status_code == 200
     assert "第一行中文逐字稿" in srt.text
-    assert srt.headers["content-disposition"].endswith("interview-zh.srt\"")
+    # RFC 6266: ASCII `filename` fallback is still present; `filename*` is appended
+    # (so the header no longer ends with the filename).
+    assert 'filename="interview-zh.srt"' in srt.headers["content-disposition"]
 
     vtt = fastapi_client.get("/api/media/1/export/vtt")
     assert vtt.status_code == 200
@@ -149,6 +151,37 @@ def test_export_endpoints_cover_supported_formats_and_current_json_gap(fastapi_c
     json_resp = fastapi_client.get("/api/media/1/export/json")
     assert json_resp.status_code == 400
     assert "json" in json_resp.json()["detail"]
+
+
+def test_export_cjk_filename_does_not_crash_header(fastapi_client, sample_record):
+    """Regression: a CJK filename used to 500 because Starlette latin-1-encodes
+    the Content-Disposition header (UnicodeEncodeError). The download must succeed
+    with an RFC 6266 `filename*` carrying the percent-encoded UTF-8 name."""
+    from urllib.parse import quote
+
+    db = importlib.import_module("db")
+    db.upsert(sample_record(
+        path="/tmp/黑沙灘.mp4",
+        filename="黑沙灘.mp4",
+        duration_s=8,
+        transcript="海浪聲",
+        lang="zh",
+    ))
+
+    for fmt in ("srt", "vtt", "txt", "edl", "fcpxml"):
+        resp = fastapi_client.get(f"/api/media/1/export/{fmt}")
+        assert resp.status_code == 200, f"{fmt} export crashed: {resp.status_code}"
+        cd = resp.headers["content-disposition"]
+        # latin-1-safe: header must encode without error and carry the real name.
+        cd.encode("latin-1")
+        assert f"filename*=UTF-8''{quote(f'黑沙灘.{fmt}')}" in cd
+
+    # Batch (#111) reuses the single-clip builder — it crashed on the same header.
+    batch = fastapi_client.post("/api/export/batch", json={"ids": [1], "fmt": "srt"})
+    assert batch.status_code == 200
+    import io, zipfile
+    names = zipfile.ZipFile(io.BytesIO(batch.content)).namelist()
+    assert names == ["黑沙灘.srt"]
 
 
 def _insert_media_with_segments(sample_record):
