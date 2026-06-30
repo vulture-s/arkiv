@@ -1,6 +1,8 @@
 import importlib
 from pathlib import Path
 
+import pytest
+
 
 def test_to_relative_idempotent(tmp_db, tmp_path, monkeypatch):
     config = importlib.import_module("config")
@@ -169,7 +171,11 @@ def test_compute_editability(tmp_db):
 
 
 def test_scenes_endpoint(fastapi_client, sample_record):
+    # Per-scene shape contract (2026-06-29 breaking change): single-frame media
+    # → 1 scene that spans [timestamp_s, media.duration_s], with keyframe_url
+    # + all 9 vision fields.
     db = importlib.import_module("db")
+    # sample_record default duration_s = 30.0 + idx (idx=1 → 31.0)
     db.upsert(sample_record(path="/tmp/scene.mp4", thumbnail_path="/tmp/scene.jpg"))
     db.upsert_frame(
         media_id=1,
@@ -189,9 +195,110 @@ def test_scenes_endpoint(fastapi_client, sample_record):
     assert response.status_code == 200
     data = response.json()
     assert data["media_id"] == 1
+    assert data["media_duration_s"] == 31.0
     assert data["total"] == 1
-    assert data["scenes"][0]["content_type"] == "Establishing"
-    assert data["scenes"][0]["thumbnail_url"].endswith("/scene_frame0.jpg")
+    scene = data["scenes"][0]
+    assert scene["scene_index"] == 0
+    assert scene["start_s"] == 1.25
+    assert scene["end_s"] == 31.0  # last scene → uses media duration
+    assert scene["duration_s"] == pytest.approx(29.75)
+    assert scene["content_type"] == "Establishing"
+    assert scene["atmosphere"] == "紀實"
+    assert scene["keyframe_url"].endswith("/scene_frame0.jpg")
+
+
+def test_scenes_endpoint_multi_frame_continuity(fastapi_client, sample_record):
+    # Multi-frame media → each scene's end_s = next scene's start_s; last scene
+    # closes at media.duration_s.
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/multi.mp4"))  # duration_s = 31.0 (idx=1)
+    for idx, ts in enumerate([0.0, 5.5, 12.3, 20.0]):
+        db.upsert_frame(
+            media_id=1,
+            frame_index=idx,
+            timestamp_s=ts,
+            thumbnail_path="thumbnails/multi_{0}.jpg".format(idx),
+            description="seg {0}".format(idx),
+            content_type="B-Roll",
+        )
+    response = fastapi_client.get("/api/media/1/scenes")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 4
+    starts = [s["start_s"] for s in data["scenes"]]
+    ends = [s["end_s"] for s in data["scenes"]]
+    assert starts == [0.0, 5.5, 12.3, 20.0]
+    # end of scene N == start of scene N+1
+    assert ends[:-1] == starts[1:]
+    # last scene closes at media.duration_s
+    assert ends[-1] == 31.0
+    # duration_s = end_s - start_s for each
+    for s in data["scenes"]:
+        assert s["duration_s"] == pytest.approx(s["end_s"] - s["start_s"])
+
+
+def test_scenes_endpoint_full_vision_metadata(fastapi_client, sample_record):
+    # All 9 vision fields must be in response (even if value None for a partial
+    # ingest) — consumers rely on key presence, not value presence.
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/full.mp4"))
+    db.upsert_frame(
+        media_id=1,
+        frame_index=0,
+        timestamp_s=0.0,
+        thumbnail_path="thumbnails/full.jpg",
+        description="full vision frame",
+        content_type="A-Roll",
+        focus_score=5,
+        atmosphere="溫暖",
+        energy="高",
+        edit_position="中段-轉場",
+        edit_reason="主題段落",
+        stability="穩定",
+        exposure="normal",
+        audio_quality="清晰",
+    )
+    response = fastapi_client.get("/api/media/1/scenes")
+    assert response.status_code == 200
+    scene = response.json()["scenes"][0]
+    required_keys = {
+        "scene_index", "start_s", "end_s", "duration_s",
+        "description", "content_type", "focus_score", "atmosphere", "energy",
+        "edit_position", "edit_reason", "stability", "exposure", "audio_quality",
+        "keyframe_url",
+    }
+    assert required_keys.issubset(scene.keys())
+    # Spot-check the 3 previously-missing fields
+    assert scene["stability"] == "穩定"
+    assert scene["exposure"] == "normal"
+    assert scene["audio_quality"] == "清晰"
+
+
+def test_scenes_endpoint_missing_duration_defensive(fastapi_client, sample_record):
+    # If media.duration_s is somehow NULL (legacy row, ingest partial fail),
+    # last scene's end_s should clamp to start_s (duration_s = 0) instead of
+    # leaking None/negative.
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/nodur.mp4"))
+    # Zero out duration_s to simulate missing
+    with db.get_conn() as conn:
+        conn.execute("UPDATE media SET duration_s = NULL WHERE id = 1")
+        conn.commit()
+    db.upsert_frame(
+        media_id=1,
+        frame_index=0,
+        timestamp_s=5.0,
+        thumbnail_path="thumbnails/nodur.jpg",
+        description="orphan frame",
+        content_type="B-Roll",
+    )
+    response = fastapi_client.get("/api/media/1/scenes")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["media_duration_s"] == 0.0
+    # Last (only) scene's end_s clamped to start_s — never negative duration
+    assert data["scenes"][0]["end_s"] >= data["scenes"][0]["start_s"]
+    assert data["scenes"][0]["duration_s"] >= 0.0
 
 
 def test_is_usable_frame_rejects_black(tmp_path):
