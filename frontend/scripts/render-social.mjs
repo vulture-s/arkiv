@@ -1,8 +1,11 @@
 // Render the social-preview card to a fixed-size PNG via system Chrome
-// (puppeteer-core, no Chromium download). Sibling of audit/shoot.mjs but
-// pinned to the 1280x640 GitHub social-preview size at @2x (-> 2560x1280).
+// (puppeteer-core, no Chromium download). Sibling of audit/shoot.mjs,
+// pinned to the 1280x640 GitHub social-preview size (GitHub rejects larger
+// dimensions with "can't process that picture"). Set SCALE=2 for a 2560x1280
+// @2x render (e.g. README hero) — not accepted by GitHub social preview.
 //
 //   node scripts/render-social.mjs [in.html] [out.png]
+//   SCALE=2 node scripts/render-social.mjs
 //
 // Defaults: ../social-preview.html  ->  ../social_preview.png
 import puppeteer from 'puppeteer-core'
@@ -17,6 +20,7 @@ const outPng = resolve(process.argv[3] || `${REPO}/social_preview.png`)
 
 const W = 1280
 const H = 640
+const SCALE = Number(process.env.SCALE) || 1 // GitHub social preview needs 1x (1280x640)
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -24,7 +28,7 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox', '--hide-scrollbars', '--force-color-profile=srgb'],
 })
 const page = await browser.newPage()
-await page.setViewport({ width: W, height: H, deviceScaleFactor: 2 })
+await page.setViewport({ width: W, height: H, deviceScaleFactor: SCALE })
 
 const msgs = []
 page.on('console', (m) => {
@@ -44,6 +48,6 @@ await page.screenshot({ path: outPng, clip: { x: 0, y: 0, width: W, height: H } 
 await browser.close()
 
 const hard = msgs.filter((m) => m.type === 'error' || m.type === 'pageerror')
-console.log(`rendered ${outPng} @ ${W * 2}x${H * 2} — ${hard.length} hard error(s), ${msgs.length} msg(s)`)
+console.log(`rendered ${outPng} @ ${W * SCALE}x${H * SCALE} — ${hard.length} hard error(s), ${msgs.length} msg(s)`)
 for (const m of msgs) console.log(`  [${m.type}] ${m.text}`)
 process.exit(hard.length ? 1 : 0)
