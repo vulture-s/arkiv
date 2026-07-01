@@ -510,7 +510,10 @@ def update_media_by_id(media_id: int, record: dict, _conn=None):
 LIGHT_COLS = (
     "id, path, filename, ext, duration_s, size_mb, "
     "width, height, fps, has_audio, lang, thumbnail_path, processed_at, rating, "
-    "editability_score"
+    "editability_score, "
+    # so the grid/inspector can show camera provenance without a per-clip detail
+    # fetch (these live in the DB but were absent from the list shape).
+    "camera_make, camera_model, lens_model, reel_name, start_tc, codec"
 )
 
 

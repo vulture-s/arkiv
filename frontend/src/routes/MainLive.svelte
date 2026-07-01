@@ -127,7 +127,7 @@
     state = 'loading'
     try {
       const [s, m, t, c] = await Promise.all([
-        api.getStats(), api.getMedia({ limit: 60 }), api.getTags(), api.getCollections(),
+        api.getStats(), api.getMedia({ limit: 500 }), api.getTags(), api.getCollections(),
       ])
       stats = s
       items = (m.items || []).map(toCard)
@@ -193,7 +193,7 @@
       // Same-DB search via /api/media?q= → {items, total, search:true}.
       // NOT /api/search/all — that's cross-project federation over the
       // ~/.arkiv-projects.json registry, which is empty here → 0 results.
-      const r = await api.getMedia({ q: query, limit: 60 })
+      const r = await api.getMedia({ q: query, limit: 500 })
       items = (r.items || []).map(toCard)
       selectedId = items.length ? items[0].id : null
       state = 'ok'
@@ -254,6 +254,7 @@
         res: selected._raw.width ? `${selected._raw.width}×${selected._raw.height}` : '—',
         cam: [selected._raw.camera_make, selected._raw.camera_model].filter(Boolean).join(' ') || '—',
         lens: selected._raw.lens_model || '—',
+        tc: selected._raw.start_tc || '—',
         iso: selected._raw.iso ?? '—', ap: selected._raw.aperture || '—', fl: selected._raw.focal_length || '—',
         rating: selected.rating,
       }
