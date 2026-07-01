@@ -341,9 +341,12 @@ def main():
     # runaway proxy/thumbnail cache. Informational (never fails).
     print("\n-- Cache dirs --")
     import config
+    # waveforms live at ROOT/waveforms (see server.py), not under .arkiv/ — derive it.
+    waveforms_dir = Path(__file__).parent / "waveforms"
     for label, d in [
         ("thumbnails", config.THUMBNAILS_DIR),
         ("proxies", config.PROXIES_DIR),
+        ("waveforms", waveforms_dir),
         ("chroma_db", config.CHROMA_PATH),
     ]:
         # Per-dir guard so one unreadable cache can't suppress the others.
@@ -378,6 +381,11 @@ def main():
                 check("media records", True, "(empty — ingest media after setup)", required=False)
             else:
                 check("media records", total > 0, f"({total} files, {transcribed} transcribed)")
+
+            # B5: thumbnail coverage — informational visibility metric, not a
+            # pass/fail gate (audio & edge-case media legitimately lack a thumb).
+            with_thumb = stats.get("with_thumb", 0)
+            check("thumbnail coverage", True, f"({with_thumb}/{total} media)", required=False)
 
         chroma_exists = config.CHROMA_PATH.exists()
         check("chroma_db", chroma_exists, f"({config.CHROMA_PATH})", required=False)
