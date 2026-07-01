@@ -11,6 +11,8 @@
   export let liveCollections = null // [{key,title,count,items}]; null → section hidden
   export let onCollection = null // (collection) => void; click → filter to members
   export let liveStorage = null // {pct, used_gb, total_gb} from /api/stats.disk; null → mock placeholder
+  export let onPool = null // (label) => void; click a Smart Pool → rating filter
+  export let activePool = null // currently-active pool label (for row highlight)
   export let liveCameras = null // [{model, count}] normalized camera category; null → section hidden
   export let onCamera = null // (model) => void; click → filter grid to that camera category
   export let activeCamera = null // currently-filtered camera model (for row highlight)
@@ -59,7 +61,9 @@
     <Eyebrow style="margin-bottom:10px;">Smart Pools</Eyebrow>
     <div class="col">
       {#each pools as [label, count]}
-        <div class="poolrow">
+        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+        <div class="poolrow" class:clickpool={onPool} class:activepool={onPool && activePool === label}
+          on:click={() => onPool && onPool(label)}>
           <span class="ellip">{label}</span>
           <Mono dim style="font-size:10px;flex:0 0 auto;">{count}</Mono>
         </div>
@@ -153,11 +157,19 @@
     padding: 4px 10px; font-size: 12.5px; color: var(--ink-2); cursor: pointer;
   }
   .ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .clickpool { border-left: 2px solid transparent; }
+  .clickpool:hover { color: var(--ink); }
+  .poolrow.activepool { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }
   .collrow:hover { color: var(--ink); }
   .camrow { border-left: 2px solid transparent; }
   .camrow:hover { color: var(--ink); }
   .camrow.activecam { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }
-  .tagsec { min-height: 0; }
+  /* Don't let the tag section shrink below its content: as a flex item with
+     min-height:0 it collapsed to a short box while the (expanded, 700+) tag
+     cloud overflowed unclipped and painted over the Storage footer below.
+     flex-shrink:0 keeps it full-height so the whole sidebar scrolls as one
+     column and Storage flows after the tags instead of colliding. */
+  .tagsec { flex-shrink: 0; }
   .tags { display: flex; flex-wrap: wrap; gap: 4px; }
   .tag {
     font-family: var(--ak-mono); font-size: 10.5px; padding: 3px 6px;

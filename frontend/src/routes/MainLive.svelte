@@ -170,6 +170,25 @@
     activeCamera = next
     if (next && (activeCollection || query)) { activeCollection = null; query = ''; load() }
   }
+  // Smart Pools → the rating dimension (shared with the toolbar FilterRow).
+  // 'Unrated' maps to rating 'none' (ratingToUi(null)), which the visible
+  // filter already handles. Clicking the active pool toggles back to all.
+  function onPoolClick(label) {
+    activeCamera = null
+    if (label === 'All media') { activeRating = null; activeFilter = 'all'; return }
+    const map = { 'Needs review': 'rev', 'Rated good': 'good', 'N·G': 'ng', 'Unrated': 'none' }
+    const target = map[label]
+    if (target === undefined) return
+    activeRating = activeRating === target ? null : target
+  }
+  // Derived pool highlight — kept in sync with activeRating so the sidebar and
+  // the toolbar rating buttons never disagree.
+  $: activePool =
+    activeRating === 'good' ? 'Rated good'
+    : activeRating === 'rev' ? 'Needs review'
+    : activeRating === 'ng' ? 'N·G'
+    : activeRating === 'none' ? 'Unrated'
+    : 'All media'
   function onCollectionClick(col) {
     query = ''
     activeCamera = null
@@ -491,7 +510,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} onTag={onTagClick} onCollection={onCollectionClick} onCamera={onCameraClick} {activeCamera} />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} onTag={onTagClick} onCollection={onCollectionClick} onCamera={onCameraClick} {activeCamera} onPool={onPoolClick} {activePool} />
 
     <main class="center">
       <div class="toolrow">
