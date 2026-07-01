@@ -19,6 +19,7 @@
   import QueryLive from './routes/QueryLive.svelte'
   import Offload from './routes/Offload.svelte'
   import SettingsLive from './routes/SettingsLive.svelte'
+  import ToastHost from './lib/ToastHost.svelte'
   import { resolvedTheme } from './lib/prefs.js'
 
   // Routes are added per overnight segment.
@@ -57,6 +58,7 @@
 
 <div class="ak-root" data-theme={$resolvedTheme}>
   <Router {routes} />
+  <ToastHost />
 </div>
 
 <style>

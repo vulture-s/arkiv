@@ -16,6 +16,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
+  import { pushToast } from '../lib/toast.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
@@ -70,8 +71,9 @@
     if (!picked.length) return
     try {
       await api.downloadFile(api.exportTimelinePath(picked, fmt), `arkiv-timeline.${fmt}`)
+      pushToast(`時間軸已匯出 · ${picked.length} 支 · ${fmt.toUpperCase()}`)
     } catch (e) {
-      err = `匯出失敗: ${e.message}`
+      pushToast(`匯出失敗: ${e.message}`, 'error')
     }
   }
   // DaVinci Resolve metadata CSV (auth-safe download). ids=null → whole library;
@@ -79,8 +81,9 @@
   async function exportMetadataCsv(ids = null) {
     try {
       await api.downloadFile(api.metadataCsvPath(ids), 'arkiv_davinci_metadata.csv')
+      pushToast(ids ? `中繼資料 CSV 已匯出 · ${ids.length} 支` : '中繼資料 CSV 已匯出 · 全庫')
     } catch (e) {
-      err = `CSV 匯出失敗: ${e.message}`
+      pushToast(`CSV 匯出失敗: ${e.message}`, 'error')
     }
   }
   // single-clip export from the inspector (auth-safe download).
@@ -96,8 +99,9 @@
     }
     try {
       await api.downloadFile(path, `${stem}.${fmt}`)
+      pushToast(`已匯出 · ${stem}.${fmt}`)
     } catch (e) {
-      err = `匯出失敗: ${e.message}`
+      pushToast(`匯出失敗: ${e.message}`, 'error')
     }
   }
   const _stem = (id, name) => (name || `media_${id}`).replace(/\.[^.]+$/, '')
@@ -105,16 +109,18 @@
     try {
       const r = await api.getChapters(id, format)
       api.downloadText(r.chapters || '', `${_stem(id, name)}.chapters.txt`)
-    } catch (e) { err = `章節匯出失敗: ${e.message}` }
+      pushToast(`章節已匯出 · ${_stem(id, name)}.chapters.txt`)
+    } catch (e) { pushToast(`章節匯出失敗: ${e.message}`, 'error') }
   }
   async function exportRemotion(id, name) {
     try {
       const r = await api.getRemotionProps(id)
       api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
-    } catch (e) { err = `Remotion 匯出失敗: ${e.message}` }
+      pushToast(`Remotion props 已匯出 · ${_stem(id, name)}.remotion.json`)
+    } catch (e) { pushToast(`Remotion 匯出失敗: ${e.message}`, 'error') }
   }
   async function revealFile(path) {
-    try { await api.openFile(path, true) } catch (e) { err = `在 Finder 顯示失敗: ${e.message}` }
+    try { await api.openFile(path, true) } catch (e) { pushToast(`在 Finder 顯示失敗: ${e.message}`, 'error') }
   }
 
   async function load() {
