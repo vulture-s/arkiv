@@ -1796,8 +1796,13 @@ def main():
             print(f"  [{mid}] {Path(resolved_path).name} >proxy", end="", flush=True)
             result = generate_proxy(mid, resolved_path)
             if result:
-                sz = Path(result).stat().st_size / (1024 * 1024)
-                print(f" [OK {sz:.0f}MB]")
+                # B6: show original→proxy size delta so the compression win is
+                # visible per-clip (not just the proxy's absolute size).
+                mib = 1024 * 1024
+                proxy_sz = Path(result).stat().st_size
+                orig_sz = Path(resolved_path).stat().st_size
+                pct = (proxy_sz - orig_sz) / orig_sz * 100 if orig_sz else 0
+                print(f" [OK {proxy_sz / mib:.0f}MB ← {orig_sz / mib:.0f}MB, {pct:+.0f}%]")
                 proxy_ok += 1
             else:
                 print(" [FAIL]")

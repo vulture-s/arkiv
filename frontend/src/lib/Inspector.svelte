@@ -238,6 +238,7 @@
       <Mono dim>CAMERA</Mono><Mono>{media.cam}</Mono>
       <Mono dim>LENS</Mono><Mono>{media.lens}</Mono>
       <Mono dim>ISO</Mono><Mono>{media.iso} · {media.ap} · {media.fl}</Mono>
+      <Mono dim>TC</Mono><Mono>{media.tc}</Mono>
       <Mono dim>SIZE</Mono><Mono>{media.size} · {media.dur}</Mono>
     </div>
   </div>

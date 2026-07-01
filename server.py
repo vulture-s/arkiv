@@ -2587,6 +2587,24 @@ def _start_tc_seconds(rec: dict, clip_fps: float) -> float:
     return 0.0
 
 
+def _edl_fps_warning(recs: list, tl_fps: float) -> "str | None":
+    """B13: EDL comment warning when clips carry differing frame rates.
+
+    A timeline's record/sequence TC assumes a single rate (tl_fps = the first
+    clip's), so mixing rates drifts the record TC against clips that aren't at
+    tl_fps (per-clip SOURCE TC stays exact — it's computed in each clip's own
+    rate). Return an EDL comment line so the editor sees this on import, or None
+    when every clip shares one rate. Pure (no I/O) so it's unit-testable."""
+    rates = {round(float(r.get("fps") or tl_fps), 3) for r in recs}
+    if len(rates) <= 1:
+        return None
+    listed = ", ".join(f"{r:g}" for r in sorted(rates))
+    return (
+        f"* WARNING: mixed frame rates ({listed}) — timeline record TC assumes "
+        f"{float(tl_fps):g}; per-clip source TC preserved."
+    )
+
+
 def _attachment_headers(stem: str, ext: str) -> dict:
     """Content-Disposition for a download, safe for non-ASCII (e.g. CJK) filenames.
 
@@ -3023,7 +3041,11 @@ def export_timeline(
 
     if fmt == "edl":
         fcm = "DROP FRAME" if tl_is_df else "NON-DROP FRAME"
-        edl = f"TITLE: arkiv timeline\nFCM: {fcm}\n\n"
+        edl = f"TITLE: arkiv timeline\nFCM: {fcm}\n"
+        fps_warn = _edl_fps_warning(recs, tl_fps)  # B13
+        if fps_warn:
+            edl += fps_warn + "\n"
+        edl += "\n"
         rec_pos = 3600.0  # timeline starts at 01:00:00:00 by convention
         for i, rec in enumerate(recs, 1):
             filename = rec.get("filename", f"media_{rec.get('id')}")

@@ -16,6 +16,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
+  import { pushToast } from '../lib/toast.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
@@ -28,6 +29,18 @@
   let activeRating = null
   let view = 'grid'
   let query = ''
+  let activeCamera = null
+  // Normalize a raw camera_model into a browsable machine category so the pool
+  // groups clips by device (A7 V / FX30 / iPhone) instead of fragmenting on
+  // per-focal-length model strings ("...iPhone 16 Pro 48mm" etc.).
+  const camCategory = (model) => {
+    if (!model) return null
+    const m = model.toLowerCase()
+    if (m.includes('ilce-7m5') || m.includes('a7')) return 'Sony A7 V'
+    if (m.includes('fx30')) return 'Sony FX30'
+    if (m.includes('iphone')) return 'iPhone'
+    return model
+  }
 
   const fmtDur = (s) => {
     s = Math.round(s || 0)
@@ -70,8 +83,9 @@
     if (!picked.length) return
     try {
       await api.downloadFile(api.exportTimelinePath(picked, fmt), `arkiv-timeline.${fmt}`)
+      pushToast(`時間軸已匯出 · ${picked.length} 支 · ${fmt.toUpperCase()}`)
     } catch (e) {
-      err = `匯出失敗: ${e.message}`
+      pushToast(`匯出失敗: ${e.message}`, 'error')
     }
   }
   // DaVinci Resolve metadata CSV (auth-safe download). ids=null → whole library;
@@ -79,8 +93,9 @@
   async function exportMetadataCsv(ids = null) {
     try {
       await api.downloadFile(api.metadataCsvPath(ids), 'arkiv_davinci_metadata.csv')
+      pushToast(ids ? `中繼資料 CSV 已匯出 · ${ids.length} 支` : '中繼資料 CSV 已匯出 · 全庫')
     } catch (e) {
-      err = `CSV 匯出失敗: ${e.message}`
+      pushToast(`CSV 匯出失敗: ${e.message}`, 'error')
     }
   }
   // single-clip export from the inspector (auth-safe download).
@@ -96,8 +111,9 @@
     }
     try {
       await api.downloadFile(path, `${stem}.${fmt}`)
+      pushToast(`已匯出 · ${stem}.${fmt}`)
     } catch (e) {
-      err = `匯出失敗: ${e.message}`
+      pushToast(`匯出失敗: ${e.message}`, 'error')
     }
   }
   const _stem = (id, name) => (name || `media_${id}`).replace(/\.[^.]+$/, '')
@@ -105,23 +121,25 @@
     try {
       const r = await api.getChapters(id, format)
       api.downloadText(r.chapters || '', `${_stem(id, name)}.chapters.txt`)
-    } catch (e) { err = `章節匯出失敗: ${e.message}` }
+      pushToast(`章節已匯出 · ${_stem(id, name)}.chapters.txt`)
+    } catch (e) { pushToast(`章節匯出失敗: ${e.message}`, 'error') }
   }
   async function exportRemotion(id, name) {
     try {
       const r = await api.getRemotionProps(id)
       api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
-    } catch (e) { err = `Remotion 匯出失敗: ${e.message}` }
+      pushToast(`Remotion props 已匯出 · ${_stem(id, name)}.remotion.json`)
+    } catch (e) { pushToast(`Remotion 匯出失敗: ${e.message}`, 'error') }
   }
   async function revealFile(path) {
-    try { await api.openFile(path, true) } catch (e) { err = `在 Finder 顯示失敗: ${e.message}` }
+    try { await api.openFile(path, true) } catch (e) { pushToast(`在 Finder 顯示失敗: ${e.message}`, 'error') }
   }
 
   async function load() {
     state = 'loading'
     try {
       const [s, m, t, c] = await Promise.all([
-        api.getStats(), api.getMedia({ limit: 60 }), api.getTags(), api.getCollections(),
+        api.getStats(), api.getMedia({ limit: 500 }), api.getTags(), api.getCollections(),
       ])
       stats = s
       items = (m.items || []).map(toCard)
@@ -144,8 +162,36 @@
   // no /api/media re-fetch, no first-N cap (Codex review P2).
   const fmtDurS = (s) => fmtDur(s)
   let activeCollection = null
+  // 機型 quick-browse: toggle a camera filter. Camera browse operates on the
+  // full library, so if we're in a collection/search subset, reset to the full
+  // pool first (that view carries camera_model; a collection subset doesn't).
+  function onCameraClick(model) {
+    const next = activeCamera === model ? null : model
+    activeCamera = next
+    if (next && (activeCollection || query)) { activeCollection = null; query = ''; load() }
+  }
+  // Smart Pools → the rating dimension (shared with the toolbar FilterRow).
+  // 'Unrated' maps to rating 'none' (ratingToUi(null)), which the visible
+  // filter already handles. Clicking the active pool toggles back to all.
+  function onPoolClick(label) {
+    activeCamera = null
+    if (label === 'All media') { activeRating = null; activeFilter = 'all'; return }
+    const map = { 'Needs review': 'rev', 'Rated good': 'good', 'N·G': 'ng', 'Unrated': 'none' }
+    const target = map[label]
+    if (target === undefined) return
+    activeRating = activeRating === target ? null : target
+  }
+  // Derived pool highlight — kept in sync with activeRating so the sidebar and
+  // the toolbar rating buttons never disagree.
+  $: activePool =
+    activeRating === 'good' ? 'Rated good'
+    : activeRating === 'rev' ? 'Needs review'
+    : activeRating === 'ng' ? 'N·G'
+    : activeRating === 'none' ? 'Unrated'
+    : 'All media'
   function onCollectionClick(col) {
     query = ''
+    activeCamera = null
     activeCollection = col.key
     items = (col.items || []).map((it) => ({
       id: it.id,
@@ -182,12 +228,13 @@
 
   async function runSearch() {
     if (!query.trim()) return load()
+    activeCamera = null
     state = 'loading'
     try {
       // Same-DB search via /api/media?q= → {items, total, search:true}.
       // NOT /api/search/all — that's cross-project federation over the
       // ~/.arkiv-projects.json registry, which is empty here → 0 results.
-      const r = await api.getMedia({ q: query, limit: 60 })
+      const r = await api.getMedia({ q: query, limit: 500 })
       items = (r.items || []).map(toCard)
       selectedId = items.length ? items[0].id : null
       state = 'ok'
@@ -235,8 +282,19 @@
     if (activeFilter === 'video' && m.kind !== 'video') return false
     if (activeFilter === 'audio' && m.kind !== 'audio') return false
     if (activeRating && m.rating !== activeRating) return false
+    if (activeCamera && camCategory(m._raw && m._raw.camera_model) !== activeCamera) return false
     return true
   })
+  // Camera categories present in the current pool, for the sidebar 機型 browser.
+  $: liveCameras = (() => {
+    const c = {}
+    for (const m of items) {
+      const cat = camCategory(m._raw && m._raw.camera_model)
+      if (cat) c[cat] = (c[cat] || 0) + 1
+    }
+    const arr = Object.entries(c).map(([model, count]) => ({ model, count })).sort((a, b) => b.count - a.count)
+    return arr.length ? arr : null
+  })()
   $: selected = items.find((m) => m.id === selectedId) || items[0] || null
 
   // Inspector base (from grid item; always available so panel renders instantly).
@@ -248,6 +306,7 @@
         res: selected._raw.width ? `${selected._raw.width}×${selected._raw.height}` : '—',
         cam: [selected._raw.camera_make, selected._raw.camera_model].filter(Boolean).join(' ') || '—',
         lens: selected._raw.lens_model || '—',
+        tc: selected._raw.start_tc || '—',
         iso: selected._raw.iso ?? '—', ap: selected._raw.aperture || '—', fl: selected._raw.focal_length || '—',
         rating: selected.rating,
       }
@@ -451,7 +510,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} onTag={onTagClick} onCollection={onCollectionClick} />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} onTag={onTagClick} onCollection={onCollectionClick} onCamera={onCameraClick} {activeCamera} onPool={onPoolClick} {activePool} />
 
     <main class="center">
       <div class="toolrow">

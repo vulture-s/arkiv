@@ -9,6 +9,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
+  import { pushToast } from '../lib/toast.js'
 
   $: theme = $resolvedTheme
   let messages = [] // {role:'user'|'assistant', text, intent?, scenes?:[{id,name,thumb}]}
@@ -74,8 +75,10 @@
     const stem = (sc.name || `media_${sc.id}`).replace(/\.[^.]+$/, '')
     try {
       await api.downloadFile(api.exportPath(sc.id, fmt), `${stem}.${fmt}`)
+      pushToast(`已匯出 · ${stem}.${fmt}`)
     } catch (e) {
       console.error('export failed', e)
+      pushToast(`匯出失敗: ${e.message}`, 'error')
     }
   }
 
