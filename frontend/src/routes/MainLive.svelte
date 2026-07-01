@@ -29,6 +29,18 @@
   let activeRating = null
   let view = 'grid'
   let query = ''
+  let activeCamera = null
+  // Normalize a raw camera_model into a browsable machine category so the pool
+  // groups clips by device (A7 V / FX30 / iPhone) instead of fragmenting on
+  // per-focal-length model strings ("...iPhone 16 Pro 48mm" etc.).
+  const camCategory = (model) => {
+    if (!model) return null
+    const m = model.toLowerCase()
+    if (m.includes('ilce-7m5') || m.includes('a7')) return 'Sony A7 V'
+    if (m.includes('fx30')) return 'Sony FX30'
+    if (m.includes('iphone')) return 'iPhone'
+    return model
+  }
 
   const fmtDur = (s) => {
     s = Math.round(s || 0)
@@ -150,8 +162,17 @@
   // no /api/media re-fetch, no first-N cap (Codex review P2).
   const fmtDurS = (s) => fmtDur(s)
   let activeCollection = null
+  // 機型 quick-browse: toggle a camera filter. Camera browse operates on the
+  // full library, so if we're in a collection/search subset, reset to the full
+  // pool first (that view carries camera_model; a collection subset doesn't).
+  function onCameraClick(model) {
+    const next = activeCamera === model ? null : model
+    activeCamera = next
+    if (next && (activeCollection || query)) { activeCollection = null; query = ''; load() }
+  }
   function onCollectionClick(col) {
     query = ''
+    activeCamera = null
     activeCollection = col.key
     items = (col.items || []).map((it) => ({
       id: it.id,
@@ -188,6 +209,7 @@
 
   async function runSearch() {
     if (!query.trim()) return load()
+    activeCamera = null
     state = 'loading'
     try {
       // Same-DB search via /api/media?q= → {items, total, search:true}.
@@ -241,8 +263,19 @@
     if (activeFilter === 'video' && m.kind !== 'video') return false
     if (activeFilter === 'audio' && m.kind !== 'audio') return false
     if (activeRating && m.rating !== activeRating) return false
+    if (activeCamera && camCategory(m._raw && m._raw.camera_model) !== activeCamera) return false
     return true
   })
+  // Camera categories present in the current pool, for the sidebar 機型 browser.
+  $: liveCameras = (() => {
+    const c = {}
+    for (const m of items) {
+      const cat = camCategory(m._raw && m._raw.camera_model)
+      if (cat) c[cat] = (c[cat] || 0) + 1
+    }
+    const arr = Object.entries(c).map(([model, count]) => ({ model, count })).sort((a, b) => b.count - a.count)
+    return arr.length ? arr : null
+  })()
   $: selected = items.find((m) => m.id === selectedId) || items[0] || null
 
   // Inspector base (from grid item; always available so panel renders instantly).
@@ -458,7 +491,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} onTag={onTagClick} onCollection={onCollectionClick} />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} onTag={onTagClick} onCollection={onCollectionClick} onCamera={onCameraClick} {activeCamera} />
 
     <main class="center">
       <div class="toolrow">

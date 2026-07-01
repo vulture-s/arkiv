@@ -11,6 +11,9 @@
   export let liveCollections = null // [{key,title,count,items}]; null → section hidden
   export let onCollection = null // (collection) => void; click → filter to members
   export let liveStorage = null // {pct, used_gb, total_gb} from /api/stats.disk; null → mock placeholder
+  export let liveCameras = null // [{model, count}] normalized camera category; null → section hidden
+  export let onCamera = null // (model) => void; click → filter grid to that camera category
+  export let activeCamera = null // currently-filtered camera model (for row highlight)
 
   const MOCK_POOLS = [
     ['All media', 247],
@@ -63,6 +66,22 @@
       {/each}
     </div>
   </section>
+
+  {#if liveCameras && liveCameras.length}
+    <section>
+      <Eyebrow style="margin-bottom:10px;">Cameras · 機型</Eyebrow>
+      <div class="col">
+        {#each liveCameras as c (c.model)}
+          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <div class="poolrow camrow" class:activecam={activeCamera === c.model}
+            on:click={() => onCamera && onCamera(c.model)}>
+            <span class="ellip">{c.model}</span>
+            <Mono dim style="font-size:10px;flex:0 0 auto;">{c.count}</Mono>
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
 
   {#if liveCollections && liveCollections.length}
     <section>
@@ -135,6 +154,9 @@
   }
   .ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .collrow:hover { color: var(--ink); }
+  .camrow { border-left: 2px solid transparent; }
+  .camrow:hover { color: var(--ink); }
+  .camrow.activecam { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }
   .tagsec { min-height: 0; }
   .tags { display: flex; flex-wrap: wrap; gap: 4px; }
   .tag {
