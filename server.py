@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, List, Literal, Optional, Set
 
@@ -137,7 +138,13 @@ class _RedactTokenFilter(_logging.Filter):
         return True
 _logging.getLogger("uvicorn.access").addFilter(_RedactTokenFilter())
 
-app = FastAPI(title="Media Asset Manager API")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _bootstrap_admin_token()  # late-bound; defined below near the admin routes
+    yield
+    # no shutdown work today; add teardown after the yield when needed
+
+app = FastAPI(title="Media Asset Manager API", lifespan=_lifespan)
 _ALLOWED_ORIGINS = [
     "http://localhost:8501",
     "http://127.0.0.1:8501",
@@ -366,7 +373,6 @@ def _split_csv(value: Optional[str]) -> Optional[List[str]]:
     return parts or None
 
 
-@app.on_event("startup")
 def _bootstrap_admin_token():
     raw = admin.bootstrap_admin_token_if_empty()
     if raw:
