@@ -1,7 +1,9 @@
 """arkiv chat RAG surface.
 
-B.4a ships the intent classifier skeleton and compilation handler only.
-Remaining handlers stay as B.4b stubs.
+Natural-language queries are routed by a 5-intent classifier
+(compilation / refinement / similarity / analytics / general), each with a
+live handler: vector search over the media library feeds the LLM response, and
+compilation/similarity intents also return candidate scene ids for the UI.
 """
 from __future__ import annotations
 
