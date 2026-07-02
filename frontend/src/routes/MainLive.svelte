@@ -663,7 +663,7 @@
   .proj { min-width: 0; }
   .projtitle { font-size: 28px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
   .livesearch { flex: 1; max-width: 360px; font-size: 12px; }
-  .ranked { font-size: 10px; padding: 6px 10px; text-decoration: none; white-space: nowrap; }
+  .ranked { font-size: 10px; padding: 6px 10px; }
   .metacsv { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
   /* G9: prototype card width = 198px (runtime-measured from the 1400px design canvas).

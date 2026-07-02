@@ -182,7 +182,7 @@ body { margin: 0; padding: 0; min-height: 100%; }
 .ak-rule { height: 1px; background: var(--rule); }
 .ak-rule-v { width: 1px; background: var(--rule); }
 
-button.ak-btn {
+.ak-btn {
   font-family: var(--ak-mono);
   font-size: var(--fs-tiny);
   text-transform: uppercase;
@@ -193,10 +193,13 @@ button.ak-btn {
   padding: 6px 10px;
   cursor: pointer;
   line-height: 1;
+  text-decoration: none; /* <a class="ak-btn"> — kill UA link underline */
+  display: inline-block; /* <a>/<span> are inline; needed for vertical padding */
+  white-space: nowrap;
 }
-button.ak-btn:hover { background: var(--surface-2); border-color: var(--ink); }
-button.ak-btn--primary { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
-button.ak-btn--primary:hover { background: var(--ink-2); border-color: var(--ink-2); color: var(--invert-ink); }
+.ak-btn:hover { background: var(--surface-2); border-color: var(--ink); }
+.ak-btn--primary { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
+.ak-btn--primary:hover { background: var(--ink-2); border-color: var(--ink-2); color: var(--invert-ink); }
 
 input.ak-input {
   font-family: var(--ak-mono);
