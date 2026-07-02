@@ -176,6 +176,7 @@
     <Mono dim style="font-size:10px;">v0.9.2</Mono>
     <div class="grow"></div>
     <Mono dim style="font-size:11px;">chat · 5-intent · vector + LLM</Mono>
+    <a class="ak-btn" href="#/main-live">← 返回素材庫</a>
   </div>
 
   <div class="body">
@@ -225,10 +226,12 @@
             <div class="scenes">
               {#each m.scenes as sc (sc.id)}
                 <div class="scene">
-                  <div class="scenethumb">
-                    {#if sc.thumb}<img src={sc.thumb} alt={sc.name} loading="lazy" />{/if}
-                  </div>
-                  <Mono dim style="font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">{sc.name}</Mono>
+                  <a class="scenelink" href={`#/main-live?sel=${sc.id}`} title="在素材庫開啟">
+                    <div class="scenethumb">
+                      {#if sc.thumb}<img src={sc.thumb} alt={sc.name} loading="lazy" />{/if}
+                    </div>
+                    <Mono dim style="font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">{sc.name}</Mono>
+                  </a>
                   <div class="exports">
                     {#each EXPORTS as fmt}
                       <button class="exp" on:click={() => exportScene(sc, fmt)}>{fmt.toUpperCase()}</button>
@@ -264,6 +267,15 @@
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
   .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
+  /* Match the global button.ak-btn look for the back-link <a> (global rule is
+     element-qualified to <button>, so an <a class="ak-btn"> is otherwise unstyled). */
+  .topbar a.ak-btn {
+    font-family: var(--ak-mono); font-size: var(--fs-tiny); text-transform: uppercase;
+    letter-spacing: var(--tr-uppercase); color: var(--ink); background: transparent;
+    border: 1px solid var(--rule-hi); padding: 6px 10px; line-height: 1;
+    text-decoration: none; cursor: pointer; white-space: nowrap;
+  }
+  .topbar a.ak-btn:hover { background: var(--surface-2); border-color: var(--ink); }
   .body { display: grid; grid-template-columns: 240px 1fr; min-height: 0; }
   .convs { border-right: 1px solid var(--rule); display: flex; flex-direction: column; min-height: 0; }
   .convhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--rule); }
@@ -295,6 +307,8 @@
   .text { font-size: 13.5px; white-space: pre-wrap; }
   .scenes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; max-width: 560px; }
   .scene { display: flex; flex-direction: column; gap: 4px; }
+  .scenelink { display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: inherit; cursor: pointer; }
+  .scenelink:hover .scenethumb { box-shadow: inset 0 0 0 1px var(--ink); }
   .scenethumb { aspect-ratio: 16 / 9; background: var(--surface-2); overflow: hidden; box-shadow: inset 0 0 0 1px var(--rule); }
   .scenethumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .exports { display: flex; gap: 4px; margin-top: 2px; }
