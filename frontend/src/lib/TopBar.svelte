@@ -1,10 +1,28 @@
 <!-- Top bar: logo · search · all-projects toggle · actions. crossProject is bindable. -->
 <script>
+  import { onMount, onDestroy } from 'svelte'
   import { push } from 'svelte-spa-router'
   import ArkivLogo from './ArkivLogo.svelte'
   import Mono from './Mono.svelte'
   import { cycleTheme, themePref } from './prefs.js'
   export let crossProject = false
+
+  let query = ''
+  let searchEl
+  // Enter → ranked search screen; SearchLive reads ?q= on mount.
+  function runSearch() {
+    const q = query.trim()
+    push(q ? `/search-live?q=${encodeURIComponent(q)}` : '/search-live')
+  }
+  // ⌘K / Ctrl-K focuses the search box (the shortcut the hint advertises).
+  function onGlobalKey(e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault()
+      searchEl?.focus()
+    }
+  }
+  onMount(() => window.addEventListener('keydown', onGlobalKey))
+  onDestroy(() => window.removeEventListener('keydown', onGlobalKey))
 </script>
 
 <div class="topbar">
@@ -18,6 +36,9 @@
     <input
       class="ak-input searchinput"
       placeholder={'搜尋媒體… "格爾木氧氣"、camera:a7s3、tag:cycling、lang:zh'}
+      bind:this={searchEl}
+      bind:value={query}
+      on:keydown={(e) => e.key === 'Enter' && runSearch()}
     />
     <button class="allproj" class:on={crossProject} on:click={() => (crossProject = !crossProject)}>
       All projects {#if crossProject}·on{/if}
@@ -27,9 +48,8 @@
 
   <div class="actions">
     <button class="ak-btn ak-btn--primary" on:click={() => push('/ingest-setup')}>+ Ingest</button>
+    <button class="ak-btn" on:click={() => push('/chat-live')} title="AI chat · 問你的素材庫">Chat</button>
     <button class="ak-btn" on:click={() => push('/offload')} title="DIT offload · card → backup">DIT</button>
-    <button class="ak-btn">EDL</button>
-    <button class="ak-btn">FCPXML</button>
     <div class="vrule"></div>
     <button class="ak-btn" title={`theme · ${$themePref}`} on:click={cycleTheme}>◐</button>
     <button class="ak-btn" title="settings" on:click={() => push('/settings')}>···</button>
