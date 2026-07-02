@@ -40,10 +40,10 @@
       bind:value={query}
       on:keydown={(e) => e.key === 'Enter' && runSearch()}
     />
+    <Mono dim style="font-size:10px;letter-spacing:0.06em;white-space:nowrap;">⌘K</Mono>
     <button class="allproj" class:on={crossProject} on:click={() => (crossProject = !crossProject)}>
       All projects {#if crossProject}·on{/if}
     </button>
-    <Mono dim style="font-size:10px;letter-spacing:0.06em;white-space:nowrap;">⌘K</Mono>
   </div>
 
   <div class="actions">
@@ -58,7 +58,9 @@
 
 <style>
   .topbar {
-    display: grid; grid-template-columns: 220px 1fr auto; align-items: center;
+    /* 3rd col = 340px so the search box's right rule lines up with the body's
+       340px inspector column below (was `auto`, which drifted). */
+    display: grid; grid-template-columns: 220px 1fr 340px; align-items: center;
     border-bottom: 1px solid var(--rule); padding-right: 16px; background: var(--bg);
   }
   .logo { padding-left: 16px; display: flex; align-items: center; gap: 12px; }
@@ -74,6 +76,6 @@
     border: 1px solid var(--rule-hi); cursor: pointer; line-height: 1; white-space: nowrap;
   }
   .allproj.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
-  .actions { display: flex; align-items: center; gap: 8px; padding-left: 16px; }
+  .actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-left: 16px; }
   .vrule { width: 1px; height: 18px; background: var(--rule); margin: 0 4px; }
 </style>
