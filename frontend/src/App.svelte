@@ -1,15 +1,6 @@
 <script>
   import Router from 'svelte-spa-router'
-  import Home from './routes/Home.svelte'
-  import Gallery from './routes/Gallery.svelte'
-  import MainDark from './routes/MainDark.svelte'
-  import MainStates from './routes/MainStates.svelte'
-  import InspectorFull from './routes/InspectorFull.svelte'
-  import Search from './routes/Search.svelte'
-  import Ingest from './routes/Ingest.svelte'
-  import Settings from './routes/Settings.svelte'
-  import Flows from './routes/Flows.svelte'
-  import Edge from './routes/Edge.svelte'
+  import { wrap } from 'svelte-spa-router/wrap'
   import Live from './routes/Live.svelte'
   import MainLive from './routes/MainLive.svelte'
   import IngestLive from './routes/IngestLive.svelte'
@@ -42,16 +33,16 @@
     '/settings': SettingsLive, // settings — live theme switcher + real system/about (engine config deferred)
 
     // ── design reference (Claude-design mock artboards; not the product) ──────
-    '/_design/home': Home, // design scaffold kept for reference (was '/')
-    '/_design/gallery': Gallery, // seg 1 — shared-primitive gallery
-    '/_design/main': MainDark, // seg 2 — hero (interactive)
-    '/_design/states': MainStates, // seg 3 — state variants
-    '/_design/inspector': InspectorFull, // seg 4 — inspector full
-    '/_design/search': Search, // seg 5 — cross-project search
-    '/_design/ingest': Ingest, // seg 6 — ingest progress
-    '/_design/settings': Settings, // seg 7 — settings modal
-    '/_design/flows': Flows, // seg 8 — round-3 flows
-    '/_design/edge': Edge, // seg 9 — round-4 edge
+    '/_design/home': wrap({ asyncComponent: () => import('./routes/Home.svelte') }), // design scaffold kept for reference (was '/')
+    '/_design/gallery': wrap({ asyncComponent: () => import('./routes/Gallery.svelte') }), // seg 1 — shared-primitive gallery
+    '/_design/main': wrap({ asyncComponent: () => import('./routes/MainDark.svelte') }), // seg 2 — hero (interactive)
+    '/_design/states': wrap({ asyncComponent: () => import('./routes/MainStates.svelte') }), // seg 3 — state variants
+    '/_design/inspector': wrap({ asyncComponent: () => import('./routes/InspectorFull.svelte') }), // seg 4 — inspector full
+    '/_design/search': wrap({ asyncComponent: () => import('./routes/Search.svelte') }), // seg 5 — cross-project search
+    '/_design/ingest': wrap({ asyncComponent: () => import('./routes/Ingest.svelte') }), // seg 6 — ingest progress
+    '/_design/settings': wrap({ asyncComponent: () => import('./routes/Settings.svelte') }), // seg 7 — settings modal
+    '/_design/flows': wrap({ asyncComponent: () => import('./routes/Flows.svelte') }), // seg 8 — round-3 flows
+    '/_design/edge': wrap({ asyncComponent: () => import('./routes/Edge.svelte') }), // seg 9 — round-4 edge
     // 360 (.insv/.360): ingest reproject shipped (Phase 8.3b) — no dedicated SPA viewer route yet
   }
 </script>
