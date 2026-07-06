@@ -72,6 +72,16 @@ def _stage(marker: str, stage: str) -> None:
         print(f" >{marker}", end="", flush=True)
 
 
+def _bench_pipeline_desc():
+    """Human-readable pipeline string for the benchmark summary. Reports the
+    *effective* vision model (settings.vision_model(), = config.VISION_MODEL
+    when unset) so a `vision.model` override isn't misreported — warmup and the
+    real vision calls both consume settings.vision_model()."""
+    import settings as _settings
+    return "faster-whisper {0} + Silero VAD + {1}".format(
+        config.WHISPER_MODEL, _settings.vision_model())
+
+
 def _warm_up_vision_model():
     """Send a dummy request to ensure the vision model is loaded in VRAM."""
     import urllib.request
@@ -1845,10 +1855,14 @@ def main():
             print("[embed] run `python embed.py` manually; ingest itself succeeded.")
 
     if bench_log:
+        # Report the *effective* vision model, not config.VISION_MODEL — a
+        # `vision.model` override would otherwise misreport the model actually
+        # used for this run (see _bench_pipeline_desc).
+        _pipeline_desc = _bench_pipeline_desc()
         print(f"\n{'='*60}")
         print(f"BENCHMARK SUMMARY — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         print(f"{'='*60}")
-        print(f"Pipeline: faster-whisper {config.WHISPER_MODEL} + Silero VAD + {config.VISION_MODEL}")
+        print(f"Pipeline: {_pipeline_desc}")
         print(f"{'─'*60}")
         print(f"{'File':<20} {'Duration':>8} {'Process':>8} {'Speed':>8}")
         print(f"{'─'*60}")
@@ -1864,7 +1878,7 @@ def main():
         bench_path = config.BASE_DIR / "bench_ingest.json"
         bench_data = {
             "timestamp": datetime.now().isoformat(),
-            "pipeline": f"faster-whisper {config.WHISPER_MODEL} + Silero VAD + {config.VISION_MODEL}",
+            "pipeline": _pipeline_desc,
             "gpu": detect_gpu(),
             "total_duration_s": round(total_dur, 1),
             "total_process_s": round(batch_elapsed, 1),
