@@ -344,6 +344,12 @@ def exiftool_extract(path: str, fps: Optional[float] = None) -> dict:
     cmd = [
         config.EXIFTOOL_PATH, "-json",
         "-Make", "-Model", "-LensModel",
+        # issue #115: Sony XAVC (A7 V / FX30) leaves the standard Make/Model
+        # blank and puts device identity in the embedded XML (NRT) block as
+        # DeviceManufacturer / DeviceModelName. Read them in the SAME exiftool
+        # call so sidecar-less clips still populate camera_make/model. Non-Sony
+        # files simply don't have these tags → d.get() returns None → no effect.
+        "-DeviceManufacturer", "-DeviceModelName", "-LensZoomModelName",
         "-GPSLatitude", "-GPSLongitude",
         "-ColorSpace",
         "-ISO",
@@ -439,9 +445,12 @@ def exiftool_extract(path: str, fps: Optional[float] = None) -> dict:
     cdate_str = str(cdate) if cdate else None
 
     return {
-        "camera_make": d.get("Make"),
-        "camera_model": d.get("Model"),
-        "lens_model": d.get("LensModel") or d.get("Blackmagic-designCameraLensType"),
+        # issue #115: fall back to embedded-XML device identity when the
+        # standard EXIF Make/Model are blank (Sony XAVC without an M01.XML
+        # sidecar). Standard tags still win when present.
+        "camera_make": d.get("Make") or d.get("DeviceManufacturer"),
+        "camera_model": d.get("Model") or d.get("DeviceModelName"),
+        "lens_model": d.get("LensModel") or d.get("Blackmagic-designCameraLensType") or d.get("LensZoomModelName"),
         "gps_lat": d.get("GPSLatitude"),
         "gps_lon": d.get("GPSLongitude"),
         "color_space": str(d.get("ColorSpace")) if d.get("ColorSpace") else None,
