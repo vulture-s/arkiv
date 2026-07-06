@@ -38,6 +38,67 @@ def test_parse_xavc_sidecar_malformed(tmp_path):
     assert ingest.parse_xavc_sidecar(str(mp4)) == {}
 
 
+# issue #115: Sony XAVC embedded-XML (NRT) camera identity fallback
+
+def test_exiftool_camera_falls_back_to_embedded_xml_device(monkeypatch):
+    """Sony XAVC without an M01.XML sidecar leaves standard Make/Model blank but
+    carries device identity in the embedded XML as DeviceManufacturer /
+    DeviceModelName. Read them in the same exiftool call so camera_make/model
+    populate instead of staying NULL (445/480 恬馨 clips were empty for this)."""
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    fake_stdout = json.dumps([{
+        "SourceFile": "C0042.MP4",
+        # standard EXIF Make/Model/LensModel intentionally absent (Sony XAVC)
+        "DeviceManufacturer": "Sony",
+        "DeviceModelName": "ILCE-7M5",
+        "LensZoomModelName": "FE 24-70mm F2.8 GM",
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    result = ingest.exiftool_extract("C0042.MP4")
+    assert result["camera_make"] == "Sony"
+    assert result["camera_model"] == "ILCE-7M5"
+    assert result["lens_model"] == "FE 24-70mm F2.8 GM"
+
+
+def test_exiftool_camera_prefers_standard_over_embedded_xml(monkeypatch):
+    """When both the standard EXIF Make/Model and the embedded-XML device tags
+    are present, the standard tags win — the embedded fallback only fills gaps."""
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+
+    fake_stdout = json.dumps([{
+        "SourceFile": "C0042.MP4",
+        "Make": "SONY",
+        "Model": "ILME-FX30",
+        "LensModel": "E 17-70mm F2.8 B070",
+        # stale/duplicate embedded values that must NOT override standard tags
+        "DeviceManufacturer": "Sony Corporation",
+        "DeviceModelName": "wrong-model",
+        "LensZoomModelName": "wrong-lens",
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    result = ingest.exiftool_extract("C0042.MP4")
+    assert result["camera_make"] == "SONY"
+    assert result["camera_model"] == "ILME-FX30"
+    assert result["lens_model"] == "E 17-70mm F2.8 B070"
+
+
 # B10b2: Blackmagic Cam app (iOS) per-vendor lens tag
 
 def test_exiftool_lens_falls_back_to_bmd_camera_lens_type(monkeypatch):
