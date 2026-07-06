@@ -1912,6 +1912,17 @@ def ingest_engines(
         {"mode": k, "name": config.WHISPER_GUARD_LAYERS[k].get("name", str(k))}
         for k in sorted(config.WHISPER_GUARD_LAYERS)
     ]
+    # brick 4b: the vision picker's options come from the installed Ollama models
+    # (queried live, vision-capable only), so the setup dialog is driven by
+    # backend truth instead of a hardcoded list. Empty when Ollama is unreachable
+    # → the UI falls back to a free-text field. Always include the current
+    # effective model so the active selection shows even if detection missed it
+    # (or Ollama is down).
+    import vision as _vision
+    cur_vision = settings_store.effective("vision.model")
+    vision_models = _vision.list_vision_models()
+    if cur_vision and cur_vision not in vision_models:
+        vision_models = sorted(set(vision_models) | {cur_vision})
     # Phase 9.7 G5③: the dialog's defaults come from the persisted settings
     # (library default), falling back to config. These are genuinely consumed —
     # IngestSetup pre-fills its pickers from them, and the vision model/num_ctx
@@ -1921,7 +1932,8 @@ def ingest_engines(
         "default_mode": settings_store.effective("transcription.default_mode"),
         "default_language": settings_store.effective("transcription.default_language"),
         "default_recursive": settings_store.effective("ingest.recursive"),
-        "vision_model": settings_store.effective("vision.model"),
+        "vision_model": cur_vision,
+        "vision_models": vision_models,
         "vision_num_ctx": settings_store.effective("vision.num_ctx"),
         "languages": _INGEST_LANGUAGES,
     }
