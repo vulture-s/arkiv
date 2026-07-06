@@ -33,6 +33,54 @@ def model_available(name: str) -> bool:
         avail = False
     _model_avail_cache[name] = avail
     return avail
+
+
+# Vision-capable model name families — used as a fallback when Ollama's
+# /api/show doesn't report capabilities (older Ollama) or is unreachable.
+_VISION_NAME_RE = re.compile(
+    r"(?:^|[-_/.\d])v(?:l|ision)(?:[-_.:]|$)"   # …vl / …-vision (qwen2.5vl, qwen3-vl, llama3.2-vision)
+    r"|llava|bakllava|moondream|minicpm-v|granite[\d.]*-vision|cogvlm",
+    re.IGNORECASE,
+)
+
+_vision_capable_cache: Dict[str, bool] = {}
+
+
+def _is_vision_model(name: str) -> bool:
+    """Best-effort vision-capability check for an installed Ollama model. Prefers
+    Ollama's own reported capabilities (POST /api/show → capabilities: [...]),
+    falling back to a name heuristic when capabilities are absent (older Ollama)
+    or the show call fails. Cached per process."""
+    if not name:
+        return False
+    if name in _vision_capable_cache:
+        return _vision_capable_cache[name]
+    result = None
+    try:
+        r = requests.post(f"{config.OLLAMA_URL}/api/show", json={"name": name}, timeout=5)
+        if r.ok:
+            caps = r.json().get("capabilities")
+            if isinstance(caps, list):
+                result = "vision" in caps
+    except Exception:
+        result = None  # fall through to the name heuristic
+    if result is None:
+        result = bool(_VISION_NAME_RE.search(name))
+    _vision_capable_cache[name] = result
+    return result
+
+
+def list_vision_models() -> List[str]:
+    """Installed Ollama models that can do vision, for the ingest-setup picker so
+    the UI is driven by backend truth instead of a hardcoded list. Returns a
+    sorted list of model tags; empty when Ollama is unreachable (the UI then
+    falls back to a free-text vision-model field)."""
+    try:
+        r = requests.get(f"{config.OLLAMA_URL}/api/tags", timeout=5)
+        installed = [m.get("name", "") for m in r.json().get("models", []) if m.get("name")]
+    except Exception:
+        return []
+    return sorted(n for n in installed if _is_vision_model(n))
 PROMPT = (
     "請用繁體中文分析這個影片畫面，回傳嚴格的 JSON 格式（不要加 markdown 標記）：\n"
     "{\n"

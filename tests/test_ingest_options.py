@@ -57,10 +57,92 @@ def test_brick4_invalid_values_dropped():
     assert "--whisper-guard" not in opts and "--language" not in opts
 
 
-def test_brick4_engines_endpoint_shape(fastapi_client):
+def test_brick4_engines_endpoint_shape(fastapi_client, monkeypatch):
+    # keep the endpoint deterministic + offline — don't let it hit a real Ollama
+    import vision
+    monkeypatch.setattr(vision, "list_vision_models", lambda: ["qwen3-vl:8b"])
     r = fastapi_client.get("/api/ingest/engines")
     assert r.status_code == 200
     data = r.json()
     assert data["default_mode"] in {m["mode"] for m in data["whisper_modes"]}
     assert data["whisper_modes"] and all("name" in m for m in data["whisper_modes"])
     assert {lang["code"] for lang in data["languages"]} >= {"zh", "en"}
+
+
+# ── brick 4b: vision model picker sourced from installed Ollama models ─────────
+
+class _FakeResp:
+    def __init__(self, payload, ok=True):
+        self._payload = payload
+        self.ok = ok
+
+    def json(self):
+        return self._payload
+
+
+def _clear_vision_caches():
+    import vision
+    vision._vision_capable_cache.clear()
+
+
+def test_brick4b_is_vision_model_prefers_ollama_capabilities(monkeypatch):
+    import vision
+    _clear_vision_caches()
+    # Ollama reports capabilities → trust them over the name (a "vision" model
+    # named plainly is still detected; a "vl"-named model reported non-vision is
+    # correctly excluded).
+    caps = {"qwen3-vl:8b": ["completion", "vision"], "text-only:latest": ["completion"]}
+    monkeypatch.setattr(vision.requests, "post",
+                        lambda url, json, timeout: _FakeResp({"capabilities": caps[json["name"]]}))
+    assert vision._is_vision_model("qwen3-vl:8b") is True
+    assert vision._is_vision_model("text-only:latest") is False
+
+
+def test_brick4b_is_vision_model_falls_back_to_name_heuristic(monkeypatch):
+    import vision
+    _clear_vision_caches()
+    # /api/show unreachable (older Ollama / down) → name heuristic decides
+    def _boom(*a, **k):
+        raise Exception("no /api/show")
+    monkeypatch.setattr(vision.requests, "post", _boom)
+    assert vision._is_vision_model("qwen2.5-vl:7b") is True
+    assert vision._is_vision_model("qwen2.5vl:7b") is True  # no separator before "vl"
+    assert vision._is_vision_model("llama3.2-vision:11b") is True
+    assert vision._is_vision_model("llava:13b") is True
+    assert vision._is_vision_model("moondream:latest") is True
+    assert vision._is_vision_model("llama3:8b") is False
+    assert vision._is_vision_model("mistral:7b") is False
+
+
+def test_brick4b_list_vision_models_filters_and_sorts(monkeypatch):
+    import vision
+    _clear_vision_caches()
+    tags = {"models": [
+        {"name": "qwen3-vl:8b"}, {"name": "llama3:8b"}, {"name": "qwen2.5vl:7b"},
+        {"name": "llava:13b"}, {"name": "nomic-embed-text:latest"},
+    ]}
+    monkeypatch.setattr(vision.requests, "get", lambda url, timeout: _FakeResp(tags))
+    # no capabilities from /api/show → name heuristic (incl. the no-separator
+    # "qwen2.5vl" case that only the widened heuristic catches)
+    monkeypatch.setattr(vision.requests, "post", lambda url, json, timeout: _FakeResp({}, ok=False))
+    out = vision.list_vision_models()
+    assert out == ["llava:13b", "qwen2.5vl:7b", "qwen3-vl:8b"]  # vision-only, sorted
+
+
+def test_brick4b_list_vision_models_empty_when_ollama_down(monkeypatch):
+    import vision
+    _clear_vision_caches()
+    def _boom(*a, **k):
+        raise Exception("connection refused")
+    monkeypatch.setattr(vision.requests, "get", _boom)
+    assert vision.list_vision_models() == []  # graceful → UI falls back to free text
+
+
+def test_brick4b_engines_includes_current_model_even_if_undetected(fastapi_client, monkeypatch):
+    import vision, settings as settings_store
+    monkeypatch.setattr(vision, "list_vision_models", lambda: ["llava:13b"])
+    monkeypatch.setattr(settings_store, "effective",
+                        lambda key, *a, **k: "custom-vl:latest" if key == "vision.model" else "x")
+    data = fastapi_client.get("/api/ingest/engines").json()
+    assert "custom-vl:latest" in data["vision_models"]  # active selection always present
+    assert data["vision_model"] == "custom-vl:latest"
