@@ -3,7 +3,7 @@
      (compilation intent), resolve them to media items and show thumbnails
      inline. Requires chat_write scope (token-free on loopback). -->
 <script>
-  import { onMount, tick } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
@@ -15,6 +15,7 @@
   let messages = [] // {role:'user'|'assistant', text, intent?, scenes?:[{id,name,thumb}]}
   let input = ''
   let busy = false
+  let abortController = null // in-flight chat request; Esc aborts it
   let convId = null
   let err = ''
   let mediaById = new Map() // id → {filename, thumb} for scene resolution
@@ -136,8 +137,9 @@
     busy = true
     scrollDown()
     const wasNew = convId == null
+    abortController = new AbortController()
     try {
-      const r = await api.chat(prompt, convId)
+      const r = await api.chat(prompt, convId, { signal: abortController.signal })
       convId = r.conversation_id || convId
       // a brand-new conversation now exists server-side → refresh the sidebar
       if (wasNew) loadConversations()
@@ -152,12 +154,22 @@
         },
       ]
     } catch (e) {
-      err = e.status === 401 ? '需要 chat_write token（tailnet）— 本機 loopback 可直接用' : e.message
-      messages = [...messages, { role: 'assistant', text: `⚠ ${err}`, error: true }]
+      if (e.name === 'AbortError') {
+        messages = [...messages, { role: 'assistant', text: '（已中斷）', error: true }]
+      } else {
+        err = e.status === 401 ? '需要 chat_write token（tailnet）— 本機 loopback 可直接用' : e.message
+        messages = [...messages, { role: 'assistant', text: `⚠ ${err}`, error: true }]
+      }
     } finally {
       busy = false
+      abortController = null
       scrollDown()
     }
+  }
+
+  // Esc during a running request aborts it (the in-flight LLM generation).
+  function abort() {
+    if (abortController) abortController.abort()
   }
 
   function onKey(e) {
@@ -167,7 +179,17 @@
     }
   }
 
-  onMount(() => { loadMediaIndex(); loadConversations() })
+  // Global Esc → interrupt the current chat task (works anywhere in the view).
+  function onGlobalKey(e) {
+    if (e.key === 'Escape' && busy) { e.preventDefault(); abort() }
+  }
+
+  onMount(() => {
+    loadMediaIndex()
+    loadConversations()
+    window.addEventListener('keydown', onGlobalKey)
+  })
+  onDestroy(() => window.removeEventListener('keydown', onGlobalKey))
 </script>
 
 <div class="artboard" data-theme={theme}>
@@ -226,7 +248,7 @@
             <div class="scenes">
               {#each m.scenes as sc (sc.id)}
                 <div class="scene">
-                  <a class="scenelink" href={`#/main-live?sel=${sc.id}`} title="在素材庫開啟">
+                  <a class="scenelink" href={`#/main-live?ids=${m.scenes.map((s) => s.id).join(',')}&sel=${sc.id}`} title="在素材庫開啟（grid 過濾成這批相關素材）">
                     <div class="scenethumb">
                       {#if sc.thumb}<img src={sc.thumb} alt={sc.name} loading="lazy" />{/if}
                     </div>
@@ -245,7 +267,7 @@
       {/each}
 
       {#if busy}
-        <div class="msg assistant"><Mono dim style="font-size:11px;color:var(--cyan);">● thinking…</Mono></div>
+        <div class="msg assistant"><Mono dim style="font-size:11px;color:var(--cyan);">● 生成中…　<span style="opacity:0.6">Esc 中斷</span></Mono></div>
       {/if}
     </div>
 

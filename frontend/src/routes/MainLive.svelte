@@ -248,13 +248,40 @@
   // clip. If it's outside the first page, fetch it by id and prepend so the grid
   // + inspector show it instead of silently falling back to the default (Codex
   // review P2).
-  function readSelParam() {
+  function readHashParam(name) {
     const h = window.location.hash
     const qi = h.indexOf('?')
     if (qi === -1) return null
-    const v = new URLSearchParams(h.slice(qi + 1)).get('sel')
+    return new URLSearchParams(h.slice(qi + 1)).get(name)
+  }
+  function readSelParam() {
+    const v = readHashParam('sel')
     const id = v == null ? null : Number(v)
     return Number.isFinite(id) ? id : null
+  }
+  // Chat deep-link: #/main-live?ids=2,5,9 shows exactly that relevant subset
+  // (not the full library) via the backend's ?ids= filter.
+  async function loadIds(ids) {
+    state = 'loading'
+    try {
+      // Load the sidebar data (stats/tags/collections) too — otherwise the
+      // deep-link path leaves stats=null and the whole sidebar (projects + pools)
+      // silently falls back to mock data. Grid items come from the ?ids= subset.
+      const [s, m, t, c] = await Promise.all([
+        api.getStats(), api.getMedia({ ids, limit: 500 }), api.getTags(), api.getCollections(),
+      ])
+      stats = s
+      items = (m.items || []).map(toCard)
+      liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
+      liveCollections = (c?.collections || []).map((col) => ({
+        key: col.key, title: col.title, count: col.count, items: col.items || [],
+      }))
+      selectedId = items.length ? items[0].id : null
+      state = 'ok'
+    } catch (e) {
+      state = 'error'
+      err = e.message
+    }
   }
   async function selectFromParam() {
     const sel = readSelParam()
@@ -273,7 +300,14 @@
     } catch (e) { /* picker falls back to its built-in zh/en list */ }
   }
   onMount(async () => {
-    await load()
+    // Deep-link from chat: #/main-live?ids=<csv>&sel=<id> filters the grid to that
+    // relevant subset (not the full library) before selecting the clicked clip.
+    const ids = readHashParam('ids')
+    if (ids && ids.trim()) {
+      await loadIds(ids)
+    } else {
+      await load()
+    }
     await selectFromParam()
     loadEngines()
   })

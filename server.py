@@ -831,6 +831,7 @@ def list_media(
     rating: Optional[str] = None,
     media_type: Optional[str] = None,
     q: Optional[str] = None,
+    ids: Optional[str] = None,
     _tok: dict = Depends(require_scopes("videos_read")),
 ):
     """List media with filters, sorting, and pagination."""
@@ -838,6 +839,20 @@ def list_media(
     # dump) and a huge limit blows up the vector-search n_results.
     limit = max(1, min(500, limit))
     offset = max(0, offset)
+    # Deep-link from chat: #/main-live?ids=2,5,9 shows EXACTLY the relevant clips
+    # chat returned (a filtered subset), in order. _parse_ids_query raises 400 on
+    # malformed ids and returns None when no filter is requested (absent/empty ?ids=,
+    # same convention as the export endpoints); [] means "filter, but no rows". Cap
+    # so a huge ?ids can't unbound the batched fetch (H16).
+    id_list = _parse_ids_query(ids)
+    if id_list is not None:
+        records = _get_light_records_by_ids(id_list[:500])
+        for rec in records:
+            _resolve_record(rec)
+        tags_by_id = _get_tags_bulk([rec["id"] for rec in records])
+        for rec in records:
+            rec["tags"] = tags_by_id.get(rec["id"], [])
+        return {"items": records, "total": len(records), "search": True}
     if q:
         enriched = []
         search_warning = None
