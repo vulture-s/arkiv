@@ -38,6 +38,25 @@ def test_parse_xavc_sidecar_malformed(tmp_path):
     assert ingest.parse_xavc_sidecar(str(mp4)) == {}
 
 
+# bench summary footer must report the *effective* vision model, not the
+# config default (todo: override active 時誤報模型 cosmetic bug)
+
+def test_bench_pipeline_desc_reports_effective_vision_model(monkeypatch):
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest, settings
+
+    # No override → equals config default (behavior-preserving)
+    monkeypatch.setattr(settings, "vision_model", lambda project=None: ingest.config.VISION_MODEL)
+    assert ingest.config.VISION_MODEL in ingest._bench_pipeline_desc()
+
+    # vision.model override active → footer reports the override, not the default
+    monkeypatch.setattr(settings, "vision_model", lambda project=None: "qwen3-vl:8b")
+    desc = ingest._bench_pipeline_desc()
+    assert "qwen3-vl:8b" in desc
+    assert ingest.config.WHISPER_MODEL in desc
+
+
 # issue #115: Sony XAVC embedded-XML (NRT) camera identity fallback
 
 def test_exiftool_camera_falls_back_to_embedded_xml_device(monkeypatch):
