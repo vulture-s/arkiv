@@ -27,6 +27,11 @@
   let engines = null
   let whisperGuard = '' // '' = default preset; else mode int as string
   let language = ''     // '' = auto-detect; else whisper code
+  // brick 4b — vision model picker. Unlike the per-run whisper preset above,
+  // vision.model is a persisted library default (ingest reads settings.vision_model()
+  // fresh each run), so selecting here writes the setting, matching SettingsLive.
+  let visionModel = ''
+  let visionNote = ''
 
   let manifest = null      // {video,audio,unsupported,total_size_mb}
   let total = 0, fresh = 0
@@ -58,6 +63,15 @@
     } catch (e) { err = e.message; starting = false }
   }
 
+  // Persist the chosen vision model as the library default (vision.model), the
+  // same setting SettingsLive writes. The next ingest picks it up via
+  // settings.vision_model(). No per-run flag exists for vision (by design).
+  async function saveVisionModel() {
+    visionNote = '儲存中…'
+    try { await api.putSettings({ 'vision.model': visionModel }); visionNote = '已設為全庫預設 ✓' }
+    catch (e) { visionNote = '儲存失敗' }
+  }
+
   // 2-phase DIT handoff: /offload sends the completed destination here as
   // #/ingest-setup?src=<path> so the user can ingest what they just offloaded.
   onMount(async () => {
@@ -67,6 +81,7 @@
       // operator's Settings choices are honored as the starting point here.
       if (engines && engines.default_language) language = engines.default_language
       if (engines && typeof engines.default_recursive === 'boolean') opts.recursive = engines.default_recursive
+      if (engines && engines.vision_model) visionModel = engines.vision_model
     } catch (e) { /* picker falls back to default-only */ }
     const h = window.location.hash
     const qi = h.indexOf('?')
@@ -151,10 +166,22 @@
           </div>
         </div>
 
-        <!-- vision pickers still have no backend (model list / tag pool) — shown, not faked -->
-        <div class="field deferred">
+        <!-- brick 4b — vision model picker (options = installed vision-capable
+             Ollama models from /api/ingest/engines). tag-pool / frames pickers
+             still have no backend → shown as pending, never faked. -->
+        <div class="field">
           <Eyebrow>Vision tagging · ollama</Eyebrow>
-          <div class="pendrow"><Mono dim>model · tag pool · frames</Mono><span class="pend">picker pending · brick 4b</span></div>
+          <div class="optrow">
+            <select class="ak-input sel" bind:value={visionModel} on:change={saveVisionModel}
+                    title="vision model (library default)"
+                    disabled={!engines || !(engines.vision_models?.length)}>
+              {#each (engines?.vision_models ?? []) as m}
+                <option value={m}>{m}</option>
+              {/each}
+            </select>
+            <div class="optlabel"><span>Model{visionNote ? ` · ${visionNote}` : ''}</span><Mono dim style="font-size:10px;">全庫預設視覺模型（持久，同 Settings）{engines && !(engines.vision_models?.length) ? ' · ollama 無法連線' : ''}</Mono></div>
+          </div>
+          <div class="pendrow"><Mono dim>tag pool · frames</Mono><span class="pend">picker pending · brick 4b</span></div>
         </div>
       </div>
 
