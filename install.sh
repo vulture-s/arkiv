@@ -11,13 +11,15 @@ PORT=${ARKIV_PORT:-8501}
 RED='\033[31m'; GREEN='\033[32m'; YELLOW='\033[33m'; BOLD='\033[1m'; NC='\033[0m'
 
 # Build the Svelte SPA (frontend/dist) that server.py serves at /. npm missing is
-# a loud warning, NOT fatal: server.py auto-falls back to the legacy page, so an
-# install on a Node-less box still works (just with the old UI). Never aborts the
-# installer (guarded so `set -e` can't trip on a build failure).
+# a loud warning, NOT fatal: the server still starts and the API works — but the
+# web UI is the built SPA now (the legacy Tailwind page was retired in the Svelte
+# cutover), so without a build "/" only shows a "run npm run build" hint until you
+# build it. Never aborts the installer (guarded so `set -e` can't trip on a build
+# failure).
 build_frontend() {
     local fe="$1"
     if ! command -v npm &>/dev/null; then
-        echo -e "  ${YELLOW}⚠${NC}  npm not found — skipping UI build (server falls back to the legacy page)."
+        echo -e "  ${YELLOW}⚠${NC}  npm not found — skipping UI build (the web UI won't load until you build it)."
         echo -e "      Install Node (brew install node), then: cd $fe && npm ci && npm run build"
         return 0
     fi
@@ -25,7 +27,7 @@ build_frontend() {
     if ( cd "$fe" && npm ci --no-audit --no-fund && npm run build ) >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓${NC} UI built ($fe/dist)"
     else
-        echo -e "  ${YELLOW}⚠${NC}  UI build failed — server falls back to the legacy page. Re-run: cd $fe && npm ci && npm run build"
+        echo -e "  ${YELLOW}⚠${NC}  UI build failed — the web UI won't load until this succeeds. Re-run: cd $fe && npm ci && npm run build"
     fi
     return 0
 }
