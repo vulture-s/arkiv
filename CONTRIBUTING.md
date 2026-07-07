@@ -38,6 +38,19 @@ python health.py
 uvicorn server:app --host 0.0.0.0 --port 8501 --reload
 ```
 
+### Git hooks
+
+Enable the repo's pre-commit checks once per clone:
+
+```bash
+bash scripts/install-hooks.sh   # points core.hooksPath at .githooks/
+```
+
+The pre-commit hook blocks two easy-to-miss landmines: `DO NOT COMMIT` / `NOCOMMIT`
+markers left in code, and a hardcoded or wide-open Vite dev-server `allowedHosts`
+(it must be sourced from a gitignored `frontend/.env.local` — see `frontend/vite.config.js`).
+Bypass in an emergency with `git commit --no-verify`.
+
 ## How to Contribute
 
 ### Reporting Bugs
