@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# arkiv — pre-commit hook (versioned; enable with scripts/install-hooks.sh)
+#
+# Guards against two classes of landmine that a routine `git add -A` would sweep
+# into a commit:
+#   §1  do-not-commit sentinel markers left in code/config
+#   §2  a hardcoded / wide-open Vite dev-server allowedHosts (must be env-sourced)
+#
+# Enable once per clone:  bash scripts/install-hooks.sh   (sets core.hooksPath=.githooks)
+# Emergency bypass (NOT recommended):  git commit --no-verify
+set -uo pipefail
+
+FAIL=0
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || true)
+
+# ============================================================================
+# §1 do-not-commit sentinel guard
+# 掃非 markdown 的 staged 檔含 sentinel token。.md 排除（docs 本來就會提及）；
+# .githooks/ 排除（hook 定義本身合法引用 token）。
+# ============================================================================
+if [ -n "$STAGED" ]; then
+  while IFS= read -r file; do
+    case "$file" in
+      *.md|*.markdown) continue ;;
+      .githooks/*) continue ;;
+      *.png|*.jpg|*.jpeg|*.gif|*.ico|*.svg|*.woff*|*.ttf|*.eot|*.mp4|*.mov|*.mp3|*.wav|*.pdf) continue ;;
+    esac
+    [ -f "$file" ] || continue
+    content=$(git show ":$file" 2>/dev/null || true)
+    [ -z "$content" ] && continue
+    if printf '%s' "$content" | grep -qiE -- "(DO[[:space:]]+NOT[[:space:]]+COMMIT|@?NOCOMMIT)"; then
+      echo "❌ BLOCKED: do-not-commit marker left in $file"
+      echo "   → remove the temporary change, or source it from a gitignored .env.local"
+      FAIL=1
+    fi
+  done <<< "$STAGED"
+fi
+
+# ============================================================================
+# §2 Vite allowedHosts guard
+# committed vite config 的 dev-server host 白名單必須 env-source（見 frontend/vite.config.js
+# 的 ARKIV_DEV_ALLOWED_HOSTS + .env.local）。擋 `allowedHosts: true`（全開）與
+# `allowedHosts: [ ...literal... ]`（硬編碼 host）——兩者都會跨環境削弱反 DNS-rebinding 保護。
+# ============================================================================
+if [ -n "$STAGED" ]; then
+  while IFS= read -r file; do
+    case "$file" in
+      *.js|*.mjs|*.cjs|*.ts) ;;
+      *) continue ;;
+    esac
+    [ -f "$file" ] || continue
+    content=$(git show ":$file" 2>/dev/null || true)
+    [ -z "$content" ] && continue
+    # match `allowedHosts:` followed by `true` or `[` (array literal); the env-sourced
+    # form `allowedHosts: <variable>` does not match either.
+    if printf '%s' "$content" | grep -qE -- "allowedHosts[[:space:]]*:[[:space:]]*(true|\[)"; then
+      echo "❌ BLOCKED: hardcoded / wide-open Vite allowedHosts in $file"
+      echo "   → source it from env instead, e.g.:"
+      echo "       const hosts = (loadEnv(mode, process.cwd(), '').ARKIV_DEV_ALLOWED_HOSTS ?? '')"
+      echo "         .split(',').map(s=>s.trim()).filter(Boolean)"
+      echo "       server: { allowedHosts: hosts }"
+      echo "     and put your local hosts in a gitignored frontend/.env.local"
+      FAIL=1
+    fi
+  done <<< "$STAGED"
+fi
+
+if [ "$FAIL" -ne 0 ]; then
+  echo ""
+  echo "Pre-commit checks failed. Fix the issues above."
+  echo "Emergency bypass (NOT recommended): git commit --no-verify"
+  exit 1
+fi
+exit 0
