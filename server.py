@@ -1653,7 +1653,24 @@ def get_stats(
     # library instead of a hardcoded demo name. Multi-library installs (one .arkiv
     # per project) each report their own name.
     stats["project"] = config.PROJECT_ROOT.name if config.PROJECT_ROOT else None
+    # The REGISTRY name for the currently-loaded project (may differ from the dir
+    # basename — a library registered as "恬馨庫" can live in a dir named "tianxin").
+    # A cross-library 精選集 item is keyed by registry name, so the grid's
+    # "加入精選集" needs this — null when the current project isn't registered
+    # (then a grid-added item couldn't be resolved back → the UI disables the add).
+    stats["project_registered_name"] = _current_project_registry_name()
     return stats
+
+
+def _current_project_registry_name():
+    try:
+        root_key = str(config.PROJECT_ROOT.expanduser().resolve(strict=False)).casefold()
+        for p in project_registry.discover_projects():
+            if p.key() == root_key:
+                return p.name
+    except Exception:
+        pass
+    return None
 
 
 @app.get("/api/tags")

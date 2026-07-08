@@ -152,6 +152,20 @@
     copyRunning = false
   }
 
+  let renaming = false
+  let renameVal = ''
+  function startRename() { renameVal = detail.name; renaming = true }
+  async function saveRename() {
+    const name = renameVal.trim()
+    if (!name || name === detail.name) { renaming = false; return }
+    try {
+      await api.renameBin(activeId, name)
+      renaming = false
+      await loadBins(); await select(activeId)
+      pushToast('已改名')
+    } catch (e) { pushToast('改名失敗: ' + e.message, 'error') }
+  }
+
   async function del(id, name) {
     if (!confirm(`刪除精選集「${name}」？（只刪清單，不動任何原始素材）`)) return
     try {
@@ -202,7 +216,14 @@
         <div class="empty">選一個精選集，或先建立一個</div>
       {:else}
         <div class="dhead">
-          <div class="ak-display dname">{detail.name}</div>
+          {#if renaming}
+            <input class="ak-input renameinput" bind:value={renameVal} autofocus
+                   on:keydown={(e) => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') renaming = false }} />
+            <button class="ak-btn" on:click={saveRename}>存</button>
+          {:else}
+            <div class="ak-display dname">{detail.name}</div>
+            <button class="ak-btn renamebtn" title="改名" on:click={startRename}>✎</button>
+          {/if}
           <Mono dim style="font-size:10.5px;">{detail.reachable}/{detail.item_count} 可達</Mono>
           <div class="grow"></div>
           {#if detail.item_count}
@@ -320,6 +341,9 @@
   .detail { padding: 18px 40px; overflow: auto; }
   .dhead { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); }
   .dname { font-size: 22px; letter-spacing: -0.03em; color: var(--ink); }
+  .renamebtn { padding: 3px 7px; opacity: 0.6; }
+  .renamebtn:hover { opacity: 1; }
+  .renameinput { font-size: 18px; padding: 4px 8px; min-width: 220px; }
   .empty { padding: 40px 16px; font-family: var(--ak-mono); font-size: 11px; color: var(--quiet); text-align: center; letter-spacing: 0.05em; }
   .empty a, .detail a { color: var(--ink-2); }
   .rgroup { margin-bottom: 16px; }

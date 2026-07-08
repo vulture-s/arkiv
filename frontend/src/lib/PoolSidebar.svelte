@@ -10,6 +10,8 @@
   export let onTag = null // (name) => void; live tag-click → filter
   export let liveCollections = null // [{key,title,count,items}]; null → section hidden
   export let onCollection = null // (collection) => void; click → filter to members
+  export let liveBins = null // [{id,name,item_count}] cross-library 精選集; null → section hidden
+  export let onBin = null // (bin) => void; click → open the bin
   export let liveStorage = null // {pct, used_gb, total_gb} from /api/stats.disk; null → mock placeholder
   export let onPool = null // (label) => void; click a Smart Pool → rating filter
   export let activePool = null // currently-active pool label (for row highlight)
@@ -96,6 +98,21 @@
           <div class="poolrow collrow" on:click={() => onCollection && onCollection(c)}>
             <span class="ellip">{c.title}</span>
             <Mono dim style="font-size:10px;flex:0 0 auto;">{c.count}</Mono>
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
+  {#if liveBins && liveBins.length}
+    <section>
+      <Eyebrow style="margin-bottom:10px;">精選集 · 跨庫</Eyebrow>
+      <div class="col">
+        {#each liveBins as bn (bn.id)}
+          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <div class="poolrow collrow" on:click={() => onBin && onBin(bn)}>
+            <span class="ellip">★ {bn.name}</span>
+            <Mono dim style="font-size:10px;flex:0 0 auto;">{bn.item_count}</Mono>
           </div>
         {/each}
       </div>

@@ -205,3 +205,21 @@ def test_bins_api_crud_and_no_path_leak(fastapi_client, tmp_path, monkeypatch):
 def test_bins_api_get_missing_404(fastapi_client, tmp_path, monkeypatch):
     monkeypatch.setenv("ARKIV_BINS_PATH", str(tmp_path / "api-bins2.json"))
     assert fastapi_client.get("/api/bins/nope").status_code == 404
+
+
+def test_stats_reports_current_project_registry_name(fastapi_client, tmp_path, monkeypatch):
+    """stats.project_registered_name = the REGISTRY name of the loaded project (may
+    differ from the dir basename); null when unregistered. The grid's 加入精選集
+    needs this so grid-added bin items are keyed by a resolvable name."""
+    import config
+    import projects
+    monkeypatch.setenv("ARKIV_PROJECTS_REGISTRY", str(tmp_path / "reg.json"))
+    monkeypatch.delenv("ARKIV_PROJECT_ROOTS", raising=False)
+
+    # unregistered → null
+    assert fastapi_client.get("/api/stats").json().get("project_registered_name") is None
+
+    # register the CURRENT project root under a name != its dir basename
+    projects.add_project("我的素材庫", str(config.PROJECT_ROOT))
+    got = fastapi_client.get("/api/stats").json().get("project_registered_name")
+    assert got == "我的素材庫"
