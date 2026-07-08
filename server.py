@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 import admin
+import bins as bins_store
 import chat
 import codec
 import auth
@@ -320,6 +321,33 @@ class ProjectCreate(BaseModel):
         if "/" in cleaned or "\\" in cleaned:
             raise ValueError("project name must not contain path separators")
         return cleaned
+
+
+class BinCreate(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _clean_bin_name(cls, v: str) -> str:
+        cleaned = " ".join(
+            "".join(c for c in (v or "") if c == " " or (ord(c) >= 0x20 and c != "\x7f")).split()
+        )
+        if not cleaned:
+            raise ValueError("bin name must not be empty")
+        if len(cleaned) > 100:
+            raise ValueError("bin name too long (max 100)")
+        return cleaned
+
+
+class BinItemRef(BaseModel):
+    project_name: str
+    media_id: str
+    filename: Optional[str] = None
+
+
+class BinAddItems(BaseModel):
+    # Accept one ref or a batch — the frontend adds a multi-selection at once.
+    items: List[BinItemRef]
 
 
 class CreateTokenRequest(BaseModel):
@@ -644,6 +672,99 @@ def projects_health(
     projects = project_registry.health_projects()
     ok_count = sum(1 for item in projects if item["status"] == "ok")
     return {"projects": projects, "total": len(projects), "ok": ok_count}
+
+
+# --- Cross-library 精選集 (bins): persistent named selections spanning projects ---
+# Storage is ~/.arkiv-bins.json (bins.py), separate from any project.db. Items
+# reference clips by (project_name, media_id) — never mutating the source library.
+
+def _bin_detail_payload(b) -> dict:
+    """Bin + per-item reachability status. The status probe re-resolves the source
+    server-side; only the enum + basename filename + project_name reach the client
+    (Phase 16.2 — no absolute path ever leaves the backend)."""
+    items = []
+    for item in b.items:
+        status = bins_store.bin_item_status(item.project_name, item.media_id)
+        items.append({
+            "project_name": item.project_name,
+            "media_id": item.media_id,
+            "filename": _basename_safe(item.filename) if item.filename else "",
+            "added_at": item.added_at,
+            "status": status,
+        })
+    payload = b.summary()
+    payload["items"] = items
+    payload["reachable"] = sum(1 for it in items if it["status"] == bins_store.STATUS_OK)
+    return payload
+
+
+@app.get("/api/bins")
+def list_bins(_tok: dict = Depends(require_scopes("collections_read"))):
+    try:
+        rows = [b.summary() for b in bins_store.list_bins()]
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=500, detail="bins store unreadable: {0}".format(exc))
+    return {"bins": rows, "total": len(rows)}
+
+
+@app.post("/api/bins")
+def create_bin(body: BinCreate, _tok: dict = Depends(require_scopes("collections_write"))):
+    try:
+        b = bins_store.create_bin(body.name)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return b.summary()
+
+
+@app.get("/api/bins/{bin_id}")
+def get_bin(bin_id: str, _tok: dict = Depends(require_scopes("collections_read"))):
+    try:
+        b = bins_store.get_bin(bin_id)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _bin_detail_payload(b)
+
+
+@app.patch("/api/bins/{bin_id}")
+def rename_bin(bin_id: str, body: BinCreate, _tok: dict = Depends(require_scopes("collections_write"))):
+    try:
+        b = bins_store.rename_bin(bin_id, body.name)
+    except bins_store.BinsError as exc:
+        code = 404 if "not found" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc))
+    return b.summary()
+
+
+@app.delete("/api/bins/{bin_id}")
+def delete_bin(bin_id: str, _tok: dict = Depends(require_scopes("collections_write"))):
+    try:
+        b = bins_store.delete_bin(bin_id)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return b.summary()
+
+
+@app.post("/api/bins/{bin_id}/items")
+def add_bin_items(bin_id: str, body: BinAddItems, _tok: dict = Depends(require_scopes("collections_write"))):
+    payload = [
+        {"project_name": it.project_name, "media_id": it.media_id, "filename": it.filename}
+        for it in body.items
+    ]
+    try:
+        b = bins_store.add_items(bin_id, payload)
+    except bins_store.BinsError as exc:
+        code = 404 if "not found" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc))
+    return _bin_detail_payload(b)
+
+
+@app.delete("/api/bins/{bin_id}/items")
+def remove_bin_item(bin_id: str, body: BinItemRef, _tok: dict = Depends(require_scopes("collections_write"))):
+    try:
+        b = bins_store.remove_item(bin_id, body.project_name, body.media_id)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _bin_detail_payload(b)
 
 
 # --- Phase 9.7 G5②: persisted settings (curated key/value overrides) ---
