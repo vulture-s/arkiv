@@ -9,10 +9,15 @@
 
   let query = ''
   let searchEl
-  // Enter → ranked search screen; SearchLive reads ?q= on mount.
+  // Enter → ranked search screen; SearchLive reads ?q= (+ ?all=1) on mount, so the
+  // "All projects" toggle here seeds federation mode over there.
   function runSearch() {
     const q = query.trim()
-    push(q ? `/search-live?q=${encodeURIComponent(q)}` : '/search-live')
+    const p = new URLSearchParams()
+    if (q) p.set('q', q)
+    if (crossProject) p.set('all', '1')
+    const qs = p.toString()
+    push(qs ? `/search-live?${qs}` : '/search-live')
   }
   // ⌘K / Ctrl-K focuses the search box (the shortcut the hint advertises).
   function onGlobalKey(e) {
