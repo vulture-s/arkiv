@@ -10,6 +10,7 @@
   import QueryLive from './routes/QueryLive.svelte'
   import Offload from './routes/Offload.svelte'
   import SettingsLive from './routes/SettingsLive.svelte'
+  import Bins from './routes/Bins.svelte'
   import ToastHost from './lib/ToastHost.svelte'
   import { resolvedTheme } from './lib/prefs.js'
 
@@ -30,6 +31,7 @@
     '/chat-live': ChatLive, // E2 — chat wired to live /api/chat
     '/search-live': SearchLive, // search wired to live /api/media?q=
     '/query-live': QueryLive, // G6 — structured query builder, live /api/search/query
+    '/bins': Bins, // 多專案 Phase 2 — cross-library 精選集 (persistent named selections spanning projects)
     '/settings': SettingsLive, // settings — live theme switcher + real system/about (engine config deferred)
 
     // ── design reference (Claude-design mock artboards; not the product) ──────

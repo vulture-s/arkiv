@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 import admin
+import bins as bins_store
 import chat
 import codec
 import auth
@@ -320,6 +321,45 @@ class ProjectCreate(BaseModel):
         if "/" in cleaned or "\\" in cleaned:
             raise ValueError("project name must not contain path separators")
         return cleaned
+
+
+class BinCreate(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _clean_bin_name(cls, v: str) -> str:
+        cleaned = " ".join(
+            "".join(c for c in (v or "") if c == " " or (ord(c) >= 0x20 and c != "\x7f")).split()
+        )
+        if not cleaned:
+            raise ValueError("bin name must not be empty")
+        if len(cleaned) > 100:
+            raise ValueError("bin name too long (max 100)")
+        return cleaned
+
+
+class BinItemRef(BaseModel):
+    project_name: str
+    media_id: str
+    filename: Optional[str] = None
+
+
+class BinAddItems(BaseModel):
+    # Accept one ref or a batch — the frontend adds a multi-selection at once.
+    items: List[BinItemRef]
+
+
+class BinCopyRequest(BaseModel):
+    # dest = an existing registered project name, OR (create_new) a filesystem path
+    # for a brand-new project. mode: 'reference' indexes the original files in place
+    # (no bytes moved — 原檔不動); 'copy' verified-copies bytes into the dest first.
+    dest: str
+    create_new: bool = False
+    dest_name: Optional[str] = None  # registry name when create_new (default = dir basename)
+    mode: Literal["reference", "copy"] = "reference"
+    skip_vision: bool = False
+    no_embed: bool = False
 
 
 class CreateTokenRequest(BaseModel):
@@ -644,6 +684,243 @@ def projects_health(
     projects = project_registry.health_projects()
     ok_count = sum(1 for item in projects if item["status"] == "ok")
     return {"projects": projects, "total": len(projects), "ok": ok_count}
+
+
+# --- Cross-library 精選集 (bins): persistent named selections spanning projects ---
+# Storage is ~/.arkiv-bins.json (bins.py), separate from any project.db. Items
+# reference clips by (project_name, media_id) — never mutating the source library.
+
+def _copy_clip_verified(src_path: str, dst_dir: Path) -> Path:
+    """Verified copy of one clip into dst_dir (hash both sides, atomic rename, NEVER
+    deletes the source). offload.run_offload is card/dir-oriented (its rel math
+    breaks for a lone file), so this reuses offload's hash primitive on a simple
+    single-file copy. Raises on hash mismatch. (ascMHL provenance is a follow-up —
+    not load-bearing for copy-into-project.)"""
+    import shutil
+    import offload as _offload
+    src = Path(src_path)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    final = dst_dir / src.name
+    partial = final.with_name(final.name + ".partial")
+    if partial.exists():
+        partial.unlink()
+    shutil.copyfile(str(src), str(partial))  # bytes only; never touches the source
+    if _offload._hash_file(src, _offload.DEFAULT_HASH) != _offload._hash_file(partial, _offload.DEFAULT_HASH):
+        partial.unlink()
+        raise ValueError("hash mismatch copying {0}".format(src.name))
+    os.replace(str(partial), str(final))
+    return final
+
+
+def _bin_detail_payload(b) -> dict:
+    """Bin + per-item reachability status. The status probe re-resolves the source
+    server-side; only the enum + basename filename + project_name reach the client
+    (Phase 16.2 — no absolute path ever leaves the backend)."""
+    items = []
+    for item in b.items:
+        status = bins_store.bin_item_status(item.project_name, item.media_id)
+        items.append({
+            "project_name": item.project_name,
+            "media_id": item.media_id,
+            "filename": _basename_safe(item.filename) if item.filename else "",
+            "added_at": item.added_at,
+            "status": status,
+        })
+    payload = b.summary()
+    payload["items"] = items
+    payload["reachable"] = sum(1 for it in items if it["status"] == bins_store.STATUS_OK)
+    return payload
+
+
+@app.get("/api/bins")
+def list_bins(_tok: dict = Depends(require_scopes("collections_read"))):
+    try:
+        rows = [b.summary() for b in bins_store.list_bins()]
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=500, detail="bins store unreadable: {0}".format(exc))
+    return {"bins": rows, "total": len(rows)}
+
+
+@app.post("/api/bins")
+def create_bin(body: BinCreate, _tok: dict = Depends(require_scopes("collections_write"))):
+    try:
+        b = bins_store.create_bin(body.name)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return b.summary()
+
+
+@app.get("/api/bins/{bin_id}")
+def get_bin(bin_id: str, _tok: dict = Depends(require_scopes("collections_read"))):
+    try:
+        b = bins_store.get_bin(bin_id)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _bin_detail_payload(b)
+
+
+@app.patch("/api/bins/{bin_id}")
+def rename_bin(bin_id: str, body: BinCreate, _tok: dict = Depends(require_scopes("collections_write"))):
+    try:
+        b = bins_store.rename_bin(bin_id, body.name)
+    except bins_store.BinsError as exc:
+        code = 404 if "not found" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc))
+    return b.summary()
+
+
+@app.delete("/api/bins/{bin_id}")
+def delete_bin(bin_id: str, _tok: dict = Depends(require_scopes("collections_write"))):
+    try:
+        b = bins_store.delete_bin(bin_id)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return b.summary()
+
+
+@app.post("/api/bins/{bin_id}/items")
+def add_bin_items(bin_id: str, body: BinAddItems, _tok: dict = Depends(require_scopes("collections_write"))):
+    payload = [
+        {"project_name": it.project_name, "media_id": it.media_id, "filename": it.filename}
+        for it in body.items
+    ]
+    try:
+        b = bins_store.add_items(bin_id, payload)
+    except bins_store.BinsError as exc:
+        code = 404 if "not found" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc))
+    return _bin_detail_payload(b)
+
+
+@app.delete("/api/bins/{bin_id}/items")
+def remove_bin_item(bin_id: str, body: BinItemRef, _tok: dict = Depends(require_scopes("collections_write"))):
+    try:
+        b = bins_store.remove_item(bin_id, body.project_name, body.media_id)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _bin_detail_payload(b)
+
+
+@app.post("/api/bins/{bin_id}/copy")
+def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_scopes("videos_write"))):
+    """Copy a bin's reachable clips into a project (existing or brand-new), then
+    index them so they're searchable there. Streams ndjson progress. RED LINE: each
+    item is re-gated for reachability server-side; unreachable ones are SKIPPED and
+    listed in the summary (never silently dropped), the source library is never
+    mutated, and in 'copy' mode the verified-copy engine never deletes the source.
+
+    mode='reference' indexes the original absolute paths in place (no bytes moved);
+    mode='copy' verified-copies (hash + MHL) bytes into the dest first."""
+    import subprocess, sys as _sys, json as _json
+
+    try:
+        b = bins_store.get_bin(bin_id)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    # Resolve destination project root + registry name.
+    if body.create_new:
+        dest_root = Path(body.dest).expanduser().resolve(strict=False)
+        # refuse to bootstrap into an existing NON-empty project dir (avoid clobber)
+        if (dest_root / ".arkiv" / "project.db").exists():
+            raise HTTPException(400, "目的地已是既有專案（含 .arkiv/project.db）；請改選現有專案或換新路徑")
+        dest_root.mkdir(parents=True, exist_ok=True)
+        dest_name = (body.dest_name or dest_root.name).strip() or dest_root.name
+    else:
+        proj = None
+        for p in project_registry.discover_projects():
+            if p.name == body.dest:
+                proj = p
+                break
+        if proj is None:
+            raise HTTPException(400, "找不到目的專案：{0}".format(body.dest))
+        dest_root = Path(proj.path).expanduser().resolve(strict=False)
+        dest_name = proj.name
+
+    dest_db = dest_root / ".arkiv" / "project.db"
+    (dest_root / ".arkiv").mkdir(parents=True, exist_ok=True)
+    dest_media_dir = dest_root / "media"
+
+    def _stream():
+        skipped = []
+        reachable = []  # (project_name, media_id, absolute_path)
+        # ── gate: re-resolve every item server-side; skip unreachable (fail-loud) ──
+        for item in b.items:
+            info = bins_store.resolve_source(item.project_name, item.media_id)
+            status = (info or {}).get("status") or bins_store.STATUS_PROJECT_UNREGISTERED
+            if status != bins_store.STATUS_OK or not (info or {}).get("absolute_path"):
+                skipped.append({"project_name": item.project_name, "media_id": item.media_id, "status": status})
+                yield _json.dumps({"type": "gate", "project_name": item.project_name,
+                                   "media_id": item.media_id, "status": status, "action": "skipped"},
+                                  ensure_ascii=False) + "\n"
+                continue
+            reachable.append((item.project_name, item.media_id, info["absolute_path"]))
+            yield _json.dumps({"type": "gate", "project_name": item.project_name,
+                               "media_id": item.media_id, "status": status, "action": "queued"},
+                              ensure_ascii=False) + "\n"
+
+        # ── copy phase (mode=copy only): verified byte-copy into the dest ──
+        ingest_paths = []
+        if body.mode == "copy" and reachable:
+            dest_media_dir.mkdir(parents=True, exist_ok=True)
+            for idx, (pn, mid, src) in enumerate(reachable):
+                try:
+                    copied = _copy_clip_verified(src, dest_media_dir)
+                    ingest_paths.append(str(copied))
+                    yield _json.dumps({"type": "copy", "file": Path(src).name,
+                                       "done": idx + 1, "total": len(reachable)}, ensure_ascii=False) + "\n"
+                except Exception as exc:  # a copy failure must not fake success
+                    skipped.append({"project_name": pn, "media_id": mid, "status": "copy_failed: {0}".format(exc)})
+                    yield _json.dumps({"type": "copy", "file": Path(src).name, "error": str(exc)},
+                                      ensure_ascii=False) + "\n"
+        else:
+            ingest_paths = [src for (_pn, _mid, src) in reachable]
+
+        # ── index phase: one ingest run over the gathered files (one model warmup) ──
+        if ingest_paths:
+            cmd = [_sys.executable, str(ROOT / "ingest.py"), "--files", *ingest_paths,
+                   "--db", str(dest_db)]
+            if body.skip_vision:
+                cmd.append("--skip-vision")
+            if body.no_embed:
+                cmd.append("--no-embed")
+            yield _json.dumps({"type": "index", "status": "start", "files": len(ingest_paths)},
+                              ensure_ascii=False) + "\n"
+            # Run ingest AS the dest project: ARKIV_PROJECT_ROOT=dest_root so paths
+            # relativize against the dest, not the server's own project. In
+            # reference mode the sources sit OUTSIDE dest_root, so this stores an
+            # absolute media.path (resolvable from the dest); in copy mode the
+            # copied files sit under dest_root/media, so they store relative. cwd
+            # points at the dest .arkiv so ingest's bench_ingest.json / state don't
+            # dirty the install dir (mirrors /api/offload's state_cwd).
+            ingest_env = dict(os.environ)
+            ingest_env["ARKIV_PROJECT_ROOT"] = str(dest_root)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1, env=ingest_env,
+                                    cwd=str(dest_root / ".arkiv"))
+            try:
+                for line in proc.stdout:
+                    yield _json.dumps({"type": "log", "line": line.rstrip("\n")}, ensure_ascii=False) + "\n"
+                proc.wait()
+            finally:
+                if proc.stdout and not proc.stdout.closed:
+                    proc.stdout.close()
+            yield _json.dumps({"type": "index", "status": "done", "code": proc.returncode},
+                              ensure_ascii=False) + "\n"
+
+        # ── bootstrap: register the new project (path now exists) ──
+        if body.create_new:
+            try:
+                project_registry.add_project(dest_name, str(dest_root))
+                yield _json.dumps({"type": "registered", "name": dest_name}, ensure_ascii=False) + "\n"
+            except project_registry.RegistryError as exc:
+                yield _json.dumps({"type": "registered", "error": str(exc)}, ensure_ascii=False) + "\n"
+
+        yield _json.dumps({"type": "done", "summary": {
+            "copied": len(ingest_paths), "skipped": skipped, "dest": dest_name, "mode": body.mode,
+        }}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 
 # --- Phase 9.7 G5②: persisted settings (curated key/value overrides) ---
@@ -1376,7 +1653,24 @@ def get_stats(
     # library instead of a hardcoded demo name. Multi-library installs (one .arkiv
     # per project) each report their own name.
     stats["project"] = config.PROJECT_ROOT.name if config.PROJECT_ROOT else None
+    # The REGISTRY name for the currently-loaded project (may differ from the dir
+    # basename — a library registered as "恬馨庫" can live in a dir named "tianxin").
+    # A cross-library 精選集 item is keyed by registry name, so the grid's
+    # "加入精選集" needs this — null when the current project isn't registered
+    # (then a grid-added item couldn't be resolved back → the UI disables the add).
+    stats["project_registered_name"] = _current_project_registry_name()
     return stats
+
+
+def _current_project_registry_name():
+    try:
+        root_key = str(config.PROJECT_ROOT.expanduser().resolve(strict=False)).casefold()
+        for p in project_registry.discover_projects():
+            if p.key() == root_key:
+                return p.name
+    except Exception:
+        pass
+    return None
 
 
 @app.get("/api/tags")

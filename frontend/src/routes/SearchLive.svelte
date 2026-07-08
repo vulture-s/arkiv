@@ -13,6 +13,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Thumb from '../lib/Thumb.svelte'
+  import { pushToast } from '../lib/toast.js'
   import { resolvedTheme } from '../lib/prefs.js'
 
   $: theme = $resolvedTheme
@@ -38,6 +39,47 @@
   let fedErrors = []
   let projectsQueried = 0
   let projectsFailed = 0
+
+  // Multi-select of federated results → 加入精選集 (a cross-library bin). Only in
+  // federation mode: an item's (project_name, media_id) is the identity a bin
+  // stores. Ordered array (add order) + derived Set for O(1) membership — same
+  // shape as MainLive's `picked`.
+  let picks = [] // [{project_name, media_id, filename}]
+  $: pickKeys = new Set(picks.map((p) => p.project_name + ':' + p.media_id))
+  let binList = [] // [{id, name, item_count}]
+  let targetBinId = ''
+  let newBinName = ''
+
+  function togglePick(project_name, media_id, filename) {
+    const key = project_name + ':' + media_id
+    picks = pickKeys.has(key)
+      ? picks.filter((p) => p.project_name + ':' + p.media_id !== key)
+      : [...picks, { project_name, media_id, filename }]
+  }
+  const clearPicks = () => (picks = [])
+
+  async function loadBins() {
+    try { binList = (await api.getBins()).bins || [] } catch (e) { /* no bins yet */ }
+  }
+
+  async function addPicksToBin() {
+    let binId = targetBinId
+    try {
+      if (!binId && newBinName.trim()) {
+        const b = await api.createBin(newBinName.trim())
+        binId = b.id
+        newBinName = ''
+        await loadBins()
+        targetBinId = binId
+      }
+      if (!binId) { pushToast('先選一個精選集或輸入新名稱', 'error'); return }
+      const r = await api.addBinItems(binId, picks)
+      const name = (binList.find((b) => b.id === binId) || {}).name || '精選集'
+      pushToast(`已加入「${name}」（共 ${r.item_count} 支）`)
+      clearPicks()
+      loadBins()
+    } catch (e) { pushToast('加入精選集失敗: ' + e.message, 'error') }
+  }
 
   // Media-type facet — wired to /api/media?media_type= (real backend filter; audit
   // H14 made it apply on the semantic-search branch too). 'all' omits the param.
@@ -179,6 +221,7 @@
       if (name) projectName = name
     } catch (e) { /* no registry → keep neutral label, projectCount 0 */ }
     loadCounts()
+    loadBins()
     // seed from the hash, e.g. #/search-live?q=餐廳&type=video  or  ?q=…&all=1
     const h = window.location.hash
     const qi = h.indexOf('?')
@@ -199,6 +242,7 @@
     <Mono dim style="font-size:10px;">live</Mono>
     <div class="grow"></div>
     <a class="ak-btn" href="#/query-live">⊞ query builder</a>
+    <a class="ak-btn" href="#/bins">★ 精選集</a>
     <a class="ak-btn" href="#/main-live">← back to grid</a>
   </div>
 
@@ -271,6 +315,21 @@
         </div>
       {/if}
 
+      {#if crossProject && picks.length}
+        <div class="pickbar">
+          <Mono style="font-size:11px;font-weight:500;">已選 {picks.length} 支 →</Mono>
+          <select class="ak-input binsel" bind:value={targetBinId}>
+            <option value="">選精選集…</option>
+            {#each binList as b}<option value={b.id}>{b.name}（{b.item_count}）</option>{/each}
+          </select>
+          <Mono dim style="font-size:10px;">或</Mono>
+          <input class="ak-input newbin" placeholder="新精選集名稱…" bind:value={newBinName}
+                 on:keydown={(e) => e.key === 'Enter' && addPicksToBin()} />
+          <button class="ak-btn ak-btn--primary" on:click={addPicksToBin}>加入精選集</button>
+          <button class="ak-btn" on:click={clearPicks}>清除</button>
+        </div>
+      {/if}
+
       {#if state === 'ok' && shown === 0 && !(crossProject && projectsQueried === 0)}
         <div class="emptyresult">沒有符合「{query}」的素材</div>
       {:else if shown}
@@ -301,6 +360,13 @@
                       <img class="rthumbimg" src={r.thumb} alt={r.name} loading="lazy" />
                     {:else}
                       <Thumb seed={r.id} kind="video" {theme} />
+                    {/if}
+                    {#if !g.openable}
+                      <!-- federated rows are read-only but pickable → 精選集 -->
+                      <label class="pickbox" title="選取加入精選集">
+                        <input type="checkbox" checked={pickKeys.has(g.name + ':' + r.id)}
+                               on:change={() => togglePick(g.name, r.id, r.name)} />
+                      </label>
                     {/if}
                     <Mono style="position:absolute;bottom:2px;right:3px;font-size:9px;color:#f3f2ee;background:rgba(10,10,12,.78);padding:1px 3px;">{r.dur}</Mono>
                   </div>
@@ -349,6 +415,11 @@
   .fvrule { width: 1px; height: 14px; background: var(--rule); margin: 0 4px; }
   .results { flex: 1; overflow: auto; padding: 14px 64px 18px; }
   .fedbanner { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; padding: 8px 10px; border: 1px solid var(--rule); background: var(--surface-2); }
+  .pickbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 8px 12px; border: 1px solid var(--rule-hi); background: var(--bg); }
+  .binsel, .newbin { font-size: 12px; padding: 4px 6px; }
+  .newbin { flex: 0 1 180px; }
+  .pickbox { position: absolute; top: 4px; left: 4px; z-index: 2; display: flex; }
+  .pickbox input { width: 15px; height: 15px; cursor: pointer; accent-color: var(--invert); }
   .rgroup { margin-bottom: 16px; }
   .ghead { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
   .gproj { font-size: 18px; letter-spacing: -0.03em; line-height: 1; color: var(--ink); }

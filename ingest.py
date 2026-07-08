@@ -1334,7 +1334,8 @@ def main():
         except (AttributeError, ValueError):
             pass
     parser = argparse.ArgumentParser(description="Ingest media files into SQLite DB")
-    parser.add_argument("--dir", help="Media directory to scan (required unless --migrate-* / --regenerate-proxies / --vision-only)")
+    parser.add_argument("--dir", help="Media directory to scan (required unless --migrate-* / --regenerate-proxies / --vision-only / --files)")
+    parser.add_argument("--files", nargs="+", metavar="F", help="Ingest an explicit list of files instead of scanning a --dir. Used by the cross-library 精選集 'copy into project' flow to index clips gathered from several source libraries in one run (one model warmup). Files outside PROJECT_ROOT store an absolute media.path (still resolvable).")
     parser.add_argument("--limit", type=int, default=0, help="Max files to process (0=all)")
     parser.add_argument("--skip-vision", action="store_true", help="Skip llava frame description")
     parser.add_argument("--refresh", action="store_true", help="Re-process already-indexed files — re-extracts thumbnail + frames (not reusing cached ones, so changed extraction logic like 360 reproject re-applies) + re-runs vision (issue #53)")
@@ -1393,8 +1394,8 @@ def main():
         or args.propose_aliases or args.apply_aliases
         or bool(args.queue) or args.status
     )
-    if not maintenance_mode and not args.dir:
-        parser.error("--dir is required unless using --migrate-storage / --migrate-relative / --regenerate-proxies / --vision-only")
+    if not maintenance_mode and not args.dir and not args.files:
+        parser.error("--dir (or --files) is required unless using --migrate-storage / --migrate-relative / --regenerate-proxies / --vision-only")
 
     if args.db:
         db.DB_PATH = Path(args.db)
@@ -1469,24 +1470,45 @@ def main():
     # audit M7: a relative --dir (e.g. `--dir clips`) used to flow cwd-relative
     # paths into the DB — a third path form besides abs/rel-to-PROJECT_ROOT,
     # breaking dedupe and resolve_path. Canonicalize before any DB interaction.
-    media_dir = Path(args.dir).expanduser().resolve()
-    if not media_dir.exists():
-        print(f"Error: {media_dir} does not exist")
-        sys.exit(1)
-
-    if media_dir.is_file():
-        # Single-file mode (used by watch.py for new-arrival ingest)
-        files = [media_dir] if media_dir.suffix.lower() in SUPPORTED else []
-    elif args.recursive:
-        files = sorted(
-            f for f in media_dir.rglob("*")
-            if f.is_file() and f.suffix.lower() in SUPPORTED
-        )
+    if args.files:
+        # Explicit file list (精選集 copy-into-project) — resolve + filter to
+        # SUPPORTED, dedup preserving order, then fall through to the same batch
+        # pipeline as --dir. Missing files are dropped with a note (the copy
+        # orchestrator already gated reachability, but be defensive).
+        files = []
+        seen = set()
+        for raw in args.files:
+            fp = Path(raw).expanduser().resolve()
+            key = str(fp)
+            if key in seen:
+                continue
+            seen.add(key)
+            if fp.suffix.lower() not in SUPPORTED:
+                print(f"Skip (unsupported): {fp}")
+                continue
+            if not fp.exists():
+                print(f"Skip (missing): {fp}")
+                continue
+            files.append(fp)
     else:
-        files = sorted(
-            f for f in media_dir.iterdir()
-            if f.is_file() and f.suffix.lower() in SUPPORTED
-        )
+        media_dir = Path(args.dir).expanduser().resolve()
+        if not media_dir.exists():
+            print(f"Error: {media_dir} does not exist")
+            sys.exit(1)
+
+        if media_dir.is_file():
+            # Single-file mode (used by watch.py for new-arrival ingest)
+            files = [media_dir] if media_dir.suffix.lower() in SUPPORTED else []
+        elif args.recursive:
+            files = sorted(
+                f for f in media_dir.rglob("*")
+                if f.is_file() and f.suffix.lower() in SUPPORTED
+            )
+        else:
+            files = sorted(
+                f for f in media_dir.iterdir()
+                if f.is_file() and f.suffix.lower() in SUPPORTED
+            )
 
     total = len(files)
 

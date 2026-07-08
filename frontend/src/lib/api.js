@@ -36,6 +36,11 @@ async function req(path, { method = 'GET', body, signal } = {}) {
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
+    // API responses are live data (reachability status, search hits, project
+    // health) — never let the browser serve a heuristically-cached copy, or a
+    // re-opened 精選集 shows stale reachability and the whole point (surfacing a
+    // moved/offline source) is defeated.
+    cache: 'no-store',
   })
   if (!res.ok) {
     let detail = null
@@ -67,6 +72,41 @@ export const addProject = (body, opts) => req('/api/projects', { method: 'POST',
 export const deleteProject = (name, opts) => req(`/api/projects/${encodeURIComponent(name)}`, { method: 'DELETE', ...opts })
 // POST /api/projects/sync → {projects, total} (refresh last_indexed_at from DB).
 export const syncProjects = (opts) => req('/api/projects/sync', { method: 'POST', ...opts })
+// ---- cross-library 精選集 (bins): persistent named selections spanning projects ----
+// A bin references clips by (project_name, media_id) — the identity that survives
+// federation's path sanitization. GET /api/bins/{id} returns each item with a
+// reachability `status` (ok | project_unregistered | db_missing | nas_unmounted |
+// row_missing | file_missing | …) — never an absolute path (Phase 16.2).
+export const getBins = (opts) => req('/api/bins', opts)
+export const createBin = (name, opts) => req('/api/bins', { method: 'POST', body: { name }, ...opts })
+export const getBin = (id, opts) => req(`/api/bins/${encodeURIComponent(id)}`, opts)
+export const renameBin = (id, name, opts) =>
+  req(`/api/bins/${encodeURIComponent(id)}`, { method: 'PATCH', body: { name }, ...opts })
+export const deleteBin = (id, opts) =>
+  req(`/api/bins/${encodeURIComponent(id)}`, { method: 'DELETE', ...opts })
+// items = [{project_name, media_id, filename?}] — deduped server-side by (project,media).
+export const addBinItems = (id, items, opts) =>
+  req(`/api/bins/${encodeURIComponent(id)}/items`, { method: 'POST', body: { items }, ...opts })
+export const removeBinItem = (id, project_name, media_id, opts) =>
+  req(`/api/bins/${encodeURIComponent(id)}/items`, { method: 'DELETE', body: { project_name, media_id }, ...opts })
+// Copy a bin's reachable clips into a project → ndjson stream of
+// {type:"gate"|"copy"|"index"|"log"|"registered"|"done", …}. req() can't stream,
+// so return the raw Response for the caller to read line-by-line (same as offloadRun).
+// body: {dest, create_new, dest_name?, mode:'reference'|'copy', skip_vision?, no_embed?}
+export async function copyBin(id, body, { signal } = {}) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (_token) headers['Authorization'] = `Bearer ${_token}`
+  const res = await fetch(`${BASE}/api/bins/${encodeURIComponent(id)}/copy`, {
+    method: 'POST', headers, body: JSON.stringify(body), signal, cache: 'no-store',
+  })
+  if (!res.ok) {
+    let detail = null
+    try { detail = await res.json() } catch { /* non-json */ }
+    throw new ApiError(res.status, `/api/bins/${id}/copy`, detail)
+  }
+  return res
+}
+
 export const getTags = (opts) => req('/api/tags', opts)
 // /api/collections → {collections:[{key,title,category,count,items:[{id,filename,thumb,score}]}], total}
 export const getCollections = (opts) => req('/api/collections', opts)

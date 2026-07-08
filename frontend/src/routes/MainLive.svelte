@@ -78,6 +78,39 @@
     picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]
   }
   const clearPicks = () => (picked = [])
+
+  // Add the multi-selection to a cross-library 精選集 (bin). A bin item is keyed by
+  // (registry project name, media_id); the current project's REGISTRY name comes
+  // from stats.project_registered_name — null when this library isn't registered,
+  // in which case a bin item couldn't be resolved back, so the add is disabled.
+  let binList = []
+  let targetBinId = ''
+  let newBinName = ''
+  $: projectRegName = stats && stats.project_registered_name
+  async function loadBins() {
+    try { binList = (await api.getBins()).bins || [] } catch (e) { /* none yet */ }
+  }
+  async function addPicksToBin() {
+    if (!projectRegName) { pushToast('本專案未登記，無法加入精選集 — 先到設定登記', 'error'); return }
+    const byId = new Map((items || []).map((m) => [m.id, m]))
+    const refs = picked.map((id) => ({
+      project_name: projectRegName,
+      media_id: String(id),
+      filename: (byId.get(id) || {}).name || `#${id}`,
+    }))
+    let binId = targetBinId
+    try {
+      if (!binId && newBinName.trim()) {
+        const b = await api.createBin(newBinName.trim())
+        binId = b.id; newBinName = ''; await loadBins(); targetBinId = binId
+      }
+      if (!binId) { pushToast('先選一個精選集或輸入新名稱', 'error'); return }
+      const r = await api.addBinItems(binId, refs)
+      const name = (binList.find((b) => b.id === binId) || {}).name || '精選集'
+      pushToast(`已加入「${name}」（共 ${r.item_count} 支）`)
+      clearPicks(); loadBins()
+    } catch (e) { pushToast('加入精選集失敗: ' + e.message, 'error') }
+  }
   const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
   async function exportTimeline(fmt) {
     if (!picked.length) return
@@ -310,6 +343,7 @@
     }
     await selectFromParam()
     loadEngines()
+    loadBins()
   })
 
   $: visible = items.filter((m) => {
@@ -544,7 +578,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} onTag={onTagClick} onCollection={onCollectionClick} onCamera={onCameraClick} {activeCamera} onPool={onPoolClick} {activePool} />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} onTag={onTagClick} onCollection={onCollectionClick} onCamera={onCameraClick} {activeCamera} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
 
     <main class="center">
       <div class="toolrow">
@@ -576,12 +610,26 @@
 
       {#if picked.length}
         <div class="exportbar">
-          <Mono style="font-size:11px;letter-spacing:0.04em;">已選 {picked.length} 支 → 合成一條時間軸</Mono>
+          <Mono style="font-size:11px;letter-spacing:0.04em;">已選 {picked.length} 支</Mono>
           <div class="expbtns">
+            <span class="barlabel">時間軸</span>
             {#each EXPORT_FMTS as fmt}
               <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}>{fmt.toUpperCase()}</button>
             {/each}
             <button class="ak-btn expbtn" on:click={() => exportMetadataCsv(picked)} title="匯出所選 metadata CSV">CSV</button>
+            <div class="barvrule"></div>
+            <span class="barlabel">精選集</span>
+            <select class="ak-input binsel" bind:value={targetBinId} disabled={!projectRegName}
+                    title={projectRegName ? '' : '本專案未登記，無法加入精選集'}>
+              <option value="">選精選集…</option>
+              {#each binList as b}<option value={b.id}>{b.name}（{b.item_count}）</option>{/each}
+            </select>
+            <input class="ak-input binnew" placeholder="新精選集…" bind:value={newBinName} disabled={!projectRegName}
+                   on:keydown={(e) => e.key === 'Enter' && addPicksToBin()} />
+            <button class="ak-btn expbtn" on:click={addPicksToBin} disabled={!projectRegName}
+                    title={projectRegName ? '加入跨庫精選集' : '本專案未登記（設定→跨庫專案）'}>加入精選集</button>
+            <a class="ak-btn expbtn" href="#/bins" title="檢視精選集">★</a>
+            <div class="barvrule"></div>
             <button class="ak-btn expbtn clear" on:click={clearPicks}>清除</button>
           </div>
         </div>
@@ -735,7 +783,13 @@
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
     padding: 9px 22px; border-bottom: 1px solid var(--rule); background: var(--surface-2);
   }
-  .expbtns { display: flex; gap: 6px; }
+  .expbtns { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .expbtn { font-size: 10px; padding: 5px 10px; text-decoration: none; }
   .expbtn.clear { opacity: 0.7; }
+  .expbtn:disabled { opacity: 0.4; cursor: default; }
+  .barlabel { font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--quiet); }
+  .barvrule { width: 1px; height: 16px; background: var(--rule-hi); margin: 0 4px; }
+  .binsel, .binnew { font-size: 10px; padding: 4px 6px; }
+  .binnew { width: 110px; }
+  .binsel:disabled, .binnew:disabled { opacity: 0.4; }
 </style>
