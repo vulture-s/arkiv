@@ -350,6 +350,18 @@ class BinAddItems(BaseModel):
     items: List[BinItemRef]
 
 
+class BinCopyRequest(BaseModel):
+    # dest = an existing registered project name, OR (create_new) a filesystem path
+    # for a brand-new project. mode: 'reference' indexes the original files in place
+    # (no bytes moved — 原檔不動); 'copy' verified-copies bytes into the dest first.
+    dest: str
+    create_new: bool = False
+    dest_name: Optional[str] = None  # registry name when create_new (default = dir basename)
+    mode: Literal["reference", "copy"] = "reference"
+    skip_vision: bool = False
+    no_embed: bool = False
+
+
 class CreateTokenRequest(BaseModel):
     name: str
     scopes: List[str]
@@ -678,6 +690,28 @@ def projects_health(
 # Storage is ~/.arkiv-bins.json (bins.py), separate from any project.db. Items
 # reference clips by (project_name, media_id) — never mutating the source library.
 
+def _copy_clip_verified(src_path: str, dst_dir: Path) -> Path:
+    """Verified copy of one clip into dst_dir (hash both sides, atomic rename, NEVER
+    deletes the source). offload.run_offload is card/dir-oriented (its rel math
+    breaks for a lone file), so this reuses offload's hash primitive on a simple
+    single-file copy. Raises on hash mismatch. (ascMHL provenance is a follow-up —
+    not load-bearing for copy-into-project.)"""
+    import shutil
+    import offload as _offload
+    src = Path(src_path)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    final = dst_dir / src.name
+    partial = final.with_name(final.name + ".partial")
+    if partial.exists():
+        partial.unlink()
+    shutil.copyfile(str(src), str(partial))  # bytes only; never touches the source
+    if _offload._hash_file(src, _offload.DEFAULT_HASH) != _offload._hash_file(partial, _offload.DEFAULT_HASH):
+        partial.unlink()
+        raise ValueError("hash mismatch copying {0}".format(src.name))
+    os.replace(str(partial), str(final))
+    return final
+
+
 def _bin_detail_payload(b) -> dict:
     """Bin + per-item reachability status. The status probe re-resolves the source
     server-side; only the enum + basename filename + project_name reach the client
@@ -765,6 +799,128 @@ def remove_bin_item(bin_id: str, body: BinItemRef, _tok: dict = Depends(require_
     except bins_store.BinsError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return _bin_detail_payload(b)
+
+
+@app.post("/api/bins/{bin_id}/copy")
+def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_scopes("videos_write"))):
+    """Copy a bin's reachable clips into a project (existing or brand-new), then
+    index them so they're searchable there. Streams ndjson progress. RED LINE: each
+    item is re-gated for reachability server-side; unreachable ones are SKIPPED and
+    listed in the summary (never silently dropped), the source library is never
+    mutated, and in 'copy' mode the verified-copy engine never deletes the source.
+
+    mode='reference' indexes the original absolute paths in place (no bytes moved);
+    mode='copy' verified-copies (hash + MHL) bytes into the dest first."""
+    import subprocess, sys as _sys, json as _json
+
+    try:
+        b = bins_store.get_bin(bin_id)
+    except bins_store.BinsError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    # Resolve destination project root + registry name.
+    if body.create_new:
+        dest_root = Path(body.dest).expanduser().resolve(strict=False)
+        # refuse to bootstrap into an existing NON-empty project dir (avoid clobber)
+        if (dest_root / ".arkiv" / "project.db").exists():
+            raise HTTPException(400, "目的地已是既有專案（含 .arkiv/project.db）；請改選現有專案或換新路徑")
+        dest_root.mkdir(parents=True, exist_ok=True)
+        dest_name = (body.dest_name or dest_root.name).strip() or dest_root.name
+    else:
+        proj = None
+        for p in project_registry.discover_projects():
+            if p.name == body.dest:
+                proj = p
+                break
+        if proj is None:
+            raise HTTPException(400, "找不到目的專案：{0}".format(body.dest))
+        dest_root = Path(proj.path).expanduser().resolve(strict=False)
+        dest_name = proj.name
+
+    dest_db = dest_root / ".arkiv" / "project.db"
+    (dest_root / ".arkiv").mkdir(parents=True, exist_ok=True)
+    dest_media_dir = dest_root / "media"
+
+    def _stream():
+        skipped = []
+        reachable = []  # (project_name, media_id, absolute_path)
+        # ── gate: re-resolve every item server-side; skip unreachable (fail-loud) ──
+        for item in b.items:
+            info = bins_store.resolve_source(item.project_name, item.media_id)
+            status = (info or {}).get("status") or bins_store.STATUS_PROJECT_UNREGISTERED
+            if status != bins_store.STATUS_OK or not (info or {}).get("absolute_path"):
+                skipped.append({"project_name": item.project_name, "media_id": item.media_id, "status": status})
+                yield _json.dumps({"type": "gate", "project_name": item.project_name,
+                                   "media_id": item.media_id, "status": status, "action": "skipped"},
+                                  ensure_ascii=False) + "\n"
+                continue
+            reachable.append((item.project_name, item.media_id, info["absolute_path"]))
+            yield _json.dumps({"type": "gate", "project_name": item.project_name,
+                               "media_id": item.media_id, "status": status, "action": "queued"},
+                              ensure_ascii=False) + "\n"
+
+        # ── copy phase (mode=copy only): verified byte-copy into the dest ──
+        ingest_paths = []
+        if body.mode == "copy" and reachable:
+            dest_media_dir.mkdir(parents=True, exist_ok=True)
+            for idx, (pn, mid, src) in enumerate(reachable):
+                try:
+                    copied = _copy_clip_verified(src, dest_media_dir)
+                    ingest_paths.append(str(copied))
+                    yield _json.dumps({"type": "copy", "file": Path(src).name,
+                                       "done": idx + 1, "total": len(reachable)}, ensure_ascii=False) + "\n"
+                except Exception as exc:  # a copy failure must not fake success
+                    skipped.append({"project_name": pn, "media_id": mid, "status": "copy_failed: {0}".format(exc)})
+                    yield _json.dumps({"type": "copy", "file": Path(src).name, "error": str(exc)},
+                                      ensure_ascii=False) + "\n"
+        else:
+            ingest_paths = [src for (_pn, _mid, src) in reachable]
+
+        # ── index phase: one ingest run over the gathered files (one model warmup) ──
+        if ingest_paths:
+            cmd = [_sys.executable, str(ROOT / "ingest.py"), "--files", *ingest_paths,
+                   "--db", str(dest_db)]
+            if body.skip_vision:
+                cmd.append("--skip-vision")
+            if body.no_embed:
+                cmd.append("--no-embed")
+            yield _json.dumps({"type": "index", "status": "start", "files": len(ingest_paths)},
+                              ensure_ascii=False) + "\n"
+            # Run ingest AS the dest project: ARKIV_PROJECT_ROOT=dest_root so paths
+            # relativize against the dest, not the server's own project. In
+            # reference mode the sources sit OUTSIDE dest_root, so this stores an
+            # absolute media.path (resolvable from the dest); in copy mode the
+            # copied files sit under dest_root/media, so they store relative. cwd
+            # points at the dest .arkiv so ingest's bench_ingest.json / state don't
+            # dirty the install dir (mirrors /api/offload's state_cwd).
+            ingest_env = dict(os.environ)
+            ingest_env["ARKIV_PROJECT_ROOT"] = str(dest_root)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1, env=ingest_env,
+                                    cwd=str(dest_root / ".arkiv"))
+            try:
+                for line in proc.stdout:
+                    yield _json.dumps({"type": "log", "line": line.rstrip("\n")}, ensure_ascii=False) + "\n"
+                proc.wait()
+            finally:
+                if proc.stdout and not proc.stdout.closed:
+                    proc.stdout.close()
+            yield _json.dumps({"type": "index", "status": "done", "code": proc.returncode},
+                              ensure_ascii=False) + "\n"
+
+        # ── bootstrap: register the new project (path now exists) ──
+        if body.create_new:
+            try:
+                project_registry.add_project(dest_name, str(dest_root))
+                yield _json.dumps({"type": "registered", "name": dest_name}, ensure_ascii=False) + "\n"
+            except project_registry.RegistryError as exc:
+                yield _json.dumps({"type": "registered", "error": str(exc)}, ensure_ascii=False) + "\n"
+
+        yield _json.dumps({"type": "done", "summary": {
+            "copied": len(ingest_paths), "skipped": skipped, "dest": dest_name, "mode": body.mode,
+        }}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 
 # --- Phase 9.7 G5②: persisted settings (curated key/value overrides) ---

@@ -89,6 +89,23 @@ export const addBinItems = (id, items, opts) =>
   req(`/api/bins/${encodeURIComponent(id)}/items`, { method: 'POST', body: { items }, ...opts })
 export const removeBinItem = (id, project_name, media_id, opts) =>
   req(`/api/bins/${encodeURIComponent(id)}/items`, { method: 'DELETE', body: { project_name, media_id }, ...opts })
+// Copy a bin's reachable clips into a project → ndjson stream of
+// {type:"gate"|"copy"|"index"|"log"|"registered"|"done", …}. req() can't stream,
+// so return the raw Response for the caller to read line-by-line (same as offloadRun).
+// body: {dest, create_new, dest_name?, mode:'reference'|'copy', skip_vision?, no_embed?}
+export async function copyBin(id, body, { signal } = {}) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (_token) headers['Authorization'] = `Bearer ${_token}`
+  const res = await fetch(`${BASE}/api/bins/${encodeURIComponent(id)}/copy`, {
+    method: 'POST', headers, body: JSON.stringify(body), signal, cache: 'no-store',
+  })
+  if (!res.ok) {
+    let detail = null
+    try { detail = await res.json() } catch { /* non-json */ }
+    throw new ApiError(res.status, `/api/bins/${id}/copy`, detail)
+  }
+  return res
+}
 
 export const getTags = (opts) => req('/api/tags', opts)
 // /api/collections → {collections:[{key,title,category,count,items:[{id,filename,thumb,score}]}], total}

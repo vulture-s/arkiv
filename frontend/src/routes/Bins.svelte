@@ -85,6 +85,73 @@
     } catch (e) { pushToast('移除失敗: ' + e.message, 'error') }
   }
 
+  // ── copy-into-project dialog ──
+  let copyOpen = false
+  let copyMode = 'reference' // reference | copy
+  let destKind = 'new' // new | existing
+  let destPath = ''
+  let destName = ''
+  let existingProj = ''
+  let projList = []
+  let fastMode = false // skip vision + embedding (clips are already analysed in source)
+  let copyRunning = false
+  let copyLog = []
+  let copySummary = null
+
+  async function openCopy() {
+    copyOpen = true
+    copyLog = []; copySummary = null
+    try { projList = (await api.getProjects()).projects || [] } catch (e) { projList = [] }
+    if (!existingProj && projList.length) existingProj = projList[0].name
+  }
+
+  function _pushLog(line) { copyLog = [...copyLog.slice(-80), line] }
+
+  function handleCopyEvent(ev) {
+    if (ev.type === 'gate') _pushLog(`${ev.action === 'skipped' ? '⤫ 跳過' : '＋ 排入'} ${ev.project_name}#${ev.media_id}${ev.action === 'skipped' ? ' · ' + ev.status : ''}`)
+    else if (ev.type === 'copy') _pushLog(ev.error ? `✗ 複製失敗 ${ev.file}: ${ev.error}` : `⇄ 複製 ${ev.file} (${ev.done}/${ev.total})`)
+    else if (ev.type === 'index') _pushLog(ev.status === 'start' ? `▸ 索引 ${ev.files} 檔…` : `▸ 索引完成 (code ${ev.code})`)
+    else if (ev.type === 'log' && ev.line) _pushLog(ev.line)
+    else if (ev.type === 'registered') _pushLog(ev.error ? `註冊: ${ev.error}` : `✓ 已註冊新專案「${ev.name}」`)
+    else if (ev.type === 'done') copySummary = ev.summary
+  }
+
+  async function runCopy() {
+    const body = { mode: copyMode, create_new: destKind === 'new', skip_vision: fastMode, no_embed: fastMode }
+    if (destKind === 'new') {
+      if (!destPath.trim()) { pushToast('請填新專案路徑', 'error'); return }
+      body.dest = destPath.trim()
+      if (destName.trim()) body.dest_name = destName.trim()
+    } else {
+      if (!existingProj) { pushToast('請選目的專案', 'error'); return }
+      body.dest = existingProj
+    }
+    copyRunning = true; copyLog = []; copySummary = null
+    try {
+      const res = await api.copyBin(activeId, body)
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        let nl
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim()
+          buf = buf.slice(nl + 1)
+          if (line) { try { handleCopyEvent(JSON.parse(line)) } catch (e) { /* skip */ } }
+        }
+      }
+      if (copySummary) {
+        const s = copySummary
+        pushToast(`複製完成 → ${s.dest}：${s.copied} 支${s.skipped.length ? '，略過 ' + s.skipped.length : ''}`)
+      }
+      loadBins(); if (activeId) select(activeId)
+    } catch (e) { pushToast('複製失敗: ' + e.message, 'error') }
+    copyRunning = false
+  }
+
   async function del(id, name) {
     if (!confirm(`刪除精選集「${name}」？（只刪清單，不動任何原始素材）`)) return
     try {
@@ -138,8 +205,65 @@
           <div class="ak-display dname">{detail.name}</div>
           <Mono dim style="font-size:10.5px;">{detail.reachable}/{detail.item_count} 可達</Mono>
           <div class="grow"></div>
+          {#if detail.item_count}
+            <button class="ak-btn ak-btn--primary" on:click={openCopy}>複製進新案 →</button>
+          {/if}
           <button class="ak-btn danger" on:click={() => del(detail.id, detail.name)}>刪除精選集</button>
         </div>
+
+        {#if copyOpen}
+          <div class="copypanel">
+            <div class="cprow">
+              <Mono dim style="font-size:10px;letter-spacing:0.08em;">目的地</Mono>
+              <label class="radio"><input type="radio" bind:group={destKind} value="new" /> 新專案</label>
+              <label class="radio"><input type="radio" bind:group={destKind} value="existing" /> 現有專案</label>
+            </div>
+            {#if destKind === 'new'}
+              <div class="cprow">
+                <input class="ak-input" style="flex:1" placeholder="新專案資料夾路徑（例 /Volumes/NAS/新案）" bind:value={destPath} />
+                <input class="ak-input" style="flex:0 1 160px" placeholder="專案名稱（選填）" bind:value={destName} />
+              </div>
+            {:else}
+              <div class="cprow">
+                <select class="ak-input" style="flex:1" bind:value={existingProj}>
+                  {#each projList as p}<option value={p.name}>{p.name}</option>{/each}
+                </select>
+              </div>
+            {/if}
+            <div class="cprow">
+              <Mono dim style="font-size:10px;letter-spacing:0.08em;">方式</Mono>
+              <label class="radio" title="新案索引舊庫原始檔路徑，不搬 bytes（原檔不動、省空間；舊庫離線則讀不到）">
+                <input type="radio" bind:group={copyMode} value="reference" /> 索引引用（原檔不動）
+              </label>
+              <label class="radio" title="驗證複製 bytes 進新案（自足可攜、防舊庫離線；佔額外空間）">
+                <input type="radio" bind:group={copyMode} value="copy" /> 實體複製 bytes
+              </label>
+            </div>
+            <div class="cprow">
+              <label class="radio" title="略過 vision/embedding 重分析（來源已分析過，較快；新案暫無語意搜尋直到補跑）">
+                <input type="checkbox" bind:checked={fastMode} /> 快速（略過重分析）
+              </label>
+              <div class="grow"></div>
+              <button class="ak-btn" on:click={() => (copyOpen = false)} disabled={copyRunning}>取消</button>
+              <button class="ak-btn ak-btn--primary" on:click={runCopy} disabled={copyRunning}>
+                {copyRunning ? '複製中…' : '開始複製'}
+              </button>
+            </div>
+            {#if copyLog.length || copySummary}
+              <div class="cplog">
+                {#each copyLog as l}<div class="cplogline">{l}</div>{/each}
+              </div>
+            {/if}
+            {#if copySummary}
+              <div class="cpsummary">
+                <Mono style="font-size:11px;font-weight:600;">完成 → {copySummary.dest}：複製 {copySummary.copied} 支（{copySummary.mode === 'copy' ? '實體複製' : '索引引用'}）</Mono>
+                {#if copySummary.skipped.length}
+                  <Mono style="font-size:10px;color:var(--cyan);">略過 {copySummary.skipped.length}：{copySummary.skipped.map((s) => s.project_name + '#' + s.media_id + '(' + s.status + ')').join('、')}</Mono>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
 
         {#if loading}
           <Mono dim style="font-size:10.5px;">載入中…</Mono>
@@ -213,4 +337,11 @@
   .xbtn { padding: 3px 8px; }
   .danger { color: #e0533d; border-color: #e0533d; }
   .danger:hover { background: #e0533d; color: #fff; }
+  .copypanel { border: 1px solid var(--rule-hi); background: var(--surface-2); padding: 12px 14px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .cprow { display: flex; align-items: center; gap: 12px; }
+  .radio { display: flex; align-items: center; gap: 5px; font-family: var(--ak-mono); font-size: 11px; color: var(--ink-2); cursor: pointer; }
+  .radio input { cursor: pointer; accent-color: var(--invert); }
+  .cplog { max-height: 160px; overflow: auto; background: var(--bg); border: 1px solid var(--rule); padding: 6px 8px; font-family: var(--ak-mono); font-size: 10px; line-height: 1.5; color: var(--ink-2); }
+  .cplogline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cpsummary { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
 </style>
