@@ -896,12 +896,17 @@ def _build_filter_clause(
     return " AND ".join(clauses), params
 
 
+# fable-audit round-5 #12: every sort has a unique `, id` tiebreaker. Without it,
+# non-unique sort keys (hundreds of C0001.MP4 filenames, equal durations, NULL
+# processed_at) leave row order undefined, so LIMIT/OFFSET pagination can repeat or
+# drop rows across page fetches — and media_position (the "next/prev in this sort")
+# can disagree with the grid. id is the PK, so it's a total order.
 SORT_MAP = {
-    "date": "processed_at DESC",
-    "name": "filename ASC",
-    "duration": "duration_s DESC",
-    "size": "size_mb DESC",
-    "rating": "CASE rating WHEN 'good' THEN 1 WHEN 'review' THEN 2 WHEN 'ng' THEN 3 ELSE 4 END",
+    "date": "processed_at DESC, id DESC",
+    "name": "filename ASC, id ASC",
+    "duration": "duration_s DESC, id DESC",
+    "size": "size_mb DESC, id DESC",
+    "rating": "CASE rating WHEN 'good' THEN 1 WHEN 'review' THEN 2 WHEN 'ng' THEN 3 ELSE 4 END, id DESC",
 }
 
 

@@ -48,7 +48,7 @@ _FIELDS: Dict[str, Tuple[Optional[str], set, str]] = {
     "rating": ("rating", {"eq"}, "enum"),
     "iso": ("iso", {"range"}, "numeric"),
     "duration": ("duration_s", {"range"}, "numeric"),
-    "date": ("processed_at", {"range"}, "numeric"),
+    "date": ("processed_at", {"range"}, "daterange"),
     "media_type": (None, {"eq"}, "bucket"),
     "semantic": (None, {"contains"}, "semantic"),
 }
@@ -85,7 +85,10 @@ def _one_condition(cond: Dict[str, Any]) -> Tuple[Optional[str], List[Any], Opti
         if not v:
             raise QueryError("tag condition needs a non-empty value")
         if op == "eq":
-            return "id IN (SELECT media_id FROM tags WHERE name = ?)", [v], None
+            # add_tag stores names lowercased; an eq bind of 'Interview' would miss
+            # the stored 'interview' (SQLite = is case-sensitive). Normalize to match
+            # the write path (fable-audit round-5 #11). CJK is unaffected by lower().
+            return "id IN (SELECT media_id FROM tags WHERE name = ?)", [v.lower()], None
         return "id IN (SELECT media_id FROM tags WHERE name LIKE ?)", ["%{0}%".format(v)], None
 
     if kind == "bucket":
@@ -112,6 +115,27 @@ def _one_condition(cond: Dict[str, Any]) -> Tuple[Optional[str], List[Any], Opti
         if op == "eq":
             return "{0} = ?".format(column), [v], None
         return "{0} LIKE ?".format(column), ["%{0}%".format(v)], None
+
+    if kind == "daterange":  # value = [start, end] date strings (either may be null)
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise QueryError("{0} range needs a [start, end] pair".format(field))
+        lo, hi = value
+        frags, params = [], []
+        if lo is not None:
+            frags.append("{0} >= ?".format(column))
+            params.append(lo)
+        if hi is not None:
+            # processed_at is a full ISO timestamp; a date-only upper bound like
+            # '2026-07-12' would exclude everything ON the 12th ('…T14:30:00' sorts
+            # after '2026-07-12'). Compare against the NEXT day exclusively so the
+            # end day is fully included (fable-audit round-5 #10; chat.py does the
+            # same day-ceiling). date() on the bound (not the column) keeps the
+            # processed_at index usable.
+            frags.append("{0} < date(?, '+1 day')".format(column))
+            params.append(hi)
+        if not frags:
+            raise QueryError("{0} range needs at least one bound".format(field))
+        return "(" + " AND ".join(frags) + ")", params, None
 
     if kind == "numeric":  # range, value = [min, max] (either may be null)
         if not isinstance(value, (list, tuple)) or len(value) != 2:
