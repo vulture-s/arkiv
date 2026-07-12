@@ -1,0 +1,24 @@
+# Tool configuration for arkiv.
+#
+# Deliberately config-only — NO [project] / build metadata. arkiv installs via
+# requirements.txt with a flat module layout at the repo root; adding packaging
+# metadata here would change the import story. This file exists so CI has a home
+# for coverage (and, later, ruff/mypy) config.
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "scripts/*",
+    "bench_*.py",
+    "resource_probe.py",
+    "temp/*",
+    "waveforms/*",
+    ".claude/*",
+    "src-tauri/*",
+]
+
+[tool.coverage.report]
+# An offload test writes into temp/ and cleans it up; that file can vanish before
+# the report runs. Don't let a missing-source artifact fail the coverage gate.
+ignore_errors = true
