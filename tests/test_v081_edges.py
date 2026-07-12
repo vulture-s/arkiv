@@ -82,6 +82,38 @@ def test_h5_merge_frame_collision_keeps_survivor_copy(tmp_db):
         assert c.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
+# ── H5 + round-5 #7: the merge must NOT cascade-delete the loser's per-language
+#    transcript archive. A language present only on the abs (loser) row must be
+#    re-parented onto the survivor, not destroyed by the media DELETE's FK cascade.
+def test_h5_merge_preserves_loser_only_transcript_language(tmp_db):
+    db = importlib.import_module("db")
+    config = importlib.import_module("config")
+
+    rel = "h5tr/clip.mp4"
+    abspath = str(Path(config.PROJECT_ROOT) / rel)
+    with db.get_conn() as c:
+        c.execute("INSERT INTO media (path, filename, ext) VALUES (?,?,?)", (rel, "clip.mp4", ".mp4"))
+        survivor_id = c.execute("SELECT id FROM media WHERE path=?", (rel,)).fetchone()["id"]
+        c.execute("INSERT INTO media (path, filename, ext) VALUES (?,?,?)", (abspath, "clip.mp4", ".mp4"))
+        legacy_id = c.execute("SELECT id FROM media WHERE path=?", (abspath,)).fetchone()["id"]
+    # survivor has a zh transcript; the legacy (abs) row is the ONLY holder of en
+    db.upsert_transcript(survivor_id, "zh", "中文逐字稿", None, None)
+    db.upsert_transcript(legacy_id, "en", "english transcript", None, None)
+
+    db.migrate_to_relative()
+
+    with db.get_conn() as c:
+        langs = {r["lang"]: r["transcript"]
+                 for r in c.execute("SELECT lang, transcript FROM transcripts WHERE media_id=?",
+                                    (survivor_id,)).fetchall()}
+        # BOTH languages survive on the survivor — the loser-only 'en' was rescued,
+        # not cascade-deleted
+        assert langs == {"zh": "中文逐字稿", "en": "english transcript"}
+        # nothing left dangling on the deleted loser id
+        assert c.execute("SELECT COUNT(*) AS n FROM transcripts WHERE media_id=?", (legacy_id,)).fetchone()["n"] == 0
+        assert c.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 # ── scene_ids: chat_messages.scene_ids_json is a TEXT JSON blob, NOT a FK, so
 #    an H5 merge that deletes a cited media id leaves a dangling reference. The
 #    refinement resolution (`SELECT ... WHERE id IN (prior_ids)`) must drop the
