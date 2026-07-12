@@ -1766,10 +1766,13 @@ def size_by_ext(
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 def _allowed_export_roots() -> list:
     """Approved roots for export-to endpoints. User can override with
-    ARKIV_EXPORT_ROOTS env (colon-separated list of abs paths)."""
+    ARKIV_EXPORT_ROOTS env (os.pathsep-separated list of abs paths — ':' on
+    POSIX, ';' on Windows). fable-audit 2026-07-12 (#3): splitting on a literal
+    ':' shredded Windows drive-letter paths (D:\\Exports → ['D', '\\Exports'])
+    at the export-allowlist boundary — mirror the _allowed_ingest_roots fix."""
     custom = os.environ.get("ARKIV_EXPORT_ROOTS", "").strip()
     if custom:
-        return [Path(p).expanduser().resolve() for p in custom.split(":") if p.strip()]
+        return [Path(p).expanduser().resolve() for p in custom.split(os.pathsep) if p.strip()]
     home = Path.home()
     return [
         (home / "Desktop").resolve(),
@@ -1810,7 +1813,42 @@ def _assert_export_dest_safe(dest: Path) -> None:
             return  # under approved root
         except ValueError:
             continue
-    raise HTTPException(403, f"匯出路徑必須在批准的目錄下：{[str(r) for r in roots]}")
+    # fable-audit 2026-07-12: don't echo the resolved absolute roots in the 403
+    # body — that leaks the operator's home layout to any caller probing the
+    # boundary. Return stable labels instead.
+    raise HTTPException(
+        403,
+        "匯出路徑必須在批准的目錄下（Desktop / Documents / Downloads / Movies / temp，"
+        "或 ARKIV_EXPORT_ROOTS 指定的目錄）",
+    )
+
+
+# Offload destinations are arbitrary by design (camera card → backup drives, e.g.
+# /Volumes/*), so — unlike export — we do NOT apply the approved-roots allowlist.
+# But refuse writes INTO OS-sensitive locations where a copied file could gain
+# execution/persistence (LaunchAgents/LaunchDaemons, ~/.ssh, cron, systemd, /etc,
+# system dirs). A card offload has no legitimate reason to target these; the
+# export path already 403s for the same class of write.
+# fable-audit 2026-07-12 (#1 /api/offload arbitrary-file-write).
+_OFFLOAD_DENY_SUBSTR = (
+    "/library/launchagents", "/library/launchdaemons",
+    "/.ssh", "/.config/systemd/", "/var/spool/cron", "/private/etc/",
+)
+_OFFLOAD_DENY_ROOTS = (
+    "/system", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/etc", "/private/etc",
+)
+
+
+def _assert_offload_dst_safe(dst: str) -> None:
+    """Reject offload destinations that land inside OS-sensitive/executable dirs."""
+    canonical = str(Path(dst).expanduser().resolve()).replace("\\", "/").lower().rstrip("/")
+    probe = canonical + "/"
+    for bad in _OFFLOAD_DENY_SUBSTR:
+        if bad in probe:
+            raise HTTPException(403, "拒絕寫入系統敏感目錄（LaunchAgents / .ssh / cron / systemd 等）")
+    for root in _OFFLOAD_DENY_ROOTS:
+        if canonical == root or probe.startswith(root + "/"):
+            raise HTTPException(403, "拒絕寫入系統目錄")
 
 
 def _csv_safe(value: str) -> str:
@@ -2353,6 +2391,8 @@ def offload_run(
         raise HTTPException(400, "來源路徑不存在")
     if not body.dst:
         raise HTTPException(400, "至少需要一個目的地 (dst)")
+    for d in body.dst:
+        _assert_offload_dst_safe(d)  # fable-audit 2026-07-12 (#1): block system/exec dirs
     cmd = [sys.executable, str(ROOT / "offload.py"), "--src", str(src), "--progress", "json"]
     for d in body.dst:
         cmd += ["--dst", d]
@@ -2456,7 +2496,9 @@ def retranscribe_media(
         raise HTTPException(404, "找不到")
     media_path = _resolve_media_path(rec.get("path", ""))
     if not Path(media_path).exists():
-        raise HTTPException(400, f"找不到媒體檔案：{media_path}")
+        # fable-audit 2026-07-12: don't leak the resolved absolute path in the
+        # error body — surface the PROJECT_ROOT-relative/basename form (Phase 16.2).
+        raise HTTPException(400, f"找不到媒體檔案：{_display_path(rec.get('path') or '')}")
     try:
         import transcribe as tr
         text, lang, segments, words = tr.transcribe(media_path, language=body.language)
@@ -2659,7 +2701,9 @@ def reingest_media(
         raise HTTPException(404, "找不到")
     media_path = _resolve_media_path(rec.get("path", ""))
     if not Path(media_path).exists():
-        raise HTTPException(400, f"找不到媒體檔案：{media_path}")
+        # fable-audit 2026-07-12: don't leak the resolved absolute path in the
+        # error body — surface the PROJECT_ROOT-relative/basename form (Phase 16.2).
+        raise HTTPException(400, f"找不到媒體檔案：{_display_path(rec.get('path') or '')}")
     # G2/G7: a fresh ingest re-runs Whisper and overwrites media.transcript — which
     # would silently destroy a hand-corrected transcript (e.g. via the 9.6b
     # correction dictionary). Snapshot the current transcript into the per-language
@@ -2765,10 +2809,15 @@ def cache_info(
 
 @app.post("/api/cache/clear")
 def clear_cache(
+    request: Request,
     target: str = Query("app", description="app|thumbnails|chromadb|waveforms|all"),
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
     """Clear caches. target: app (pycache+thumbnails+waveforms), thumbnails, chromadb, waveforms, all."""
+    # fable-audit 2026-07-12 (#4): this is the only heavy mutating route missing the
+    # M14 guard — target=chromadb/all rmtree's the whole semantic index, and as a
+    # no-preflight simple POST a cross-site page could fire it under loopback-trust.
+    _assert_same_site(request)
     import shutil
     cleared = []
     if target in ("app", "thumbnails", "all"):
@@ -4083,6 +4132,20 @@ def recorrect_revert(
 class RetranscribeAllRequest(BaseModel):
     language: Optional[str] = None
     backup: bool = True
+
+    # fable-audit 2026-07-12 (#10): the single-clip RetranscribeRequest got the
+    # M23 ISO-639 validator but this whole-library sibling didn't — an unvalidated
+    # language flowed into whisper for the ENTIRE project, raising deep in a
+    # background batch (swallowed, hours of churn, lock held). Reject up front.
+    @field_validator("language")
+    @classmethod
+    def _check_language(cls, v):
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if not _re.fullmatch(r"[a-z]{2,3}", v):
+            raise ValueError("language must be null or a 2-3 letter ISO-639 code (e.g. 'zh', 'en')")
+        return v
 
 
 @app.post("/api/retranscribe-all")
