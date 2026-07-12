@@ -518,9 +518,21 @@ def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[st
     proxy_dir.mkdir(parents=True, exist_ok=True)
     proxy_path = config.proxy_path_for(media_id, path)
     if proxy_path.exists() and not force:
-        return str(proxy_path)
+        # fable-audit round-5 #1: a truncated proxy from a prior kill/power-loss is
+        # otherwise served forever. Treat an empty file as absent so it gets rebuilt.
+        if proxy_path.stat().st_size > 0:
+            return str(proxy_path)
+        proxy_path.unlink(missing_ok=True)
     if force:
         proxy_path.unlink(missing_ok=True)
+    # Encode to a same-dir tmp with the REAL .mp4 suffix, then os.replace onto the
+    # final path only after a clean, non-empty encode (mirrors frames.py _extract_to).
+    # A kill/power-loss mid-encode then leaves the tmp — never a half-written final
+    # that every consumer would accept by bare existence (fable-audit round-5 #1).
+    # Tmp keeps .mp4 (codex footgun: ffmpeg infers the muxer from the extension) and
+    # sits beside the final so os.replace stays on one filesystem.
+    tmp_path = proxy_path.with_name("{0}.tmp.{1}{2}".format(proxy_path.stem, os.getpid(), proxy_path.suffix))
+    tmp_path.unlink(missing_ok=True)
     cmd = [
         config.FFMPEG_PATH, "-y", "-i", path,
         "-c:v", "libx264", "-preset", "fast", "-crf", "28",
@@ -530,19 +542,33 @@ def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[st
         "-vf", "scale=-2:720",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
-        str(proxy_path),
+        str(tmp_path),
     ]
     try:
         # encoding pinned: Windows zh-TW default cp950 can't decode ffmpeg's
         # utf-8 stderr → UnicodeDecodeError crashes proxy gen on headless ingest.
         r = subprocess.run(cmd, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=600)
-        if r.returncode == 0 and proxy_path.exists():
+        if r.returncode == 0 and tmp_path.exists() and tmp_path.stat().st_size > 0:
+            os.replace(str(tmp_path), str(proxy_path))
             return str(proxy_path)
-        proxy_path.unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)
+        # fable-audit round-5 #60: say WHY (ffmpeg-missing vs disk-full vs bad codec)
+        # instead of a silent None that reads as a mystery 409 downstream.
+        tail = (r.stderr or "")[-300:]
+        print("[proxy] ffmpeg rc={0} for {1}: {2}".format(r.returncode, path, tail))
         return None
-    except Exception:
-        proxy_path.unlink(missing_ok=True)
+    except FileNotFoundError as exc:  # ffmpeg binary itself missing — distinct failure
+        tmp_path.unlink(missing_ok=True)
+        print("[proxy] ffmpeg not found ({0}); check FFMPEG_PATH".format(exc))
+        return None
+    except subprocess.TimeoutExpired:
+        tmp_path.unlink(missing_ok=True)
+        print("[proxy] timeout after 600s: {0}".format(path))
+        return None
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        print("[proxy] failed {0}: {1}: {2}".format(path, type(exc).__name__, exc))
         return None
 
 
