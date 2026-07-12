@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -113,6 +114,15 @@ def resolve_path(rel_path: str) -> str:
     return str(joined)
 
 
+# Identifiers that _add_column_if_missing is allowed to interpolate into DDL.
+# sqlite can't bind table/column names, so the ALTER below is an f-string — every
+# caller passes a hardcoded literal from the migration list, never user input.
+# fable-audit 2026-07-12 (#db.py:124): assert that invariant so a future caller
+# can't silently turn this helper into a SQL-injection sink.
+_MIGRATION_TABLES = frozenset({"media", "frames", "access_tokens"})
+_MIGRATION_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 def _add_column_if_missing(conn, table: str, col: str, typ: str):
     """ALTER TABLE ... ADD COLUMN that only swallows the expected
     "duplicate column name" error.
@@ -120,6 +130,11 @@ def _add_column_if_missing(conn, table: str, col: str, typ: str):
     audit L10: the old bare `except Exception: pass` here also ate
     database-locked / disk-I/O errors, silently skipping schema migrations —
     those must surface, only the idempotent re-run case is benign."""
+    if table not in _MIGRATION_TABLES or not _MIGRATION_IDENT_RE.match(col):
+        raise ValueError(
+            "refusing unsafe migration identifier: "
+            "table={0!r} col={1!r}".format(table, col)
+        )
     try:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
     except sqlite3.OperationalError as e:
