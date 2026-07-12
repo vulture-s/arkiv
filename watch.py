@@ -94,40 +94,11 @@ class StabilityTracker:
         return list(self._seen.keys())
 
 
-# ── subprocess dispatch (kept from the polling watcher) ──────────────────────
-
-def run_tree(cmd: Sequence[str], timeout: float) -> subprocess.CompletedProcess:
-    """subprocess.run that kills the whole process tree on timeout.
-
-    audit H8: plain subprocess.run(timeout=) only kills the direct child;
-    ffmpeg/whisper grandchildren orphan and (on Windows) hold the pipes open so
-    communicate() hangs. POSIX: new session + killpg. Windows: taskkill /T /F.
-    """
-    kwargs: dict = {}
-    if os.name == "posix":
-        kwargs["start_new_session"] = True
-    else:
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    proc = subprocess.Popen(
-        list(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs,
-    )
-    try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        if os.name == "posix":
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                proc.kill()
-        else:
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
-            proc.kill()
-        try:
-            out, err = proc.communicate(timeout=10)
-        except Exception:
-            out, err = "", ""
-        raise subprocess.TimeoutExpired(list(cmd), timeout, output=out, stderr=err)
-    return subprocess.CompletedProcess(list(cmd), proc.returncode, out, err)
+# ── subprocess dispatch ──────────────────────────────────────────────────────
+# run_tree (process-tree-safe subprocess.run) moved to the shared proctree module
+# (fable-audit round-5 #2) so the /api/ingest + reingest HTTP routes reuse the same
+# tree-kill instead of the plain subprocess.run that orphaned their ffmpeg children.
+from proctree import run_tree  # noqa: F401,E402 (re-exported for existing callers)
 
 
 def ingest_file(path: Path, timeout: float = 600.0) -> bool:

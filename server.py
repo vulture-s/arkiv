@@ -2349,7 +2349,10 @@ def ingest_media(
     if not _acquire_ingest_slot():  # audit H3
         raise HTTPException(409, "已有匯入任務進行中，請稍候")
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, cwd=str(ROOT))
+        # run_tree, not subprocess.run: on timeout the whole ingest.py→ffmpeg/whisper
+        # tree is killed, not just the direct child (fable-audit round-5 #2 / #12).
+        import proctree
+        result = proctree.run_tree(cmd, timeout=1800, cwd=str(ROOT))
         payload = {
             "ok": result.returncode == 0,
             "stdout": result.stdout[-2000:] if result.stdout else "",
@@ -2761,16 +2764,18 @@ def reingest_media(
             media_id, rec["lang"], rec["transcript"],
             rec.get("segments_json"), rec.get("words_json"),
         )
-    import subprocess, sys
+    import subprocess, sys, proctree
     if not _acquire_ingest_slot():  # audit H3 — don't run concurrently with another ingest
         raise HTTPException(409, "已有匯入任務進行中，請稍候")
     try:
         # Single-file mode (ingest.py handles a file path as --dir). The old
         # `--dir <parent> --limit 1` re-processed the alphabetically-first file of
         # the folder, not this media — silently refreshing the WRONG row (audit H4).
-        result = subprocess.run(
+        # run_tree kills the whole tree on timeout (round-5 #2 / #12), so an orphaned
+        # ffmpeg can't keep writing after the 600s cap with the slot released.
+        result = proctree.run_tree(
             [sys.executable, str(ROOT / "ingest.py"), "--dir", media_path, "--refresh"],
-            capture_output=True, text=True, timeout=600, cwd=str(ROOT)
+            timeout=600, cwd=str(ROOT),
         )
         payload = {
             "ok": result.returncode == 0,
