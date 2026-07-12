@@ -156,3 +156,49 @@ def test_retranscribe_all_accepts_null_language(fastapi_client):
     # null is valid (auto-detect); must not 422 at the validation layer
     resp = fastapi_client.post("/api/retranscribe-all", json={"language": None})
     assert resp.status_code != 422
+
+
+# ── round-5 #16: 'app' cache-clear must NOT nuke DB-referenced thumbnails ─────
+
+def test_cache_clear_app_preserves_thumbnails(fastapi_client, tmp_path, monkeypatch):
+    config = importlib.import_module("config")
+    thumbs = tmp_path / "thumbnails"; thumbs.mkdir()
+    (thumbs / "clip_thumb.jpg").write_bytes(b"jpg")
+    (thumbs / "clip_frame0.jpg").write_bytes(b"jpg")
+    monkeypatch.setattr(config, "THUMBNAILS_DIR", thumbs)
+
+    # 'app' clears cheap regenerables only — thumbnails survive (grid + vision intact)
+    r = fastapi_client.post("/api/cache/clear", params={"target": "app"})
+    assert r.status_code == 200
+    assert (thumbs / "clip_thumb.jpg").exists()
+    assert not any("thumbnails" in c for c in r.json()["cleared"])
+
+    # explicit target='thumbnails' still clears them
+    r = fastapi_client.post("/api/cache/clear", params={"target": "thumbnails"})
+    assert r.status_code == 200
+    assert list(thumbs.iterdir()) == []
+    assert any("thumbnails" in c for c in r.json()["cleared"])
+
+
+# ── round-5 #15: chromadb clear invalidates the in-process client cache ───────
+
+def test_cache_clear_chromadb_invalidates_client_cache(fastapi_client, tmp_path, monkeypatch):
+    config = importlib.import_module("config")
+    vectordb = importlib.import_module("vectordb")
+    chroma = tmp_path / "chroma"; chroma.mkdir()
+    (chroma / "index.bin").write_bytes(b"x")
+    monkeypatch.setattr(config, "CHROMA_PATH", chroma)
+    called = {"n": 0}
+    monkeypatch.setattr(vectordb, "clear_client_cache", lambda: called.__setitem__("n", called["n"] + 1))
+
+    r = fastapi_client.post("/api/cache/clear", params={"target": "chromadb"})
+    assert r.status_code == 200
+    assert not chroma.exists()          # index removed
+    assert called["n"] == 1             # cached System dropped so a rebuild is seen
+
+
+def test_cache_clear_refuses_chromadb_during_embed_rebuild(fastapi_client, monkeypatch):
+    import server
+    monkeypatch.setattr(server, "_embed_rebuild_active", True)  # a rebuild is mid-flight
+    r = fastapi_client.post("/api/cache/clear", params={"target": "chromadb"})
+    assert r.status_code == 409

@@ -190,6 +190,21 @@ def _assert_collection_compatible(col) -> None:
 _CHROMA_LOCK = threading.Lock()
 
 
+def clear_client_cache():
+    """Drop chromadb's process-global System cache so the NEXT PersistentClient(path)
+    rebuilds from the on-disk dir. After rmtree'ing CHROMA_PATH, the cached System
+    still serves the DELETED index in-process until the server restarts — so a
+    rebuild is invisible and search returns the old deleted index all session
+    (fable-audit round-5 #15). Best-effort: a chromadb version without this API just
+    means the pre-existing restart-to-see-it behaviour, never a crash."""
+    with _CHROMA_LOCK:
+        try:
+            from chromadb.api.shared_system_client import SharedSystemClient
+            SharedSystemClient.clear_system_cache()
+        except Exception:
+            pass
+
+
 def get_collection(reset: bool = False):
     with _CHROMA_LOCK:  # audit M11
         client = chromadb.PersistentClient(path=str(CHROMA_PATH))
