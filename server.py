@@ -621,6 +621,25 @@ def search_all(
     return JSONResponse(content=payload, status_code=status_code)
 
 
+def _project_paths_visible(tok: dict) -> bool:
+    """fable-audit 2026-07-12 (#22): absolute project roots leave the backend only
+    for admin-scoped callers. Loopback-trust already grants all scopes (incl.
+    'admin'), so the LOCAL operator's registry / mount UI is unaffected (case a);
+    a remote admin token also sees full paths (case c); a remote projects_read-only
+    token gets basenames — so a browse-only LAN/Tailscale client can't map the
+    operator's home layout, drive structure, or other clients' folder names."""
+    return "admin" in (tok.get("scopes") or ())
+
+
+def _sanitize_project_paths(projects: list, tok: dict) -> list:
+    if _project_paths_visible(tok):
+        return projects
+    for p in projects:
+        if p.get("path"):
+            p["path"] = _basename_safe(p["path"])
+    return projects
+
+
 @app.get("/api/projects")
 def list_projects(
     _tok: dict = Depends(require_scopes("projects_read")),
@@ -631,6 +650,7 @@ def list_projects(
         projects = [project.to_dict() for project in project_registry.list_registry_projects()]
     except project_registry.RegistryError as exc:
         raise HTTPException(status_code=500, detail="project registry unreadable: {0}".format(exc))
+    _sanitize_project_paths(projects, _tok)
     return {"projects": projects, "total": len(projects)}
 
 
@@ -682,6 +702,7 @@ def projects_health(
     _tok: dict = Depends(require_scopes("projects_read")),
 ):
     projects = project_registry.health_projects()
+    _sanitize_project_paths(projects, _tok)  # fable-audit #22 — see list_projects
     ok_count = sum(1 for item in projects if item["status"] == "ok")
     return {"projects": projects, "total": len(projects), "ok": ok_count}
 
