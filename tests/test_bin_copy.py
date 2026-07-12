@@ -179,6 +179,62 @@ def test_copy_mode_copies_verified_bytes_and_keeps_source(fastapi_client, tmp_pa
     assert str(copied) in calls[0]["cmd"]
 
 
+def test_copy_same_basename_never_clobbers(fastapi_client, tmp_path, monkeypatch):
+    """fable-audit 2026-07-12 CRITICAL #3: two clips sharing a basename (C0001.MP4
+    from two different source projects) must both survive the copy — the second must
+    NOT os.replace over the first. Pre-fix, verified-copy reported `copied: 2` while
+    only one file's bytes existed on disk; if the operator then trusted the copy and
+    wiped the source card, a clip was gone."""
+    bins = _setup(tmp_path, monkeypatch)
+    calls = _stub_ingest(monkeypatch)
+
+    # two DISTINCT clips that happen to share the camera-original basename
+    srcA = tmp_path / "cardA" / "C0001.MP4"
+    srcB = tmp_path / "cardB" / "C0001.MP4"
+    srcA.parent.mkdir(parents=True)
+    srcB.parent.mkdir(parents=True)
+    srcA.write_bytes(b"AAAA-distinct-bytes-from-card-A")
+    srcB.write_bytes(b"BBBB-different-bytes-from-card-B")
+    _stub_resolve(monkeypatch, {
+        ("libA", "1"): {"status": "ok", "absolute_path": str(srcA), "filename": "C0001.MP4"},
+        ("libB", "2"): {"status": "ok", "absolute_path": str(srcB), "filename": "C0001.MP4"},
+    })
+
+    b = bins.create_bin("collide")
+    bins.add_items(b.id, [
+        {"project_name": "libA", "media_id": "1", "filename": "C0001.MP4"},
+        {"project_name": "libB", "media_id": "2", "filename": "C0001.MP4"},
+    ])
+
+    dest = tmp_path / "proj_collide"
+    r = fastapi_client.post(
+        "/api/bins/{0}/copy".format(b.id),
+        json={"dest": str(dest), "create_new": True, "mode": "copy",
+              "skip_vision": True, "no_embed": True},
+    )
+    assert r.status_code == 200, r.text
+    events = _parse_ndjson(r.text)
+
+    media = dest / "media"
+    files = sorted(p.name for p in media.iterdir() if not p.name.endswith(".partial"))
+    # BOTH clips landed under distinct names — nothing was overwritten
+    assert len(files) == 2, "expected 2 files, got {0}".format(files)
+    all_bytes = {(media / f).read_bytes() for f in files}
+    assert all_bytes == {b"AAAA-distinct-bytes-from-card-A", b"BBBB-different-bytes-from-card-B"}
+
+    # the second clip was renamed (not clobbered) and the stream said so
+    assert any(e.get("type") == "copy" and e.get("renamed_to") for e in events)
+    done = [e for e in events if e["type"] == "done"][0]["summary"]
+    assert done["copied"] == 2  # both counted, both real on disk
+
+    # ingest indexes BOTH distinct copied paths (ingest_paths correctly remapped)
+    cmd = calls[0]["cmd"]
+    assert str(media / files[0]) in cmd and str(media / files[1]) in cmd
+    # sources untouched
+    assert srcA.read_bytes() == b"AAAA-distinct-bytes-from-card-A"
+    assert srcB.read_bytes() == b"BBBB-different-bytes-from-card-B"
+
+
 def test_copy_into_existing_project(fastapi_client, tmp_path, monkeypatch):
     bins = _setup(tmp_path, monkeypatch)
     _stub_ingest(monkeypatch)

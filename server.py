@@ -670,17 +670,40 @@ def projects_health(
 # Storage is ~/.arkiv-bins.json (bins.py), separate from any project.db. Items
 # reference clips by (project_name, media_id) — never mutating the source library.
 
-def _copy_clip_verified(src_path: str, dst_dir: Path) -> Path:
+def _unique_dest(dst_dir: Path, name: str, taken=None) -> Path:
+    """Pick a path in dst_dir for `name` that overwrites NOTHING. If the name already
+    exists on disk OR was already used this run (casefolded — macOS/exFAT are
+    case-insensitive), append ' (n)' before the extension until free.
+
+    fable-audit 2026-07-12 critical #3: two clips sharing a basename (e.g. C0001.MP4
+    from two source projects) both resolved to dst_dir/C0001.MP4 and the second
+    os.replace silently destroyed the first's bytes while verified-copy reported
+    success. The casefolded `taken` set closes the sequential-run window before the
+    first file lands on disk (codex footgun: check BOTH on-disk and per-run names)."""
+    n = 1
+    candidate = name
+    stem, ext = os.path.splitext(name)
+    while (dst_dir / candidate).exists() or (taken is not None and candidate.casefold() in taken):
+        n += 1
+        candidate = "{0} ({1}){2}".format(stem, n, ext)
+    if taken is not None:
+        taken.add(candidate.casefold())
+    return dst_dir / candidate
+
+
+def _copy_clip_verified(src_path: str, dst_dir: Path, taken=None) -> Path:
     """Verified copy of one clip into dst_dir (hash both sides, atomic rename, NEVER
-    deletes the source). offload.run_offload is card/dir-oriented (its rel math
-    breaks for a lone file), so this reuses offload's hash primitive on a simple
-    single-file copy. Raises on hash mismatch. (ascMHL provenance is a follow-up —
-    not load-bearing for copy-into-project.)"""
+    deletes the source, NEVER overwrites an existing/colliding dest — see
+    _unique_dest). offload.run_offload is card/dir-oriented (its rel math breaks for
+    a lone file), so this reuses offload's hash primitive on a simple single-file
+    copy. Raises on hash mismatch. Returns the actual final path (which may be a
+    ' (n)'-suffixed rename); the caller reads .name to detect a rename. (ascMHL
+    provenance is a follow-up — not load-bearing for copy-into-project.)"""
     import shutil
     import offload as _offload
     src = Path(src_path)
     dst_dir.mkdir(parents=True, exist_ok=True)
-    final = dst_dir / src.name
+    final = _unique_dest(dst_dir, src.name, taken)
     partial = final.with_name(final.name + ".partial")
     if partial.exists():
         partial.unlink()
@@ -843,12 +866,16 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
         ingest_paths = []
         if body.mode == "copy" and reachable:
             dest_media_dir.mkdir(parents=True, exist_ok=True)
+            taken = set()  # casefolded dest names claimed this run (critical #3)
             for idx, (pn, mid, src) in enumerate(reachable):
                 try:
-                    copied = _copy_clip_verified(src, dest_media_dir)
+                    copied = _copy_clip_verified(src, dest_media_dir, taken)
                     ingest_paths.append(str(copied))
-                    yield _json.dumps({"type": "copy", "file": Path(src).name,
-                                       "done": idx + 1, "total": len(reachable)}, ensure_ascii=False) + "\n"
+                    evt = {"type": "copy", "file": Path(src).name,
+                           "done": idx + 1, "total": len(reachable)}
+                    if copied.name != Path(src).name:  # basename collision → renamed, not clobbered
+                        evt["renamed_to"] = copied.name
+                    yield _json.dumps(evt, ensure_ascii=False) + "\n"
                 except Exception as exc:  # a copy failure must not fake success
                     skipped.append({"project_name": pn, "media_id": mid, "status": "copy_failed: {0}".format(exc)})
                     yield _json.dumps({"type": "copy", "file": Path(src).name, "error": str(exc)},
