@@ -37,27 +37,24 @@ import tag_aliases
 import tag_quality
 
 
-# ── Ingest single-flight guard ───────────────────────────────────────────────
-# One guard for ALL ingest entry points (REST /api/ingest, reingest, WS) so two
-# full pipelines can't run at once → DB-lock contention + double whisper + OOM on a
-# 16GB box (audit H3). threading.Lock because REST runs in the threadpool while the
-# WS variant runs on the event loop.
+# ── Ingest single-flight guard + WS broadcaster ──────────────────────────────
+# Extracted to state.py (fable-audit 2026-07-12) as the APIRouter-split foundation:
+# the ingest single-flight slot and the WS IngestBroadcaster are shared runtime
+# state that a future per-router split must import as ONE instance (forking them
+# would silently break the H3 double-whisper-OOM guard). Re-exported here so
+# existing call sites + tests keep referencing server._acquire_ingest_slot /
+# server.ingest_ws unchanged.
 import threading as _threading
-_ingest_lock = _threading.Lock()
-_ingest_active = False
+from state import (  # noqa: F401  (re-exported for backward compat)
+    IngestBroadcaster,
+    _acquire_ingest_slot,
+    _release_ingest_slot,
+    ingest_ws,
+)
 
-def _acquire_ingest_slot() -> bool:
-    global _ingest_active
-    with _ingest_lock:
-        if _ingest_active:
-            return False
-        _ingest_active = True
-        return True
-
-def _release_ingest_slot() -> None:
-    global _ingest_active
-    with _ingest_lock:
-        _ingest_active = False
+# The remaining guards stay here for now — their flags are rebound via `global`
+# inside route handlers (and a test writes the raw flag), so they need a
+# mutable-container refactor rather than a plain import to move to state.py.
 
 # audit M9 (partial): vision.VISION_MODEL is module-global, so two concurrent
 # retry-vision calls could interleave their save/swap/restore and permanently
@@ -76,44 +73,6 @@ _embed_rebuild_active = False
 _retranscribe_lock = _threading.Lock()
 _retranscribe_active = False
 _retranscribe_progress = {"total": 0, "done": 0, "failed": 0, "current": None, "running": False, "backup": None}
-
-# ── WebSocket connection manager ────────────────────────────────────────────
-_MAX_WS_CONNECTIONS = 32  # cap concurrent progress listeners (DoS guard)
-
-
-class IngestBroadcaster:
-    """Manages WebSocket connections for ingest progress updates."""
-    def __init__(self):
-        self.connections: Set[WebSocket] = set()
-
-    async def connect(self, ws: WebSocket) -> bool:
-        if len(self.connections) >= _MAX_WS_CONNECTIONS:
-            await ws.close(code=1013)  # try again later
-            return False
-        await ws.accept()
-        # audit L6: re-check after the await — concurrent handshakes can all pass
-        # the pre-accept check before any of them is added to the set (TOCTOU).
-        if len(self.connections) >= _MAX_WS_CONNECTIONS:
-            await ws.close(code=1013)
-            return False
-        self.connections.add(ws)
-        return True
-
-    def disconnect(self, ws: WebSocket):
-        self.connections.discard(ws)
-
-    async def broadcast(self, data: dict):
-        dead = set()
-        # snapshot: send_json awaits, so a concurrent connect/disconnect mutating
-        # the live set mid-iteration would raise "Set changed size" (audit H9).
-        for ws in list(self.connections):
-            try:
-                await ws.send_json(data)
-            except Exception:
-                dead.add(ws)
-        self.connections -= dead
-
-ingest_ws = IngestBroadcaster()
 
 # ── Init ─────────────────────────────────────────────────────────────────────
 db.init_db()
