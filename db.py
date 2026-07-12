@@ -79,6 +79,34 @@ def to_relative(abs_path: str) -> str:
         return abs_path
 
 
+def dedup_path_variants(path: str) -> List[str]:
+    """Every stored form a file could match on for dedup: its absolute path, the
+    forward-slash relative form (what new ingests write), and the BACKSLASH relative
+    form a pre-fix Windows ingest wrote (fable-audit round-5 #9). Without the
+    backslash form, a NAS DB written by old Windows ingest and opened on mac looked
+    entirely unprocessed and re-ingested the whole library as duplicates."""
+    abs_path = str(path)
+    rel = to_relative(abs_path)
+    variants = [abs_path, rel]
+    back = rel.replace("/", "\\")
+    if back != rel:
+        variants.append(back)
+    return variants
+
+
+def canonical_stored_path(stored: str) -> str:
+    """Canonicalise a STORED path value to forward-slash relative. to_relative alone
+    can't convert a backslash-relative path ('media\\clip.mp4' is neither absolute
+    nor under PROJECT_ROOT, so it's returned unchanged), which is why migrate_to_
+    relative never reconciled pre-fix Windows rows (fable-audit round-5 #9)."""
+    if not stored:
+        return stored
+    p = Path(stored)
+    if not p.is_absolute() and "\\" in stored:
+        return stored.replace("\\", "/")
+    return to_relative(stored)
+
+
 def resolve_path(rel_path: str) -> str:
     """Relative path -> absolute under PROJECT_ROOT. Idempotent.
 
@@ -395,8 +423,10 @@ def migrate_to_relative():
     with get_conn() as conn:
         rows = conn.execute("SELECT id, path, thumbnail_path FROM media").fetchall()
         for row in rows:
-            new_path = to_relative(row["path"]) if row["path"] else row["path"]
-            new_thumb = to_relative(row["thumbnail_path"]) if row["thumbnail_path"] else row["thumbnail_path"]
+            # canonical_stored_path (not to_relative) so a pre-fix Windows
+            # backslash-relative row is also normalised, not just abs→rel (#9).
+            new_path = canonical_stored_path(row["path"]) if row["path"] else row["path"]
+            new_thumb = canonical_stored_path(row["thumbnail_path"]) if row["thumbnail_path"] else row["thumbnail_path"]
             if new_path != row["path"] or new_thumb != row["thumbnail_path"]:
                 try:
                     conn.execute(
@@ -459,11 +489,12 @@ def migrate_to_relative():
 
 
 def is_processed(path: str) -> bool:
-    rel = to_relative(str(path))
+    variants = dedup_path_variants(str(path))  # abs / forward-rel / backslash-rel (#9)
+    placeholders = ",".join("?" * len(variants))
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id FROM media WHERE path=? OR path=?",
-            (str(path), rel),
+            "SELECT id FROM media WHERE path IN ({0})".format(placeholders),
+            variants,
         ).fetchone()
         return row is not None
 

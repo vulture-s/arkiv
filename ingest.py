@@ -1546,7 +1546,9 @@ def main():
         _known_paths = {r[0] for r in conn.execute("SELECT path FROM media").fetchall()}
 
     def _is_known(p) -> bool:
-        return str(p) in _known_paths or db.to_relative(str(p)) in _known_paths
+        # abs / forward-rel / backslash-rel — matches is_processed so a pre-fix
+        # Windows (backslash) DB row isn't re-ingested as a duplicate (round-5 #9).
+        return any(v in _known_paths for v in db.dedup_path_variants(str(p)))
 
     if args.limit and not args.refresh:
         # Filter out already-processed files before applying limit
