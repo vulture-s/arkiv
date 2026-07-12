@@ -877,6 +877,7 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
             ingest_paths = [src for (_pn, _mid, src) in reachable]
 
         # ── index phase: one ingest run over the gathered files (one model warmup) ──
+        index_skipped_busy = False
         if ingest_paths:
             cmd = [_sys.executable, str(ROOT / "ingest.py"), "--files", *ingest_paths,
                    "--db", str(dest_db)]
@@ -884,29 +885,52 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
                 cmd.append("--skip-vision")
             if body.no_embed:
                 cmd.append("--no-embed")
-            yield _json.dumps({"type": "index", "status": "start", "files": len(ingest_paths)},
-                              ensure_ascii=False) + "\n"
-            # Run ingest AS the dest project: ARKIV_PROJECT_ROOT=dest_root so paths
-            # relativize against the dest, not the server's own project. In
-            # reference mode the sources sit OUTSIDE dest_root, so this stores an
-            # absolute media.path (resolvable from the dest); in copy mode the
-            # copied files sit under dest_root/media, so they store relative. cwd
-            # points at the dest .arkiv so ingest's bench_ingest.json / state don't
-            # dirty the install dir (mirrors /api/offload's state_cwd).
-            ingest_env = dict(os.environ)
-            ingest_env["ARKIV_PROJECT_ROOT"] = str(dest_root)
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, bufsize=1, env=ingest_env,
-                                    cwd=str(dest_root / ".arkiv"))
-            try:
-                for line in proc.stdout:
-                    yield _json.dumps({"type": "log", "line": line.rstrip("\n")}, ensure_ascii=False) + "\n"
-                proc.wait()
-            finally:
-                if proc.stdout and not proc.stdout.closed:
-                    proc.stdout.close()
-            yield _json.dumps({"type": "index", "status": "done", "code": proc.returncode},
-                              ensure_ascii=False) + "\n"
+            # fable-audit 2026-07-12 (#2/#5): this launches a full whisper+vision
+            # pipeline — it MUST share the H3 single-flight slot, or a concurrent
+            # /api/ingest runs a second pipeline → double-whisper OOM. If the slot
+            # is busy, the bytes are already copied; skip indexing (fail-loud) so
+            # the user can re-ingest later rather than risk the OOM.
+            if not _acquire_ingest_slot():
+                index_skipped_busy = True
+                yield _json.dumps({"type": "index", "status": "busy",
+                                   "error": "已有匯入任務進行中，已複製檔案但略過索引；請稍後手動 ingest"},
+                                  ensure_ascii=False) + "\n"
+            else:
+                yield _json.dumps({"type": "index", "status": "start", "files": len(ingest_paths)},
+                                  ensure_ascii=False) + "\n"
+                # Run ingest AS the dest project: ARKIV_PROJECT_ROOT=dest_root so paths
+                # relativize against the dest, not the server's own project. In
+                # reference mode the sources sit OUTSIDE dest_root, so this stores an
+                # absolute media.path (resolvable from the dest); in copy mode the
+                # copied files sit under dest_root/media, so they store relative. cwd
+                # points at the dest .arkiv so ingest's bench_ingest.json / state don't
+                # dirty the install dir (mirrors /api/offload's state_cwd).
+                ingest_env = dict(os.environ)
+                ingest_env["ARKIV_PROJECT_ROOT"] = str(dest_root)
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                        text=True, bufsize=1, env=ingest_env,
+                                        cwd=str(dest_root / ".arkiv"))
+                try:
+                    for line in proc.stdout:
+                        yield _json.dumps({"type": "log", "line": line.rstrip("\n")}, ensure_ascii=False) + "\n"
+                    proc.wait()
+                except GeneratorExit:
+                    # fable-audit 2026-07-12 (#6/#7): client disconnected — terminate
+                    # the child (mirrors offload_run) so a multi-minute whisper/vision
+                    # pass doesn't run orphaned with the slot held.
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    raise
+                finally:
+                    if proc.stdout and not proc.stdout.closed:
+                        proc.stdout.close()
+                    _release_ingest_slot()
+                yield _json.dumps({"type": "index", "status": "done", "code": proc.returncode},
+                                  ensure_ascii=False) + "\n"
 
         # ── bootstrap: register the new project (path now exists) ──
         if body.create_new:
@@ -918,6 +942,7 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
 
         yield _json.dumps({"type": "done", "summary": {
             "copied": len(ingest_paths), "skipped": skipped, "dest": dest_name, "mode": body.mode,
+            "index_skipped_busy": index_skipped_busy,
         }}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(_stream(), media_type="application/x-ndjson")
@@ -4109,6 +4134,12 @@ def retranscribe_all(
     with _retranscribe_lock:  # refuse concurrent batch runs (mirrors embed M8)
         if _retranscribe_active:
             raise HTTPException(409, "批次重轉錄已在進行中，請稍候")
+        # fable-audit 2026-07-12 (#11): this batch runs whisper IN-PROCESS over the
+        # whole library — it must also hold the shared H3 ingest slot, or a
+        # concurrent /api/ingest loads a second whisper → double-whisper OOM. The
+        # background worker releases it in its finally.
+        if not _acquire_ingest_slot():
+            raise HTTPException(409, "已有匯入任務進行中，請稍候")
         _retranscribe_active = True
         _retranscribe_progress.update({
             "total": len(targets), "done": 0, "failed": 0,
@@ -4178,6 +4209,7 @@ def _run_retranscribe_all(targets, language, backup):
         _retranscribe_progress["current"] = None
         with _retranscribe_lock:
             _retranscribe_active = False
+        _release_ingest_slot()  # fable-audit 2026-07-12 (#11): free the shared H3 slot
 
 
 @app.get("/api/retranscribe-all/status")
