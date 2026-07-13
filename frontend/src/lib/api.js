@@ -20,7 +20,14 @@ export function setToken(t) {
 
 class ApiError extends Error {
   constructor(status, path, body) {
-    super(`arkiv API ${status} on ${path}`)
+    // round-5 #49: fold the backend's FastAPI `detail` into the message so every
+    // toast that shows e.message surfaces WHY it failed (e.g. "找不到媒體檔案") instead
+    // of an opaque "arkiv API 500 on /path". body is usually {detail: "..."}.
+    const detail = body && typeof body === 'object' ? body.detail : body
+    const suffix = detail
+      ? `：${typeof detail === 'string' ? detail : JSON.stringify(detail)}`
+      : ''
+    super(`arkiv API ${status} on ${path}${suffix}`)
     this.status = status
     this.path = path
     this.body = body
