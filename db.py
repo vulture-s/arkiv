@@ -220,7 +220,10 @@ def init_db():
         # migrations: add columns if upgrading from older schema
         for col, typ in [
             ("file_hash", "TEXT"),
-            ("hash_algo", "TEXT DEFAULT 'xxh3-128'"),
+            # fable-audit round-5 #8: the default was a bogus 'xxh3-128' — arkiv hashes
+            # with xxh3 (xxh3_64, offload.DEFAULT_HASH). ingest now writes hash_algo
+            # explicitly, so the column default only labels legacy NULL-hash rows.
+            ("hash_algo", "TEXT DEFAULT 'xxh3'"),
             ("hash_verified_at", "TEXT"),
             ("thumbnail_path", "TEXT"),
             ("rating", "TEXT"),
@@ -497,6 +500,42 @@ def is_processed(path: str) -> bool:
             variants,
         ).fetchone()
         return row is not None
+
+
+def find_moved_row(file_hash: str) -> Optional[Dict]:
+    """A media row with this content hash whose stored path NO LONGER exists on disk
+    — i.e. the file was moved/renamed, not a genuine second copy (fable-audit
+    round-5 #8, move-detection semantics). Returned so ingest can re-point the row
+    instead of re-transcribing/re-visioning the whole library after a reorg. A hash
+    match whose path STILL exists is a real duplicate and is NOT returned (it gets
+    ingested as a new row, so the original is never silently abandoned)."""
+    if not file_hash:
+        return None
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM media WHERE file_hash=?", (file_hash,)).fetchall()
+    for r in rows:
+        try:
+            stored = resolve_path(r["path"])
+        except ValueError:
+            continue  # a poisoned/escaping legacy path — skip, don't re-point onto it
+        if not Path(stored).exists():
+            return dict(r)
+    return None
+
+
+def repoint_media_path(media_id: int, new_abs_path: str, _conn=None) -> None:
+    """Point an existing row at a new location (the file moved). Preserves the row's
+    ratings / tags / transcript / frames — only the path changes (round-5 #8). Stored
+    in the same relative form a fresh ingest would use."""
+    new_stored = to_relative(new_abs_path)
+
+    def _do(c):
+        c.execute("UPDATE media SET path=? WHERE id=?", (new_stored, media_id))
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
 
 
 _ALLOWED_COLS = {
