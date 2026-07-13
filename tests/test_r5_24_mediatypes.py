@@ -26,6 +26,7 @@ def test_every_module_references_the_shared_set():
     import watch
     import query_builder
     import frames
+    import routers.media as rm  # R5-25 #51: the media-search ext buckets moved here
 
     assert ingest.VIDEO_EXT is mediatypes.VIDEO_EXT
     assert ingest.SUPPORTED is mediatypes.MEDIA_EXT
@@ -33,8 +34,10 @@ def test_every_module_references_the_shared_set():
     assert server.VIDEO_EXTS is mediatypes.VIDEO_EXT
     assert server.AUDIO_EXTS is mediatypes.AUDIO_EXT
     assert server.MEDIA_EXTS is mediatypes.MEDIA_EXT
-    assert server._VIDEO_EXTS is mediatypes.VIDEO_EXT
-    assert server._AUDIO_EXTS is mediatypes.AUDIO_EXT
+    # R5-25 #51: _VIDEO_EXTS/_AUDIO_EXTS (list_media's search-branch filter buckets)
+    # moved to routers/media.py with the media route group; still the shared object.
+    assert rm._VIDEO_EXTS is mediatypes.VIDEO_EXT
+    assert rm._AUDIO_EXTS is mediatypes.AUDIO_EXT
 
     assert watch.MEDIA_EXTS is mediatypes.MEDIA_EXT
 
