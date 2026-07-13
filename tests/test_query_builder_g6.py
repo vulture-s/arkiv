@@ -54,6 +54,16 @@ def test_numeric_range_open_upper():
     assert c["params"] == [10]
 
 
+def test_date_range_upper_bound_is_day_inclusive():
+    # fable-audit round-5 #10: processed_at is a full timestamp, so the end-day bound
+    # must compare against the next day exclusively (not <= the date-only string).
+    c = qb.compile_spec({"conditions": [
+        {"field": "date", "op": "range", "value": ["2026-05-01", "2026-05-03"]},
+    ]})
+    assert c["where"] == "(processed_at >= ? AND processed_at < date(?, '+1 day'))"
+    assert c["params"] == ["2026-05-01", "2026-05-03"]
+
+
 def test_media_type_bucket():
     c = qb.compile_spec({"conditions": [
         {"field": "media_type", "op": "eq", "value": "video"},
@@ -186,3 +196,47 @@ def test_query_invalid_spec_is_422(fastapi_client):
         "conditions": [{"field": "bogus", "op": "eq", "value": 1}],
     })
     assert r.status_code == 422
+
+
+def test_date_range_includes_end_day(fastapi_client, server_module):
+    """fable-audit round-5 #10: the clip processed at 2026-05-03T09:00 must be
+    returned when the range END is '2026-05-03' — pre-fix `<= '2026-05-03'` dropped
+    every clip processed after midnight on the end day."""
+    db = importlib.import_module("db")
+    _seed(db)
+    r = fastapi_client.post("/api/search/query", json={
+        "conditions": [{"field": "date", "op": "range", "value": ["2026-05-01", "2026-05-03"]}],
+    })
+    assert r.status_code == 200, r.text
+    assert {it["filename"] for it in r.json()["items"]} == {"a.mp4", "b.mov", "c.mp3"}
+
+
+def test_date_range_single_day_not_empty(fastapi_client, server_module):
+    """A single-day range [d, d] must return that day's clips, not nothing."""
+    db = importlib.import_module("db")
+    _seed(db)
+    r = fastapi_client.post("/api/search/query", json={
+        "conditions": [{"field": "date", "op": "range", "value": ["2026-05-03", "2026-05-03"]}],
+    })
+    assert {it["filename"] for it in r.json()["items"]} == {"c.mp3"}
+
+
+def test_tag_eq_is_case_insensitive(fastapi_client, server_module):
+    """fable-audit round-5 #11: add_tag stores lowercased, so an eq bind of a
+    mixed-case tag must normalize to match (else 'Interview' finds nothing)."""
+    db = importlib.import_module("db")
+    _seed(db)
+    db.add_tag(1, "Interview")  # stored as 'interview'
+    r = fastapi_client.post("/api/search/query", json={
+        "conditions": [{"field": "tag", "op": "eq", "value": "Interview"}],
+    })
+    assert {it["filename"] for it in r.json()["items"]} == {"a.mp4"}
+
+
+def test_sort_map_entries_have_unique_tiebreaker():
+    """fable-audit round-5 #12: every sort ends with an id tiebreaker so LIMIT/OFFSET
+    pagination is a total order (no repeat/drop across pages)."""
+    db = importlib.import_module("db")
+    for key, val in db.SORT_MAP.items():
+        tail = val.rstrip()
+        assert tail.endswith("id DESC") or tail.endswith("id ASC"), (key, val)
