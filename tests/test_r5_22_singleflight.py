@@ -84,19 +84,23 @@ def test_proxy_build_409_when_guard_held(fastapi_client, server_module, tmp_path
 
 
 def test_proxy_build_wrapper_releases_slot(server_module, monkeypatch):
+    # _build_proxies / _build_proxies_all moved to routers/proxy.py in the R5-25
+    # split; _proxy_guard there is the SAME state.proxy_build instance.
+    import routers.proxy as rp
     calls = []
-    monkeypatch.setattr(server_module, "_build_proxies", lambda items: calls.append(items))
-    assert server_module._proxy_guard.acquire()  # route would have acquired it
-    server_module._build_proxies_all([{"id": 1, "path": "x"}])
-    assert server_module._proxy_guard.active is False, "wrapper must free the slot"
+    monkeypatch.setattr(rp, "_build_proxies", lambda items: calls.append(items))
+    assert rp._proxy_guard.acquire()  # route would have acquired it
+    rp._build_proxies_all([{"id": 1, "path": "x"}])
+    assert rp._proxy_guard.active is False, "wrapper must free the slot"
     assert calls == [[{"id": 1, "path": "x"}]]
 
 
 def test_proxy_build_wrapper_releases_on_exception(server_module, monkeypatch):
+    import routers.proxy as rp
     def boom(items):
         raise RuntimeError("ffmpeg blew up")
-    monkeypatch.setattr(server_module, "_build_proxies", boom)
-    assert server_module._proxy_guard.acquire()
+    monkeypatch.setattr(rp, "_build_proxies", boom)
+    assert rp._proxy_guard.acquire()
     with pytest.raises(RuntimeError):
-        server_module._build_proxies_all([])
-    assert server_module._proxy_guard.active is False, "slot freed even on failure"
+        rp._build_proxies_all([])
+    assert rp._proxy_guard.active is False, "slot freed even on failure"

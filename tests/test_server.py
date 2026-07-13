@@ -758,7 +758,8 @@ def test_proxy_build_one_queues_single_media_when_proxy_missing(
 
     queued = []
     import server
-    monkeypatch.setattr(server, "_build_proxies", lambda items: queued.extend(items))
+    import routers.proxy as _rp  # proxy routes moved here in the R5-25 split
+    monkeypatch.setattr(_rp, "_build_proxies", lambda items: queued.extend(items))
 
     resp = fastapi_client.post("/api/proxy/build/1")
     assert resp.status_code == 200
@@ -791,7 +792,8 @@ def test_proxy_build_one_skips_when_proxy_already_exists(
 
     import server
     queued = []
-    monkeypatch.setattr(server, "_build_proxies", lambda items: queued.extend(items))
+    import routers.proxy as _rp  # proxy routes moved here in the R5-25 split
+    monkeypatch.setattr(_rp, "_build_proxies", lambda items: queued.extend(items))
 
     resp = fastapi_client.post("/api/proxy/build/1")
     assert resp.status_code == 200
@@ -821,7 +823,8 @@ def test_proxy_build_one_rebuilds_when_existing_proxy_is_empty(
 
     import server
     queued = []
-    monkeypatch.setattr(server, "_build_proxies", lambda items: queued.extend(items))
+    import routers.proxy as _rp  # proxy routes moved here in the R5-25 split
+    monkeypatch.setattr(_rp, "_build_proxies", lambda items: queued.extend(items))
 
     resp = fastapi_client.post("/api/proxy/build/1")
     assert resp.status_code == 200
