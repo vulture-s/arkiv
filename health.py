@@ -112,6 +112,8 @@ def preflight_paths():
     main() still returned exit 0.
     """
     import config
+    import db  # R5-23 (#54): read the DB path through the SSOT accessor, not a
+              # frozen config value, so a --db override preflights the SAME db it writes
     import sqlite3
 
     errors = []
@@ -137,7 +139,7 @@ def preflight_paths():
 
     # 8.0e: per-path writable + symlink-target check
     paths_to_check = [
-        ("DB_PATH parent", config.DB_PATH.parent),
+        ("DB_PATH parent", db.get_db_path().parent),
         ("THUMBNAILS_DIR", config.THUMBNAILS_DIR),
         ("PROXIES_DIR", config.PROXIES_DIR),
         ("CHROMA_PATH", config.CHROMA_PATH),
@@ -161,9 +163,9 @@ def preflight_paths():
             errors.append(f"{name} 不可寫: {p} ({e.__class__.__name__}: {e})")
 
     # Sample DB resolve: stale PROJECT_ROOT after media move shows up here
-    if config.DB_PATH.exists():
+    if db.get_db_path().exists():
         try:
-            conn = sqlite3.connect(str(config.DB_PATH))
+            conn = sqlite3.connect(str(db.get_db_path()))
             row = conn.execute("SELECT path FROM media LIMIT 1").fetchone()
             conn.close()
             if row and row[0]:
@@ -365,15 +367,16 @@ def main():
     print("\n-- Database --")
     try:
         import config
+        import db  # R5-23 (#54): DB path via the SSOT accessor (see preflight_paths)
         check("config.py", True)
 
-        db_exists = config.DB_PATH.exists()
+        db_path = db.get_db_path()
+        db_exists = db_path.exists()
         check("media.db", db_exists,
-              f"({config.DB_PATH})" if db_exists else "(will be created on first run)",
+              f"({db_path})" if db_exists else "(will be created on first run)",
               required=False)
 
         if db_exists:
-            import db
             stats = db.get_stats()
             total = stats["total"]
             transcribed = stats["with_transcript"]

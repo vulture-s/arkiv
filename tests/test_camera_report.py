@@ -24,8 +24,7 @@ def test_camera_report_writes_three_section_csv_and_summary_matches_sql(monkeypa
     try:
         db_path = temp_root_path / "test.db"
         monkeypatch.setattr(config, "PROJECT_ROOT", temp_root_path)
-        monkeypatch.setattr(config, "DB_PATH", db_path)
-        monkeypatch.setattr(db, "DB_PATH", db_path)
+        monkeypatch.setattr(config, "DB_PATH", db_path)  # R5-23: SSOT accessor follows config.DB_PATH
         db.init_db()
 
         camera_report = importlib.import_module("camera_report")
@@ -209,8 +208,7 @@ def test_camera_report_main_returns_1_when_no_data(monkeypatch):
     try:
         db_path = temp_root_path / "test.db"
         monkeypatch.setattr(config, "PROJECT_ROOT", temp_root_path)
-        monkeypatch.setattr(config, "DB_PATH", db_path)
-        monkeypatch.setattr(db, "DB_PATH", db_path)
+        monkeypatch.setattr(config, "DB_PATH", db_path)  # R5-23: SSOT accessor follows config.DB_PATH
         db.init_db()
 
         camera_report = importlib.import_module("camera_report")
