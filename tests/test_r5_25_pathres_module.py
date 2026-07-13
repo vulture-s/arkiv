@@ -28,6 +28,7 @@ _NAMES = (
     "_resolve_record",
     "_resolve_frame",
     "_resolve_media_path",
+    "_proxy_ready",  # moved here in the proxy peel (R5-25 PR21); shared by /api/stream + proxy routes
 )
 
 

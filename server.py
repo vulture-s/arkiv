@@ -147,6 +147,7 @@ from routers.bins import router as bins_router  # noqa: E402
 from routers.offload import router as offload_router  # noqa: E402
 from routers.analytics import router as analytics_router  # noqa: E402
 from routers.retranscribe import router as retranscribe_router  # noqa: E402
+from routers.proxy import router as proxy_router  # noqa: E402
 app.include_router(admin_router)
 app.include_router(settings_router)
 app.include_router(projects_router)
@@ -156,6 +157,7 @@ app.include_router(bins_router)
 app.include_router(offload_router)
 app.include_router(analytics_router)
 app.include_router(retranscribe_router)
+app.include_router(proxy_router)
 
 ROOT = Path(__file__).parent
 # Built Svelte SPA (frontend/dist). Gitignored — produced by `npm run build`.
@@ -206,6 +208,7 @@ from pathres import (  # noqa: F401 (re-exported for backward compat)
     _resolve_record,
     _resolve_frame,
     _resolve_media_path,
+    _proxy_ready,
 )
 # R5-25 / #51: export-format builders (CSV/EDL/FCPXML/SRT/VTT serialisers + the
 # timecode/framerate math they share) live in export_builders.py (a leaf service
@@ -2456,16 +2459,9 @@ async def ingest_media_ws(
 
 import mimetypes
 
-
-def _proxy_ready(p: Path) -> bool:
-    """A proxy counts as present only if it exists AND is non-empty. A zero/truncated
-    file left by a killed encode must not be served as valid nor block a rebuild
-    (fable-audit round-5 C1 — the consumer side of the atomic-write fix in
-    ingest.generate_proxy)."""
-    try:
-        return p.exists() and p.stat().st_size > 0
-    except OSError:
-        return False
+# _proxy_ready moved to pathres.py (R5-25 / #51) — shared by /api/stream (below)
+# and the proxy routes (routers/proxy.py) — and re-exported at the top of this
+# module.
 
 
 @app.get("/api/stream/{media_id}")
@@ -2537,90 +2533,10 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
 # ── Proxy Management ─────────────────────────────────────────────────────────
 
 # PROXY_CODECS lives in codec.py — single source of truth.
-# _assert_same_site moved to webguard.py (R5-25 / #51) and is re-exported at the
-# top of this module.
-
-@app.get("/api/proxy/status")
-def proxy_status(_tok: dict = Depends(require_scopes("videos_read"))):
-    """Check proxy status for all media files."""
-    proxy_dir = config.PROXIES_DIR
-    proxy_dir.mkdir(parents=True, exist_ok=True)
-    with db.get_conn() as conn:
-        rows = conn.execute("SELECT id, path FROM media").fetchall()
-    proxied = sum(
-        1 for r in rows
-        if _proxy_ready(config.proxy_path_for(r["id"], _resolve_media_path(r["path"])))
-    )
-    size_mb = round(sum(p.stat().st_size for p in proxy_dir.glob("*.mp4")) / 1048576, 1)
-    return {"total": len(rows), "proxied": proxied, "size_mb": size_mb}
-
-
-@app.post("/api/proxy/build")
-def proxy_build(request: Request, background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
-    """Queue proxy generation for all HEVC/ProRes files without proxy."""
-    _assert_same_site(request)  # audit M14
-    proxy_dir = config.PROXIES_DIR
-    proxy_dir.mkdir(parents=True, exist_ok=True)
-    with db.get_conn() as conn:
-        rows = conn.execute("SELECT id, path FROM media").fetchall()
-    to_build = [
-        dict(r) for r in rows
-        if not _proxy_ready(config.proxy_path_for(r["id"], _resolve_media_path(r["path"])))
-    ]
-    if not to_build:
-        return {"message": "全部 proxy 已存在", "queued": 0}
-    # R5-22 (#59): single-flight the whole-library build so a double-click can't
-    # launch parallel full-library ffmpeg loops (mid-build playback would stream
-    # truncated proxies). The guarded wrapper releases the slot in its finally.
-    if not _proxy_guard.acquire():
-        raise HTTPException(409, "proxy 生成已在進行中，請稍候")
-    background_tasks.add_task(_build_proxies_all, to_build)
-    return {"message": f"開始生成 {len(to_build)} 個 proxy（背景執行）", "queued": len(to_build)}
-
-
-@app.post("/api/proxy/build/{media_id}")
-def proxy_build_one(media_id: int, request: Request, background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
-    """Per-id proxy build — surface 自 7.7g 409 「生成 proxy」按鈕，使用者點到
-    哪個 HEVC 就只建那個，避免 build all 整庫拖時間。"""
-    _assert_same_site(request)  # audit M14
-    proxy_dir = config.PROXIES_DIR
-    proxy_dir.mkdir(parents=True, exist_ok=True)
-    rec = db.get_record_by_id(media_id)
-    if not rec:
-        raise HTTPException(404, "找不到媒體")
-    src = _resolve_media_path(rec["path"])
-    if _proxy_ready(config.proxy_path_for(media_id, src)):
-        return {"message": "proxy 已存在", "queued": 0, "media_id": media_id}
-    background_tasks.add_task(_build_proxies, [{"id": media_id, "path": rec["path"]}])
-    return {
-        "message": f"開始生成 proxy（背景執行）",
-        "queued": 1,
-        "media_id": media_id,
-        "filename": rec.get("filename"),
-    }
-
-
-def _build_proxies_all(items: list):
-    """Whole-library proxy build background task — holds the R5-22 (#59)
-    single-flight for its whole lifetime and frees it in finally. The per-id build
-    stays unguarded (targeted, cheap) and calls _build_proxies directly."""
-    try:
-        _build_proxies(items)
-    finally:
-        _proxy_guard.release()
-
-
-def _build_proxies(items: list):
-    """Background task: generate H.264 proxy for each file."""
-    import ingest
-    for item in items:
-        src = _resolve_media_path(item["path"])
-        try:
-            result = ingest.generate_proxy(item["id"], src)
-            if not result:
-                print(f"[proxy] Failed {item['id']}")
-        except Exception as e:
-            print(f"[proxy] Failed {item['id']}: {e}")
+# The proxy routes (/api/proxy/status, /api/proxy/build, /api/proxy/build/{id})
+# plus the _build_proxies / _build_proxies_all background workers moved to
+# routers/proxy.py (R5-25 / #51), mounted via app.include_router below. The R5-22
+# (#59) single-flight guard is shared from state.py.
 
 
 @app.post("/api/embed/rebuild")

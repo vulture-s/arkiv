@@ -14,6 +14,7 @@ names for backward compatibility (existing call sites + tests that reference
 `server._resolve_media_path` keep working).
 """
 import os
+from pathlib import Path
 
 import db
 
@@ -90,3 +91,14 @@ def _resolve_media_path(path: str) -> str:
     if os.name == "nt" and path.startswith("/"):
         return path
     return db.resolve_path(path)
+
+
+def _proxy_ready(p: Path) -> bool:
+    """A proxy counts as present only if it exists AND is non-empty. A zero/truncated
+    file left by a killed encode must not be served as valid nor block a rebuild
+    (fable-audit round-5 C1 — the consumer side of the atomic-write fix in
+    ingest.generate_proxy). Shared by /api/stream (server) + the proxy routes."""
+    try:
+        return p.exists() and p.stat().st_size > 0
+    except OSError:
+        return False
