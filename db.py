@@ -360,6 +360,16 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_jobs_status_priority "
             "ON jobs(status, priority, created_at)"
         )
+        # fable-audit round-5 #20: the gallery/list/search paths sorted + filtered on
+        # these media columns with ZERO indexes — every page was a full-table scan +
+        # temp B-tree sort, and tag name-lookups scanned the whole tags table. These
+        # make the common query patterns index-backed on a 100k+ row library.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_media_processed_at ON media(processed_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_media_lang ON media(lang)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_media_rating ON media(rating)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_media_filename ON media(filename)")
+        # covering index for the tag subquery (WHERE name=? → media_id)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_name_media ON tags(name, media_id)")
         # Phase 9.7 G2: per-language transcript archive. media.transcript/lang/
         # segments_json/words_json stay the ACTIVE transcript (what search indexes
         # + exports use); this table keeps every transcribed language so a

@@ -196,10 +196,15 @@ def _query_chroma(project: ProjectMeta, query_embeddings, limit: int) -> List[Di
 
 def _sql_like_search(conn: sqlite3.Connection, project: ProjectMeta, query: str, limit: int) -> List[Dict[str, Any]]:
     like = "%%%s%%" % query
+    # fable-audit round-5 #24: bound the fallback. Pre-fix it fetched the FULL
+    # transcript of EVERY match with no LIMIT — an embedder outage + a common CJK
+    # token on a big library pulled hundreds of MB per project and pinned workers.
+    # LIMIT caps the rows; substr keeps only the excerpt this function actually uses.
     rows = conn.execute(
-        "SELECT id, path, filename, duration_s, rating, lang, ext, transcript "
-        "FROM media WHERE filename LIKE ? OR transcript LIKE ? ORDER BY id",
-        (like, like),
+        "SELECT id, path, filename, duration_s, rating, lang, ext, "
+        "substr(transcript, 1, 300) AS transcript "
+        "FROM media WHERE filename LIKE ? OR transcript LIKE ? ORDER BY id LIMIT ?",
+        (like, like, limit),
     ).fetchall()
     seen = set()
     results = []
