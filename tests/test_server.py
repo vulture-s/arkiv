@@ -801,6 +801,89 @@ def test_proxy_build_one_skips_when_proxy_already_exists(
     assert queued == []
 
 
+def test_proxy_build_one_rebuilds_when_existing_proxy_is_empty(
+    fastapi_client, sample_record, tmp_path, monkeypatch
+):
+    """fable-audit round-5 C1: a zero-byte proxy left by a killed encode must be
+    treated as ABSENT, not served/counted as valid nor allowed to block a rebuild.
+    Pre-fix `proxy_path.exists()` said 'done' for a 0-byte file → the truncated
+    proxy was permanent."""
+    db = importlib.import_module("db")
+    config = importlib.import_module("config")
+
+    src = tmp_path / "src.mov"
+    src.write_bytes(b"hevc-bytes")
+    db.upsert(sample_record(path=str(src), filename="src.mov", ext=".mov"))
+    proxies_dir = tmp_path / "proxies"; proxies_dir.mkdir()
+    monkeypatch.setattr(config, "PROXIES_DIR", proxies_dir)
+    # a truncated (empty) proxy from a prior killed encode
+    config.proxy_path_for(1, str(src)).write_bytes(b"")
+
+    import server
+    queued = []
+    monkeypatch.setattr(server, "_build_proxies", lambda items: queued.extend(items))
+
+    resp = fastapi_client.post("/api/proxy/build/1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["queued"] == 1  # empty proxy treated as missing → rebuilt
+    assert queued and queued[0]["id"] == 1
+
+
+def test_generate_proxy_failed_encode_leaves_no_final(tmp_path, monkeypatch):
+    """fable-audit round-5 #1: a mid-encode failure must NOT leave a half-written
+    final proxy. ffmpeg writes to a same-dir tmp; only a clean, non-empty encode is
+    os.replace'd onto the final path."""
+    from pathlib import Path
+    ingest = importlib.import_module("ingest")
+    config = importlib.import_module("config")
+    proxies = tmp_path / "proxies"; proxies.mkdir()
+    monkeypatch.setattr(config, "PROXIES_DIR", proxies)
+    src = tmp_path / "clip.mov"; src.write_bytes(b"src")
+
+    class _R:
+        returncode = 1
+        stderr = "ffmpeg: Conversion failed!"
+        stdout = ""
+
+    def fake_run(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"\x00\x00")  # ffmpeg wrote a truncated tmp, then died
+        return _R()
+    monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+
+    assert ingest.generate_proxy(1, str(src)) is None
+    assert not config.proxy_path_for(1, str(src)).exists()   # no half-written final
+    assert list(proxies.glob("*.tmp.*")) == []               # tmp cleaned up
+
+
+def test_generate_proxy_success_replaces_atomically(tmp_path, monkeypatch):
+    """A clean encode lands as the final proxy via os.replace; a pre-existing empty
+    proxy (killed prior run) is discarded and rebuilt (round-5 #1 writer-side gate)."""
+    from pathlib import Path
+    ingest = importlib.import_module("ingest")
+    config = importlib.import_module("config")
+    proxies = tmp_path / "proxies"; proxies.mkdir()
+    monkeypatch.setattr(config, "PROXIES_DIR", proxies)
+    src = tmp_path / "clip.mov"; src.write_bytes(b"src")
+    config.proxy_path_for(1, str(src)).write_bytes(b"")  # stale empty proxy — must be rebuilt
+
+    class _R:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def fake_run(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"real-proxy-bytes")
+        return _R()
+    monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+
+    result = ingest.generate_proxy(1, str(src))
+    final = config.proxy_path_for(1, str(src))
+    assert result == str(final)
+    assert final.read_bytes() == b"real-proxy-bytes"
+    assert list(proxies.glob("*.tmp.*")) == []
+
+
 def test_stream_returns_409_when_hevc_source_has_no_proxy(
     fastapi_client, sample_record, tmp_path, monkeypatch
 ):

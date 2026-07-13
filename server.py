@@ -3867,6 +3867,18 @@ async def ingest_media_ws(
 
 import mimetypes
 
+
+def _proxy_ready(p: Path) -> bool:
+    """A proxy counts as present only if it exists AND is non-empty. A zero/truncated
+    file left by a killed encode must not be served as valid nor block a rebuild
+    (fable-audit round-5 C1 — the consumer side of the atomic-write fix in
+    ingest.generate_proxy)."""
+    try:
+        return p.exists() and p.stat().st_size > 0
+    except OSError:
+        return False
+
+
 @app.get("/api/stream/{media_id}")
 def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read"))):
     """Stream a media file with range request support for seeking.
@@ -3880,7 +3892,7 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
     # user's content under the same media_id.
     resolved_src = _resolve_media_path(rec["path"])
     proxy_path = config.proxy_path_for(media_id, resolved_src)
-    if proxy_path.exists():
+    if _proxy_ready(proxy_path):
         return FileResponse(
             path=str(proxy_path),
             media_type="video/mp4",
@@ -3964,7 +3976,7 @@ def proxy_status(_tok: dict = Depends(require_scopes("videos_read"))):
         rows = conn.execute("SELECT id, path FROM media").fetchall()
     proxied = sum(
         1 for r in rows
-        if config.proxy_path_for(r["id"], _resolve_media_path(r["path"])).exists()
+        if _proxy_ready(config.proxy_path_for(r["id"], _resolve_media_path(r["path"])))
     )
     size_mb = round(sum(p.stat().st_size for p in proxy_dir.glob("*.mp4")) / 1048576, 1)
     return {"total": len(rows), "proxied": proxied, "size_mb": size_mb}
@@ -3980,7 +3992,7 @@ def proxy_build(request: Request, background_tasks: BackgroundTasks, _tok: dict 
         rows = conn.execute("SELECT id, path FROM media").fetchall()
     to_build = [
         dict(r) for r in rows
-        if not config.proxy_path_for(r["id"], _resolve_media_path(r["path"])).exists()
+        if not _proxy_ready(config.proxy_path_for(r["id"], _resolve_media_path(r["path"])))
     ]
     if not to_build:
         return {"message": "全部 proxy 已存在", "queued": 0}
@@ -3999,7 +4011,7 @@ def proxy_build_one(media_id: int, request: Request, background_tasks: Backgroun
     if not rec:
         raise HTTPException(404, "找不到媒體")
     src = _resolve_media_path(rec["path"])
-    if config.proxy_path_for(media_id, src).exists():
+    if _proxy_ready(config.proxy_path_for(media_id, src)):
         return {"message": "proxy 已存在", "queued": 0, "media_id": media_id}
     background_tasks.add_task(_build_proxies, [{"id": media_id, "path": rec["path"]}])
     return {
