@@ -92,9 +92,16 @@ def _candidate_hashes(raw):
 
 
 def new_token_id():
-    if nanoid_generate is not None:
-        return nanoid_generate()
-    return secrets.token_urlsafe(16)
+    # Both nanoid and base64url use the alphabet [A-Za-z0-9_-]. A LEADING '-'
+    # makes `arkiv_token.py revoke <id>` argparse-ambiguous — the id is read as an
+    # option flag, so the positional goes unfilled ("error: the following
+    # arguments are required: token_id"). That surfaced as an intermittent
+    # (~1/64) CI failure of test_cli_revoke_removes_token. Re-roll until the first
+    # char isn't '-' so every issued id is CLI-safe; entropy impact is negligible.
+    while True:
+        tid = nanoid_generate() if nanoid_generate is not None else secrets.token_urlsafe(16)
+        if tid and not tid.startswith("-"):
+            return tid
 
 
 def new_raw_token():
