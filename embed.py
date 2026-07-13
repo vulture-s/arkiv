@@ -50,9 +50,17 @@ def get_records_by_ids(ids: List[int]) -> List[Dict]:
 
 
 def get_indexed_media_ids(col) -> set[str]:
-    """Return set of media_ids already in ChromaDB."""
-    result = col.get(include=["metadatas"])
-    return {m["media_id"] for m in result["metadatas"]}
+    """media_ids already in ChromaDB, derived from chunk-id PREFIXES.
+
+    fable-audit round-5 #31: pulling include=["metadatas"] fetched every chunk's
+    full metadata (hundreds of MB for 150-250k chunks) on EVERY reconcile — including
+    no-op watch runs — just to build an id set. Chunk ids are '{media_id}_t{i}' /
+    '{media_id}_f0' (vectordb.build/upsert) and media ids are integers (no '_'), so
+    the prefix before the first '_' is the media_id. include=[] returns only the ids.
+    Returned as strings, matching the reconcile diff's str(id) comparisons."""
+    result = col.get(include=[])
+    ids = result.get("ids") or []
+    return {cid.split("_", 1)[0] for cid in ids}
 
 
 def run_embed(rebuild: bool = False, force_ids=None, prune: bool = True) -> dict:

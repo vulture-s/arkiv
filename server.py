@@ -1467,6 +1467,13 @@ def get_media_detail(
             rec["canonical_tags"] = json.loads(rec["canonical_tags"])
         except Exception:
             rec["canonical_tags"] = None
+    # fable-audit round-5 #26 (codex-verified): words_json (word-level timing JSON,
+    # multi-MB) has NO frontend consumer here — the inspector's transcript seek uses
+    # segments_json (kept), and word-level data is served separately via
+    # /api/media/{id}/remotion-props. Drop only words_json from this per-click
+    # response so it isn't shipped over NAS/Tailscale on every arrow-key. The shared
+    # db.get_record_by_id is untouched (export/retranscribe/remotion still need it).
+    rec.pop("words_json", None)
     return rec
 
 

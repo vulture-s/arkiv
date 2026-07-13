@@ -723,29 +723,27 @@ def set_canonical_tags(media_id: int, tags: list) -> None:
 def get_stats() -> Dict:
     """Aggregate stats for sidebar and dashboard."""
     with get_conn() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM media").fetchone()[0]
-        with_transcript = conn.execute(
-            "SELECT COUNT(*) FROM media WHERE transcript IS NOT NULL"
-        ).fetchone()[0]
-        with_thumb = conn.execute(
-            "SELECT COUNT(*) FROM media WHERE thumbnail_path IS NOT NULL"
-        ).fetchone()[0]
-        total_duration = conn.execute(
-            "SELECT COALESCE(SUM(duration_s), 0) FROM media"
-        ).fetchone()[0]
-        total_size = conn.execute(
-            "SELECT COALESCE(SUM(size_mb), 0) FROM media"
-        ).fetchone()[0]
+        # fable-audit round-5 #27: fold five separate full-table scans into ONE
+        # single-pass aggregate. COUNT(col) counts non-NULL values, i.e. it equals
+        # COUNT(*) WHERE col IS NOT NULL — so with_transcript / with_thumb come free.
+        agg = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "COUNT(transcript) AS with_transcript, "
+            "COUNT(thumbnail_path) AS with_thumb, "
+            "COALESCE(SUM(duration_s), 0) AS total_duration, "
+            "COALESCE(SUM(size_mb), 0) AS total_size "
+            "FROM media"
+        ).fetchone()
         langs = conn.execute(
             "SELECT lang, COUNT(*) as cnt FROM media "
             "WHERE lang IS NOT NULL GROUP BY lang ORDER BY cnt DESC"
         ).fetchall()
         return {
-            "total": total,
-            "with_transcript": with_transcript,
-            "with_thumb": with_thumb,
-            "total_duration_s": total_duration,
-            "total_size_mb": total_size,
+            "total": agg["total"],
+            "with_transcript": agg["with_transcript"],
+            "with_thumb": agg["with_thumb"],
+            "total_duration_s": agg["total_duration"],
+            "total_size_mb": agg["total_size"],
             "langs": {r["lang"]: r["cnt"] for r in langs},
         }
 
