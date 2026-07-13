@@ -2,7 +2,7 @@ from __future__ import annotations
 import base64
 import json
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import requests
 
@@ -10,7 +10,6 @@ import config
 from llm import vision
 
 OLLAMA_URL = f"{config.OLLAMA_URL}/api/generate"
-VISION_MODEL = config.VISION_MODEL
 
 _model_avail_cache: Dict[str, bool] = {}
 
@@ -136,18 +135,22 @@ def _empty_result() -> Dict:
     return result
 
 
-def describe_frames(frame_paths: List[str]) -> List[Dict]:
+def describe_frames(frame_paths: List[str], model: Optional[str] = None) -> List[Dict]:
     """
     Representative frame strategy:
     - Middle frame: full 12-field analysis
     - Other frames: light 11-field + inherit edit_reason only
     - Skip unusable frames (black/white/blurry)
+
+    `model` is threaded down to `_call_vision`; when None the effective/default
+    model is resolved from settings (behavior-preserving). Callers pass an explicit
+    model name to force the fallback path onto that model (round-5 #50).
     """
     if not frame_paths:
         return []
 
     rep_idx = len(frame_paths) // 2
-    rep_result = _describe_one(frame_paths[rep_idx])
+    rep_result = _describe_one(frame_paths[rep_idx], model=model)
     rep_result["file"] = frame_paths[rep_idx]
 
     inheritable = ("edit_reason",)
@@ -167,7 +170,7 @@ def describe_frames(frame_paths: List[str]) -> List[Dict]:
             results.append(skip_result)
             continue
 
-        light = _describe_one_light(path)
+        light = _describe_one_light(path, model=model)
         light["file"] = path
         for k in inheritable:
             light[k] = rep_result.get(k)
@@ -191,14 +194,17 @@ def _normalize_result(parsed: Dict) -> Dict:
     return result
 
 
-def _call_vision(img_path, prompt, max_retries=2):
-    """Send image to Ollama vision, return raw response text."""
+def _call_vision(img_path, prompt, max_retries=2, model=None):
+    """Send image to Ollama vision, return raw response text.
+
+    `model`, when given, is used verbatim (this is how the failure-fallback path
+    forces the fallback model to actually run — round-5 #50). When None, Phase 9.7
+    G5③ honors the operator's library default (settings table), falling back to
+    config.VISION_MODEL / num_ctx when unset (behavior-preserving)."""
     with open(img_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
-    # Phase 9.7 G5③: honor the operator's library default (settings table),
-    # falling back to config.VISION_MODEL / num_ctx when unset (behavior-preserving).
     import settings as _settings
-    eff_model = _settings.vision_model()
+    eff_model = model if model is not None else _settings.vision_model()
     eff_num_ctx = _settings.vision_num_ctx()
     for attempt in range(max_retries):
         try:
@@ -214,9 +220,9 @@ def _call_vision(img_path, prompt, max_retries=2):
     return ""
 
 
-def _describe_one(img_path, max_retries=2):
+def _describe_one(img_path, max_retries=2, model=None):
     try:
-        raw = _call_vision(img_path, PROMPT, max_retries)
+        raw = _call_vision(img_path, PROMPT, max_retries, model=model)
     except Exception as e:
         print(f" [VISION FAIL: {e}]", end="", flush=True)
         result = _empty_result()
@@ -240,10 +246,10 @@ def _describe_one(img_path, max_retries=2):
     return result
 
 
-def _describe_one_light(img_path, max_retries=2):
+def _describe_one_light(img_path, max_retries=2, model=None):
     """Lightweight vision: description + tags + 7 quality/content fields."""
     try:
-        raw = _call_vision(img_path, LIGHT_PROMPT, max_retries)
+        raw = _call_vision(img_path, LIGHT_PROMPT, max_retries, model=model)
     except Exception as e:
         print(f" [VISION-LIGHT FAIL: {e}]", end="", flush=True)
         return _empty_result()
