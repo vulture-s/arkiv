@@ -335,6 +335,70 @@ def bin_item_status(project_name: str, media_id: Any) -> str:
             conn.close()
 
 
+def bin_item_statuses(items) -> Dict[Any, str]:
+    """Batch of bin_item_status keyed by (project_name, str(media_id)).
+
+    fable-audit round-5 #23: calling bin_item_status per item did a registry read +
+    health probe + fresh SQLite connection PER ITEM — a 200-item NAS bin cost ~200×
+    (discover + health + open) on every bin open and every add/remove. This groups
+    items by project and pays that cost ONCE per project, fetching all of a project's
+    rows with a single WHERE id IN (...). `items` is any iterable exposing
+    project_name + media_id (bin items or (name, id) tuples)."""
+    from projects import discover_projects
+    from health import project_health, HealthStatus
+    from federation import _connect_project_db, _resolve_paths
+
+    by_project: Dict[str, list] = {}
+    for it in items:
+        pn = it.project_name if hasattr(it, "project_name") else it[0]
+        mid = it.media_id if hasattr(it, "media_id") else it[1]
+        by_project.setdefault(pn, []).append(str(mid))
+
+    result: Dict[Any, str] = {}
+    projects_by_name = {p.name: p for p in discover_projects()}  # ONE registry read
+
+    for pn, mids in by_project.items():
+        project = projects_by_name.get(pn)
+        if project is None:
+            for mid in mids:
+                result[(pn, mid)] = STATUS_PROJECT_UNREGISTERED
+            continue
+        health = project_health(project)  # ONE health probe per project
+        if health != HealthStatus.OK:
+            hv = health.value if isinstance(health, HealthStatus) else str(health)
+            for mid in mids:
+                result[(pn, mid)] = hv
+            continue
+        conn = None
+        try:
+            conn = _connect_project_db(project)  # ONE connection per project
+            placeholders = ",".join("?" * len(mids))
+            rows = {
+                str(r["id"]): r
+                for r in conn.execute(
+                    "SELECT id, path FROM media WHERE id IN ({0})".format(placeholders),
+                    mids,
+                ).fetchall()
+            }
+            for mid in mids:
+                row = rows.get(mid)
+                if row is None:
+                    result[(pn, mid)] = STATUS_ROW_MISSING
+                    continue
+                _relative, absolute = _resolve_paths(project, row["path"] or "")
+                if not absolute or not os.path.exists(absolute):
+                    result[(pn, mid)] = STATUS_FILE_MISSING
+                else:
+                    result[(pn, mid)] = STATUS_OK
+        except Exception:
+            for mid in mids:
+                result.setdefault((pn, mid), STATUS_ERROR)
+        finally:
+            if conn is not None:
+                conn.close()
+    return result
+
+
 def resolve_source(project_name: str, media_id: Any) -> Optional[Dict[str, Any]]:
     """Server-side ONLY: (project_name, media_id) → {absolute_path, filename,
     status}. The absolute path is for the copy orchestrator (server.py); never
