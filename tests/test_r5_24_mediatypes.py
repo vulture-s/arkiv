@@ -22,18 +22,20 @@ def test_media_partitions_into_video_and_audio():
 def test_every_module_references_the_shared_set():
     """Each module binds its extension name to the SAME shared object — no copies."""
     import ingest
-    import server
     import watch
     import query_builder
     import frames
     import routers.media as rm  # R5-25 #51: the media-search ext buckets moved here
+    import routers.ingest as ri  # R5-25 #51: the scan-manifest ext buckets moved here
 
     assert ingest.VIDEO_EXT is mediatypes.VIDEO_EXT
     assert ingest.SUPPORTED is mediatypes.MEDIA_EXT
 
-    assert server.VIDEO_EXTS is mediatypes.VIDEO_EXT
-    assert server.AUDIO_EXTS is mediatypes.AUDIO_EXT
-    assert server.MEDIA_EXTS is mediatypes.MEDIA_EXT
+    # R5-25 #51: the ingest-scan ext buckets (VIDEO_EXTS/AUDIO_EXTS/MEDIA_EXTS)
+    # moved to routers/ingest.py with the /api/ingest family; still the shared object.
+    assert ri.VIDEO_EXTS is mediatypes.VIDEO_EXT
+    assert ri.AUDIO_EXTS is mediatypes.AUDIO_EXT
+    assert ri.MEDIA_EXTS is mediatypes.MEDIA_EXT
     # R5-25 #51: _VIDEO_EXTS/_AUDIO_EXTS (list_media's search-branch filter buckets)
     # moved to routers/media.py with the media route group; still the shared object.
     assert rm._VIDEO_EXTS is mediatypes.VIDEO_EXT

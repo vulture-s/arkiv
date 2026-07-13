@@ -74,7 +74,10 @@ def test_h4_reingest_targets_single_file(
     rec = sample_record()
     db.upsert(rec)
     mid = _media_id(db, rec)
-    monkeypatch.setattr(server_module, "_resolve_media_path", lambda p: __file__)
+    # R5-25 #51: reingest moved to routers/ingest.py — it reads that module's
+    # _resolve_media_path (imported by-name from pathres), so patch it there.
+    import routers.ingest as _ri
+    monkeypatch.setattr(_ri, "_resolve_media_path", lambda p: __file__)
 
     captured = {}
 
