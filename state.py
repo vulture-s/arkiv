@@ -18,6 +18,8 @@ from typing import Set
 
 from fastapi import WebSocket
 
+import config
+
 
 # ── Named single-flight guards ────────────────────────────────────────────────
 # R5-22 (#52): embed-rebuild / retranscribe used bare module-global bools
@@ -79,6 +81,24 @@ retranscribe.reset_progress(
 # siblings) — a double-click launched parallel full-library ffmpeg loops and
 # mid-build playback streamed truncated proxies.
 proxy_build = SingleFlight("proxy_build")
+
+
+def _rebuild_embeddings():
+    """Background task: full embedding rebuild via subprocess. Runs embed.py in a
+    child process to isolate its sys.exit() guard and use sys.executable per the
+    platform Python-concurrency rule (not in-process — sys.exit would kill server).
+
+    R5-25 (#51): moved here from server.py (swapping ROOT→config.BASE_DIR) so both
+    /api/embed/rebuild (server) and the /api/recorrect rebuild chain
+    (routers/recorrect.py) share ONE worker + the ONE embed_rebuild guard above."""
+    import subprocess
+    import sys
+    try:
+        subprocess.run([sys.executable, str(config.BASE_DIR / "embed.py"), "--rebuild"], check=False)
+    except Exception as e:
+        print(f"[embed] rebuild failed: {e}")
+    finally:
+        embed_rebuild.release()  # audit M8: always free the single-flight slot
 
 # ── Ingest single-flight guard ────────────────────────────────────────────────
 # One guard for ALL ingest entry points (REST /api/ingest, reingest, WS, bin-copy,

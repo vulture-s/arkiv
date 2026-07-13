@@ -52,6 +52,7 @@ from state import (  # noqa: F401  (re-exported for backward compat)
     embed_rebuild as _embed_guard,
     retranscribe as _retranscribe_guard,
     proxy_build as _proxy_guard,
+    _rebuild_embeddings,
 )
 
 # R5-22 (#52): the embed-rebuild / retranscribe single-flight guards + the
@@ -148,6 +149,7 @@ from routers.offload import router as offload_router  # noqa: E402
 from routers.analytics import router as analytics_router  # noqa: E402
 from routers.retranscribe import router as retranscribe_router  # noqa: E402
 from routers.proxy import router as proxy_router  # noqa: E402
+from routers.recorrect import router as recorrect_router  # noqa: E402
 app.include_router(admin_router)
 app.include_router(settings_router)
 app.include_router(projects_router)
@@ -158,6 +160,7 @@ app.include_router(offload_router)
 app.include_router(analytics_router)
 app.include_router(retranscribe_router)
 app.include_router(proxy_router)
+app.include_router(recorrect_router)
 
 ROOT = Path(__file__).parent
 # Built Svelte SPA (frontend/dist). Gitignored — produced by `npm run build`.
@@ -2554,90 +2557,18 @@ def embed_rebuild(request: Request, background_tasks: BackgroundTasks, _tok: dic
     return {"message": f"開始重建向量索引（{total} 筆素材，背景執行）", "queued": total}
 
 
-def _rebuild_embeddings():
-    """Background task: full embedding rebuild via subprocess. Runs embed.py in a
-    child process to isolate its sys.exit() guard and use sys.executable per the
-    platform Python-concurrency rule (not in-process — sys.exit would kill server)."""
-    import subprocess
-    import sys
-    try:
-        subprocess.run([sys.executable, str(ROOT / "embed.py"), "--rebuild"], check=False)
-    except Exception as e:
-        print(f"[embed] rebuild failed: {e}")
-    finally:
-        _embed_guard.release()  # audit M8: always free the single-flight slot
+# _rebuild_embeddings moved to state.py (R5-25 / #51, ROOT→config.BASE_DIR) so
+# /api/embed/rebuild (above) and the /api/recorrect rebuild chain
+# (routers/recorrect.py) share ONE worker + the ONE embed_rebuild guard. Re-exported
+# at the top of this module for the embed_rebuild route + backward compat.
 
 
 # ── Phase 9.6b: per-project correction dictionary ────────────────────────────
-
-class CorrectionsBody(BaseModel):
-    # raw dicts; corrections._clean_rule validates (sidesteps `from` keyword).
-    rules: List[dict] = []
-
-
-class RevertBody(BaseModel):
-    backup: Optional[str] = None
-
-
-@app.get("/api/corrections")
-def get_corrections(_tok: dict = Depends(require_scopes("projects_read"))):
-    """The active project's correction dictionary (.arkiv/corrections.json)."""
-    return {"rules": corrections.load_rules()}
-
-
-@app.put("/api/corrections")
-def put_corrections(
-    body: CorrectionsBody,
-    request: Request,
-    _tok: dict = Depends(require_scopes("projects_write")),
-):
-    """Replace the dictionary. Returns the cleaned rules actually persisted."""
-    _assert_same_site(request)
-    saved = corrections.save_rules(body.rules)
-    return {"ok": True, "rules": saved, "count": len(saved)}
-
-
-@app.post("/api/recorrect")
-def recorrect(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    dry_run: int = Query(1, description="1 = preview only (default, writes nothing)"),
-    rebuild: int = Query(0, description="1 = rebuild embeddings after applying"),
-    _tok: dict = Depends(require_scopes("ingest_write")),
-):
-    """Batch-apply the dictionary's post-rules to stored transcripts.
-
-    Defaults to dry-run (RP-4): a bare POST previews hits and writes nothing.
-    dry_run=0 applies (transcript + segments_json synced, backup written first);
-    rebuild=1 then chains the existing single-flight embedding rebuild so search
-    reflects the corrected text."""
-    if dry_run:
-        return {"dry_run": True, **corrections.scan()}
-    _assert_same_site(request)  # mutating — same-origin only (audit M14 pattern)
-    result = corrections.apply()
-    embed_started = False
-    if rebuild and result.get("media_updated"):
-        if _embed_guard.acquire():  # audit M8: only start if no rebuild is running
-            background_tasks.add_task(_rebuild_embeddings)
-            embed_started = True
-    return {"dry_run": False, **result, "embed_rebuild_started": embed_started}
-
-
-@app.get("/api/recorrect/backups")
-def recorrect_backups(_tok: dict = Depends(require_scopes("projects_read"))):
-    """Reversible recorrect backups, newest first (for the revert picker)."""
-    return {"backups": corrections.list_backups()}
-
-
-@app.post("/api/recorrect/revert")
-def recorrect_revert(
-    body: RevertBody,
-    request: Request,
-    _tok: dict = Depends(require_scopes("ingest_write")),
-):
-    """Restore transcripts from a recorrect backup (latest if unspecified)."""
-    _assert_same_site(request)
-    return corrections.revert(body.backup)
+#
+# The correction-dictionary + recorrect routes (/api/corrections GET/PUT,
+# /api/recorrect POST, /api/recorrect/backups GET, /api/recorrect/revert POST)
+# with CorrectionsBody / RevertBody moved to routers/recorrect.py (R5-25 / #51),
+# mounted via app.include_router below.
 
 
 # ── Phase 9.6d: project-wide batch retranscribe (2a) ─────────────────────────
