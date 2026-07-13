@@ -51,22 +51,16 @@ from state import (  # noqa: F401  (re-exported for backward compat)
     _acquire_ingest_slot,
     _release_ingest_slot,
     ingest_ws,
+    embed_rebuild as _embed_guard,
+    retranscribe as _retranscribe_guard,
+    proxy_build as _proxy_guard,
 )
 
-# The remaining guards stay here for now — their flags are rebound via `global`
-# inside route handlers (and a test writes the raw flag), so they need a
-# mutable-container refactor rather than a plain import to move to state.py.
-
-# audit M8: single-flight for the embed rebuild — double-clicking the rebuild
-# button used to launch N concurrent drop+rebuild subprocesses over the same
-# Chroma collection.
-_embed_rebuild_lock = _threading.Lock()
-_embed_rebuild_active = False
-
-# Phase 9.6d: project-wide batch retranscribe (single-flight + progress poll).
-_retranscribe_lock = _threading.Lock()
-_retranscribe_active = False
-_retranscribe_progress = {"total": 0, "done": 0, "failed": 0, "current": None, "running": False, "backup": None}
+# R5-22 (#52): the embed-rebuild / retranscribe single-flight guards + the
+# retranscribe progress dict now live in state.py as SingleFlight OBJECTS
+# (_embed_guard / _retranscribe_guard), so an APIRouter-split module imports a
+# live instance instead of a frozen bool copy. The retranscribe progress dict is
+# _retranscribe_guard.progress (mutated in place).
 
 # R5-17 (#19): single-flight the offload endpoint PER SOURCE. Two runs over the
 # same card (a double-clicked Run, or a retry over a still-live run) would race
@@ -2951,7 +2945,7 @@ def clear_cache(
     _assert_same_site(request)
     import shutil
     # #15: never rmtree the index out from under an active rebuild.
-    if target in ("chromadb", "all") and _embed_rebuild_active:
+    if target in ("chromadb", "all") and _embed_guard.active:
         raise HTTPException(409, "語意索引重建進行中，請待完成後再清除")
     cleared = []
     if target in ("thumbnails", "all"):
@@ -4137,7 +4131,12 @@ def proxy_build(request: Request, background_tasks: BackgroundTasks, _tok: dict 
     ]
     if not to_build:
         return {"message": "全部 proxy 已存在", "queued": 0}
-    background_tasks.add_task(_build_proxies, to_build)
+    # R5-22 (#59): single-flight the whole-library build so a double-click can't
+    # launch parallel full-library ffmpeg loops (mid-build playback would stream
+    # truncated proxies). The guarded wrapper releases the slot in its finally.
+    if not _proxy_guard.acquire():
+        raise HTTPException(409, "proxy 生成已在進行中，請稍候")
+    background_tasks.add_task(_build_proxies_all, to_build)
     return {"message": f"開始生成 {len(to_build)} 個 proxy（背景執行）", "queued": len(to_build)}
 
 
@@ -4163,6 +4162,16 @@ def proxy_build_one(media_id: int, request: Request, background_tasks: Backgroun
     }
 
 
+def _build_proxies_all(items: list):
+    """Whole-library proxy build background task — holds the R5-22 (#59)
+    single-flight for its whole lifetime and frees it in finally. The per-id build
+    stays unguarded (targeted, cheap) and calls _build_proxies directly."""
+    try:
+        _build_proxies(items)
+    finally:
+        _proxy_guard.release()
+
+
 def _build_proxies(items: list):
     """Background task: generate H.264 proxy for each file."""
     import ingest
@@ -4181,15 +4190,12 @@ def embed_rebuild(request: Request, background_tasks: BackgroundTasks, _tok: dic
     """Drop + rebuild the ChromaDB semantic index from all media.
     Wired to 進階設定 → 搜尋引擎 → 「重建向量索引」button."""
     _assert_same_site(request)  # audit M14
-    global _embed_rebuild_active
     with db.get_conn() as conn:
         total = conn.execute("SELECT count(*) FROM media").fetchone()[0]
     if not total:
         return {"message": "尚無素材可建立索引", "queued": 0}
-    with _embed_rebuild_lock:  # audit M8: refuse concurrent rebuilds
-        if _embed_rebuild_active:
-            raise HTTPException(409, "向量索引重建已在進行中，請稍候")
-        _embed_rebuild_active = True
+    if not _embed_guard.acquire():  # audit M8: refuse concurrent rebuilds
+        raise HTTPException(409, "向量索引重建已在進行中，請稍候")
     background_tasks.add_task(_rebuild_embeddings)
     return {"message": f"開始重建向量索引（{total} 筆素材，背景執行）", "queued": total}
 
@@ -4198,7 +4204,6 @@ def _rebuild_embeddings():
     """Background task: full embedding rebuild via subprocess. Runs embed.py in a
     child process to isolate its sys.exit() guard and use sys.executable per the
     platform Python-concurrency rule (not in-process — sys.exit would kill server)."""
-    global _embed_rebuild_active
     import subprocess
     import sys
     try:
@@ -4206,8 +4211,7 @@ def _rebuild_embeddings():
     except Exception as e:
         print(f"[embed] rebuild failed: {e}")
     finally:
-        with _embed_rebuild_lock:  # audit M8: always free the single-flight slot
-            _embed_rebuild_active = False
+        _embed_guard.release()  # audit M8: always free the single-flight slot
 
 
 # ── Phase 9.6b: per-project correction dictionary ────────────────────────────
@@ -4259,12 +4263,9 @@ def recorrect(
     result = corrections.apply()
     embed_started = False
     if rebuild and result.get("media_updated"):
-        global _embed_rebuild_active
-        with _embed_rebuild_lock:  # audit M8: refuse concurrent rebuilds
-            if not _embed_rebuild_active:
-                _embed_rebuild_active = True
-                background_tasks.add_task(_rebuild_embeddings)
-                embed_started = True
+        if _embed_guard.acquire():  # audit M8: only start if no rebuild is running
+            background_tasks.add_task(_rebuild_embeddings)
+            embed_started = True
     return {"dry_run": False, **result, "embed_rebuild_started": embed_started}
 
 
@@ -4321,26 +4322,24 @@ def retranscribe_all(
     to the shared correction-backups first (RP-4 — restorable via the same
     revert)."""
     _assert_same_site(request)
-    global _retranscribe_active
     with db.get_conn() as conn:
         rows = conn.execute("SELECT id, path FROM media WHERE has_audio=1").fetchall()
     targets = [(r["id"], r["path"]) for r in rows]
     if not targets:
         return {"queued": 0, "message": "沒有含音訊的素材可重轉錄"}
-    with _retranscribe_lock:  # refuse concurrent batch runs (mirrors embed M8)
-        if _retranscribe_active:
-            raise HTTPException(409, "批次重轉錄已在進行中，請稍候")
-        # fable-audit 2026-07-12 (#11): this batch runs whisper IN-PROCESS over the
-        # whole library — it must also hold the shared H3 ingest slot, or a
-        # concurrent /api/ingest loads a second whisper → double-whisper OOM. The
-        # background worker releases it in its finally.
-        if not _acquire_ingest_slot():
-            raise HTTPException(409, "已有匯入任務進行中，請稍候")
-        _retranscribe_active = True
-        _retranscribe_progress.update({
-            "total": len(targets), "done": 0, "failed": 0,
-            "current": None, "running": True, "backup": None,
-        })
+    if not _retranscribe_guard.acquire():  # refuse concurrent batch runs (mirrors embed M8)
+        raise HTTPException(409, "批次重轉錄已在進行中，請稍候")
+    # fable-audit 2026-07-12 (#11): this batch runs whisper IN-PROCESS over the
+    # whole library — it must also hold the shared H3 ingest slot, or a concurrent
+    # /api/ingest loads a second whisper → double-whisper OOM. The background
+    # worker releases both in its finally; if the slot is busy we must free our own
+    # guard before bailing so a later retry isn't wrongly rejected.
+    if not _acquire_ingest_slot():
+        _retranscribe_guard.release()
+        raise HTTPException(409, "已有匯入任務進行中，請稍候")
+    _retranscribe_guard.reset_progress(
+        total=len(targets), done=0, failed=0, current=None, running=True, backup=None,
+    )
     background_tasks.add_task(_run_retranscribe_all, targets, body.language, body.backup)
     return {"queued": len(targets)}
 
@@ -4348,8 +4347,13 @@ def retranscribe_all(
 def _run_retranscribe_all(targets, language, backup):
     """Background worker: re-transcribe each target, preserving the single-clip
     guard (never blank a good transcript on an empty/failed decode — audit H1)."""
-    global _retranscribe_active
     import transcribe as tr
+    # The worker owns its progress lifecycle: seed a clean counter set at the start
+    # (the route also seeds it for the poll window before this task is scheduled).
+    _retranscribe_guard.reset_progress(
+        total=len(targets), done=0, failed=0, current=None, running=True, backup=None,
+    )
+    progress = _retranscribe_guard.progress  # in-place dict shared with the poller
     try:
         if backup:
             rows = []
@@ -4365,27 +4369,27 @@ def _run_retranscribe_all(targets, language, backup):
                     if r:
                         rows.append(dict(r))
             if rows:
-                _retranscribe_progress["backup"] = corrections._write_backup(
+                progress["backup"] = corrections._write_backup(
                     rows, [{"op": "retranscribe-all", "language": language}]
                 )
         for mid, path in targets:
-            _retranscribe_progress["current"] = mid
+            progress["current"] = mid
             media_path = _resolve_media_path(path or "")
             if not Path(media_path).exists():
-                _retranscribe_progress["failed"] += 1
-                _retranscribe_progress["done"] += 1
+                progress["failed"] += 1
+                progress["done"] += 1
                 continue
             try:
                 text, lang, segments, words = tr.transcribe(media_path, language=language)
             except Exception:
-                _retranscribe_progress["failed"] += 1
-                _retranscribe_progress["done"] += 1
+                progress["failed"] += 1
+                progress["done"] += 1
                 continue
             rec = db.get_record_by_id(mid) or {}
             # refuse to overwrite a good transcript with nothing (H1)
             if not (text or "").strip() and (rec.get("transcript") or "").strip():
-                _retranscribe_progress["failed"] += 1
-                _retranscribe_progress["done"] += 1
+                progress["failed"] += 1
+                progress["done"] += 1
                 continue
             _al = lang or language
             _sj = json.dumps(segments, ensure_ascii=False) if segments else None
@@ -4409,19 +4413,18 @@ def _run_retranscribe_all(targets, language, backup):
                     ),
                 )
                 db.upsert_transcript(mid, _al, text, _sj, _wj, _conn=conn)  # G2 archive
-            _retranscribe_progress["done"] += 1
+            progress["done"] += 1
     finally:
-        _retranscribe_progress["running"] = False
-        _retranscribe_progress["current"] = None
-        with _retranscribe_lock:
-            _retranscribe_active = False
+        progress["running"] = False
+        progress["current"] = None
+        _retranscribe_guard.release()
         _release_ingest_slot()  # fable-audit 2026-07-12 (#11): free the shared H3 slot
 
 
 @app.get("/api/retranscribe-all/status")
 def retranscribe_all_status(_tok: dict = Depends(require_scopes("projects_read"))):
     """Poll batch-retranscribe progress {total, done, failed, current, running, backup}."""
-    return dict(_retranscribe_progress)
+    return dict(_retranscribe_guard.progress)
 
 
 # ── Serve Frontend ───────────────────────────────────────────────────────────

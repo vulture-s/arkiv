@@ -197,8 +197,11 @@ def test_cache_clear_chromadb_invalidates_client_cache(fastapi_client, tmp_path,
     assert called["n"] == 1             # cached System dropped so a rebuild is seen
 
 
-def test_cache_clear_refuses_chromadb_during_embed_rebuild(fastapi_client, monkeypatch):
+def test_cache_clear_refuses_chromadb_during_embed_rebuild(fastapi_client):
     import server
-    monkeypatch.setattr(server, "_embed_rebuild_active", True)  # a rebuild is mid-flight
-    r = fastapi_client.post("/api/cache/clear", params={"target": "chromadb"})
-    assert r.status_code == 409
+    assert server._embed_guard.acquire()  # R5-22: a rebuild is mid-flight (state.SingleFlight)
+    try:
+        r = fastapi_client.post("/api/cache/clear", params={"target": "chromadb"})
+        assert r.status_code == 409
+    finally:
+        server._embed_guard.release()
