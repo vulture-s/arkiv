@@ -60,8 +60,11 @@ def test_server_no_longer_defines_proxy_handlers():
     assert "def _build_proxies" not in src
     assert not re.search(r"@app\.(get|post)\(\"/api/proxy", src)
     assert "include_router(proxy_router)" in src
-    # /api/stream stays in server.py and still uses the (re-exported) _proxy_ready
-    assert "def stream_media" in src
+    # /api/stream also consumes _proxy_ready; it lives in routers/misc.py (peeled
+    # after proxy) and imports _proxy_ready from pathres like the proxy routes do.
+    import routers.misc as rm
+    import pathres
+    assert rm._proxy_ready is pathres._proxy_ready
 
 
 def test_proxy_routes_mounted_and_auth_guarded(server_module):

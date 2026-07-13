@@ -150,6 +150,7 @@ from routers.analytics import router as analytics_router  # noqa: E402
 from routers.retranscribe import router as retranscribe_router  # noqa: E402
 from routers.proxy import router as proxy_router  # noqa: E402
 from routers.recorrect import router as recorrect_router  # noqa: E402
+from routers.misc import router as misc_router  # noqa: E402
 app.include_router(admin_router)
 app.include_router(settings_router)
 app.include_router(projects_router)
@@ -161,6 +162,7 @@ app.include_router(analytics_router)
 app.include_router(retranscribe_router)
 app.include_router(proxy_router)
 app.include_router(recorrect_router)
+app.include_router(misc_router)
 
 ROOT = Path(__file__).parent
 # Built Svelte SPA (frontend/dist). Gitignored — produced by `npm run build`.
@@ -1623,13 +1625,8 @@ def reingest_media(
 # (R5-25 / #51), re-exported at the top of this module.
 
 
-def _log_safe(text: str, limit: int) -> str:
-    """Strip control chars (newlines, ANSI/terminal escapes) and truncate, so a
-    value printed to the server terminal/log can't forge lines or fill disk."""
-    if not text:
-        return ""
-    cleaned = "".join(c for c in text if c == " " or (0x20 <= ord(c) < 0x7F) or ord(c) >= 0x80)
-    return cleaned[:limit]
+# _log_safe moved to routers/misc.py (R5-25 / #51) with its only caller,
+# /api/client-log.
 
 
 # _subtitle_ts / _subtitle_text / _edl_timecode / _start_tc_seconds /
@@ -2459,108 +2456,11 @@ async def ingest_media_ws(
 
 
 # ── Video Streaming ──────────────────────────────────────────────────────────
-
-import mimetypes
-
-# _proxy_ready moved to pathres.py (R5-25 / #51) — shared by /api/stream (below)
-# and the proxy routes (routers/proxy.py) — and re-exported at the top of this
-# module.
-
-
-@app.get("/api/stream/{media_id}")
-def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read"))):
-    """Stream a media file with range request support for seeking.
-    Serves H.264 proxy if available (for browser-incompatible codecs like ProRes/HEVC).
-    """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
-        raise HTTPException(404, "找不到媒體")
-    # Proxy filename is hash-scoped by absolute source path so that a
-    # proxies/ directory copied between installations cannot serve another
-    # user's content under the same media_id.
-    resolved_src = _resolve_media_path(rec["path"])
-    proxy_path = config.proxy_path_for(media_id, resolved_src)
-    if _proxy_ready(proxy_path):
-        return FileResponse(
-            path=str(proxy_path),
-            media_type="video/mp4",
-            filename=Path(resolved_src).stem + "_proxy.mp4",
-        )
-    file_path = Path(resolved_src)
-    if not file_path.exists():
-        raise HTTPException(404, "找不到檔案")
-    # Only serve known media extensions
-    if file_path.suffix.lower() not in MEDIA_EXTS:
-        raise HTTPException(403, "不是媒體檔案")
-
-    # Phase 7.7g: HEVC/ProRes 沒對應 proxy 時不要 silently 送原檔（Chrome/WKWebView
-    # 都播不出來，使用者只看到「無法播放」），改回 409 + JSON，前端可 surface
-    # 「需先建 proxy」的引導 + POST /api/proxy/build 觸發背景生成。
-    # tri-state: NEEDED → 409；NOT_NEEDED / UNKNOWN（ffprobe 失敗、binary 缺、
-    # NAS unreachable）→ fall through，維持送原檔的舊 fallback 行為。
-    # audit M24: use the codec persisted at ingest instead of re-running ffprobe
-    # on EVERY playback; only probe when the column is NULL (legacy rows) and
-    # backfill so the next play is probe-free. None (probe failed / audio-only)
-    # keeps the UNKNOWN fall-through behavior.
-    stored_codec = (rec.get("codec") or "").strip().lower() or None
-    if stored_codec is None:
-        stored_codec = codec.probe_codec(str(file_path))
-        if stored_codec:
-            try:
-                with db.get_conn() as conn:
-                    conn.execute("UPDATE media SET codec=? WHERE id=?", (stored_codec, media_id))
-            except Exception:
-                pass  # backfill is best-effort; playback must not fail on it
-    if stored_codec and stored_codec in codec.PROXY_CODECS:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "need_proxy": True,
-                "media_id": media_id,
-                "filename": rec.get("filename"),
-                "reason": "browser-incompatible codec (HEVC/ProRes); proxy required for playback",
-                "hint": "POST /api/proxy/build to queue proxy generation",
-            },
-        )
-
-    mime, _ = mimetypes.guess_type(str(file_path))
-    if not mime:
-        mime = "video/mp4"
-    return FileResponse(
-        path=str(file_path),
-        media_type=mime,
-        filename=file_path.name,
-    )
-
-
-# ── Proxy Management ─────────────────────────────────────────────────────────
-
-# PROXY_CODECS lives in codec.py — single source of truth.
-# The proxy routes (/api/proxy/status, /api/proxy/build, /api/proxy/build/{id})
-# plus the _build_proxies / _build_proxies_all background workers moved to
-# routers/proxy.py (R5-25 / #51), mounted via app.include_router below. The R5-22
-# (#59) single-flight guard is shared from state.py.
-
-
-@app.post("/api/embed/rebuild")
-def embed_rebuild(request: Request, background_tasks: BackgroundTasks, _tok: dict = Depends(require_scopes("ingest_write"))):
-    """Drop + rebuild the ChromaDB semantic index from all media.
-    Wired to 進階設定 → 搜尋引擎 → 「重建向量索引」button."""
-    _assert_same_site(request)  # audit M14
-    with db.get_conn() as conn:
-        total = conn.execute("SELECT count(*) FROM media").fetchone()[0]
-    if not total:
-        return {"message": "尚無素材可建立索引", "queued": 0}
-    if not _embed_guard.acquire():  # audit M8: refuse concurrent rebuilds
-        raise HTTPException(409, "向量索引重建已在進行中，請稍候")
-    background_tasks.add_task(_rebuild_embeddings)
-    return {"message": f"開始重建向量索引（{total} 筆素材，背景執行）", "queued": total}
-
-
-# _rebuild_embeddings moved to state.py (R5-25 / #51, ROOT→config.BASE_DIR) so
-# /api/embed/rebuild (above) and the /api/recorrect rebuild chain
-# (routers/recorrect.py) share ONE worker + the ONE embed_rebuild guard. Re-exported
-# at the top of this module for the embed_rebuild route + backward compat.
+#
+# /api/stream (+ /api/embed/rebuild, /api/open-file, /api/client-log with its
+# _log_safe sanitiser) moved to routers/misc.py (R5-25 / #51), mounted via
+# app.include_router below. _rebuild_embeddings lives in state.py (shared by the
+# embed route + the recorrect rebuild chain), re-exported at the top of this module.
 
 
 # ── Phase 9.6b: per-project correction dictionary ────────────────────────────
@@ -2597,72 +2497,6 @@ def _load_index() -> str:
         "<h1>arkiv</h1><p>UI build not found. Run "
         "<code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code>.</p>"
     )
-
-class OpenFileRequest(BaseModel):  # audit M22: malformed JSON → clean 422, not a raw 500
-    path: str
-    reveal: bool = False
-
-
-@app.post("/api/open-file")
-def open_file(
-    body: OpenFileRequest,
-    _tok: dict = Depends(require_scopes("videos_write")),
-):
-    """Open file in OS default app or reveal in file manager. Only allows known media files from DB.
-
-    Requires videos_write: launching an OS app / revealing a file is a privileged
-    side effect on the host. Loopback is token-free (full scope); a remote
-    read-only browse token is correctly refused.
-    """
-    import subprocess, platform
-    file_path = body.path
-    reveal = body.reveal
-    # Validate: only allow paths that exist in our database
-    if not db.is_processed(file_path):
-        raise HTTPException(403, "只能開啟已索引的媒體檔案")
-    resolved_path = _resolve_media_path(file_path)
-    if not Path(resolved_path).exists():
-        raise HTTPException(404, "找不到檔案")
-    system = platform.system()
-    if reveal:
-        if system == "Darwin":
-            subprocess.Popen(["open", "-R", resolved_path])
-        elif system == "Windows":
-            subprocess.Popen(["explorer", "/select,", resolved_path])
-        else:
-            subprocess.Popen(["xdg-open", str(Path(resolved_path).parent)])
-    else:
-        if system == "Darwin":
-            subprocess.Popen(["open", resolved_path])
-        elif system == "Windows":
-            os.startfile(resolved_path)
-        else:
-            subprocess.Popen(["xdg-open", resolved_path])
-    return {"ok": True}
-
-
-class ClientLogRequest(BaseModel):
-    # audit M22: the model's job is turning malformed JSON into a 422 instead of
-    # a raw 500. Fields stay Any (the WebView occasionally logs non-string
-    # payloads); the handler stringifies + sanitizes as before.
-    level: Any = "info"
-    msg: Any = ""
-
-
-@app.post("/api/client-log")
-def client_log(body: ClientLogRequest):
-    """Receive client-side logs (errors, info) and print to server terminal.
-
-    Stays unauthenticated (the WebView logs diagnostics, sometimes before a token
-    is wired), but the attacker-controlled fields are sanitized + truncated:
-    control chars (newlines / ANSI terminal escapes) are stripped so a remote
-    caller can't forge log lines or corrupt the operator's terminal, and lengths
-    are capped so it can't be used to fill a redirected logfile.
-    """
-    level = _log_safe(str(body.level if body.level is not None else "info").upper(), 16)
-    msg = _log_safe(str(body.msg if body.msg is not None else ""), 2000)
-    print(f"[WebView {level}] {msg}", flush=True)
-    return {"ok": True}
 
 
 @app.get("/", response_class=HTMLResponse)
