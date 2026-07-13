@@ -59,11 +59,19 @@
 
   async function select(id) {
     activeId = id
+    detail = null
     loading = true
     try {
-      detail = await api.getBin(id)
-    } catch (e) { pushToast('讀取精選集失敗: ' + e.message, 'error'); detail = null }
-    loading = false
+      const d = await api.getBin(id)
+      // round-5 #35: ignore a stale response — if the user clicked another bin
+      // while this one's (slow NAS) detail was in flight, activeId has moved on and
+      // assigning would show bin A's items under bin B (and mutations would hit the
+      // wrong bin). Mirrors MainLive.fetchDetail's guard.
+      if (activeId === id) detail = d
+    } catch (e) {
+      if (activeId === id) { pushToast('讀取精選集失敗: ' + e.message, 'error'); detail = null }
+    }
+    if (activeId === id) loading = false
   }
 
   async function create() {
