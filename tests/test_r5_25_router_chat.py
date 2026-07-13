@@ -55,8 +55,11 @@ def test_server_no_longer_defines_chat_handlers():
     assert "def _chat_owner_filter" not in src
     assert not re.search(r"@app\.(get|post)\(\"/api/chat", src)
     assert "include_router(chat_router)" in src
-    # _split_csv (used by search) must NOT have been dragged along
-    assert "def _split_csv" in src
+    # _split_csv (used by search) must NOT have been dragged into the chat router;
+    # it later moved to routers/search.py with /api/search/all (R5-25 search peel).
+    import routers.search
+    assert hasattr(routers.search, "_split_csv")
+    assert "def _split_csv" not in src
 
 
 def test_chat_routes_mounted_and_auth_guarded(server_module):
