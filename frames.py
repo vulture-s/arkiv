@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import config
+import mediatypes
 
 THUMBNAILS_DIR = config.THUMBNAILS_DIR
 
@@ -17,7 +18,7 @@ THUMBNAILS_DIR = config.THUMBNAILS_DIR
 # the raw fisheye buries the wearer + on-screen text (event name, bib #) in the
 # distorted edge and the VLM reads nothing; the equirect stitch surfaces them. 360
 # frames extract larger (1024px vs the normal 320px) so reprojected detail survives.
-_FISHEYE_360_EXT = {".insv", ".360"}
+_FISHEYE_360_EXT = mediatypes.VIDEO_360_EXT  # R5-24: shared source of truth
 _V360_360_FILTER = "v360=dfisheye:equirect:ih_fov=193:iv_fov=193"
 _360_SCALE = "scale=1024:-1"
 _NORMAL_SCALE = "scale=320:-1"

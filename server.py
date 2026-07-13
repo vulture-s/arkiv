@@ -30,6 +30,7 @@ import config
 import corrections
 import db
 import federation
+import mediatypes
 import projects as project_registry
 import settings as settings_store
 import smart_collections
@@ -1114,9 +1115,10 @@ def media_pool(
 
 
 # audit H14: ext buckets mirror db._build_filter_clause's media_type sets so the
-# search branch applies the SAME filter the SQL (non-search) path does.
-_VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".insv", ".360"})
-_AUDIO_EXTS = frozenset({".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"})
+# search branch applies the SAME filter the SQL (non-search) path does. R5-24:
+# both now come from the shared mediatypes source, so they can't drift apart.
+_VIDEO_EXTS = mediatypes.VIDEO_EXT
+_AUDIO_EXTS = mediatypes.AUDIO_EXT
 
 
 def _get_tags_bulk(media_ids) -> dict:
@@ -2224,9 +2226,9 @@ def _ingest_cmd_opts(body: "IngestRequest") -> list:
 class ScanRequest(BaseModel):
     path: str
 
-MEDIA_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".insv", ".360", ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
-VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".insv", ".360"}
-AUDIO_EXTS = {".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
+MEDIA_EXTS = mediatypes.MEDIA_EXT
+VIDEO_EXTS = mediatypes.VIDEO_EXT
+AUDIO_EXTS = mediatypes.AUDIO_EXT
 assert VIDEO_EXTS | AUDIO_EXTS == MEDIA_EXTS  # the two must partition MEDIA_EXTS
 # camera raw / stills the ingest pipeline does not process — surfaced in the scan
 # manifest as "skipped" so the redesign's setup dialog (op-01) can show what will
