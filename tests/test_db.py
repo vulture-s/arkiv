@@ -237,5 +237,5 @@ def test_db_file_is_owner_only(tmp_db):
     db = importlib.import_module("db")
     with db.get_conn() as conn:
         conn.execute("SELECT 1")
-    mode = stat.S_IMODE(os.stat(db.DB_PATH).st_mode)
+    mode = stat.S_IMODE(os.stat(db.get_db_path()).st_mode)
     assert mode & 0o077 == 0, f"DB world/group-accessible: {oct(mode)}"

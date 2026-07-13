@@ -288,7 +288,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args = parser.parse_args(argv)
     if args.db:
-        db.DB_PATH = Path(args.db)
+        db.set_db_path(Path(args.db))  # R5-23 (#54): via SSOT accessor, not a raw rebind
 
     if args.cmd == "corpus":
         _emit(build_corpus(args.lang), args.out)

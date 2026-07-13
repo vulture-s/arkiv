@@ -89,13 +89,19 @@ def _release_offload_slot(key: str) -> None:
 
 
 # ── Init ─────────────────────────────────────────────────────────────────────
-db.init_db()
+# R5-23 (#53): DB init + log-filter install are SIDE EFFECTS and must NOT fire at
+# import time — a transitional `import server` (e.g. during the APIRouter split, a
+# tooling import, or a test collection) used to create .arkiv/ and run migrations
+# against the env-configured PRODUCTION db before any preflight ran. They now run
+# in _lifespan, so they fire on real app startup only. TestClient enters the
+# lifespan via its context manager, so the fixtures keep working.
 
 # Redact `?token=` from uvicorn access logs. /api/stream accepts the token as a
 # query param (a <video src> can't send a header), and uvicorn's default access
 # log records the full request line incl. query string → the raw token would be
 # written to stdout / any redirected logfile. This filter scrubs it everywhere
-# the access logger formats a request path.
+# the access logger formats a request path. (Class defined at import; INSTALLED in
+# _lifespan so a bare import doesn't mutate global logging state.)
 import logging as _logging
 import re as _re
 _TOKEN_QS = _re.compile(r"(token=)[^&\s\"']+")
@@ -110,13 +116,21 @@ class _RedactTokenFilter(_logging.Filter):
         except Exception:
             pass
         return True
-_logging.getLogger("uvicorn.access").addFilter(_RedactTokenFilter())
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    db.init_db()  # R5-23 (#53): create/migrate the db on startup, not at import
+    _install_token_redaction_filter()
     _bootstrap_admin_token()  # late-bound; defined below near the admin routes
     yield
     # no shutdown work today; add teardown after the yield when needed
+
+
+def _install_token_redaction_filter() -> None:
+    # Idempotent: never stack a second filter if the app is (re)started in-process.
+    logger = _logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _RedactTokenFilter) for f in logger.filters):
+        logger.addFilter(_RedactTokenFilter())
 
 app = FastAPI(title="Media Asset Manager API", lifespan=_lifespan)
 _ALLOWED_ORIGINS = [
@@ -1711,7 +1725,8 @@ def get_stats(
     # effort: a stat() failure (e.g. path vanished) must not 500 the dashboard.
     try:
         import shutil
-        du = shutil.disk_usage(config.DB_PATH.parent if config.DB_PATH else ROOT)
+        _db_path = db.get_db_path()  # R5-23 (#54): SSOT accessor, not config value
+        du = shutil.disk_usage(_db_path.parent if _db_path else ROOT)
         stats["disk"] = {
             "used_gb": round(du.used / 1e9, 1),
             "total_gb": round(du.total / 1e9, 1),

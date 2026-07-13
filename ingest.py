@@ -1438,7 +1438,7 @@ def main():
         parser.error("--dir (or --files) is required unless using --migrate-storage / --migrate-relative / --regenerate-proxies / --vision-only")
 
     if args.db:
-        db.DB_PATH = Path(args.db)
+        db.set_db_path(Path(args.db))  # R5-23 (#54): via SSOT accessor, not a raw rebind
 
     # --migrate-storage runs BEFORE db.init_db() because it creates the
     # storage layout (BASE_DIR/.arkiv/) that init_db needs. Other maintenance
@@ -1927,7 +1927,7 @@ def main():
 
     _moved_suffix = f"  moved={moved}" if moved else ""
     print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}{_moved_suffix}")
-    print(f"DB: {db.DB_PATH}")
+    print(f"DB: {db.get_db_path()}")
 
     # Auto-build the vector index so semantic search + chat work immediately.
     # ingest writes SQLite records; embeddings live in ChromaDB and were a

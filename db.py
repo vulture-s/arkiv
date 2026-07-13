@@ -8,14 +8,39 @@ from typing import Dict, List, Optional, Tuple
 
 import config as _config
 import mediatypes
-from config import DB_PATH
 
 from contextlib import contextmanager
 
 
+# R5-23 (#54): the DB path is a SINGLE source of truth reached ONLY through
+# get_db_path()/set_db_path(). Previously db.py did `from config import DB_PATH`
+# (a frozen value copy) while `--db` rebound db.DB_PATH and health/server read
+# config.DB_PATH — so a `--db` run preflighted the DEFAULT db while writing the
+# backup db (a silent mixed-database run). Now `--db` calls set_db_path() and
+# every reader calls get_db_path(); a lint test forbids value imports of DB_PATH.
+# The override defaults to None → we follow config.DB_PATH dynamically, so a test
+# that monkeypatches config.DB_PATH is honored without a second knob.
+_db_path_override: Optional[Path] = None
+
+
+def get_db_path() -> Path:
+    """The one true DB path. An explicit set_db_path()/--db override wins;
+    otherwise follow config.DB_PATH so an env/config change is picked up live."""
+    return _db_path_override if _db_path_override is not None else _config.DB_PATH
+
+
+def set_db_path(path) -> Path:
+    """Point every db.get_conn() (and every reader routed through get_db_path())
+    at `path`. Pass None to fall back to config.DB_PATH."""
+    global _db_path_override, _init_done_for
+    _db_path_override = Path(path) if path is not None else None
+    _init_done_for = None  # force re-init against the new location on next open
+    return get_db_path()
+
+
 # audit L14: once-only init — the parent-dir check + double chmod used to run
 # on EVERY connection, multiplying syscalls on N+1-heavy call paths. Keyed on
-# the DB path (not a plain bool) so tests / `--db` that rebind db.DB_PATH at
+# the DB path (not a plain bool) so tests / `--db` that switch the path at
 # runtime still re-init for the new location.
 _init_done_for: Optional[str] = None
 
@@ -23,13 +48,14 @@ _init_done_for: Optional[str] = None
 @contextmanager
 def get_conn():
     global _init_done_for
-    first_open = _init_done_for != str(DB_PATH)
+    db_path = get_db_path()
+    first_open = _init_done_for != str(db_path)
     if first_open:
         # Ensure the DB's parent dir exists. On a fresh clone the .arkiv/ data dir
-        # doesn't exist yet, and server.py calls init_db() at import → sqlite would
+        # doesn't exist yet, and init_db() at startup would otherwise make sqlite
         # raise "unable to open database file". Covers every DB-opening path
         # (server / ingest / embed / tests), not just server startup.
-        parent = Path(DB_PATH).expanduser().parent
+        parent = Path(db_path).expanduser().parent
         if parent and not parent.exists():
             parent.mkdir(parents=True, exist_ok=True)
             # Only tighten a dir WE just created — never an existing (possibly shared)
@@ -38,7 +64,7 @@ def get_conn():
                 os.chmod(parent, 0o700)
             except OSError:
                 pass
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = sqlite3.connect(db_path, timeout=30)
     # audit M6: SQLite ships with foreign_keys OFF per-connection, so every
     # ON DELETE CASCADE in the schema was dead — revoking a token or deleting
     # media left orphan child rows. init_db() clears pre-existing orphans via
@@ -48,10 +74,10 @@ def get_conn():
         # Our own token-hash DB file — keep it owner-only on shared hosts.
         # Best-effort (no-op / may fail on Windows).
         try:
-            os.chmod(DB_PATH, 0o600)
+            os.chmod(db_path, 0o600)
         except OSError:
             pass
-        _init_done_for = str(DB_PATH)
+        _init_done_for = str(db_path)
     conn.row_factory = sqlite3.Row
     try:
         yield conn

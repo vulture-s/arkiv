@@ -122,8 +122,10 @@ def tmp_db(tmp_path, monkeypatch):
     config = importlib.import_module("config")
     db = importlib.import_module("db")
     db_path = tmp_path / "test.db"
+    # R5-23 (#54): db.get_db_path() follows config.DB_PATH when no --db override is
+    # set, so monkeypatching config.DB_PATH alone points the whole stack at the tmp
+    # db (the old separate `db.DB_PATH` value copy is gone).
     monkeypatch.setattr(config, "DB_PATH", db_path)
-    monkeypatch.setattr(db, "DB_PATH", db_path)
     db.init_db()
     return db_path
 
