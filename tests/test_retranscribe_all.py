@@ -46,9 +46,9 @@ def test_batch_updates_all_and_backup_reverts(srv, tmp_path, monkeypatch):
 
     srv._run_retranscribe_all([(id1, p1), (id2, p2)], None, True)
 
-    assert srv._retranscribe_progress["done"] == 2
-    assert srv._retranscribe_progress["failed"] == 0
-    assert srv._retranscribe_progress["backup"]
+    assert srv._retranscribe_guard.progress["done"] == 2
+    assert srv._retranscribe_guard.progress["failed"] == 0
+    assert srv._retranscribe_guard.progress["backup"]
     with db.get_conn() as conn:
         got = [r["transcript"] for r in conn.execute("SELECT transcript FROM media ORDER BY id")]
     assert got == ["新的逐字稿", "新的逐字稿"]
@@ -69,8 +69,8 @@ def test_batch_guard_never_blanks_good_transcript(srv, tmp_path, monkeypatch):
 
     srv._run_retranscribe_all([(id1, p1)], None, False)
 
-    assert srv._retranscribe_progress["failed"] == 1
-    assert srv._retranscribe_progress["done"] == 1
+    assert srv._retranscribe_guard.progress["failed"] == 1
+    assert srv._retranscribe_guard.progress["done"] == 1
     with db.get_conn() as conn:
         kept = conn.execute("SELECT transcript FROM media WHERE id=?", (id1,)).fetchone()["transcript"]
     assert kept == "務必保留這段"  # untouched
@@ -87,7 +87,7 @@ def test_batch_missing_file_counts_failed(srv, tmp_path, monkeypatch):
         gid = cur.lastrowid
     monkeypatch.setattr(transcribe, "transcribe", lambda path, language=None: ("x", "zh", [], []))
     srv._run_retranscribe_all([(gid, "/no/such/file.wav")], None, False)
-    assert srv._retranscribe_progress["failed"] == 1
+    assert srv._retranscribe_guard.progress["failed"] == 1
     with db.get_conn() as conn:
         assert conn.execute("SELECT transcript FROM media WHERE id=?", (gid,)).fetchone()["transcript"] == "原文"
 
@@ -117,12 +117,12 @@ def test_api_refuses_concurrent_run(fastapi_client, server_module, tmp_path, mon
     config = importlib.import_module("config")
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
     _seed_audio(tmp_path, "丙")
-    server_module._retranscribe_active = True  # pretend a batch is mid-flight
+    assert server_module._retranscribe_guard.acquire()  # pretend a batch is mid-flight
     try:
         r = fastapi_client.post("/api/retranscribe-all", json={})
         assert r.status_code == 409
     finally:
-        server_module._retranscribe_active = False
+        server_module._retranscribe_guard.release()
 
 
 def test_batch_backup_and_revert_restore_lang(srv, tmp_path, monkeypatch):

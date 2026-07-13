@@ -18,6 +18,68 @@ from typing import Set
 
 from fastapi import WebSocket
 
+
+# ── Named single-flight guards ────────────────────────────────────────────────
+# R5-22 (#52): embed-rebuild / retranscribe used bare module-global bools
+# (`_embed_rebuild_active` etc.) rebound via `global` inside route handlers. Once
+# the APIRouter split moves those routes into their own modules, `from server
+# import _embed_rebuild_active` would import a FROZEN COPY of the bool — the
+# importing router's guard reads False forever and the single-flight is silently
+# dead (embed has no ingest-slot backstop). Wrapping the flag in an OBJECT means a
+# router imports ONE live instance; acquire()/release() mutate it in place, and
+# the progress dict is mutated in place too, so a poller holding the same dict
+# sees updates. This is the mutable-container refactor state.py's header deferred.
+class SingleFlight:
+    """A named, thread-safe single-flight slot with an in-place progress dict."""
+
+    def __init__(self, name):
+        self.name = name
+        self._lock = _threading.Lock()
+        self._active = False
+        self.progress = {}
+
+    def acquire(self):
+        """Reserve the slot. True if reserved, False if already held."""
+        with self._lock:
+            if self._active:
+                return False
+            self._active = True
+            return True
+
+    def release(self):
+        with self._lock:
+            self._active = False
+
+    @property
+    def active(self):
+        with self._lock:
+            return self._active
+
+    def reset_progress(self, **fields):
+        """Replace the progress dict CONTENTS in place (never rebind), so a
+        reference already handed to a poller keeps pointing at live data."""
+        self.progress.clear()
+        self.progress.update(fields)
+
+
+# audit M8: single-flight for the embed rebuild — double-clicking 「重建向量索引」
+# used to launch N concurrent drop+rebuild subprocesses over the same Chroma
+# collection. Shared by /api/embed/rebuild and the recorrect rebuild chain.
+embed_rebuild = SingleFlight("embed_rebuild")
+
+# Phase 9.6d: project-wide batch retranscribe (single-flight + progress poll).
+# Seed the poll shape so GET /api/retranscribe-all/status returns the full dict
+# even before the first run (parity with the old module-global default).
+retranscribe = SingleFlight("retranscribe")
+retranscribe.reset_progress(
+    total=0, done=0, failed=0, current=None, running=False, backup=None,
+)
+
+# R5-22 (#59): /api/proxy/build had NO single-flight (unlike its embed/retranscribe
+# siblings) — a double-click launched parallel full-library ffmpeg loops and
+# mid-build playback streamed truncated proxies.
+proxy_build = SingleFlight("proxy_build")
+
 # ── Ingest single-flight guard ────────────────────────────────────────────────
 # One guard for ALL ingest entry points (REST /api/ingest, reingest, WS, bin-copy,
 # retranscribe-all) so two full pipelines can't run at once → DB-lock contention +
