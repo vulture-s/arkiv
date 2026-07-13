@@ -152,6 +152,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# R5-25 / #51 router split: route groups peeled from this module into focused
+# APIRouter modules under routers/, mounted here. Each is self-contained (imports
+# auth/admin/db/state/… + the leaf service modules directly — no server import).
+from routers.admin import router as admin_router  # noqa: E402
+app.include_router(admin_router)
+
 ROOT = Path(__file__).parent
 # Built Svelte SPA (frontend/dist). Gitignored — produced by `npm run build`.
 FRONTEND_DIST = ROOT / "frontend" / "dist"
@@ -322,12 +328,8 @@ class BinCopyRequest(BaseModel):
     no_embed: bool = False
 
 
-class CreateTokenRequest(BaseModel):
-    name: str
-    scopes: List[str]
-    description: Optional[str] = None
-    expires_in_days: Optional[int] = None
-    allowed_ips: Optional[List[str]] = None
+# CreateTokenRequest + the /api/admin/tokens handlers moved to routers/admin.py
+# (R5-25 / #51 router split), mounted via app.include_router below.
 
 
 class ChatRequest(BaseModel):
@@ -3232,54 +3234,6 @@ def export_timeline(
         media_type="application/xml; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="arkiv-timeline.fcpxml"'},
     )
-
-
-# ── Admin Tokens ─────────────────────────────────────────────────────────────
-
-
-@app.post("/api/admin/tokens")
-def admin_create_token(
-    req: CreateTokenRequest,
-    _tok: dict = Depends(require_scopes("admin")),
-):
-    try:
-        return admin.create_token(
-            name=req.name,
-            scopes=req.scopes,
-            description=req.description,
-            expires_in_days=req.expires_in_days,
-            allowed_ips=req.allowed_ips,
-        )
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-
-@app.get("/api/admin/tokens")
-def admin_list_tokens(
-    _tok: dict = Depends(require_scopes("admin")),
-):
-    return {"tokens": admin.list_tokens()}
-
-
-@app.get("/api/admin/tokens/{token_id}")
-def admin_get_token(
-    token_id: str,
-    _tok: dict = Depends(require_scopes("admin")),
-):
-    token = admin.get_token(token_id)
-    if not token:
-        raise HTTPException(404, "Token not found")
-    return token
-
-
-@app.delete("/api/admin/tokens/{token_id}")
-def admin_revoke_token(
-    token_id: str,
-    _tok: dict = Depends(require_scopes("admin")),
-):
-    if not admin.revoke_token(token_id):
-        raise HTTPException(404, "Token not found")
-    return {"ok": True, "deleted": token_id}
 
 
 # ── WebSocket: Ingest Progress ───────────────────────────────────────────
