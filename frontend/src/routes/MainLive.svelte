@@ -22,6 +22,14 @@
   let state = 'loading' // loading | ok | error
   let err = ''
   let items = []
+  // R5-20 (#37): the grid used to cap at 500 with no indicator — clips 501+ were
+  // unreachable from browse. `total` is the server-side pool count; `moreParams`
+  // holds the request to re-issue with an incrementing offset (null = fully
+  // loaded / not a paginated view, e.g. a Smart Collection or deep-link subset).
+  const PAGE = 500
+  let total = 0
+  let moreParams = null
+  let loadingMore = false
   let stats = null
   let selectedId = null
   let hoverId = null
@@ -172,10 +180,12 @@
     state = 'loading'
     try {
       const [s, m, t, c] = await Promise.all([
-        api.getStats(), api.getMedia({ limit: 500 }), api.getTags(), api.getCollections(),
+        api.getStats(), api.getMedia({ limit: PAGE }), api.getTags(), api.getCollections(),
       ])
       stats = s
       items = (m.items || []).map(toCard)
+      total = m.total ?? items.length
+      moreParams = { limit: PAGE }
       liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
       liveCollections = (c?.collections || []).map((col) => ({
         key: col.key, title: col.title, count: col.count,
@@ -186,6 +196,26 @@
     } catch (e) {
       state = 'error'
       err = e.message + (e.body ? ' · ' + JSON.stringify(e.body) : '')
+    }
+  }
+
+  // R5-20 (#37): fetch the next offset page for the current view and append.
+  // `moreParams` carries the same filters as the originating request; the id
+  // dedupe guard keeps a concurrent ingest that shifts the window from
+  // double-inserting a row. Silent failure was the B11 anti-pattern — surface it.
+  async function loadMore() {
+    if (!moreParams || loadingMore || items.length >= total) return
+    loadingMore = true
+    try {
+      const r = await api.getMedia({ ...moreParams, offset: items.length })
+      const seen = new Set(items.map((x) => x.id))
+      const more = (r.items || []).map(toCard).filter((x) => !seen.has(x.id))
+      items = [...items, ...more]
+      total = r.total ?? total
+    } catch (e) {
+      pushToast(`載入更多失敗: ${e.message}`, 'error')
+    } finally {
+      loadingMore = false
     }
   }
 
@@ -236,6 +266,9 @@
       thumb: it.thumb || null, // already a root-relative /thumbnails/<name> path
       _raw: it,
     }))
+    // Collections arrive fully classified server-side (no cap) → nothing more to page.
+    total = items.length
+    moreParams = null
     selectedId = items.length ? items[0].id : null
   }
 
@@ -267,8 +300,10 @@
       // Same-DB search via /api/media?q= → {items, total, search:true}.
       // NOT /api/search/all — that's cross-project federation over the
       // ~/.arkiv-projects.json registry, which is empty here → 0 results.
-      const r = await api.getMedia({ q: query, limit: 500 })
+      const r = await api.getMedia({ q: query, limit: PAGE })
       items = (r.items || []).map(toCard)
+      total = r.total ?? items.length
+      moreParams = { q: query, limit: PAGE }
       selectedId = items.length ? items[0].id : null
       state = 'ok'
     } catch (e) {
@@ -301,10 +336,13 @@
       // deep-link path leaves stats=null and the whole sidebar (projects + pools)
       // silently falls back to mock data. Grid items come from the ?ids= subset.
       const [s, m, t, c] = await Promise.all([
-        api.getStats(), api.getMedia({ ids, limit: 500 }), api.getTags(), api.getCollections(),
+        api.getStats(), api.getMedia({ ids, limit: PAGE }), api.getTags(), api.getCollections(),
       ])
       stats = s
       items = (m.items || []).map(toCard)
+      // A deep-link ?ids= subset is exactly the returned rows — no further pages.
+      total = items.length
+      moreParams = null
       liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
       liveCollections = (c?.collections || []).map((col) => ({
         key: col.key, title: col.title, count: col.count, items: col.items || [],
@@ -701,6 +739,15 @@
             {/each}
           </div>
         {/if}
+
+        {#if state === 'ok' && moreParams && items.length < total}
+          <div class="loadmore">
+            <Mono dim>顯示 {items.length} / {total} 支</Mono>
+            <button class="ak-btn" on:click={loadMore} disabled={loadingMore}>
+              {loadingMore ? '載入中…' : `載入更多 (+${Math.min(PAGE, total - items.length)})`}
+            </button>
+          </div>
+        {/if}
       </div>
     </main>
 
@@ -779,6 +826,7 @@
   .lthumbph.audio { background: repeating-linear-gradient(90deg, var(--rule-hi) 0 2px, transparent 2px 4px); }
 
   .msg { padding: 40px 22px; display: flex; flex-direction: column; gap: 8px; }
+  .loadmore { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 20px 22px; border-top: 1px solid var(--rule); }
   .exportbar {
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
     padding: 9px 22px; border-bottom: 1px solid var(--rule); background: var(--surface-2);
