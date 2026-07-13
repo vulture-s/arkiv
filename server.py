@@ -903,41 +903,50 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
                                    "error": "已有匯入任務進行中，已複製檔案但略過索引；請稍後手動 ingest"},
                                   ensure_ascii=False) + "\n"
             else:
-                yield _json.dumps({"type": "index", "status": "start", "files": len(ingest_paths)},
-                                  ensure_ascii=False) + "\n"
-                # Run ingest AS the dest project: ARKIV_PROJECT_ROOT=dest_root so paths
-                # relativize against the dest, not the server's own project. In
-                # reference mode the sources sit OUTSIDE dest_root, so this stores an
-                # absolute media.path (resolvable from the dest); in copy mode the
-                # copied files sit under dest_root/media, so they store relative. cwd
-                # points at the dest .arkiv so ingest's bench_ingest.json / state don't
-                # dirty the install dir (mirrors /api/offload's state_cwd).
-                ingest_env = dict(os.environ)
-                ingest_env["ARKIV_PROJECT_ROOT"] = str(dest_root)
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                        text=True, bufsize=1, env=ingest_env,
-                                        cwd=str(dest_root / ".arkiv"))
+                # fable-audit round-5 #58: the slot is now held. The FIRST yield below
+                # and the Popen sit BEFORE the inner try, so a GeneratorExit at that
+                # yield (client disconnects) or a Popen failure used to escape the
+                # release → every ingest endpoint 409s until restart. Wrap everything
+                # from here in an outer try whose finally always releases the slot.
+                proc = None
                 try:
-                    for line in proc.stdout:
-                        yield _json.dumps({"type": "log", "line": line.rstrip("\n")}, ensure_ascii=False) + "\n"
-                    proc.wait()
-                except GeneratorExit:
-                    # fable-audit 2026-07-12 (#6/#7): client disconnected — terminate
-                    # the child (mirrors offload_run) so a multi-minute whisper/vision
-                    # pass doesn't run orphaned with the slot held.
-                    proc.terminate()
+                    yield _json.dumps({"type": "index", "status": "start", "files": len(ingest_paths)},
+                                      ensure_ascii=False) + "\n"
+                    # Run ingest AS the dest project: ARKIV_PROJECT_ROOT=dest_root so
+                    # paths relativize against the dest, not the server's own project.
+                    # In reference mode the sources sit OUTSIDE dest_root, so this
+                    # stores an absolute media.path (resolvable from the dest); in copy
+                    # mode the copied files sit under dest_root/media, so they store
+                    # relative. cwd points at the dest .arkiv so ingest's
+                    # bench_ingest.json / state don't dirty the install dir (mirrors
+                    # /api/offload's state_cwd).
+                    ingest_env = dict(os.environ)
+                    ingest_env["ARKIV_PROJECT_ROOT"] = str(dest_root)
+                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                            text=True, bufsize=1, env=ingest_env,
+                                            cwd=str(dest_root / ".arkiv"))
                     try:
-                        proc.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
+                        for line in proc.stdout:
+                            yield _json.dumps({"type": "log", "line": line.rstrip("\n")}, ensure_ascii=False) + "\n"
                         proc.wait()
-                    raise
+                    except GeneratorExit:
+                        # fable-audit 2026-07-12 (#6/#7): client disconnected —
+                        # terminate the child (mirrors offload_run) so a multi-minute
+                        # whisper/vision pass doesn't run orphaned with the slot held.
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait()
+                        raise
+                    finally:
+                        if proc.stdout and not proc.stdout.closed:
+                            proc.stdout.close()
+                    yield _json.dumps({"type": "index", "status": "done", "code": proc.returncode},
+                                      ensure_ascii=False) + "\n"
                 finally:
-                    if proc.stdout and not proc.stdout.closed:
-                        proc.stdout.close()
                     _release_ingest_slot()
-                yield _json.dumps({"type": "index", "status": "done", "code": proc.returncode},
-                                  ensure_ascii=False) + "\n"
 
         # ── bootstrap: register the new project (path now exists) ──
         if body.create_new:

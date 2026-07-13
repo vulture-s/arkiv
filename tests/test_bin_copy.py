@@ -263,6 +263,44 @@ def test_copy_into_existing_project(fastapi_client, tmp_path, monkeypatch):
     assert done["copied"] == 1 and done["dest"] == "已存在專案"
 
 
+def test_copy_bin_releases_slot_when_popen_fails(fastapi_client, tmp_path, monkeypatch):
+    """fable-audit round-5 #58: the ingest slot is acquired before the index-phase
+    Popen. If Popen raises (or the client disconnects at the first yield), the slot
+    must STILL be released — pre-fix it leaked and every ingest endpoint 409'd until
+    restart."""
+    import server
+    bins = _setup(tmp_path, monkeypatch)
+
+    src = tmp_path / "src" / "clip.mp4"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"x")
+    _stub_resolve(monkeypatch, {
+        ("libA", "1"): {"status": "ok", "absolute_path": str(src), "filename": "clip.mp4"},
+    })
+    b = bins.create_bin("slotbin")
+    bins.add_items(b.id, [{"project_name": "libA", "media_id": "1", "filename": "clip.mp4"}])
+
+    assert server._acquire_ingest_slot() is True  # confirm free, then release for the run
+    server._release_ingest_slot()
+
+    def boom(*a, **k):
+        raise OSError("popen failed during index phase")
+    monkeypatch.setattr(subprocess, "Popen", boom)
+
+    try:
+        fastapi_client.post(
+            "/api/bins/{0}/copy".format(b.id),
+            json={"dest": str(tmp_path / "np"), "create_new": True, "mode": "reference",
+                  "skip_vision": True, "no_embed": True},
+        )
+    except Exception:
+        pass  # the stream errors out — that's fine; the slot must be free regardless
+
+    # the slot was released despite the Popen failure (not wedged)
+    assert server._acquire_ingest_slot() is True
+    server._release_ingest_slot()
+
+
 def test_copy_unknown_dest_project_400(fastapi_client, tmp_path, monkeypatch):
     bins = _setup(tmp_path, monkeypatch)
     b = bins.create_bin("cb")
