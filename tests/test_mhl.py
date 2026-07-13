@@ -128,6 +128,30 @@ def test_create_writes_v2_hashlist_and_chain():
     assert len(c4_value) == 90
 
 
+def test_partial_files_excluded_from_manifest():
+    """fable-audit round-5 #18: a truncated <name>.partial left by a killed offload
+    must NOT be hashed into the manifest — else ascMHL records it as verified
+    original content and verify passes forever on a broken clip."""
+    fixture = REPO_ROOT / "temp" / "mhl-partial-evidence"
+    ensure_clean(fixture)
+    fixture = make_fixture(fixture)
+    # a killed offload's leftover truncated temp file
+    (fixture / "A001" / "clip_003.mp4.partial").write_bytes(b"trunc")
+
+    result = run_cli(["create", "--source", str(fixture)], cwd=fixture)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    mhl_path = sorted((fixture / "ascmhl").glob("0001_*.mhl"))[0]
+    root = parse_xml(mhl_path)
+    hashes = root.find("m:hashes", MHL_NS)
+    paths = [h.findtext("m:path", namespaces=MHL_NS) for h in hashes.findall("m:hash", MHL_NS)]
+    # the two real clips are hashed; the .partial is not
+    assert "A001/clip_001.mp4" in paths
+    assert "A001/clip_002.mp4" in paths
+    assert not any((p or "").endswith(".partial") for p in paths)
+    ensure_clean(fixture)
+
+
 def test_verify_detects_tamper():
     fixture = REPO_ROOT / "temp" / "mhl-verify-evidence"
     ensure_clean(fixture)

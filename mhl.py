@@ -268,6 +268,13 @@ def _compute_directory_hashes(
 def _should_ignore(path: Path, rel_dir: str) -> bool:
     if path.name == ".DS_Store":
         return True
+    # fable-audit round-5 #18: a killed offload leaves a truncated "<name>.partial"
+    # (offload writes bytes there, then os.replace's onto the final name on success).
+    # It must NEVER be hashed into the manifest — otherwise ascMHL records the
+    # truncated bytes as verified original content and every future verify passes on
+    # a broken clip. Excluding it here means a leftover .partial is simply ignored.
+    if path.name.endswith(".partial"):
+        return True
     parts = path.parts
     if "ascmhl" in parts:
         return True
