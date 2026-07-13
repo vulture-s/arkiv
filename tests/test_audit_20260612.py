@@ -54,7 +54,10 @@ def test_h1_retranscribe_refuses_empty_overwrite(
 
     import transcribe as tr
     monkeypatch.setattr(tr, "transcribe", lambda *a, **k: ("", "", [], []))
-    monkeypatch.setattr(server_module, "_resolve_media_path", lambda p: __file__)
+    # R5-25 #51: retranscribe moved to routers/media.py, which imports
+    # _resolve_media_path from pathres — patch the name the handler actually reads.
+    import routers.media as rm
+    monkeypatch.setattr(rm, "_resolve_media_path", lambda p: __file__)
 
     r = fastapi_client.post("/api/media/%d/retranscribe" % mid, json={"language": "zh"})
     assert r.status_code == 422
@@ -105,7 +108,9 @@ def test_c1_retry_vision_no_deadlock_persists_tags(
         vis, "describe_frames",
         lambda paths, model=None: [{"description": "一隻貓", "tags": ["貓", "室內"], "focus_score": 80}],
     )
-    monkeypatch.setattr(server_module, "_resolve_media_path", lambda p: p)
+    # R5-25 #51: retry-vision moved to routers/media.py — patch the name it reads.
+    import routers.media as rm
+    monkeypatch.setattr(rm, "_resolve_media_path", lambda p: p)
 
     r = fastapi_client.post("/api/media/%d/retry-vision" % mid)
     assert r.status_code == 200, r.text
