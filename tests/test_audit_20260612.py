@@ -79,7 +79,10 @@ def test_h4_reingest_targets_single_file(
         captured["cmd"] = cmd
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    # reingest now dispatches through proctree.run_tree (round-5 #2: tree-kill on
+    # timeout) rather than a bare subprocess.run — stub the shared helper.
+    import proctree
+    monkeypatch.setattr(proctree, "run_tree", fake_run)
     r = fastapi_client.post("/api/media/%d/reingest" % mid)
     assert r.status_code == 200
     cmd = captured["cmd"]
