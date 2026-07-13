@@ -123,3 +123,73 @@ def test_api_refuses_concurrent_run(fastapi_client, server_module, tmp_path, mon
         assert r.status_code == 409
     finally:
         server_module._retranscribe_active = False
+
+
+def test_batch_backup_and_revert_restore_lang(srv, tmp_path, monkeypatch):
+    """fable-audit round-5 #14: the batch backup must carry lang, and revert must
+    restore it — else a zh→en batch, reverted, leaves the zh text tagged lang='en',
+    which later per-language archives cross-contaminate."""
+    db = importlib.import_module("db")
+    transcribe = importlib.import_module("transcribe")
+    corrections = importlib.import_module("corrections")
+    id1, p1 = _seed_audio(tmp_path, "中文逐字稿")
+    with db.get_conn() as c:
+        c.execute("UPDATE media SET lang='zh' WHERE id=?", (id1,))
+    monkeypatch.setattr(transcribe, "transcribe",
+                        lambda path, language=None: ("english text", "en", [], []))
+
+    srv._run_retranscribe_all([(id1, p1)], "en", True)
+    with db.get_conn() as c:
+        row = c.execute("SELECT transcript, lang FROM media WHERE id=?", (id1,)).fetchone()
+    assert row["transcript"] == "english text" and row["lang"] == "en"
+
+    corrections.revert()
+    with db.get_conn() as c:
+        row = c.execute("SELECT transcript, lang FROM media WHERE id=?", (id1,)).fetchone()
+    assert row["transcript"] == "中文逐字稿"
+    assert row["lang"] == "zh"  # pre-fix: stayed 'en' (text/lang mismatch)
+
+
+def test_batch_archives_outgoing_language(srv, tmp_path, monkeypatch):
+    """fable-audit round-5 C2: even with per-run backup OFF, the batch must archive
+    the OUTGOING transcript before overwriting media — like the single-clip path —
+    so the prior active language survives in the per-language archive."""
+    db = importlib.import_module("db")
+    transcribe = importlib.import_module("transcribe")
+    id1, p1 = _seed_audio(tmp_path, "原始中文")
+    with db.get_conn() as c:
+        c.execute("UPDATE media SET lang='zh' WHERE id=?", (id1,))
+    monkeypatch.setattr(transcribe, "transcribe",
+                        lambda path, language=None: ("english", "en", [], []))
+
+    srv._run_retranscribe_all([(id1, p1)], "en", False)  # backup OFF → archive is the only safety net
+    with db.get_conn() as c:
+        archived = {r["lang"]: r["transcript"]
+                    for r in c.execute("SELECT lang, transcript FROM transcripts WHERE media_id=?", (id1,))}
+    assert archived.get("zh") == "原始中文"  # outgoing zh preserved (C2)
+    assert archived.get("en") == "english"  # new active also archived
+
+
+def test_single_clip_same_lang_retranscribe_backs_up(fastapi_client, srv, tmp_path, monkeypatch):
+    """fable-audit round-5 #17: retranscribing into the SAME language would let the
+    G2 archive-outgoing be immediately overwritten by the new-active archive,
+    destroying a hand-corrected transcript with no recoverable copy. A durable
+    correction-backup must be written first."""
+    db = importlib.import_module("db")
+    transcribe = importlib.import_module("transcribe")
+    corrections = importlib.import_module("corrections")
+    id1, p1 = _seed_audio(tmp_path, "手動修正過的逐字稿")
+    with db.get_conn() as c:
+        c.execute("UPDATE media SET lang='zh' WHERE id=?", (id1,))
+    monkeypatch.setattr(transcribe, "transcribe",
+                        lambda path, language=None: ("機器重轉的較差版本", "zh", [], []))
+
+    r = fastapi_client.post("/api/media/%d/retranscribe" % id1, json={"language": "zh"})
+    assert r.status_code == 200, r.text
+    assert r.json()["backup"]  # a backup was written (round-5 #17)
+    with db.get_conn() as c:
+        assert c.execute("SELECT transcript FROM media WHERE id=?", (id1,)).fetchone()[0] == "機器重轉的較差版本"
+
+    corrections.revert()  # the hand-corrected original is recoverable
+    with db.get_conn() as c:
+        assert c.execute("SELECT transcript FROM media WHERE id=?", (id1,)).fetchone()[0] == "手動修正過的逐字稿"

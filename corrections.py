@@ -371,14 +371,20 @@ def revert(backup_name: Optional[str] = None) -> Dict:
     except (OSError, ValueError):
         return {"restored": 0, "backup": name, "error": "backup unreadable"}
     media = payload.get("media", [])
+    # fable-audit round-5 #14: restore lang too, but tolerate OLD backups that predate
+    # the lang field — COALESCE(?, lang) keeps the current lang when the backup has
+    # none, instead of nulling/guessing it (codex footgun). retranscribe-all backups
+    # now carry lang; correction-apply backups don't (apply never changes lang), so
+    # COALESCE leaves lang untouched there — correct in both cases.
     rows = [
-        (m.get("transcript"), m.get("segments_json"), m.get("words_json"), m["id"])
+        (m.get("transcript"), m.get("segments_json"), m.get("words_json"), m.get("lang"), m["id"])
         for m in media if isinstance(m, dict) and "id" in m
     ]
     if rows:
         with db.get_conn() as conn:
             conn.executemany(
-                "UPDATE media SET transcript=?, segments_json=?, words_json=? WHERE id=?",
+                "UPDATE media SET transcript=?, segments_json=?, words_json=?, "
+                "lang=COALESCE(?, lang) WHERE id=?",
                 rows,
             )
     return {"restored": len(rows), "backup": name}

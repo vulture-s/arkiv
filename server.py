@@ -2546,6 +2546,20 @@ def retranscribe_media(
     active_lang = lang or body.language
     seg_json = json.dumps(segments, ensure_ascii=False) if segments else None
     words_json = json.dumps(words, ensure_ascii=False) if words else None
+    # fable-audit round-5 #17: when retranscribing into the SAME language, the G2
+    # archive-outgoing below writes the old text to transcripts[(id, lang)] and then
+    # the new-active archive overwrites that very row — so a hand-corrected transcript
+    # would be destroyed with no recoverable copy. Snapshot it to the durable
+    # correction-backups first (restorable via the same revert). Cross-language
+    # retranscribes are already safe (the outgoing language's archive row survives).
+    backup_name = None
+    if active_lang == rec.get("lang") and (rec.get("transcript") or "").strip():
+        backup_name = corrections._write_backup(
+            [{"id": media_id, "transcript": rec.get("transcript"),
+              "segments_json": rec.get("segments_json"),
+              "words_json": rec.get("words_json"), "lang": rec.get("lang")}],
+            [{"op": "retranscribe", "language": active_lang}],
+        )
     with db.get_conn() as conn:
         # G2: archive the OUTGOING transcript first so retranscribing into a
         # different language preserves the previous one (else zh→en would lose zh).
@@ -2558,7 +2572,7 @@ def retranscribe_media(
         )
         # archive the new active language too (its row mirrors media.*).
         db.upsert_transcript(media_id, active_lang, text, seg_json, words_json, _conn=conn)
-    return {"ok": True, "transcript_length": len(text), "language": active_lang}
+    return {"ok": True, "transcript_length": len(text), "language": active_lang, "backup": backup_name}
 
 
 class ActivateLangRequest(BaseModel):
@@ -4242,7 +4256,10 @@ def _run_retranscribe_all(targets, language, backup):
             with db.get_conn() as conn:
                 for mid, _ in targets:
                     r = conn.execute(
-                        "SELECT id, transcript, segments_json, words_json FROM media WHERE id=?",
+                        # fable-audit round-5 #14: include lang so revert restores the
+                        # language too — else a zh→en batch, reverted, leaves zh text
+                        # tagged lang='en', which later archives cross-contaminate.
+                        "SELECT id, transcript, segments_json, words_json, lang FROM media WHERE id=?",
                         (mid,),
                     ).fetchone()
                     if r:
@@ -4274,6 +4291,13 @@ def _run_retranscribe_all(targets, language, backup):
             _sj = json.dumps(segments, ensure_ascii=False) if segments else None
             _wj = json.dumps(words, ensure_ascii=False) if words else None
             with db.get_conn() as conn:
+                # fable-audit round-5 C2: archive the OUTGOING transcript first, like
+                # the single-clip retranscribe does — else a batch zh→en overwrites
+                # media's zh with en and, if the per-run backup is off/lost, the prior
+                # active text is gone from the archive too.
+                if (rec.get("transcript") or "").strip() and rec.get("lang"):
+                    db.upsert_transcript(mid, rec["lang"], rec.get("transcript"),
+                                         rec.get("segments_json"), rec.get("words_json"), _conn=conn)
                 conn.execute(
                     "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
                     (
