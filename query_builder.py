@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+import mediatypes
+
 
 class QueryError(ValueError):
     """Raised on an unknown field, disallowed op, or malformed value."""
@@ -53,9 +55,10 @@ _FIELDS: Dict[str, Tuple[Optional[str], set, str]] = {
     "semantic": (None, {"contains"}, "semantic"),
 }
 
-# ext buckets — kept in sync with server._VIDEO_EXTS / _AUDIO_EXTS.
-_VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".insv", ".360")
-_AUDIO_EXTS = (".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg")
+# ext buckets — R5-24: shared source of truth in mediatypes.py (was hand-copied
+# in sync with server._VIDEO_EXTS / _AUDIO_EXTS).
+_VIDEO_EXTS = mediatypes.VIDEO_EXT
+_AUDIO_EXTS = mediatypes.AUDIO_EXT
 
 
 def _one_condition(cond: Dict[str, Any]) -> Tuple[Optional[str], List[Any], Optional[str]]:

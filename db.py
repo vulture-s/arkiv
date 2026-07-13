@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import config as _config
+import mediatypes
 from config import DB_PATH
 
 from contextlib import contextmanager
@@ -968,9 +969,11 @@ def _build_filter_clause(
         clauses.append("rating = ?")
         params.append(rating)
     if media_type == "video":
-        clauses.append("ext IN ('.mp4', '.mov', '.mkv', '.avi', '.webm', '.m4v', '.mts')")
+        # R5-24: sourced from the shared set so .insv/.360 are included and this
+        # filter can never drift from the rest of the codebase again.
+        clauses.append("ext IN " + mediatypes.sql_in_literal(mediatypes.VIDEO_EXT))
     elif media_type == "audio":
-        clauses.append("ext IN ('.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg')")
+        clauses.append("ext IN " + mediatypes.sql_in_literal(mediatypes.AUDIO_EXT))
     return " AND ".join(clauses), params
 
 

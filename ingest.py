@@ -22,23 +22,16 @@ import codec
 import config
 import db
 import frames as frm
+import mediatypes
 import tag_quality
 import transcribe as tr
 import vision as vis
 
-SUPPORTED = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts",
-             ".insv", ".360",  # 360 rigs (Insta360 / GoPro Max) — see VIDEO_EXT note
-             ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"}
-# B3: .mkv/.avi/.webm are in SUPPORTED (so they ingest into the DB) but were
-# absent here, so is_video was False for them → they silently skipped
-# thumbnail/frames/vision. ffmpeg/ffprobe handle these containers, so treat
-# them as video too. Keep VIDEO_EXT ⊆ SUPPORTED.
-# 360 formats: .insv (Insta360) / .360 (GoPro Max) are HEVC-in-MOV/MP4 — ffmpeg
-# probes + extracts frames fine (.insv verified 2026-06-12: dual 2880×2880 HEVC
-# fisheye + AAC, thumbnail decodes). Frames land as raw fisheye, which is exactly
-# what we want indexed (VLM still describes them). Competitor StoryCube shows the
-# same files as UNKNOWN — see case-study storycube-asus-gopro-20260612.
-VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mts", ".mkv", ".avi", ".webm", ".insv", ".360"}
+# R5-24: extension sets live in mediatypes.py (single source of truth). VIDEO_EXT
+# ⊆ SUPPORTED still holds. .mkv/.avi/.webm count as video (B3); .insv/.360 are the
+# 360 rigs — see mediatypes for the full rationale.
+SUPPORTED = mediatypes.MEDIA_EXT
+VIDEO_EXT = mediatypes.VIDEO_EXT
 # Codecs needing browser-playable proxy — single source of truth in codec.py.
 PROXY_CODECS = codec.PROXY_CODECS
 logger = logging.getLogger(__name__)
