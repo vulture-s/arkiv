@@ -59,11 +59,19 @@
 
   async function select(id) {
     activeId = id
+    detail = null
     loading = true
     try {
-      detail = await api.getBin(id)
-    } catch (e) { pushToast('讀取精選集失敗: ' + e.message, 'error'); detail = null }
-    loading = false
+      const d = await api.getBin(id)
+      // round-5 #35: ignore a stale response — if the user clicked another bin
+      // while this one's (slow NAS) detail was in flight, activeId has moved on and
+      // assigning would show bin A's items under bin B (and mutations would hit the
+      // wrong bin). Mirrors MainLive.fetchDetail's guard.
+      if (activeId === id) detail = d
+    } catch (e) {
+      if (activeId === id) { pushToast('讀取精選集失敗: ' + e.message, 'error'); detail = null }
+    }
+    if (activeId === id) loading = false
   }
 
   async function create() {
@@ -79,8 +87,14 @@
   }
 
   async function removeItem(it) {
+    // round-5 #35 (codex): act on the bin currently SHOWN (detail.id), and ignore
+    // the response if the user switched bins mid-removal — else the old bin's
+    // updated detail renders under the newer selection.
+    const id = detail && detail.id
+    if (!id) return
     try {
-      detail = await api.removeBinItem(activeId, it.project_name, it.media_id)
+      const d = await api.removeBinItem(id, it.project_name, it.media_id)
+      if (activeId === id) detail = d
       loadBins() // refresh counts
     } catch (e) { pushToast('移除失敗: ' + e.message, 'error') }
   }
@@ -126,9 +140,13 @@
       if (!existingProj) { pushToast('請選目的專案', 'error'); return }
       body.dest = existingProj
     }
+    // round-5 #35 (codex): copy the bin whose detail is OPEN (detail.id), not
+    // whichever bin happens to be active at click time.
+    const binId = detail && detail.id
+    if (!binId) { pushToast('請先選一個精選集', 'error'); return }
     copyRunning = true; copyLog = []; copySummary = null
     try {
-      const res = await api.copyBin(activeId, body)
+      const res = await api.copyBin(binId, body)
       const reader = res.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
@@ -147,7 +165,7 @@
         const s = copySummary
         pushToast(`複製完成 → ${s.dest}：${s.copied} 支${s.skipped.length ? '，略過 ' + s.skipped.length : ''}`)
       }
-      loadBins(); if (activeId) select(activeId)
+      loadBins(); select(binId)
     } catch (e) { pushToast('複製失敗: ' + e.message, 'error') }
     copyRunning = false
   }
@@ -156,12 +174,15 @@
   let renameVal = ''
   function startRename() { renameVal = detail.name; renaming = true }
   async function saveRename() {
+    // round-5 #35 (codex): rename the bin being edited (detail.id), not whichever
+    // bin is active if the user switched selection while the rename box was open.
+    const binId = detail && detail.id
     const name = renameVal.trim()
-    if (!name || name === detail.name) { renaming = false; return }
+    if (!binId || !name || name === detail.name) { renaming = false; return }
     try {
-      await api.renameBin(activeId, name)
+      await api.renameBin(binId, name)
       renaming = false
-      await loadBins(); await select(activeId)
+      await loadBins(); await select(binId)
       pushToast('已改名')
     } catch (e) { pushToast('改名失敗: ' + e.message, 'error') }
   }

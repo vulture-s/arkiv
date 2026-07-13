@@ -133,10 +133,18 @@
   }
 
   // Current-project search (/api/media?q=) → one group of openable rows.
-  async function runCurrent(q) {
+  // round-5 #36: monotonic search sequence. Toggling Current ↔ federated (or
+  // re-searching) while a request is in flight must not let the STALE response
+  // paint over the newer one — a slow /api/search/all resolving after a fast
+  // Current-only search used to clobber `groups` with contradictory, unclickable
+  // rows. Each run captures its seq and bails on assignment if superseded.
+  let _searchSeq = 0
+
+  async function runCurrent(q, mySeq) {
     const params = { q, limit: 40 }
     if (mediaType !== 'all') params.media_type = mediaType
     const r = await api.getMedia(params)
+    if (mySeq !== _searchSeq) return  // superseded by a newer search
     total = r.total ?? (r.items || []).length
     const items = (r.items || []).map((it) => ({
       id: it.id,
@@ -155,8 +163,9 @@
   }
 
   // Federated search (/api/search/all) → one group per project, read-only rows.
-  async function runFederated(q) {
+  async function runFederated(q, mySeq) {
     const r = await api.search(q, { limit: 40 })
+    if (mySeq !== _searchSeq) return  // superseded by a newer search
     total = r.total_results ?? (r.items || []).length
     projectsQueried = r.projects_queried ?? 0
     projectsFailed = r.projects_failed ?? 0
@@ -184,16 +193,19 @@
 
   async function runSearch() {
     const q = query.trim()
-    if (!q) { state = 'idle'; groups = []; total = 0; fedErrors = []; return }
+    if (!q) { _searchSeq++; state = 'idle'; groups = []; total = 0; fedErrors = []; return }
+    const mySeq = ++_searchSeq  // round-5 #36: claim this run's sequence
     state = 'loading'
     syncHash()
     const t0 = performance.now()
     try {
-      if (crossProject) await runFederated(q)
-      else await runCurrent(q)
+      if (crossProject) await runFederated(q, mySeq)
+      else await runCurrent(q, mySeq)
+      if (mySeq !== _searchSeq) return  // a newer search superseded us — don't flip state
       elapsedMs = Math.round(performance.now() - t0)
       state = 'ok'
     } catch (e) {
+      if (mySeq !== _searchSeq) return
       state = 'error'
       err = e.message + (e.body ? ' · ' + JSON.stringify(e.body) : '')
     }
