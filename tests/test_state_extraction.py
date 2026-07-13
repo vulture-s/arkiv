@@ -14,8 +14,14 @@ def test_no_duplicate_route_registrations(server_module):
     seen = set()
     dupes = []
     for r in server_module.app.routes:
+        path = getattr(r, "path", None)
+        # app.include_router() appends a pathless `_IncludedRouter` sentinel to
+        # app.routes per include (R5-25 router split) — not a real route, so one
+        # per mounted router is expected. Only real (path, methods) routes count.
+        if path is None:
+            continue
         methods = tuple(sorted(getattr(r, "methods", None) or ()))
-        key = (getattr(r, "path", None), methods)
+        key = (path, methods)
         if key in seen:
             dupes.append(key)
         seen.add(key)
