@@ -418,7 +418,7 @@
     try {
       await api.activateTranscript(selected.id, lang)
       await Promise.all([fetchDetail(selected.id), fetchTranscripts(selected.id)])
-    } catch (e) { err = `切換主要語言失敗: ${e.message}` }
+    } catch (e) { pushToast(`切換主要語言失敗: ${e.message}`, 'error') }  // round-5 #43
   }
 
   // Real audio waveform peaks (0..1) from the backend ffmpeg endpoint — fetched
@@ -500,7 +500,7 @@
       const r = await api.addTag(id, n)
       if (detail && detail.id === id) detail = { ...detail, tags: r.tags }
     } catch (e) {
-      err = `加標籤失敗: ${e.message}`
+      pushToast(`加標籤失敗: ${e.message}`, 'error')  // round-5 #43
     }
   }
   async function removeTag(name) {
@@ -516,7 +516,7 @@
       if (detail && detail.id === id) detail = { ...detail, tags: r.tags }
     } catch (e) {
       if (detail && detail.id === id && prev) detail = { ...detail, tags: prev }
-      err = `刪標籤失敗: ${e.message}`
+      pushToast(`刪標籤失敗: ${e.message}`, 'error')  // round-5 #43 — was a silent revert
     }
   }
 
@@ -570,7 +570,7 @@
     } catch (e) {
       // revert on failure
       items = items.map((m) => (m.id === id ? { ...m, rating: prev } : m))
-      err = `rating 寫入失敗: ${e.message}`
+      pushToast(`rating 寫入失敗: ${e.message}`, 'error')  // round-5 #43 — was a silent revert
     }
   }
 </script>
