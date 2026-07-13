@@ -27,10 +27,14 @@ _seed_audio.n = 0
 
 @pytest.fixture
 def srv(server_module, tmp_path, monkeypatch):
-    """server module with active project rooted at tmp_path (for backups)."""
+    """batch-retranscribe router module (the worker + the shared single-flight
+    guard), active project rooted at tmp_path (for backups). Depends on
+    server_module so the app/db is initialised; _run_retranscribe_all + the
+    _retranscribe_guard moved to routers.retranscribe in the R5-25 router split
+    (the guard is the SAME state.retranscribe object server_module re-exports)."""
     config = importlib.import_module("config")
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    return server_module
+    return importlib.import_module("routers.retranscribe")
 
 
 def test_batch_updates_all_and_backup_reverts(srv, tmp_path, monkeypatch):
