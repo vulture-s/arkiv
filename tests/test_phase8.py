@@ -391,7 +391,7 @@ def test_describe_frames_representative_strategy(monkeypatch):
     vis = importlib.import_module("vision")
     calls = []
 
-    def mock_full(path, max_retries=2):
+    def mock_full(path, max_retries=2, model=None):
         calls.append(("full", path))
         r = vis._empty_result()
         r["description"] = "full desc"
@@ -402,7 +402,7 @@ def test_describe_frames_representative_strategy(monkeypatch):
         r["edit_reason"] = "建立場景"
         return r
 
-    def mock_light(path, max_retries=2):
+    def mock_light(path, max_retries=2, model=None):
         calls.append(("light", path))
         r = vis._empty_result()
         r["description"] = "light desc"

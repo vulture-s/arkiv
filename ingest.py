@@ -815,15 +815,14 @@ def _describe_frames_with_fallback(frame_paths):
             print(f" [Phase 1: {len(failed_indices)} failed, fallback '{fallback_model or 'none'}' 未安裝 → 跳過]", end="", flush=True)
         else:
             print(f" [Phase 1: {len(failed_indices)} failed, trying fallback {fallback_model}]", end="", flush=True)
-            original_model = vis.VISION_MODEL
-            try:
-                vis.VISION_MODEL = fallback_model
-                retry_results = vis.describe_frames([frame_paths[i] for i in failed_indices])
-                for idx, retry_r in zip(failed_indices, retry_results):
-                    if retry_r.get("description") and not retry_r.get("error"):
-                        frame_results[idx] = retry_r
-            finally:
-                vis.VISION_MODEL = original_model
+            # Pass the fallback model explicitly so _call_vision actually runs it
+            # (round-5 #50: the old vis.VISION_MODEL swap was dead — _call_vision
+            # re-read the model from settings, so the fallback re-ran the primary).
+            retry_results = vis.describe_frames(
+                [frame_paths[i] for i in failed_indices], model=fallback_model)
+            for idx, retry_r in zip(failed_indices, retry_results):
+                if retry_r.get("description") and not retry_r.get("error"):
+                    frame_results[idx] = retry_r
     still_failed = [i for i, vr in enumerate(frame_results) if vr.get("error") or not vr.get("description")]
     return frame_results, still_failed
 

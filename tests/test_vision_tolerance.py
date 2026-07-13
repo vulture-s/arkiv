@@ -55,13 +55,14 @@ def test_consecutive_guard_overrides_skip_failed(ing):
 
 # ── _describe_frames_with_fallback ──────────────────────────────────────────
 def _install_fake_vision(ing, monkeypatch):
-    """describe_frames mock keyed on path tokens. Reads vis.VISION_MODEL so the
-    fallback pass can rescue a TFAIL (transient) frame but not a PFAIL one."""
-    def fake(paths):
+    """describe_frames mock keyed on path tokens. Reads the threaded `model` arg so
+    the fallback pass can rescue a TFAIL (transient) frame but not a PFAIL one —
+    proving the fallback model name actually reaches describe_frames (round-5 #50)."""
+    def fake(paths, model=None):
         out = []
         for p in paths:
             ps = str(p)
-            is_fallback = "minicpm" in (ing.vis.VISION_MODEL or "")
+            is_fallback = "minicpm" in (model or "")
             if "PFAIL" in ps:
                 out.append({"description": ""})                       # both models fail
             elif "TFAIL" in ps and not is_fallback:

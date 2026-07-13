@@ -103,7 +103,7 @@ def test_c1_retry_vision_no_deadlock_persists_tags(
     import vision as vis
     monkeypatch.setattr(
         vis, "describe_frames",
-        lambda paths: [{"description": "一隻貓", "tags": ["貓", "室內"], "focus_score": 80}],
+        lambda paths, model=None: [{"description": "一隻貓", "tags": ["貓", "室內"], "focus_score": 80}],
     )
     monkeypatch.setattr(server_module, "_resolve_media_path", lambda p: p)
 

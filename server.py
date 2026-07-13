@@ -56,13 +56,6 @@ from state import (  # noqa: F401  (re-exported for backward compat)
 # inside route handlers (and a test writes the raw flag), so they need a
 # mutable-container refactor rather than a plain import to move to state.py.
 
-# audit M9 (partial): vision.VISION_MODEL is module-global, so two concurrent
-# retry-vision calls could interleave their save/swap/restore and permanently
-# pin the fallback model as "primary" (silent quality degradation). Serializing
-# the swap window removes the race; the full fix (pass the model as a
-# describe_frames parameter) needs a vision.py signature change.
-_vision_fallback_lock = _threading.Lock()
-
 # audit M8: single-flight for the embed rebuild — double-clicking the rebuild
 # button used to launch N concurrent drop+rebuild subprocesses over the same
 # Chroma collection.
@@ -2730,20 +2723,15 @@ def retry_vision(
     # installed, instead of 404-ing once per failed frame.
     if failed and config.VISION_FALLBACK_MODEL and vis.model_available(config.VISION_FALLBACK_MODEL):
         fallback_model = config.VISION_FALLBACK_MODEL
-        # audit M9: hold the lock across save/swap/restore so a concurrent
-        # retry-vision can't snapshot the fallback as "original" and restore it
-        # as the permanent primary model.
-        with _vision_fallback_lock:
-            original_model = vis.VISION_MODEL
-            try:
-                vis.VISION_MODEL = fallback_model
-                retry_paths = [frame_paths[i] for i in failed]
-                retry_results = vis.describe_frames(retry_paths)
-                for idx, retry_r in zip(failed, retry_results):
-                    if retry_r.get("description") and not retry_r.get("error"):
-                        results[idx] = retry_r
-            finally:
-                vis.VISION_MODEL = original_model
+        # round-5 #50: pass the fallback model straight through to _call_vision.
+        # The old vis.VISION_MODEL global-swap was dead (_call_vision re-read the
+        # model from settings) — and being a module global it also raced across
+        # concurrent retry-vision calls. Threading the arg fixes both.
+        retry_paths = [frame_paths[i] for i in failed]
+        retry_results = vis.describe_frames(retry_paths, model=fallback_model)
+        for idx, retry_r in zip(failed, retry_results):
+            if retry_r.get("description") and not retry_r.get("error"):
+                results[idx] = retry_r
 
     # Write results to DB
     patched = 0
