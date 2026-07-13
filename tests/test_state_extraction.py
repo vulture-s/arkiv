@@ -10,14 +10,32 @@
 import importlib
 
 
+def _iter_all_routes(app):
+    """Yield every real route, descending into included routers.
+
+    R5-25 router split: FastAPI ≥0.138 does NOT flatten app.include_router()
+    routes into app.routes — it inserts a lazy `_IncludedRouter` matcher whose
+    real routes live in `.original_router.routes`. A flat scan of app.routes
+    therefore misses every peeled router's endpoints (they still match at request
+    time — this is purely an enumeration concern). Descend into each included
+    router so route-surface guards see the whole app.
+    """
+    try:
+        from fastapi.routing import _IncludedRouter
+    except ImportError:  # older FastAPI flattens; no marker type
+        _IncludedRouter = ()
+    for r in app.routes:
+        if _IncludedRouter and isinstance(r, _IncludedRouter):
+            yield from r.original_router.routes
+        else:
+            yield r
+
+
 def test_no_duplicate_route_registrations(server_module):
     seen = set()
     dupes = []
-    for r in server_module.app.routes:
+    for r in _iter_all_routes(server_module.app):
         path = getattr(r, "path", None)
-        # app.include_router() appends a pathless `_IncludedRouter` sentinel to
-        # app.routes per include (R5-25 router split) — not a real route, so one
-        # per mounted router is expected. Only real (path, methods) routes count.
         if path is None:
             continue
         methods = tuple(sorted(getattr(r, "methods", None) or ()))
@@ -28,12 +46,13 @@ def test_no_duplicate_route_registrations(server_module):
     assert not dupes, f"duplicate route registrations: {dupes}"
     # sanity: the app actually has a substantial route surface (guards an empty/half
     # -wired app slipping past a future split)
-    api_routes = [r for r in server_module.app.routes if getattr(r, "path", "").startswith("/api/")]
+    api_routes = [r for r in _iter_all_routes(server_module.app)
+                  if getattr(r, "path", "").startswith("/api/")]
     assert len(api_routes) >= 50
 
 
 def test_critical_routes_present(server_module):
-    paths = {getattr(r, "path", "") for r in server_module.app.routes}
+    paths = {getattr(r, "path", "") for r in _iter_all_routes(server_module.app)}
     for p in ("/api/projects", "/api/bins/{bin_id}/copy", "/api/offload",
               "/api/cache/clear", "/api/retranscribe-all", "/api/search/all"):
         assert p in paths, f"missing route {p}"
