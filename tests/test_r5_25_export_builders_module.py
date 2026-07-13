@@ -53,14 +53,14 @@ def test_server_reexports_export_builders_by_identity():
 def test_http_and_log_helpers_did_not_go_to_export_builders():
     # _attachment_headers (Content-Disposition) and _log_safe (terminal sanitiser)
     # are HTTP/logging concerns, not export-format serialisers — they must NOT have
-    # been pulled into export_builders. _log_safe later moved to routers/misc.py
-    # with its only caller /api/client-log (R5-25 misc peel); _attachment_headers
-    # still lives in server (moves with the export routes in a later peel).
+    # been pulled into export_builders. In the R5-25 router split they moved to the
+    # routers that own their callers: _attachment_headers → routers/export.py (with
+    # the export routes), _log_safe → routers/misc.py (with /api/client-log).
     import export_builders
     assert not hasattr(export_builders, "_attachment_headers")
     assert not hasattr(export_builders, "_log_safe")
-    import server
-    assert hasattr(server, "_attachment_headers")
+    import routers.export
+    assert hasattr(routers.export, "_attachment_headers")
     import routers.misc
     assert hasattr(routers.misc, "_log_safe")
 
