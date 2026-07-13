@@ -424,6 +424,17 @@ def migrate_to_relative():
                     conn.execute("DELETE FROM frames WHERE media_id=?", (row["id"],))
                     conn.execute("UPDATE OR IGNORE tags SET media_id=? WHERE media_id=?", (sid, row["id"]))
                     conn.execute("DELETE FROM tags WHERE media_id=?", (row["id"],))
+                    # fable-audit round-5 #7: transcripts.media_id is ON DELETE
+                    # CASCADE, so the media DELETE below would wipe the loser's
+                    # per-language transcript archive. These abs/rel rows are the
+                    # SAME physical file, so re-parent every language the survivor
+                    # LACKS (UPDATE OR IGNORE); a shared-language conflict keeps the
+                    # survivor's authoritative copy (identical content) and the
+                    # cascade drops the redundant loser row. Without this, a language
+                    # present only on the loser (survivor zh, loser en) was silently
+                    # destroyed by the cascade.
+                    conn.execute("UPDATE OR IGNORE transcripts SET media_id=? WHERE media_id=?", (sid, row["id"]))
+                    conn.execute("DELETE FROM transcripts WHERE media_id=?", (row["id"],))
                     conn.execute("DELETE FROM media WHERE id=?", (row["id"],))
                     merged_count += 1
                     print(f"[migrate] merged duplicate media id={row['id']} into id={sid} ({new_path})")
