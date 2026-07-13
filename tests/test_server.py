@@ -1326,10 +1326,11 @@ def test_chat_persists_capped_prompt(server_module):
     """A multi-MB prompt must not be stored verbatim in the conversation DB."""
     import importlib
     chat = importlib.import_module("chat")
-    server = importlib.import_module("server")
+    # ChatRequest moved to routers/chat.py in the R5-25 router split.
+    chat_router = importlib.import_module("routers.chat")
     capped = ("x" * 50000)[:8000]
     assert len(capped) == 8000  # the slice the handler persists
-    assert len(server.ChatRequest(prompt="x" * 50000).prompt) == 50000  # model keeps it for trim
+    assert len(chat_router.ChatRequest(prompt="x" * 50000).prompt) == 50000  # model keeps it for trim
 
 
 def test_access_log_redacts_token_query_param():
