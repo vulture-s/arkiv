@@ -307,9 +307,15 @@ def _load_state(path):
 
 
 def _save_state(path, state):
+    # R5-17 (#19): write atomically (tmp on the same dir + os.replace) so a crash
+    # or SIGTERM mid-write can't leave a half-written JSON that _load_state then
+    # fails to parse — the resume path depends on this file always being valid.
     path = Path(path)
     _ensure_parent(path)
-    path.write_text(json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    data = json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(data, encoding="utf-8")
+    os.replace(str(tmp), str(path))
 
 
 def _build_file_records(source_files, dsts):
