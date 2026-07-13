@@ -220,6 +220,15 @@ from export_builders import (  # noqa: F401 (re-exported for backward compat)
     _edl_fps_warning,
     _fcpxml_rational,
 )
+# R5-25 / #51: request-input parsers / option builders (the ?ids= query parser +
+# the IngestRequest→CLI-flags translator + the whisper language allowlist) live
+# in reqopts.py (a leaf — config + fastapi only). Re-exported here for compat.
+from reqopts import (  # noqa: F401 (re-exported for backward compat)
+    _parse_ids_query,
+    _INGEST_LANGUAGES,
+    _INGEST_LANGUAGE_CODES,
+    _ingest_cmd_opts,
+)
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
@@ -1822,20 +1831,8 @@ def size_by_ext(
 # this module.
 
 
-def _parse_ids_query(ids_query):
-    """Decode ?ids=1,2,3 query string → [int]. Returns None when no filter requested."""
-    if not ids_query:
-        return None
-    parsed = []
-    for raw in ids_query.split(","):
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            parsed.append(int(raw))
-        except ValueError:
-            raise HTTPException(400, f"無效的 media id: {raw!r}")
-    return parsed  # may be [] if all entries were blank → caller treats as filter-with-no-rows
+# _parse_ids_query moved to reqopts.py (R5-25 / #51), re-exported at the top of
+# this module.
 
 
 @app.get("/api/export/metadata-csv")
@@ -1928,40 +1925,8 @@ class IngestRequest(BaseModel):
     language: Optional[str] = None
 
 
-# brick 4 — whisper language codes the setup picker offers (whisper supports many
-# more; this is the curated UI set). Omit / None = auto-detect or the preset hint.
-_INGEST_LANGUAGES = [
-    {"code": "zh", "label": "中文"},
-    {"code": "en", "label": "English"},
-    {"code": "ja", "label": "日本語"},
-    {"code": "ko", "label": "한국어"},
-]
-_INGEST_LANGUAGE_CODES = {lang["code"] for lang in _INGEST_LANGUAGES}
-
-
-def _ingest_cmd_opts(body: "IngestRequest") -> list:
-    """Translate IngestRequest options into ingest.py CLI flags. Shared by the
-    REST (/api/ingest) and WebSocket (/api/ingest/ws) triggers so the two never
-    drift. --dir / --limit stay with the callers; this is only the extra knobs."""
-    opts: list = []
-    if body.skip_vision:
-        opts.append("--skip-vision")
-    if body.refresh:
-        opts.append("--refresh")
-    if body.recursive:
-        opts.append("--recursive")
-    if body.max_failures and body.max_failures > 0:
-        opts += ["--max-failures", str(int(body.max_failures))]
-    if body.skip_failed:
-        opts.append("--skip-failed")
-    if body.no_embed:
-        opts.append("--no-embed")
-    # brick 4 — only emit when explicitly set (and valid) so defaults stay untouched.
-    if body.whisper_guard is not None and body.whisper_guard in config.WHISPER_GUARD_LAYERS:
-        opts += ["--whisper-guard", str(int(body.whisper_guard))]
-    if body.language and body.language in _INGEST_LANGUAGE_CODES:
-        opts += ["--language", body.language]
-    return opts
+# _INGEST_LANGUAGES / _INGEST_LANGUAGE_CODES / _ingest_cmd_opts moved to
+# reqopts.py (R5-25 / #51), re-exported at the top of this module.
 
 
 class ScanRequest(BaseModel):
