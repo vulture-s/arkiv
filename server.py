@@ -62,24 +62,9 @@ from state import (  # noqa: F401  (re-exported for backward compat)
 # live instance instead of a frozen bool copy. The retranscribe progress dict is
 # _retranscribe_guard.progress (mutated in place).
 
-# R5-17 (#19): single-flight the offload endpoint PER SOURCE. Two runs over the
-# same card (a double-clicked Run, or a retry over a still-live run) would race
-# on that source's resumable state file, tearing the JSON mid-write and
-# double-copying every byte. Keyed on the resolved source path so offloading two
-# *different* cards concurrently is still allowed.
-_offload_lock = _threading.Lock()
-_offload_active: Set[str] = set()
-
-def _acquire_offload_slot(key: str) -> bool:
-    with _offload_lock:
-        if key in _offload_active:
-            return False
-        _offload_active.add(key)
-        return True
-
-def _release_offload_slot(key: str) -> None:
-    with _offload_lock:
-        _offload_active.discard(key)
+# The offload per-source single-flight primitives (_offload_lock / _offload_active
+# / _acquire_offload_slot / _release_offload_slot) moved to routers/offload.py
+# with the /api/offload handlers (R5-25 / #51).
 
 
 # ── Init ─────────────────────────────────────────────────────────────────────
@@ -161,12 +146,14 @@ from routers.projects import router as projects_router  # noqa: E402
 from routers.chat import router as chat_router  # noqa: E402
 from routers.cache import router as cache_router  # noqa: E402
 from routers.bins import router as bins_router  # noqa: E402
+from routers.offload import router as offload_router  # noqa: E402
 app.include_router(admin_router)
 app.include_router(settings_router)
 app.include_router(projects_router)
 app.include_router(chat_router)
 app.include_router(cache_router)
 app.include_router(bins_router)
+app.include_router(offload_router)
 
 ROOT = Path(__file__).parent
 # Built Svelte SPA (frontend/dist). Gitignored — produced by `npm run build`.
@@ -1439,140 +1426,8 @@ def ingest_media(
 
 # ── DIT Offload (card → backup) — powers the /dit UI ─────────────────────────
 
-class OffloadPreviewRequest(BaseModel):
-    src: str
-    organize: Optional[str] = None
-    include_heic: bool = False
-    limit: int = 200  # cap the preview; a full card can be hundreds of files
-
-
-class OffloadRequest(BaseModel):
-    src: str
-    dst: List[str]
-    organize: Optional[str] = None
-    include_heic: bool = False
-
-
-@app.post("/api/offload/preview")
-def offload_preview(
-    body: OffloadPreviewRequest,
-    _tok: dict = Depends(require_scopes("videos_write")),
-):
-    """Read-only layout preview for the DIT Offload UI — shows source→dest mapping
-    under the --organize template without copying anything."""
-    import offload as _offload
-    src = Path(body.src).expanduser().resolve()
-    if not src.exists():
-        raise HTTPException(400, "來源路徑不存在")
-    # Clamp the limit server-side: it's client-controlled and a 0 / negative / huge
-    # value would otherwise disable the cap and force full enumeration + exiftool +
-    # a giant JSON on a large card (Codex). Always (0, 200].
-    safe_limit = body.limit if 0 < body.limit <= 200 else 200
-    try:
-        return _offload.preview_layout(
-            str(src), organize=body.organize, include_heic=body.include_heic,
-            limit=safe_limit)
-    except ValueError as exc:  # bad --organize template
-        raise HTTPException(400, str(exc))
-    except FileNotFoundError as exc:
-        raise HTTPException(400, str(exc))
-
-
-@app.post("/api/offload")
-def offload_run(
-    body: OffloadRequest,
-    _tok: dict = Depends(require_scopes("videos_write")),
-):
-    """Run a DIT offload (copy + hash-verify + MHL, never deletes source) with the
-    --organize naming policy. Mirrors /api/ingest's subprocess pattern. Source/dest
-    are arbitrary by design (card → backup drives); gated by videos_write (loopback
-    is token-free, a remote read token is refused)."""
-    import subprocess, sys
-    src = Path(body.src).expanduser().resolve()
-    if not src.exists():
-        raise HTTPException(400, "來源路徑不存在")
-    if not body.dst:
-        raise HTTPException(400, "至少需要一個目的地 (dst)")
-    for d in body.dst:
-        _assert_offload_dst_safe(d)  # fable-audit 2026-07-12 (#1): block system/exec dirs
-    cmd = [sys.executable, str(ROOT / "offload.py"), "--src", str(src), "--progress", "json"]
-    for d in body.dst:
-        cmd += ["--dst", d]
-    if body.organize:
-        cmd += ["--organize", body.organize]
-    if body.include_heic:
-        cmd += ["--include-heic"]
-    # offload writes offload-state.json into its cwd; keep that out of the install
-    # ROOT (it would dirty the repo / install dir on every UI run). Use the
-    # project's .arkiv dir so the state is scoped + resumable per project.
-    state_cwd = config.THUMBNAILS_DIR.parent
-    state_cwd.mkdir(parents=True, exist_ok=True)
-    # R5-17 (#19): give each source card its OWN resumable state file and ALWAYS
-    # --resume it. Previously no --resume was passed, so offload.py fell back to a
-    # single cwd/offload-state.json: a retry re-copied from zero, and a second
-    # concurrent card clobbered the first's state. A stable per-source path means a
-    # 400GB offload that dies at 92% picks up from the last verified file.
-    import hashlib as _hashlib
-    state_path = state_cwd / "offload-state-{0}.json".format(
-        _hashlib.sha1(str(src).encode("utf-8")).hexdigest()[:16])
-    cmd += ["--resume", str(state_path)]
-
-    # Single-flight per source (see _acquire_offload_slot): reject a second run over
-    # the same card so the two can't tear the shared state file. Acquired here (sync)
-    # so the collision surfaces as a real 409; released in the generator's finally.
-    slot_key = str(src)
-    if not _acquire_offload_slot(slot_key):
-        raise HTTPException(409, "此來源的轉存正在進行中，請稍候")
-
-    def _stream():
-        # Stream the offload's --progress json events line-by-line (ndjson) so the UI
-        # shows live per-file progress instead of blocking on one giant request.
-        import json as _json
-        proc = None
-        saw_done = False
-        try:
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                bufsize=1, cwd=str(state_cwd))
-            for line in proc.stdout:
-                try:  # JSON parse (not substring) so a filename can't false-positive
-                    if _json.loads(line).get("type") == "done":
-                        saw_done = True
-                except (ValueError, AttributeError):
-                    pass
-                yield line if line.endswith("\n") else line + "\n"
-            proc.wait()
-            if not saw_done:
-                # offload exited before emitting its terminal event (e.g. a
-                # ValueError/RuntimeError exit path) — synthesize one so the UI's
-                # done-handler always fires instead of hanging on "running" (Codex).
-                yield _json.dumps({"type": "done", "code": proc.returncode if proc.returncode is not None else 1,
-                                   "summary": {}}, ensure_ascii=False) + "\n"
-        except GeneratorExit:
-            # client disconnected (Stop button / navigate-away) — stop the
-            # (resumable) offload and bound the wait so a stalled child can't pin
-            # the worker forever (Codex). The per-source state file is left intact
-            # so the next Run resumes.
-            if proc is not None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()  # reap to avoid a zombie if terminate timed out
-            raise
-        finally:
-            if proc is not None and proc.stdout and not proc.stdout.closed:
-                proc.stdout.close()
-            _release_offload_slot(slot_key)
-    return StreamingResponse(_stream(), media_type="application/x-ndjson")
-
-
-@app.get("/dit")
-def serve_dit():
-    """Legacy DIT path — the standalone dit-offload.html island was ported into
-    the SPA (Svelte cutover Phase 3). Redirect old bookmarks to the SPA route."""
-    return RedirectResponse(url="/#/offload", status_code=308)
+# OffloadPreviewRequest / OffloadRequest + the /api/offload* handlers + /dit
+# redirect moved to routers/offload.py (R5-25 / #51), mounted via include_router.
 
 
 # ── Re-transcribe ─────────────────────────────────────────────────────────────

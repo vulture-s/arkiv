@@ -63,17 +63,20 @@ def test_distinct_sources_get_distinct_state_files(fastapi_client, tmp_path, mon
 
 
 def test_concurrent_same_source_is_409(fastapi_client, server_module, tmp_path, monkeypatch):
+    # slot moved to routers/offload.py in the R5-25 router split; acquire the SAME
+    # module the route uses so the in-flight simulation actually blocks the route.
+    import routers.offload as _ro
     _state_dir(monkeypatch, tmp_path)
     card = tmp_path / "busycard"; card.mkdir()
     (card / "A.MP4").write_bytes(b"a")
     dst = tmp_path / "busydst"; dst.mkdir()
     key = str(card.resolve())
-    assert server_module._acquire_offload_slot(key)  # simulate a run already in flight
+    assert _ro._acquire_offload_slot(key)  # simulate a run already in flight
     try:
         r = fastapi_client.post("/api/offload", json={"src": str(card), "dst": [str(dst)]})
         assert r.status_code == 409
     finally:
-        server_module._release_offload_slot(key)
+        _ro._release_offload_slot(key)
     # slot freed → a fresh run over the same card is accepted again
     r2 = fastapi_client.post("/api/offload", json={"src": str(card), "dst": [str(dst)]})
     assert r2.status_code == 200
@@ -81,14 +84,15 @@ def test_concurrent_same_source_is_409(fastapi_client, server_module, tmp_path, 
 
 
 def test_offload_slot_guard_semantics(server_module):
+    import routers.offload as _ro  # slot moved here in the R5-25 router split
     k = "/tmp/some/card"
-    assert server_module._acquire_offload_slot(k) is True
-    assert server_module._acquire_offload_slot(k) is False       # same key blocked
-    assert server_module._acquire_offload_slot(k + "2") is True  # a different card is fine
-    server_module._release_offload_slot(k)
-    server_module._release_offload_slot(k + "2")
-    assert server_module._acquire_offload_slot(k) is True        # released → reusable
-    server_module._release_offload_slot(k)
+    assert _ro._acquire_offload_slot(k) is True
+    assert _ro._acquire_offload_slot(k) is False       # same key blocked
+    assert _ro._acquire_offload_slot(k + "2") is True  # a different card is fine
+    _ro._release_offload_slot(k)
+    _ro._release_offload_slot(k + "2")
+    assert _ro._acquire_offload_slot(k) is True        # released → reusable
+    _ro._release_offload_slot(k)
 
 
 def test_save_state_is_atomic(tmp_path, monkeypatch):
