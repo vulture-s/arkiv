@@ -44,11 +44,15 @@ def test_server_reexports_reqopts_by_identity():
         )
 
 
-def test_ingest_request_model_stays_in_server():
-    # The pydantic model is a server/API-schema concern; reqopts only duck-types on
-    # it, so it must NOT have moved (would drag pydantic wiring into the leaf).
-    import server
-    assert hasattr(server, "IngestRequest")
+def test_reqopts_does_not_own_the_ingest_request_model():
+    # The pydantic model is an API-schema concern; reqopts only duck-types on it
+    # (string annotation), so it must NOT live in the leaf. R5-25 #51 (final peel):
+    # IngestRequest moved with the ingest route group to routers/ingest.py — reqopts
+    # still owns neither the model nor a server import.
+    import reqopts
+    import routers.ingest as ri
+    assert not hasattr(reqopts, "IngestRequest")
+    assert hasattr(ri, "IngestRequest")
 
 
 # ── _parse_ids_query behaviour ───────────────────────────────────────────────

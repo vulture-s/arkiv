@@ -5,16 +5,17 @@ transcribe/vision knobs; these must translate to the real ingest.py CLI flags,
 shared by the REST and WebSocket triggers so they never drift.
 """
 import server
+from routers.ingest import IngestRequest  # R5-25 #51: model moved with the ingest router
 
 
 def test_defaults_emit_no_extra_flags():
     # an unconfigured ingest must behave exactly as before (only --dir/--limit,
     # which the callers add — this helper returns just the extra knobs)
-    assert server._ingest_cmd_opts(server.IngestRequest(path="/x")) == []
+    assert server._ingest_cmd_opts(IngestRequest(path="/x")) == []
 
 
 def test_each_option_maps_to_its_flag():
-    body = server.IngestRequest(
+    body = IngestRequest(
         path="/x", skip_vision=True, refresh=True, recursive=True,
         max_failures=20, skip_failed=True, no_embed=True,
     )
@@ -30,14 +31,14 @@ def test_each_option_maps_to_its_flag():
 def test_zero_max_failures_omits_flag():
     # 0 = the engine default (halt on first failure); must NOT emit the flag
     assert "--max-failures" not in server._ingest_cmd_opts(
-        server.IngestRequest(path="/x", max_failures=0)
+        IngestRequest(path="/x", max_failures=0)
     )
 
 
 # ── brick 4: whisper guard preset + language ──────────────────────────────────
 
 def test_brick4_whisper_guard_and_language_map_to_flags():
-    body = server.IngestRequest(path="/x", whisper_guard=2, language="zh")
+    body = IngestRequest(path="/x", whisper_guard=2, language="zh")
     opts = server._ingest_cmd_opts(body)
     assert opts[opts.index("--whisper-guard") + 1] == "2"
     assert opts[opts.index("--language") + 1] == "zh"
@@ -45,14 +46,14 @@ def test_brick4_whisper_guard_and_language_map_to_flags():
 
 def test_brick4_defaults_omit_flags():
     # None preset + None language = unchanged engine behaviour, no flags
-    opts = server._ingest_cmd_opts(server.IngestRequest(path="/x"))
+    opts = server._ingest_cmd_opts(IngestRequest(path="/x"))
     assert "--whisper-guard" not in opts and "--language" not in opts
 
 
 def test_brick4_invalid_values_dropped():
     # an out-of-range preset / unknown language code must not reach the CLI
     opts = server._ingest_cmd_opts(
-        server.IngestRequest(path="/x", whisper_guard=99, language="xx")
+        IngestRequest(path="/x", whisper_guard=99, language="xx")
     )
     assert "--whisper-guard" not in opts and "--language" not in opts
 
