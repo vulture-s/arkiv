@@ -2873,14 +2873,24 @@ def clear_cache(
     target: str = Query("app", description="app|thumbnails|chromadb|waveforms|all"),
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
-    """Clear caches. target: app (pycache+thumbnails+waveforms), thumbnails, chromadb, waveforms, all."""
+    """Clear caches. target: app (pycache+waveforms — cheap regenerables only),
+    thumbnails, chromadb, waveforms, all.
+
+    fable-audit round-5 #16: 'app' NO LONGER clears thumbnails. media.thumbnail_path
+    and the vision frame images (*_frame*.jpg) live in the thumbnails dir and are
+    DB-referenced — a casual 'clear app cache' used to blank the whole grid + frame
+    strips and need an hours-long --refresh. Thumbnails now clear only on an explicit
+    target of 'thumbnails' or 'all'."""
     # fable-audit 2026-07-12 (#4): this is the only heavy mutating route missing the
     # M14 guard — target=chromadb/all rmtree's the whole semantic index, and as a
     # no-preflight simple POST a cross-site page could fire it under loopback-trust.
     _assert_same_site(request)
     import shutil
+    # #15: never rmtree the index out from under an active rebuild.
+    if target in ("chromadb", "all") and _embed_rebuild_active:
+        raise HTTPException(409, "語意索引重建進行中，請待完成後再清除")
     cleared = []
-    if target in ("app", "thumbnails", "all"):
+    if target in ("thumbnails", "all"):
         thumbs = config.THUMBNAILS_DIR
         if thumbs.exists():
             files = list(thumbs.iterdir())
@@ -2901,8 +2911,20 @@ def clear_cache(
             cleared.append("__pycache__")
     if target in ("chromadb", "all"):
         if config.CHROMA_PATH.exists():
-            shutil.rmtree(config.CHROMA_PATH, ignore_errors=True)
+            try:
+                # #15: drop ignore_errors — a failed clear must surface, not be
+                # silently reported as done.
+                shutil.rmtree(config.CHROMA_PATH)
+            except OSError as exc:
+                raise HTTPException(500, "清除 chromadb 失敗：{0}".format(exc))
             cleared.append("chromadb")
+        # #15: invalidate chromadb's in-process System cache so a subsequent rebuild
+        # is actually served, instead of the cached (now-deleted) index all session.
+        try:
+            import vectordb
+            vectordb.clear_client_cache()
+        except Exception:
+            pass
     return {"ok": True, "cleared": cleared}
 
 
