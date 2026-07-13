@@ -74,6 +74,26 @@ _retranscribe_lock = _threading.Lock()
 _retranscribe_active = False
 _retranscribe_progress = {"total": 0, "done": 0, "failed": 0, "current": None, "running": False, "backup": None}
 
+# R5-17 (#19): single-flight the offload endpoint PER SOURCE. Two runs over the
+# same card (a double-clicked Run, or a retry over a still-live run) would race
+# on that source's resumable state file, tearing the JSON mid-write and
+# double-copying every byte. Keyed on the resolved source path so offloading two
+# *different* cards concurrently is still allowed.
+_offload_lock = _threading.Lock()
+_offload_active: Set[str] = set()
+
+def _acquire_offload_slot(key: str) -> bool:
+    with _offload_lock:
+        if key in _offload_active:
+            return False
+        _offload_active.add(key)
+        return True
+
+def _release_offload_slot(key: str) -> None:
+    with _offload_lock:
+        _offload_active.discard(key)
+
+
 # ── Init ─────────────────────────────────────────────────────────────────────
 db.init_db()
 
@@ -2467,16 +2487,33 @@ def offload_run(
     # project's .arkiv dir so the state is scoped + resumable per project.
     state_cwd = config.THUMBNAILS_DIR.parent
     state_cwd.mkdir(parents=True, exist_ok=True)
+    # R5-17 (#19): give each source card its OWN resumable state file and ALWAYS
+    # --resume it. Previously no --resume was passed, so offload.py fell back to a
+    # single cwd/offload-state.json: a retry re-copied from zero, and a second
+    # concurrent card clobbered the first's state. A stable per-source path means a
+    # 400GB offload that dies at 92% picks up from the last verified file.
+    import hashlib as _hashlib
+    state_path = state_cwd / "offload-state-{0}.json".format(
+        _hashlib.sha1(str(src).encode("utf-8")).hexdigest()[:16])
+    cmd += ["--resume", str(state_path)]
+
+    # Single-flight per source (see _acquire_offload_slot): reject a second run over
+    # the same card so the two can't tear the shared state file. Acquired here (sync)
+    # so the collision surfaces as a real 409; released in the generator's finally.
+    slot_key = str(src)
+    if not _acquire_offload_slot(slot_key):
+        raise HTTPException(409, "此來源的轉存正在進行中，請稍候")
 
     def _stream():
         # Stream the offload's --progress json events line-by-line (ndjson) so the UI
         # shows live per-file progress instead of blocking on one giant request.
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            bufsize=1, cwd=str(state_cwd))
-        saw_done = False
         import json as _json
+        proc = None
+        saw_done = False
         try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                bufsize=1, cwd=str(state_cwd))
             for line in proc.stdout:
                 try:  # JSON parse (not substring) so a filename can't false-positive
                     if _json.loads(line).get("type") == "done":
@@ -2492,18 +2529,22 @@ def offload_run(
                 yield _json.dumps({"type": "done", "code": proc.returncode if proc.returncode is not None else 1,
                                    "summary": {}}, ensure_ascii=False) + "\n"
         except GeneratorExit:
-            # client disconnected — stop the (resumable) offload and bound the wait
-            # so a stalled child can't pin the worker forever (Codex).
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()  # reap to avoid a zombie if terminate timed out
+            # client disconnected (Stop button / navigate-away) — stop the
+            # (resumable) offload and bound the wait so a stalled child can't pin
+            # the worker forever (Codex). The per-source state file is left intact
+            # so the next Run resumes.
+            if proc is not None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()  # reap to avoid a zombie if terminate timed out
             raise
         finally:
-            if proc.stdout and not proc.stdout.closed:
+            if proc is not None and proc.stdout and not proc.stdout.closed:
                 proc.stdout.close()
+            _release_offload_slot(slot_key)
     return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 

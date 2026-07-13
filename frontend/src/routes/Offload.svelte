@@ -16,6 +16,7 @@
      Safety: offload.py copies + verifies, NEVER deletes the source. -->
 <script>
   import { push } from 'svelte-spa-router'
+  import { onDestroy } from 'svelte'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
@@ -39,9 +40,18 @@
   let recent = [] // [{name, status}] — last handful of files, failed flagged
   let summary = null // {dst: {verified_files, failed_files, mhl_path, status}}
   let doneCode = null
+  // R5-17 (#45): a running offload used to be uncancellable — Cancel just navigated
+  // away and left the fetch (and the server-side copy) running orphaned. Hold the
+  // AbortController so Stop / navigate-away can drop the connection; the server
+  // already terminates the copy subprocess on disconnect (offload_run GeneratorExit).
+  let abortCtl = null
+  let stopped = false
 
   $: liveDsts = dsts.map((d) => d.trim()).filter(Boolean)
-  $: canRun = phase === 'preview' && liveDsts.length > 0
+  // Run is armed after a Preview; also re-armed after a Stop so the user can
+  // Resume directly — the backend keeps a per-source state file and picks up from
+  // the last verified file (R5-17 #19), no re-Preview needed.
+  $: canRun = (phase === 'preview' || (phase === 'done' && stopped)) && liveDsts.length > 0
   $: pct = pTotal ? Math.min(100, Math.round((pDone / pTotal) * 100)) : 0
   $: anyFailed = summary ? Object.values(summary).some((s) => s.failed_files > 0) || doneCode !== 0 : false
   const base = (p) => String(p).split(/[\\/]/).pop()
@@ -65,13 +75,14 @@
 
   async function doRun() {
     if (!canRun) return
-    err = ''; phase = 'running'
+    err = ''; phase = 'running'; stopped = false
     curDst = ''; pTotal = 0; pDone = 0; pFailed = 0; recent = []; summary = null; doneCode = null
+    abortCtl = new AbortController()
     try {
       const res = await api.offloadRun({
         src: src.trim(), dst: liveDsts,
         organize: organize.trim() || null, include_heic: includeHeic,
-      })
+      }, { signal: abortCtl.signal })
       const reader = res.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
@@ -99,10 +110,31 @@
       }
       if (phase !== 'done') { phase = 'done'; doneCode = doneCode ?? 1 }
     } catch (e) {
-      err = e.body?.detail || e.message
-      phase = 'done'; doneCode = doneCode ?? 1
+      if (stopped || e.name === 'AbortError') {
+        // User stopped it (or navigated away): the copy is resumable, so this is
+        // not a failure — verified files are kept and re-Run continues from here.
+        phase = 'done'; doneCode = doneCode ?? 130; err = ''
+      } else {
+        err = e.body?.detail || e.message
+        phase = 'done'; doneCode = doneCode ?? 1
+      }
+    } finally {
+      abortCtl = null
     }
   }
+
+  // R5-17 (#45): stop a running offload. Aborting the fetch drops the HTTP
+  // connection, which trips the server's terminate-on-disconnect; the per-source
+  // state file is preserved so a later Run resumes from the last verified file.
+  function stopRun() {
+    if (phase !== 'running' || !abortCtl) return
+    if (!confirm('轉存進行中，確定停止？已複製並校驗的檔案會保留，可稍後從中斷處續傳。')) return
+    stopped = true
+    abortCtl.abort()
+  }
+
+  // Navigating away mid-copy must also stop the server-side copy, not orphan it.
+  onDestroy(() => { if (abortCtl) abortCtl.abort() })
 
   // 2-phase handoff — ingest the first destination we just offloaded.
   function ingestNext() {
@@ -186,7 +218,7 @@
           </div>
         {:else}
           <!-- running / done -->
-          <Eyebrow>{phase === 'running' ? 'Copying · verify + MHL' : (anyFailed ? 'Offload — failed' : 'Offload — complete')}</Eyebrow>
+          <Eyebrow>{phase === 'running' ? 'Copying · verify + MHL' : (stopped ? 'Offload — stopped' : (anyFailed ? 'Offload — failed' : 'Offload — complete'))}</Eyebrow>
           {#if curDst}<Mono dim style="font-size:10px;">→ {curDst}</Mono>{/if}
           <div class="bar"><div class="barfill" class:fail={anyFailed} style="width:{phase === 'done' ? 100 : pct}%;"></div></div>
           <Mono dim style="font-size:10.5px;">{pDone}{pTotal ? `/${pTotal}` : ''} files{pFailed ? ` · ${pFailed} failed` : ''}</Mono>
@@ -220,13 +252,18 @@
 
     <div class="footer">
       {#if err}<Mono style="font-size:11px;" class="errtext">{err}</Mono>
+      {:else if phase === 'done' && stopped}<Mono style="font-size:11px;">■ 已停止 · 已校驗檔案保留，可續傳</Mono>
       {:else if phase === 'done'}<Mono style="font-size:11px;" class={anyFailed ? 'errtext' : ''}>{anyFailed ? `✗ 轉存有失敗 (exit ${doneCode})` : `✓ 轉存完成 (exit ${doneCode})`}</Mono>{/if}
       <div class="grow"></div>
       {#if phase === 'done' && !anyFailed}
         <button class="ak-btn" on:click={ingestNext}>接著 ingest →</button>
       {/if}
-      <button class="ak-btn" on:click={() => push('/')}>{phase === 'done' ? 'Done' : 'Cancel'}</button>
-      <button class="ak-btn ak-btn--primary" on:click={doRun} disabled={!canRun}>{phase === 'running' ? 'copying…' : 'Run offload →'}</button>
+      {#if phase === 'running'}
+        <button class="ak-btn stopbtn" on:click={stopRun}>停止</button>
+      {:else}
+        <button class="ak-btn" on:click={() => push('/')}>{phase === 'done' ? 'Done' : 'Cancel'}</button>
+      {/if}
+      <button class="ak-btn ak-btn--primary" on:click={doRun} disabled={!canRun}>{phase === 'running' ? 'copying…' : (stopped && phase === 'done' ? 'Resume →' : 'Run offload →')}</button>
     </div>
   </div>
 </div>
@@ -279,4 +316,5 @@
 
   .footer { display: flex; align-items: center; gap: 12px; padding: 16px 28px; border-top: 1px solid var(--rule); }
   .footer :global(.errtext) { color: var(--danger); }
+  .stopbtn { border-color: var(--cyan); color: var(--cyan); }
 </style>
