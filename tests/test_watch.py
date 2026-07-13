@@ -87,7 +87,36 @@ def test_failed_dispatch_not_marked_known(tmp_path):
     _make_file(f)
     w = watch.Watcher([root], debounce_s=0.0, dispatch=lambda p: False)  # ingest fails
     assert w.tick(now=1.0) == []          # dispatch ran but returned False
-    assert str(f) not in w.known           # so it can be retried next tick
+    assert str(f) not in w.known           # so it can be retried (after back-off)
+
+
+def test_failing_file_backs_off_then_quarantines(tmp_path):
+    """fable-audit round-5 #5: a permanently-failing file must NOT be re-dispatched
+    every tick. It backs off exponentially and, after QUARANTINE_AFTER failures,
+    stops retrying — until its signature changes (re-copied / fixed)."""
+    root = tmp_path / "inbox"
+    root.mkdir()
+    f = root / "corrupt.mp4"
+    _make_file(f, size=1000)
+    calls = []
+    w = watch.Watcher([root], debounce_s=0.0, dispatch=lambda p: calls.append(p) or False)
+    assert w.QUARANTINE_AFTER == 3 and w.BASE_BACKOFF_S == 30.0  # pin the constants this test assumes
+
+    w.tick(now=0.0)                 # fail #1 → back off until t=30
+    assert len(calls) == 1
+    w.tick(now=10.0)                # inside back-off → NOT retried
+    assert len(calls) == 1
+    w.tick(now=30.0)               # fail #2 → back off until t=90
+    assert len(calls) == 2
+    w.tick(now=90.0)               # fail #3 → now quarantined
+    assert len(calls) == 3
+    w.tick(now=100_000.0)          # quarantined: never retried, however long we wait
+    assert len(calls) == 3
+
+    # the file is re-copied (new signature) → quarantine clears, dispatched again
+    _make_file(f, size=2000)
+    w.tick(now=100_001.0)
+    assert len(calls) == 4
 
 
 def test_non_media_ignored(tmp_path):

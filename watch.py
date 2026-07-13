@@ -128,6 +128,14 @@ class Watcher:
     """Ties roots → candidate files → stability → dispatch. `tick()` is the pure
     polling step (also reused to drain candidates queued by watchdog events)."""
 
+    # fable-audit round-5 #5: a file whose dispatch keeps failing (corrupt .MP4)
+    # was retried every tick forever — whisper warm-up + log spam + RAM pressure,
+    # 24/7. Back off exponentially and quarantine after N failures; a signature
+    # change (the file was re-copied / fixed) clears the record for a fresh attempt.
+    QUARANTINE_AFTER = 3
+    BASE_BACKOFF_S = 30.0
+    MAX_BACKOFF_S = 3600.0
+
     def __init__(
         self,
         roots: Sequence[Path],
@@ -141,6 +149,8 @@ class Watcher:
         self.clock = clock
         self.known: Set[str] = set()         # already-ingested resolved paths
         self._candidates: Set[str] = set()    # paths flagged by watchdog events
+        # path -> (fail_count, next_retry_at, signature_at_failure)
+        self._failures: Dict[str, Tuple[int, float, Signature]] = {}
 
     def load_known(self) -> None:
         """Seed `known` from the DB so we never re-ingest existing media."""
@@ -198,11 +208,30 @@ class Watcher:
             if not p.exists():
                 self.tracker.forget(key)
                 continue
+            # Back-off / quarantine gate (round-5 #5): a file that keeps failing
+            # dispatch must not be retried every tick. A signature change means the
+            # file was re-copied/fixed → clear the record and try fresh.
+            fail = self._failures.get(key)
+            if fail is not None:
+                fcount, retry_at, fsig = fail
+                if fsig == sig:
+                    if fcount >= self.QUARANTINE_AFTER:
+                        continue  # quarantined until the file changes
+                    if now < retry_at:
+                        continue  # still inside the back-off window
+                else:
+                    self._failures.pop(key, None)
             ok = self.dispatch(p)
             self.tracker.forget(key)
             if ok:
                 self.known.add(key)
+                self._failures.pop(key, None)
                 dispatched.append(p)
+            else:
+                prev = self._failures.get(key)
+                fcount = prev[0] + 1 if (prev and prev[2] == sig) else 1
+                backoff = min(self.MAX_BACKOFF_S, self.BASE_BACKOFF_S * (2 ** (fcount - 1)))
+                self._failures[key] = (fcount, now + backoff, sig)
         return dispatched
 
     # --- run loop (I/O shell; verified on-device, not in unit tests) ---
