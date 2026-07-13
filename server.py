@@ -178,78 +178,19 @@ def serve_thumbnail(
     return FileResponse(str(resolved))
 
 
-def _basename_safe(value: str) -> str:
-    """Separator-agnostic basename. `os.path.basename` on a POSIX host treats `\\`
-    as an ordinary character, so a Windows project path (`C:\\Users\\me\\proj`)
-    handed over by a cross-platform federation peer would survive `basename` +
-    `rstrip("/")` and leak intact. Normalise both separators first."""
-    if not value:
-        return value
-    normalized = str(value).replace("\\", "/").rstrip("/")
-    return normalized.rsplit("/", 1)[-1] or normalized
-
-
-def _looks_absolute(p: str) -> bool:
-    """True for POSIX (`/x`), Windows drive (`C:\\x`), or UNC (`\\\\host`) absolute
-    paths. `os.path.isabs` on a POSIX host misses the Windows forms, which would
-    let a cross-platform peer's absolute path slip past the leak guard."""
-    if not p:
-        return False
-    return (
-        p.startswith("/")
-        or p.startswith("\\\\")
-        # Windows drive form `X:` followed by EITHER separator (`C:\` or `C:/` —
-        # Windows APIs emit and accept both). Security-first call on an inherent
-        # ambiguity: `C:/...` could also be a POSIX *relative* path under a dir
-        # literally named "C:", but a leak guard must not let a Windows-absolute
-        # path through, and a Unix media dir literally named "C:" is pathological.
-        # So we basename it (the rare round-trip loss is the accepted trade-off vs
-        # re-opening the path leak). (Codex round-1 wanted C:/ preserved; round-2
-        # showed that re-leaks C:/ Windows absolutes — no-leak wins.)
-        or (len(p) >= 3 and p[0].isalpha() and p[1] == ":" and p[2] in ("\\", "/"))
-    )
-
-
-def _display_path(path: str) -> str:
-    """Phase 16.2: the non-leaking path form for API responses.
-
-    Returning the absolute fs path leaked the operator's directory tree
-    (/Volumes/home/影片專案/…) to any read-scope / loopback client. We return the
-    PROJECT_ROOT-relative form; a legacy row whose stored path is absolute AND
-    outside PROJECT_ROOT (so to_relative can't relativize it) is reduced to its
-    basename rather than leaking the full path. Relative paths round-trip through
-    /api/open-file (db.is_processed matches relative; the server re-absolutizes);
-    once a library is migrated (ingest.py --migrate-relative) every row is
-    relative and open-file works for all of them.
-    """
-    if not path:
-        return path
-    rel = db.to_relative(path)
-    if _looks_absolute(rel):  # absolute (POSIX/Windows/UNC) & outside root — don't leak
-        return _basename_safe(rel)
-    return rel
-
-
-def _resolve_record(rec: dict) -> dict:
-    if rec.get("path"):
-        rec["path"] = _display_path(rec["path"])
-    if rec.get("thumbnail_path"):
-        rec["thumbnail_path"] = _display_path(rec["thumbnail_path"])
-    return rec
-
-
-def _resolve_frame(frame: dict) -> dict:
-    if frame.get("thumbnail_path"):
-        frame["thumbnail_path"] = _display_path(frame["thumbnail_path"])
-    return frame
-
-
-def _resolve_media_path(path: str) -> str:
-    if not path:
-        return path
-    if os.name == "nt" and path.startswith("/"):
-        return path
-    return db.resolve_path(path)
+# R5-25 / #51: path-resolution helpers live in pathres.py (a leaf service module,
+# no server state) so the coming APIRouter split can import them without the
+# router→server→router import cycle. Re-exported here for backward compat —
+# existing call sites and tests that reference `server._resolve_media_path` etc.
+# keep working unchanged.
+from pathres import (  # noqa: F401 (re-exported for backward compat)
+    _basename_safe,
+    _looks_absolute,
+    _display_path,
+    _resolve_record,
+    _resolve_frame,
+    _resolve_media_path,
+)
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
