@@ -1693,6 +1693,15 @@ def main():
                                 )
                 # Queue for Phase 2 vision
                 if frames and need_vision:
+                    # fable-audit round-5 #28: the FULL record (transcript +
+                    # segments_json + words_json) is already persisted by the Phase-1
+                    # upsert above, and Phase 2 reads the record only for _auto_tags
+                    # (codex-verified) — so drop the heavy transcript JSON before
+                    # retaining it, or an interview-heavy batch pins 100-300MB of dead
+                    # strings in RAM through the entire vision + proxy passes while
+                    # Ollama runs. duration_s etc. stay for the bench line below.
+                    for _heavy in ("transcript", "segments_json", "words_json"):
+                        record.pop(_heavy, None)
                     phase1_results[str(f)] = (record, frames)
 
                 dur = record.get("duration_s", 0)
