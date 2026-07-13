@@ -112,6 +112,26 @@ def test_h5_merge_preserves_loser_only_transcript_language(tmp_db):
         # nothing left dangling on the deleted loser id
         assert c.execute("SELECT COUNT(*) AS n FROM transcripts WHERE media_id=?", (legacy_id,)).fetchone()["n"] == 0
         assert c.execute("PRAGMA foreign_key_check").fetchall() == []
+# ── round-5 #9: a pre-fix Windows ingest stored backslash-relative paths that
+#    to_relative can't convert, so dedup missed them (whole-library re-ingest as
+#    duplicates) and migrate never reconciled them.
+def test_backslash_relative_row_is_deduped_and_migrated(tmp_db):
+    db = importlib.import_module("db")
+    config = importlib.import_module("config")
+    with db.get_conn() as c:
+        c.execute("INSERT INTO media (path, filename, ext) VALUES (?,?,?)",
+                  ("media\\clip.mp4", "clip.mp4", ".mp4"))
+    abspath = str(Path(config.PROJECT_ROOT) / "media" / "clip.mp4")
+
+    # dedup recognises the backslash row via its abs path → not re-ingested
+    assert db.is_processed(abspath) is True
+    assert db.dedup_path_variants(abspath).count("media\\clip.mp4") == 1
+
+    # migrate normalises it to forward-slash (pre-fix it was left untouched)
+    db.migrate_to_relative()
+    with db.get_conn() as c:
+        paths = [r["path"] for r in c.execute("SELECT path FROM media")]
+    assert paths == ["media/clip.mp4"]
 
 
 # ── scene_ids: chat_messages.scene_ids_json is a TEXT JSON blob, NOT a FK, so
