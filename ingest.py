@@ -623,11 +623,25 @@ def _apply_vision_to_frame_data(frame_data: List[Dict], frame_results: List[Dict
     return scores
 
 
-def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None, refresh: bool = False) -> Dict:
+def _file_hash(path: Path) -> Optional[str]:
+    """xxh3 content hash of a file (offload's primitive), or None if unreadable.
+    Content-addresses each clip so a moved/renamed file is recognised instead of
+    re-ingested as a duplicate (fable-audit round-5 #8)."""
+    try:
+        import offload as _offload
+        return _offload._hash_file(path, "xxh3")
+    except OSError:
+        return None
+
+
+def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
+                 refresh: bool = False, file_hash: Optional[str] = None) -> Dict:
     """
     Process one media file.
     If `existing` is provided (refresh mode), skip transcription and reuse existing
     transcript/lang — only re-run thumbnail + vision.
+    `file_hash` may be passed in (already computed for move-detection) to avoid
+    hashing the file twice; if None it is computed here.
     """
     _stage("probe", "probe")
     meta = probe(str(path))
@@ -656,6 +670,14 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
         # the record below / in Phase 2 only when a real value exists.
         "processed_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Content hash for move-detection + integrity (round-5 #8). Reuse a hash the
+    # caller already computed (move-detection pass), else compute it now. On a
+    # refresh this backfills legacy rows whose file_hash was NULL.
+    fhash = file_hash if file_hash is not None else _file_hash(path)
+    if fhash:
+        record["file_hash"] = fhash
+        record["hash_algo"] = "xxh3"
 
     # Audio transcription (skip on refresh — reuse existing)
     if meta["has_audio"] and not existing:
@@ -1564,7 +1586,7 @@ def main():
 
     import time as _time
 
-    ok, skipped, failed = 0, 0, 0
+    ok, skipped, failed, moved = 0, 0, 0, 0
     refreshed_ids = set()  # already-indexed ids re-processed this run → force re-embed
     bench_log = []  # per-file benchmark records
     batch_start = _time.time()
@@ -1583,6 +1605,23 @@ def main():
             skipped += 1
             continue
 
+        # Move-detection (round-5 #8): an UNKNOWN path whose content hash matches a
+        # row whose stored path is GONE is a moved/renamed file — re-point the
+        # existing row (keeping its ratings/tags/transcript) instead of re-ingesting
+        # the whole library as duplicates after a folder reorg. A hash match whose
+        # path still exists is a genuine second copy → fall through to a fresh
+        # ingest. The hash is reused by process_file so the file is read once.
+        file_hash = None
+        if not already and not args.refresh:
+            file_hash = _file_hash(f)
+            if file_hash:
+                mrow = db.find_moved_row(file_hash)
+                if mrow is not None:
+                    db.repoint_media_path(mrow["id"], str(f))
+                    print(f"[{i}/{len(files)}] MOVED {f.name} → re-pointed id={mrow['id']}")
+                    moved += 1
+                    continue
+
         existing = None
         if already and args.refresh:
             existing = _get_media_row_for_path(f)
@@ -1593,8 +1632,10 @@ def main():
             print(f"[{i}/{len(files)}] {f.name}", end="", flush=True)
         file_start = _time.time()
         try:
-            # Phase 1: always skip vision — will run in Phase 2
-            record = process_file(f, skip_vision=True, existing=existing, refresh=args.refresh)
+            # Phase 1: always skip vision — will run in Phase 2. Pass the hash we
+            # already computed for move-detection so the file isn't read twice.
+            record = process_file(f, skip_vision=True, existing=existing,
+                                  refresh=args.refresh, file_hash=file_hash)
             file_elapsed = _time.time() - file_start
             if record:
                 frames = record.pop("_frames", [])
@@ -1883,7 +1924,8 @@ def main():
     batch_elapsed = _time.time() - batch_start
     total_dur = sum(b["duration_s"] for b in bench_log)
 
-    print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}")
+    _moved_suffix = f"  moved={moved}" if moved else ""
+    print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}{_moved_suffix}")
     print(f"DB: {db.DB_PATH}")
 
     # Auto-build the vector index so semantic search + chat work immediately.
