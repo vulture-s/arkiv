@@ -139,6 +139,38 @@ def test_status_row_missing(tmp_path, monkeypatch):
     assert bins.bin_item_status("libB", "999") == bins.STATUS_ROW_MISSING
 
 
+def test_bin_item_statuses_batches_one_registry_read_and_matches(tmp_path, monkeypatch):
+    """fable-audit round-5 #23: the batched status probe groups by project — ONE
+    registry read for the whole bin (not per item) — and returns the same status
+    each per-item bin_item_status would."""
+    bins = _fresh_bins(tmp_path, monkeypatch)
+    rootA = _make_project(tmp_path, "libA", make_file=True)
+    rootB = _make_project(tmp_path, "libB", make_file=True)
+    _register(tmp_path, monkeypatch, "libA", rootA)
+    _register(tmp_path, monkeypatch, "libB", rootB)
+
+    import projects
+    calls = {"n": 0}
+    real_discover = projects.discover_projects
+
+    def counting_discover(*a, **k):
+        calls["n"] += 1
+        return real_discover(*a, **k)
+    monkeypatch.setattr(projects, "discover_projects", counting_discover)
+
+    items = [("libA", "1"), ("libB", "1"), ("libB", "999"), ("ghost", "1")]
+    res = bins.bin_item_statuses(items)
+    assert res[("libA", "1")] == bins.STATUS_OK
+    assert res[("libB", "1")] == bins.STATUS_OK
+    assert res[("libB", "999")] == bins.STATUS_ROW_MISSING
+    assert res[("ghost", "1")] == bins.STATUS_PROJECT_UNREGISTERED
+    assert calls["n"] == 1  # ONE registry read for the whole batch, not per item
+
+    # parity with the per-item probe (this loop itself re-reads the registry)
+    for pn, mid in items:
+        assert res[(pn, mid)] == bins.bin_item_status(pn, mid)
+
+
 def test_status_file_missing(tmp_path, monkeypatch):
     bins = _fresh_bins(tmp_path, monkeypatch)
     # row exists but the referenced file is never created on disk

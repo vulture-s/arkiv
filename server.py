@@ -719,9 +719,12 @@ def _bin_detail_payload(b) -> dict:
     """Bin + per-item reachability status. The status probe re-resolves the source
     server-side; only the enum + basename filename + project_name reach the client
     (Phase 16.2 — no absolute path ever leaves the backend)."""
+    # fable-audit round-5 #23: one batched status probe (grouped by project) instead
+    # of a per-item registry read + health probe + sqlite open.
+    statuses = bins_store.bin_item_statuses(b.items)
     items = []
     for item in b.items:
-        status = bins_store.bin_item_status(item.project_name, item.media_id)
+        status = statuses.get((item.project_name, str(item.media_id)), bins_store.STATUS_ERROR)
         items.append({
             "project_name": item.project_name,
             "media_id": item.media_id,
