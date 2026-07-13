@@ -1130,13 +1130,21 @@ def _get_light_records_by_ids(media_ids) -> list:
     ids = [int(m) for m in media_ids]
     if not ids:
         return []
-    placeholders = ",".join("?" * len(ids))
+    # fable-audit round-5 #21: chunk the IN() so a broad structured/semantic query
+    # (thousands of matching ids) doesn't blow past SQLite's max variable count
+    # (999 on old builds) → "too many SQL variables" HTTP 500.
+    by_id = {}
+    _CHUNK = 500
     with db.get_conn() as conn:
-        rows = conn.execute(
-            f"SELECT {db.LIGHT_COLS} FROM media WHERE id IN ({placeholders})",
-            ids,
-        ).fetchall()
-    by_id = {r["id"]: dict(r) for r in rows}
+        for start in range(0, len(ids), _CHUNK):
+            chunk = ids[start:start + _CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT {db.LIGHT_COLS} FROM media WHERE id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for r in rows:
+                by_id[r["id"]] = dict(r)
     return [by_id[i] for i in ids if i in by_id]
 
 
