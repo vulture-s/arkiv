@@ -1,5 +1,16 @@
 # Changelog
-## Unreleased
+## v0.10.0 - 2026-07-14
+
+A large release: a month of Phase 9.x transcription/UI work, cross-library
+"精選集" bins, live cross-project federation search, an optional pgvector backend,
+two security-hardening rounds (round-4 + round-5), a performance batch, and the
+internal `server.py` → `routers/` split. ~130 commits since v0.9.2.
+
+### Breaking
+- **`GET /api/media/{id}/scenes` returns a per-scene shape (#111).** Each scene is
+  now an object (`{start, end, thumbnail, …}`) instead of the previous flat/parallel-array
+  form, so per-scene metadata (deep-links, thumbnails) can attach to the right scene.
+  Clients that indexed the old array layout must read the object fields.
 
 ### Added
 - **Batch export to zip — `POST /api/export/batch` (Phase 12.4).** Bundle the per-clip export (`srt`/`vtt`/`txt`/`edl`/`edl-markers`/`fcpxml`) of many clips into one `.zip`, one file per clip. Reuses the single-clip builder verbatim so formats + content are identical; missing ids are skipped, duplicate filename stems de-collide (`clip.srt`, `clip_1.srt`) so nothing is silently overwritten. (For one stitched timeline use `/api/export/timeline`.) 6 tests in `tests/test_export_batch.py`. — *The rest of Phase 12 (corpus/jsonl/SRT-layout/bilingual via `export.py`) was already shipped; this closes the last item.*
@@ -13,14 +24,42 @@
 - **Correction-dictionary editor in Settings (Phase 9.6c).** Settings → **Vocabulary**: edit the per-project dictionary (rule table `from → to · scope · pre · post`), then batch-recorrect from the same panel — `預覽命中` (dry-run) → `套用校正` (gated on a preview with hits) with an optional vector-rebuild, plus `還原最近一次`. The dictionary is the unified vocab UI — its `pre` toggle is the hotword function, so no separate `vocabulary.txt` editor is needed.
 - **Project-wide batch retranscribe (Phase 9.6d, the 2a upgrade path).** `POST /api/retranscribe-all` re-runs Whisper across every audio clip so newly-added hotwords / correction-dictionary pre-terms take effect — for the rare case a term was mis-heard so badly that find→replace can't recover it. Single-flight + `GET /api/retranscribe-all/status` progress poll (mirrors the embed-rebuild pattern); snapshots all transcripts to the shared correction-backups first, so the existing revert restores them. Preserves the single-clip guard (never blanks a good transcript on an empty/failed decode). Wired into Settings → Vocabulary as a clearly-marked heavy "升級" action with live progress. 6 tests in `tests/test_retranscribe_all.py`.
 - **Per-project correction dictionary + batch recorrect (Phase 9.6b).** A `.arkiv/corrections.json` dictionary of `{from, to, scope, pre, post}` rules drives two paths from one source: `pre` terms feed the Whisper hotword list (`initial_prompt`, hot-read like `vocabulary.txt`), and `post` rules batch-rewrite **already-stored** transcripts — fixing the whole backlog's search recall in seconds without re-running audio. Endpoints: `GET/PUT /api/corrections`, `POST /api/recorrect` (defaults to dry-run preview — writes nothing; `dry_run=0` applies, `rebuild=1` chains the embedding rebuild), `GET /api/recorrect/backups`, `POST /api/recorrect/revert`. CLI: `python recorrect.py --dry-run | --apply [--rebuild] | --revert [NAME]`. **RP-4 safe**: preview-first, and every apply writes a timestamped backup restorable via revert. The recorrect **syncs `segments_json` alongside the transcript blob** (else search/SRT drift), and `words_json` gets whole-token renames. Scope `word` guards against bleeding into a longer token (a `松→鬆` rule never touches `馬拉松`). Operates on the active project. 16 tests in `tests/test_corrections.py`; full suite 608 passed / 5 skipped.
+- **Cross-library "精選集" bins (multi-project Phase 2, PR A/B/C).** Curate clips into named bins that span projects: persistence + CRUD + reference-integrity status (PR A), copy a bin *into* a project in either reference or verified-copy mode with project bootstrap (PR B), and add-to-bin straight from the main grid plus bin rename and a 精選集 section in the pool sidebar (PR C). Bin-detail status probes are batched per project so a large multi-project bin stays responsive.
+- **Live cross-project federation search.** The search box now queries across projects through the federation layer (`GET /api/search/all`), with the API-boundary path sanitisation that keeps a `videos_read` client from mapping the operator's cross-project directory layout (Phase 16.2).
+- **Optional pgvector backend for embeddings (#180).** A shared-NAS Postgres/pgvector store is selectable as the vector backend; Chroma stays the default, so existing single-box installs are unaffected.
+- **Live vision-model picker at ingest (brick 4b).** IngestSetup lists the vision models actually installed in Ollama and lets you pick one per run, instead of being pinned to the config default.
+- **機型 camera browser in the pool sidebar.** Browse the library by camera model, surfacing the camera/lens/timecode/codec metadata already captured at ingest.
+- **Chat scene deep-links.** A chat answer's scene references filter the main grid to the relevant subset and wire back-navigation into the app; Esc aborts an in-flight request.
+- **Basic drag-to-look 360 viewer in the inspector** for `.insv` / `.360` footage.
+- **Settings tabs — projects CRUD + real transcription engines (Phase 9.7 G5 ①).**
+- **Optional LLM tag canonicalization (E).** A semantic synonym-merge pass collapses near-duplicate tags, on top of the prompt-level canonicalization and variant-collapse fixes.
+- **Draggable IN/OUT waveform markers + click-to-play** in the inspector.
+- **Small quality-of-life bricks:** export success/failure toasts (B11), a mixed-frame-rate warning on timeline EDL export (B13), waveform cache dir + thumbnail-coverage reporting in health (B5), and a per-clip original→proxy size delta in the ingest log (B6).
 
 ### Changed
 - **Legacy Tailwind UI retired (Svelte cutover Phase 3, #78).** The old single-file `index.html` + the standalone `dit-offload.html` island are deleted; `/` serves only the built Svelte SPA (a missing build now shows a clear "run `npm run build`" message instead of falling back). The `/legacy` route and the `ARKIV_UI=legacy` escape hatch are removed (the SPA has baked since v0.9.2), the Tailwind CDN proxy + `/tailwind-static.css` go with them, `/dit` now 308-redirects to `/#/offload`, and the Tauri `frontendDist` points at the built SPA. `install.sh` no longer copies the deleted `index.html`.
 - **Default vision model is now `qwen2.5vl:7b` (was `qwen3-vl:8b`).** Qwen3-VL's vision path (DeepStack / interleaved-MRoPE) runs ~10x slower than Qwen2.5-VL under Ollama and often offloads the vision encoder to CPU — measured **~60s/frame vs ~8s/frame on an M2 Max** for identical frames (Ollama issues #12854 / #12882 / #14548). At ~2000 frames that's ~30h vs ~3.5h, at comparable tag quality (spot-checked). Override with `ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b` for the higher ceiling once the Ollama regression is fixed.
+- **arkiv is now Windows-portable.** Cross-platform path handling throughout and a green Windows test suite; the frontend/inspector was rebuilt to a full-window layout with a real video/audio player, waveform, and scrolling side panels.
 
 ### Fixed
 - **Vision fallback no longer 404s on every fresh install.** The Phase-2 fallback model was hardcoded — and inconsistently (`ingest.py` used `minicpm-v`, `server.py` used `moondream2`) — while `install.sh` pulled neither, so the issue-#48 resilience path silently 404'd per failed frame and left those frames empty. Now: a single configurable `ARKIV_OLLAMA_VISION_FALLBACK_MODEL` (default `minicpm-v:latest`) used by both paths, pulled by `install.sh`, and **skipped gracefully** (logged once, frame left for a later `--vision-only` retry) when the model isn't installed instead of erroring per frame.
 - **`install.sh` pulls the right models** for the new defaults: `qwen2.5vl:7b` (vision) + `minicpm-v` (fallback), alongside `bge-m3` + `qwen2.5:14b`.
+- **CJK-named clips export instead of 500ing.** Content-Disposition now uses an RFC 6266 `filename*` so a clip with a Chinese/Japanese/Korean name downloads correctly instead of erroring.
+- **Sony XAVC camera identity recovered from embedded XML** (closes #115); the ingest bench summary now reports the *effective* vision model rather than the config default.
+- **Tag-cloud noise cut down** across the pipeline: Simplified→Traditional normalisation, artifact/English filtering, per-clip dedup, a canonical prompt + variant collapse, a UI cap, and a library alias map.
+- **Domain-agnostic Tier-1 smart collections** — the hardcoded food vocabulary is gone, so smart pools work for any library.
+- **Frontend robustness:** API errors are surfaced (`ApiError` detail, no more silently-swallowed mutations), stale-response guards on the bin + search loaders, and a grid truncation notice with offset-based load-more.
+- **Content-hash move-detection dedup at ingest (round-5 #8)** and migration of legacy backslash-relative paths (round-5 #9), so a moved/re-ingested file is recognised instead of duplicated.
+
+### Security
+- **Hardening round-4 (fable-audit 2026-07-12).** Offload-path denylist, cache-clear CSRF protection, absolute-path leak fixes, and a DDL guard; absolute project paths are now scoped to admin callers only (#22).
+- **Hardening round-5 (#51, ~30 findings).** Highlights: `/api/ingest` + reingest run through a tree-killing process group so an aborted ingest leaves no orphans (#2/#12); `/api/cache/clear` protects thumbnails and invalidates the chromadb cache (#15/#16); ingest single-flight now also covers `copy_bin` + retranscribe-all, and the ingest slot is released on a copy_bin index-phase failure (#58); atomic proxy writes with a non-empty gate at every consumer (#1/#60); resumable, abortable, single-flight offload state (#19/#45); transcript-merge re-parents transcripts before the media row is deleted (#7); retranscribe integrity (language backup, revert, archive-outgoing) (#14/#17); a permanently-failing watched file is backed off and quarantined (#5); the dead `VISION_MODEL` global is removed and the fallback model threaded through `_call_vision` (#50); single-source extension sets fix `.insv`/`.360` SQL drift (#57).
+
+### Performance (round-5)
+- Indexed the hot media columns, chunked large `id IN (…)` queries, and bounded the federation SQL fallback (#20/#21/#24); trimmed the media-detail payload, made stats a single pass, and reconciled embeddings ids-only (#26/#27/#31); dropped the heavy transcript JSON from the Phase-1→2 retained record (#28); batched bin-detail status probes per project (#23); code-split the `/_design` mock routes via async import.
+
+### Internal
+- **`server.py` split into a `routers/` package (#51, R5-25).** The ~4.5k-line FastAPI monolith was peeled — verbatim, behaviour-preserving — into focused `APIRouter` modules (`routers/*.py`) behind leaf service modules (pathres/webguard/export_builders/reqopts/mediarecords/state) that broke the import cycle. `server.py` is now a ~490-line app shell (static routes + lifespan + middleware + `include_router` wiring). No route paths, methods, or auth changed.
 
 ## v0.9.2 - 2026-06-17
 
