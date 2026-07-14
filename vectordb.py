@@ -11,7 +11,15 @@ from typing import Any, Dict, List, Optional
 
 import chromadb
 
-from config import CHROMA_PATH, COLLECTION_NAME, EMBED_DIM, EMBED_MODEL, OLLAMA_URL
+from config import (
+    ARKIV_PG_DSN,
+    CHROMA_PATH,
+    COLLECTION_NAME,
+    EMBED_DIM,
+    EMBED_MODEL,
+    OLLAMA_URL,
+    VECTOR_BACKEND,
+)
 from llm import embed
 
 OLLAMA_EMBED_URL = f"{OLLAMA_URL}/api/embeddings"
@@ -206,6 +214,18 @@ def clear_client_cache():
 
 
 def get_collection(reset: bool = False):
+    if VECTOR_BACKEND == "pg":
+        # Shared NAS pgvector store. PgCollection mimics the Chroma collection
+        # API used here, so every caller downstream is unchanged. Its metadata is
+        # stamped with the active model/dim → _assert_collection_compatible takes
+        # the fast match path without a DB probe.
+        from pgvector_backend import PgCollection
+        col = PgCollection(ARKIV_PG_DSN, EMBED_DIM, EMBED_MODEL, COLLECTION_NAME)
+        if reset:
+            col.reset()
+        _assert_collection_compatible(col)
+        return col
+
     with _CHROMA_LOCK:  # audit M11
         client = chromadb.PersistentClient(path=str(CHROMA_PATH))
         if reset:

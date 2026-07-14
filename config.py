@@ -481,3 +481,21 @@ def discover_projects():
 
 COLLECTION_NAME = "media_assets"
 EMBED_DIM = 1024  # bge-m3 default; informational only — ChromaDB infers dim from first vector
+
+# ── Vector backend selection (向量庫整併 / pgvector consolidation) ──────────────
+# "chroma" (default) = per-install ChromaDB at CHROMA_PATH — existing behavior,
+# fully non-breaking. "pg" = shared NAS pgvector-rag store (24/7 always-on),
+# letting arkiv/media/OpenClaw converge onto one vector DB instead of scattered
+# per-machine chroma dirs. DSN carries the password — supply it via env, never
+# hardcode. Fails loud at import if pg is selected without a DSN.
+VECTOR_BACKEND = os.getenv("ARKIV_VECTOR_BACKEND", "chroma").strip().lower()
+if VECTOR_BACKEND not in ("chroma", "pg"):
+    raise ValueError(
+        f"ARKIV_VECTOR_BACKEND must be 'chroma' or 'pg', got {VECTOR_BACKEND!r}"
+    )
+ARKIV_PG_DSN = os.getenv("ARKIV_PG_DSN", "").strip()
+if VECTOR_BACKEND == "pg" and not ARKIV_PG_DSN:
+    raise ValueError(
+        "ARKIV_VECTOR_BACKEND=pg requires ARKIV_PG_DSN "
+        "(e.g. postgresql://rag:PASSWORD@100.64.154.6:5433/rag)"
+    )

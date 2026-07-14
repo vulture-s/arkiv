@@ -54,6 +54,12 @@ mlx-whisper>=0.4;platform_system=="Darwin"
 # still supports 3.9 (NAS), where an unconditional entry would break pip install.
 mcp>=1.2; python_version >= "3.10"
 
+# ── Shared pgvector backend (向量庫整併) — install manually if needed ──────
+# Only needed when ARKIV_VECTOR_BACKEND=pg (route vectors to the shared NAS
+# pgvector-rag store instead of a local ChromaDB). The default "chroma" backend
+# never imports psycopg, so it stays out of the base install:
+#   pip install 'psycopg[binary]>=3.1'
+
 # ── CUDA / GPU support (install manually if needed) ──────
 # torch>=2.0              # Required for CUDA Whisper; skip on macOS (MLX)
 
