@@ -44,7 +44,18 @@ class PgCollection:
 
     def __init__(self, dsn: str, dim: int, model: str, collection: str,
                  table: Optional[str] = None):
-        import psycopg  # optional dep — only needed for the pg backend
+        # psycopg is an optional dependency — only the pg backend needs it, so it
+        # is NOT in the base requirements. Guard the import (arkiv's optional-dep
+        # convention, cf. health.py's `import mlx`) so a fresh chroma-only install
+        # never imports it, and give an actionable message if pg is selected
+        # without it installed.
+        try:
+            import psycopg
+        except ImportError as exc:
+            raise ImportError(
+                "ARKIV_VECTOR_BACKEND=pg needs psycopg — install it with: "
+                "pip install 'psycopg[binary]>=3.1'"
+            ) from exc
         self._psycopg = psycopg
         self.dsn = dsn
         self.dim = int(dim)
