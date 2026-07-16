@@ -97,6 +97,34 @@
   // set range exports just that sub-clip (EDL/SRT/FCPXML). Set at the playhead.
   let inSec = null
   let outSec = null
+  // Hydrate the marks from the persisted backend values when a clip opens (and
+  // once more if the detail lands after the switch), but never clobber an edit the
+  // user already made on this clip (tracked by _ioTouched). Keyed on media.id so a
+  // clip-switch resets, fixing the old bug where marks leaked across clips / were lost.
+  let _ioLoadedId = null
+  let _ioTouched = false
+  $: _hydrateInOut(media && media.id, inPoint, outPoint)
+  function _hydrateInOut(id, ip, op) {
+    if (id == null) return
+    if (id !== _ioLoadedId) {
+      _ioLoadedId = id
+      _ioTouched = false
+      inSec = ip ?? null
+      outSec = op ?? null
+    } else if (!_ioTouched && (ip != null || op != null) && inSec == null && outSec == null) {
+      inSec = ip ?? null // detail arrived after the clip switch — hydrate once
+      outSec = op ?? null
+    }
+  }
+  // Debounced persist — waveform marker drags fire onTrim rapidly, so coalesce the
+  // writes; marking the clip as touched locks out further auto-hydration.
+  let _ioTimer = null
+  function _persistInOut() {
+    _ioTouched = true
+    if (!onInOut) return
+    if (typeof clearTimeout !== 'undefined') clearTimeout(_ioTimer)
+    _ioTimer = setTimeout(() => onInOut(inSec, outSec), 350)
+  }
   // When frameExact, mark at the exact frame boundary (curFrame from rVFC),
   // expressed back in seconds so the ?in_s/out_s export contract is unchanged —
   // the value just now lands precisely on a frame edge instead of wherever the
@@ -108,6 +136,7 @@
     if (t == null) return
     inSec = t
     if (outSec != null && outSec <= inSec) outSec = null
+    _persistInOut()
   }
   function setOut() {
     if (!playerEl) return
@@ -115,8 +144,9 @@
     if (t == null) return
     outSec = t
     if (inSec != null && inSec >= outSec) inSec = null
+    _persistInOut()
   }
-  function clearInOut() { inSec = null; outSec = null }
+  function clearInOut() { inSec = null; outSec = null; _persistInOut() }
   // Waveform marker drag → set IN/OUT directly (no need to scrub the playhead there)
   function onTrim(e) {
     if (!mediaDuration) return
@@ -128,6 +158,7 @@
       outSec = t
       if (inSec != null && inSec >= outSec) inSec = null
     }
+    _persistInOut()
   }
   function onLoadedMeta() {
     if (playerEl && playerEl.duration) mediaDuration = playerEl.duration
@@ -156,6 +187,13 @@
   // edit_position, edit_reason, focus_score}]. null → mock screens unchanged.
   export let frameScenes = null
   export let onRate = null // (uiRating) => void; when set, rate buttons are live
+  // Persisted IN/OUT trim points (seconds) for THIS clip, from the backend detail.
+  // The inspector hydrates its marks from these on clip-open so a range survives a
+  // clip-switch/reload; null → no saved marks. onInOut(inSec, outSec) persists a
+  // change (debounced) — null keeps the marks purely local (mock screens unchanged).
+  export let inPoint = null
+  export let outPoint = null
+  export let onInOut = null // (inSec, outSec) => void
   // (fmt) => void; triggers an authenticated download for this clip. When set,
   // the export buttons become live; null → mock screens keep the inert buttons.
   export let onExport = null

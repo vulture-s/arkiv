@@ -24,6 +24,7 @@ _EXPECTED_ROUTES = {
     ("/api/media/{media_id}/scenes", "GET"),
     ("/api/media/{media_id}/chapters", "GET"),
     ("/api/media/{media_id}/rating", "PATCH"),
+    ("/api/media/{media_id}/inout", "PATCH"),
     ("/api/media/{media_id}/tags", "GET"),
     ("/api/media/{media_id}/tags", "POST"),
     ("/api/media/{media_id}/tags/{tag_name}", "DELETE"),
@@ -41,7 +42,7 @@ def test_media_router_is_a_leaf_module():
     assert not re.search(r"^\s*from\s+server\b", src, re.M)
 
 
-def test_router_owns_exactly_the_16_media_routes():
+def test_router_owns_exactly_the_17_media_routes():
     import routers.media as rm
     pairs = {
         (r.path, m)

@@ -615,6 +615,18 @@
       pushToast(`rating 寫入失敗: ${e.message}`, 'error')  // round-5 #43 — was a silent revert
     }
   }
+
+  // Persist the inspector's IN/OUT marks (debounced upstream in the inspector).
+  // Optimistically fold into the local detail so re-opening the clip restores the
+  // range without a refetch; toast on write failure.
+  async function saveInOut(id, inS, outS) {
+    if (detail && detail.id === id) detail = { ...detail, in_point: inS ?? null, out_point: outS ?? null }
+    try {
+      await api.setInOut(id, inS ?? null, outS ?? null)
+    } catch (e) {
+      pushToast(`IN/OUT 寫入失敗: ${e.message}`, 'error')
+    }
+  }
 </script>
 
 <div class="artboard" data-theme={theme}>
@@ -784,6 +796,9 @@
         onRemotion={selected ? () => exportRemotion(selected.id, selected.name) : null}
         onReveal={inspPath ? () => revealFile(inspPath) : null}
         onRate={rate}
+        inPoint={detailLive ? detailLive.in_point : null}
+        outPoint={detailLive ? detailLive.out_point : null}
+        onInOut={selected ? (inS, outS) => saveInOut(selected.id, inS, outS) : null}
       />
     {/if}
   </div>
