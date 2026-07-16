@@ -925,6 +925,60 @@ def test_generate_proxy_success_replaces_atomically(tmp_path, monkeypatch):
     assert list(proxies.glob("*.tmp.*")) == []
 
 
+def test_build_proxy_cmd_hwaccel_and_height():
+    """D3: hardware DECODE is prepended before -i, encode stays libx264, and the
+    scale height is parameterised (the resolution selector drives it)."""
+    ingest = importlib.import_module("ingest")
+    cmd = ingest._build_proxy_cmd("/src.mp4", "/dst.mp4", 720, True)
+    assert "-hwaccel" in cmd and cmd[cmd.index("-hwaccel") + 1] == "videotoolbox"
+    # -hwaccel must come before the input, or ffmpeg ignores it
+    assert cmd.index("-hwaccel") < cmd.index("-i")
+    assert cmd[cmd.index("-i") + 1] == "/src.mp4"
+    assert cmd[cmd.index("-c:v") + 1] == "libx264"  # encode stays software libx264
+    assert "scale=-2:720" in cmd
+    assert cmd[-1] == "/dst.mp4"
+    # software path: no -hwaccel, height honoured
+    sw = ingest._build_proxy_cmd("/s.mp4", "/d.mp4", 1080, False)
+    assert "-hwaccel" not in sw
+    assert "scale=-2:1080" in sw
+
+
+def test_generate_proxy_falls_back_to_software_when_hwaccel_fails(tmp_path, monkeypatch):
+    """D3: a source VideoToolbox can't hardware-decode must not fail the proxy —
+    the encoder retries in software (no -hwaccel) and still produces the file."""
+    ingest = importlib.import_module("ingest")
+    config = importlib.import_module("config")
+    proxies = tmp_path / "proxies"; proxies.mkdir()
+    monkeypatch.setattr(config, "PROXIES_DIR", proxies)
+    src = tmp_path / "clip.mov"; src.write_bytes(b"src")
+
+    calls = []
+
+    class _R:
+        stderr = "boom"
+
+        def __init__(self, rc):
+            self.returncode = rc
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        used_hw = "-hwaccel" in cmd
+        if used_hw:
+            return _R(1)  # hardware decode "fails"
+        open(cmd[-1], "wb").write(b"sw-proxy")  # software succeeds, writes the tmp
+        return _R(0)
+
+    monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+
+    result = ingest.generate_proxy(1, str(src), hwaccel=True)
+    final = config.proxy_path_for(1, str(src))
+    assert result == str(final)
+    assert final.read_bytes() == b"sw-proxy"
+    assert len(calls) == 2  # first hwaccel (failed), then software
+    assert "-hwaccel" in calls[0] and "-hwaccel" not in calls[1]
+    assert list(proxies.glob("*.tmp.*")) == []  # tmp cleaned
+
+
 def test_stream_returns_409_when_hevc_source_has_no_proxy(
     fastapi_client, sample_record, tmp_path, monkeypatch
 ):

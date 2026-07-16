@@ -505,8 +505,42 @@ def needs_proxy(path: str) -> bool:
     return codec.needs_proxy(path) == codec.NEEDED
 
 
-def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[str]:
-    """Generate a 720p H.264 proxy for browser playback. Returns proxy path or None."""
+def _build_proxy_cmd(src: str, dst: str, height: int, hwaccel: bool) -> list:
+    """ffmpeg args for a browser-playback proxy: {height}p H.264, faststart.
+
+    hwaccel=True prepends VideoToolbox hardware DECODE — the proxy bottleneck is
+    decoding the 4K source, not encoding the small output (measured 26% wall / 59%
+    CPU on Apple Silicon). Encode stays libx264: the videotoolbox *encoder* was
+    slower and produced a far larger file. The caller retries with hwaccel=False if
+    a source's codec/pix_fmt isn't hardware-decodable. `-hwaccel` must precede `-i`."""
+    cmd = [config.FFMPEG_PATH, "-y"]
+    if hwaccel:
+        cmd += ["-hwaccel", "videotoolbox"]
+    cmd += [
+        "-i", src,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "28",
+        "-profile:v", "high", "-level:v", "4.0",
+        "-pix_fmt", "yuv420p",
+        "-g", "30",
+        "-vf", "scale=-2:{0}".format(int(height)),
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        dst,
+    ]
+    return cmd
+
+
+def generate_proxy(media_id: int, path: str, force: bool = False,
+                   height: Optional[int] = None, hwaccel: Optional[bool] = None) -> Optional[str]:
+    """Generate an H.264 proxy for browser playback. Returns proxy path or None.
+
+    height defaults to config.PROXY_HEIGHT; hwaccel defaults to
+    config.PROXY_HWDECODE_DEFAULT (Apple Silicon VideoToolbox decode). A hardware
+    decode that a given source can't support falls back to software automatically."""
+    if height is None:
+        height = config.PROXY_HEIGHT
+    if hwaccel is None:
+        hwaccel = config.PROXY_HWDECODE_DEFAULT
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
     proxy_path = config.proxy_path_for(media_id, path)
@@ -526,22 +560,23 @@ def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[st
     # sits beside the final so os.replace stays on one filesystem.
     tmp_path = proxy_path.with_name("{0}.tmp.{1}{2}".format(proxy_path.stem, os.getpid(), proxy_path.suffix))
     tmp_path.unlink(missing_ok=True)
-    cmd = [
-        config.FFMPEG_PATH, "-y", "-i", path,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "28",
-        "-profile:v", "high", "-level:v", "4.0",
-        "-pix_fmt", "yuv420p",
-        "-g", "30",
-        "-vf", "scale=-2:720",
-        "-c:a", "aac", "-b:a", "128k",
-        "-movflags", "+faststart",
-        str(tmp_path),
-    ]
-    try:
+
+    def _run(use_hw: bool):
         # encoding pinned: Windows zh-TW default cp950 can't decode ffmpeg's
         # utf-8 stderr → UnicodeDecodeError crashes proxy gen on headless ingest.
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=600)
+        return subprocess.run(
+            _build_proxy_cmd(path, str(tmp_path), height, use_hw),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+        )
+
+    try:
+        r = _run(hwaccel)
+        if r.returncode != 0 and hwaccel:
+            # a source VideoToolbox can't hardware-decode (unusual pix_fmt/codec) →
+            # retry in software rather than fail the whole proxy.
+            tmp_path.unlink(missing_ok=True)
+            print("[proxy] hwaccel decode failed (rc={0}) for {1}; retrying software".format(r.returncode, path))
+            r = _run(False)
         if r.returncode == 0 and tmp_path.exists() and tmp_path.stat().st_size > 0:
             os.replace(str(tmp_path), str(proxy_path))
             return str(proxy_path)
