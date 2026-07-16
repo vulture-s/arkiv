@@ -4,10 +4,18 @@ Vector DB module — ChromaDB + Ollama bge-m3 (multilingual, default)
 """
 import json
 import logging
+import os
 import re
 import threading
 import requests
 from typing import Any, Dict, List, Optional
+
+# Turn off chromadb's PostHog telemetry before importing it. arkiv is a local,
+# offline-capable media tool with no reason to phone home on every client init;
+# setting this at the source also covers the HTTP surface, and `setdefault` lets
+# an explicit override still win. (The MCP launch config sets the same env — this
+# is the code-side SSOT so it holds no matter how the process is started.)
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 import chromadb
 
