@@ -24,7 +24,6 @@ from typing import Any, Dict, List, Optional
 
 import db
 import scenes
-import vectordb as vdb
 from mcp.server.fastmcp import FastMCP
 from pathres import _display_path
 
@@ -106,35 +105,47 @@ def search_media_impl(
     enriched: List[Dict[str, Any]] = []
     seen: set = set()
 
-    # 1. Semantic (vector) search — preferred.
+    # 1. Semantic (vector) search — preferred. vectordb (and its heavy chromadb
+    # dependency) is imported lazily HERE, not at module scope: six of the seven
+    # tools never touch a vector index, so the server must boot and serve them on
+    # a box with no vector backend — and so tests/test_mcp_e2e.py can run on CI,
+    # which installs none. Bind vdb to the module *or* None BEFORE the try, so the
+    # `except vdb.EmbeddingDimensionMismatch` clause below can never reference an
+    # unbound name when the import itself is what failed.
     try:
-        for r in vdb.search(query, n_results=limit * 3):
-            mid = int(r["media_id"])
-            if mid in seen:
-                continue
-            rec = db.get_record_by_id(mid)
-            if not rec:
-                continue
-            seen.add(mid)
-            item = _light(rec)
-            item["score"] = round(float(r.get("score", 0)), 4)
-            if r.get("excerpt"):
-                item["excerpt"] = r["excerpt"]
-            item["tags"] = _tag_names(mid)
-            enriched.append(item)
-            if len(enriched) >= limit:
-                break
-    # audit M17: split the dim-mismatch branch out of the blanket except — log
-    # it and surface a degraded hint (mirrors server.py's search_degraded fix)
-    # instead of silently SQL-degrading. SQL fallback still runs below.
-    except vdb.EmbeddingDimensionMismatch as exc:
-        LOGGER.warning("mcp semantic search degraded: %s", exc)
-        if _warnings is not None:
-            _warnings.append(str(exc))
-        enriched, seen = [], set()
+        import vectordb as vdb
     except Exception:
-        # Vector index unavailable/empty — degrade to SQL.
-        enriched, seen = [], set()
+        vdb = None
+
+    if vdb is not None:
+        try:
+            for r in vdb.search(query, n_results=limit * 3):
+                mid = int(r["media_id"])
+                if mid in seen:
+                    continue
+                rec = db.get_record_by_id(mid)
+                if not rec:
+                    continue
+                seen.add(mid)
+                item = _light(rec)
+                item["score"] = round(float(r.get("score", 0)), 4)
+                if r.get("excerpt"):
+                    item["excerpt"] = r["excerpt"]
+                item["tags"] = _tag_names(mid)
+                enriched.append(item)
+                if len(enriched) >= limit:
+                    break
+        # audit M17: split the dim-mismatch branch out of the blanket except — log
+        # it and surface a degraded hint (mirrors server.py's search_degraded fix)
+        # instead of silently SQL-degrading. SQL fallback still runs below.
+        except vdb.EmbeddingDimensionMismatch as exc:
+            LOGGER.warning("mcp semantic search degraded: %s", exc)
+            if _warnings is not None:
+                _warnings.append(str(exc))
+            enriched, seen = [], set()
+        except Exception:
+            # Vector index unavailable/empty — degrade to SQL.
+            enriched, seen = [], set()
 
     # 2. SQL text fallback (filename / transcript) when semantic found nothing.
     if not enriched:
