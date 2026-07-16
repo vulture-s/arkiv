@@ -23,7 +23,7 @@ stays in routers/media.py.
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pathres import _resolve_media_path
+from pathres import _display_path, _resolve_media_path
 
 
 def _build_scenes(frames: List[Dict[str, Any]], media_duration_s: float) -> List[Dict[str, Any]]:
@@ -78,25 +78,65 @@ def _media_duration_s(rec: Dict[str, Any]) -> float:
 
 def _keyframe_url(thumbnail_path: Optional[str]) -> Optional[str]:
     """HTTP-only: the /thumbnails/<basename> URL served by the authed thumbnail
-    route. Not used by MCP — a server-relative URL is meaningless over stdio."""
+    route. Meaningless over stdio — an MCP client has no host and no session to
+    fetch it with, so the MCP surface uses _keyframe_path instead."""
     if not thumbnail_path:
         return None
     return "/thumbnails/{0}".format(Path(_resolve_media_path(thumbnail_path)).name)
 
 
-def _scenes_payload(media_id: int, rec: Dict[str, Any],
-                    frames: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """The exact HTTP response body. Byte-frozen by tests/test_scenes_contract.py."""
+def _keyframe_path(thumbnail_path: Optional[str]) -> Optional[str]:
+    """MCP-only: the PROJECT_ROOT-relative path (basename for an out-of-root
+    legacy row). Data rather than a server URL — a stdio MCP client runs on this
+    same machine, so a path is actionable to it where a URL is not.
+
+    Same leak guard as every other path the MCP server emits (mcp_server._safe_path
+    is this function's `_display_path` too). Never hand a raw frame's
+    thumbnail_path out: db.get_frames is SELECT *, so it is absolute for
+    out-of-root legacy rows.
+    """
+    if not thumbnail_path:
+        return None
+    return _display_path(thumbnail_path)
+
+
+def _scenes_core(media_id: int, rec: Dict[str, Any],
+                 frames: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Envelope + scenes with NO path field. Shared by both surfaces; each one
+    appends its own keyframe representation on top (see below)."""
     media_duration_s = _media_duration_s(rec)
     scenes = _build_scenes(frames, media_duration_s)
-    for scene, frame in zip(scenes, frames):
-        if frame.get("thumbnail_path"):
-            # Appended LAST, and conditionally: key order is contract, and a
-            # scene with no thumbnail omits the key rather than carrying null.
-            scene["keyframe_url"] = _keyframe_url(frame["thumbnail_path"])
     return {
         "media_id": media_id,
         "media_duration_s": media_duration_s,
         "scenes": scenes,
         "total": len(scenes),
     }
+
+
+# The two surface shapes live side by side on purpose: the ONLY difference
+# between them should be the keyframe representation, and that is easiest to keep
+# true when both are visible in one screenful. Everything above the fold —
+# envelope, boundaries, vision fields — is shared by construction.
+
+def _scenes_payload(media_id: int, rec: Dict[str, Any],
+                    frames: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The exact HTTP response body. Byte-frozen by tests/test_scenes_contract.py."""
+    payload = _scenes_core(media_id, rec, frames)
+    for scene, frame in zip(payload["scenes"], frames):
+        if frame.get("thumbnail_path"):
+            # Appended LAST, and conditionally: key order is contract, and a
+            # scene with no thumbnail omits the key rather than carrying null.
+            scene["keyframe_url"] = _keyframe_url(frame["thumbnail_path"])
+    return payload
+
+
+def _scenes_for_mcp(media_id: int, rec: Dict[str, Any],
+                    frames: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The MCP tool body. Identical to the HTTP one except keyframe_path replaces
+    keyframe_url — same position (last), same conditionality."""
+    payload = _scenes_core(media_id, rec, frames)
+    for scene, frame in zip(payload["scenes"], frames):
+        if frame.get("thumbnail_path"):
+            scene["keyframe_path"] = _keyframe_path(frame["thumbnail_path"])
+    return payload

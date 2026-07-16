@@ -276,10 +276,146 @@ def test_tool_json_keeps_cjk_readable(monkeypatch):
     assert json.loads(raw)["transcript"] == "中文"
 
 
+# ── get_scenes ────────────────────────────────────────────────────────────────
+def _fake_frames(**over):
+    frame = {
+        "id": 7, "media_id": 1, "frame_index": 0, "timestamp_s": 0.0,
+        "description": "手持走入店內", "content_type": "Establishing",
+        "focus_score": 3, "atmosphere": "紀實", "energy": "中",
+        "edit_position": "開場", "edit_reason": "建立場景",
+        "stability": "穩定", "exposure": "normal", "audio_quality": "清晰",
+        "thumbnail_path": "thumbnails/a.jpg",
+    }
+    frame.update(over)
+    return [frame]
+
+
+def test_get_scenes_impl_shape(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: {"id": 1, "duration_s": 30.0})
+    monkeypatch.setattr(db, "get_frames", lambda mid: _fake_frames())
+    monkeypatch.setattr(db, "to_relative", lambda p: p)
+
+    out = m.get_scenes_impl(1)
+
+    assert out["media_id"] == 1
+    assert out["media_duration_s"] == 30.0
+    assert out["total"] == 1
+    scene = out["scenes"][0]
+    assert scene["start_s"] == 0.0
+    assert scene["end_s"] == 30.0        # only frame → closes at media duration
+    assert scene["duration_s"] == 30.0
+    assert scene["description"] == "手持走入店內"
+    assert scene["keyframe_path"] == "thumbnails/a.jpg"
+
+
+def test_get_scenes_impl_unknown_id_is_none_not_empty(monkeypatch):
+    # The distinction matters: db.get_frames on a bogus id also returns [], so
+    # without the rec lookup "no such media" and "no vision analysis yet" would
+    # give the agent the same answer.
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: None)
+    assert m.get_scenes_impl(999999) is None
+
+
+def test_get_scenes_no_frames_is_empty_not_none(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: {"id": 1, "duration_s": 30.0})
+    monkeypatch.setattr(db, "get_frames", lambda mid: [])
+    out = m.get_scenes_impl(1)
+    assert out is not None
+    assert out["total"] == 0
+    assert out["scenes"] == []
+
+
+@pytest.mark.parametrize("stored,expected", [
+    ("/Users/secret/footage/x.jpg", "x.jpg"),        # POSIX absolute
+    ("C:\\Users\\me\\x.jpg", "x.jpg"),               # Windows drive, backslash
+    ("C:/Users/me/x.jpg", "x.jpg"),                  # Windows drive, forward slash (#182)
+    ("\\\\nas\\share\\x.jpg", "x.jpg"),              # UNC
+    ("thumbnails/x.jpg", "thumbnails/x.jpg"),        # in-root relative — preserved
+])
+def test_get_scenes_keyframe_path_never_leaks_absolute(monkeypatch, stored, expected):
+    """RED LINE. db.get_frames is SELECT *, so thumbnail_path is raw and absolute
+    for out-of-root legacy rows — handing it out unfiltered is exactly the leak
+    #182 fixed on the other tools. Scenes must go through the same guard."""
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: {"id": 1, "duration_s": 30.0})
+    monkeypatch.setattr(db, "get_frames", lambda mid: _fake_frames(thumbnail_path=stored))
+    monkeypatch.setattr(db, "to_relative", lambda p: p)  # out-of-root passthrough
+
+    out = m.get_scenes_impl(1)
+
+    assert out["scenes"][0]["keyframe_path"] == expected
+
+
+def test_get_scenes_omits_keyframe_path_without_a_thumbnail(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: {"id": 1, "duration_s": 30.0})
+    monkeypatch.setattr(db, "get_frames", lambda mid: _fake_frames(thumbnail_path=None))
+    out = m.get_scenes_impl(1)
+    assert "keyframe_path" not in out["scenes"][0]
+
+
+def test_get_scenes_never_emits_a_url_or_raw_frame_columns(monkeypatch):
+    """keyframe_url is an HTTP concept (no host, no session over stdio), and the
+    raw frame's id/media_id/thumbnail_path are noise the agent must not see."""
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: {"id": 1, "duration_s": 30.0})
+    monkeypatch.setattr(db, "get_frames", lambda mid: _fake_frames())
+    monkeypatch.setattr(db, "to_relative", lambda p: p)
+
+    scene = m.get_scenes_impl(1)["scenes"][0]
+
+    assert "keyframe_url" not in scene
+    assert "thumbnail_path" not in scene
+    assert "media_id" not in scene
+    assert not any(isinstance(v, str) and v.startswith("/thumbnails/") for v in scene.values())
+
+
+def test_get_scenes_matches_the_http_shape_except_the_keyframe_key(monkeypatch):
+    """Anti-fork pin, and the reason scenes.py exists at all.
+
+    The MCP and HTTP scene shapes must differ in EXACTLY one way: keyframe_path
+    vs keyframe_url. Everything else — envelope, boundaries, key order, every
+    vision field — comes from the shared derivation. mcp_server already forked a
+    same-looking copy of the leak guard once and drifted for 38 days (#182); this
+    fails the moment someone re-derives scenes on either side.
+    """
+    import scenes as scenes_mod
+
+    monkeypatch.setattr(db, "to_relative", lambda p: p)
+    rec = {"id": 1, "duration_s": 30.0}
+    frames = _fake_frames()
+
+    http = scenes_mod._scenes_payload(1, rec, frames)
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: rec)
+    monkeypatch.setattr(db, "get_frames", lambda mid: frames)
+    mcp_out = m.get_scenes_impl(1)
+
+    assert list(http.keys()) == list(mcp_out.keys())
+    assert http["media_duration_s"] == mcp_out["media_duration_s"]
+    assert http["total"] == mcp_out["total"]
+
+    for h, c in zip(http["scenes"], mcp_out["scenes"]):
+        assert list(h.keys())[:-1] == list(c.keys())[:-1]   # same keys, same order
+        assert list(h.keys())[-1] == "keyframe_url"          # …differing only in
+        assert list(c.keys())[-1] == "keyframe_path"         #    the last one
+        for key in h:
+            if key != "keyframe_url":
+                assert h[key] == c[key], key
+
+
+def test_get_scenes_tool_returns_valid_json(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: {"id": 1, "duration_s": 30.0})
+    monkeypatch.setattr(db, "get_frames", lambda mid: _fake_frames())
+    monkeypatch.setattr(db, "to_relative", lambda p: p)
+
+    raw = m.get_scenes(1)
+
+    assert "手持走入店內" in raw                       # ensure_ascii=False
+    assert json.loads(raw)["scenes"][0]["start_s"] == 0.0
+
+
 # ── tools are registered with FastMCP ─────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_tools_registered():
     tools = await m.mcp.list_tools()
     names = {t.name for t in tools}
     assert {"search_media", "get_media", "get_transcript",
-            "list_recent", "library_stats", "list_tags"} <= names
+            "list_recent", "library_stats", "list_tags",
+            "get_scenes"} <= names

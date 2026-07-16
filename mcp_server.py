@@ -23,6 +23,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 import db
+import scenes
 import vectordb as vdb
 from mcp.server.fastmcp import FastMCP
 from pathres import _display_path
@@ -167,6 +168,21 @@ def get_media_impl(media_id: int) -> Optional[Dict[str, Any]]:
     return out
 
 
+def get_scenes_impl(media_id: int) -> Optional[Dict[str, Any]]:
+    """Per-scene breakdown for one media item, or None if the id is unknown.
+
+    The rec lookup is not redundant with get_frames: db.get_frames on an unknown
+    id returns [], which is indistinguishable from a real clip that has no vision
+    analysis yet. Fetch the record first so "no such media" (None) and "no scenes"
+    (total: 0) stay different answers — and it carries duration_s anyway.
+    """
+    rec = db.get_record_by_id(int(media_id))
+    if not rec:
+        return None
+    frames = db.get_frames(int(media_id))
+    return scenes._scenes_for_mcp(int(media_id), rec, frames)
+
+
 def get_transcript_impl(media_id: int) -> Optional[Dict[str, Any]]:
     """Transcript text for one media item, or None."""
     rec = db.get_record_by_id(int(media_id))
@@ -239,6 +255,43 @@ def get_media(media_id: int) -> str:
     Returns a JSON object, or null if the id is unknown.
     """
     return _j(get_media_impl(media_id))
+
+
+@mcp.tool()
+def get_scenes(media_id: int) -> str:
+    """Timecoded scene breakdown for one media item — what happens, and when.
+
+    Use this to decide WHICH PART of a clip to use: search_media/get_media answer
+    "which clip", this answers "which seconds of it". Each scene is one
+    scene-detect boundary with vision analysis of its keyframe.
+
+    Returns a JSON object, or null if the id is unknown:
+      {media_id, media_duration_s, total, scenes: [...]}
+
+    Each scene:
+      scene_index    int    0-based, in playback order
+      start_s        float  scene start, seconds from clip start
+      end_s          float  = next scene's start_s; the last scene ends at
+                            media_duration_s
+      duration_s     float  end_s - start_s
+      description    str    what the keyframe shows (may be "" if not analysed)
+      content_type   str    e.g. Establishing / B-Roll / A-Roll / Talking-Head
+      focus_score    int    1-5, higher = sharper
+      atmosphere     str
+      energy         str
+      edit_position  str    where this shot would sit in a cut
+      edit_reason    str
+      stability      str
+      exposure       str
+      audio_quality  str
+      keyframe_path  str    PROJECT_ROOT-relative path to the keyframe JPEG.
+                            Present only when a keyframe exists.
+
+    Every vision field is present on every scene, but is null when that clip has
+    not been analysed — check for null rather than for the key. Values are in the
+    library's own language (typically Chinese).
+    """
+    return _j(get_scenes_impl(media_id))
 
 
 @mcp.tool()
