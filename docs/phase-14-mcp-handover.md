@@ -4,15 +4,19 @@ Exposes arkiv's local media knowledge layer to MCP clients (Claude Desktop,
 Claude Code, OpenClaw) over **stdio**, so an agent can search and read your
 footage library directly — no HTTP round-trip, no auth token.
 
-> Status: implemented + tested on branch `feat/phase-14-mcp-server`. Not merged,
-> not tagged. Mac (Python 3.12) verified; see "Verification" below.
+> Status: shipped on `main`, released in v0.10.0. Mac (Python 3.12) verified; see
+> "Verification" below. Timecode tools (`get_scenes`, `get_transcript` segments)
+> landed 2026-07-16 — see "Timecodes" below.
 
 ## What ships
 
 - `mcp_server.py` — a `FastMCP("arkiv")` stdio server.
-- `tests/test_mcp_server.py` — 18 unit tests (mocked db/vectordb) + 1 async
+- `tests/test_mcp_server.py` — 47 unit tests (mocked db/vectordb) + 1 async
   tool-registration test.
-- `requirements.txt` — adds optional `mcp>=1.2`.
+- `tests/test_mcp_e2e.py` — 2 end-to-end stdio tests (real subprocess, real
+  `mcp` client).
+- `requirements.txt` — adds optional `mcp>=1.2` (3.10+ only; the SDK is gated out
+  on the 3.9 NAS floor, and both test modules `importorskip` accordingly).
 
 ## Tools (all read-only)
 
@@ -20,13 +24,51 @@ footage library directly — no HTTP round-trip, no auth token.
 |------|------|------------------------|
 | `search_media` | `query: str, limit=20` | list of `{id, filename, path, score, excerpt, tags, lang, duration_s}` |
 | `get_media` | `media_id: int` | full record (relative paths, tags) or `null` |
-| `get_transcript` | `media_id: int` | `{id, filename, lang, transcript}` or `null` |
+| `get_scenes` | `media_id: int` | `{media_id, media_duration_s, total, scenes: [...]}` or `null` |
+| `get_transcript` | `media_id: int, include_words=False` | `{id, filename, lang, transcript, duration_s, segments, has_words}` (+ `words`, `words_truncated` when `include_words`) or `null` |
 | `list_recent` | `limit=20` | list of lightweight records |
 | `library_stats` | — | `{total, with_transcript, with_thumb, total_duration_s, total_size_mb, langs}` |
 | `list_tags` | `limit=30` | list of `{name, count}` |
 
 Search tries semantic (vector) search first and falls back to SQL
 filename/transcript `LIKE` when the vector index is empty/unavailable.
+
+## Timecodes — "which clip" vs "which seconds of it"
+
+`search_media` / `get_media` answer *which clip*. `get_scenes` and
+`get_transcript.segments` answer *which seconds of it*, which is what a
+downstream editing agent actually needs in order to cut.
+
+- **`get_scenes`** — one entry per scene-detect boundary: `start_s` / `end_s` /
+  `duration_s` plus the nine vision fields for that scene's keyframe
+  (`description`, `content_type`, `focus_score`, `atmosphere`, `energy`,
+  `edit_position`, `edit_reason`, `stability`, `exposure`, `audio_quality`) and
+  a `keyframe_path`. Every vision key is always present but is `null` on an
+  unanalysed clip — check the value, not the key.
+- **`get_transcript.segments`** — `[{start, end, text}]`, on by default.
+  `words` (`[{word, start, end, score}]`) is **opt-in** via `include_words` and
+  capped at 5000: word timing is multi-MB on a long clip, and unlike the HTTP
+  API — where the same payload is merely slow (see the `words_json` drop at
+  `routers/media.py:383-389`) — over MCP it blows the agent's context window.
+  `has_words` advertises availability without paying for it.
+
+Two things worth knowing:
+
+- **Segments are projected, not passed through.** The backends disagree on shape:
+  mlx-whisper (every Mac ingest) stores its native dict — `seek`, `id`,
+  `tokens`, `temperature`, logprobs and all — while faster-whisper writes six
+  keys and whisperx a third shape. Verbatim, the payload would depend on which
+  machine ingested the clip. The tool projects onto `{start, end, text}`, which
+  is what `transcribe.py:223-224` documents as the contract anyway.
+- **Clips ingested before Phase 9.4 have no segment timing**, so `segments` is
+  `[]` on them and callers should fall back to the flat `transcript`.
+
+`get_scenes` shares its derivation with the HTTP `/api/media/{id}/scenes` route
+via the `scenes.py` leaf, so the two cannot drift. They differ in exactly one
+key, pinned by a test: HTTP emits `keyframe_url` (`/thumbnails/<basename>`, for
+the authed thumbnail route), MCP emits `keyframe_path` (PROJECT_ROOT-relative) —
+a server-relative URL is not actionable over stdio, but a path is, since the
+client runs on the same machine.
 
 ## Design contract (red lines)
 
@@ -72,11 +114,40 @@ Claude Desktop / Claude Code (`.mcp.json` or `claude_desktop_config.json`):
 
 ## Verification
 
-- `pytest tests/test_mcp_server.py` → 18 passed.
-- Full suite → 422 passed / 3 skipped (was 404/3; +18, zero regressions).
-- End-to-end stdio smoke (real subprocess + `mcp` client): `tools/list` returns
-  all 6 tools; `library_stats` / `search_media` / `list_recent` return valid JSON
-  against an empty DB without error.
+- `pytest tests/test_mcp_server.py` → 47 passed.
+- `pytest tests/test_mcp_e2e.py` → 2 passed. Real subprocess + real `mcp` stdio
+  client against a seeded temp project: `tools/list` returns all 7 tools;
+  `get_scenes` / `get_transcript` / `library_stats` round-trip correctly; an
+  unknown id returns `null`; and a library seeded with out-of-root absolute paths
+  (`/Volumes/…`, `C:/Users/…`) leaks none of them across `get_media`,
+  `get_scenes` or `list_recent`.
+- Full suite → 976 passed / 6 skipped.
+
+The e2e module is the only thing that exercises the MCP layer itself: every unit
+test calls the `*_impl` functions directly, so FastMCP registration, stdio
+JSON-RPC framing, tool dispatch, argument coercion and `_j` serialisation are
+covered here and nowhere else. A tool can be perfectly correct at the impl level
+and still be unreachable or carry a broken schema.
+
+**It does not run on CI, by necessity, not choice.** The server runs as a real
+subprocess, which loads no conftest and therefore needs the real `chromadb` —
+`mcp_server` imports `vectordb`, which imports `chromadb`, both at module level.
+CI deliberately installs no heavy backends (they are faked in `conftest.py`), so
+the module self-skips there after probing for a real chromadb in a fresh
+interpreter. It runs on any box with a working install, which is where it was
+verified.
+
+That gap has a cause worth fixing separately: **six of the seven tools never
+touch a vector index, yet the server cannot start without chromadb.** Making the
+`vectordb` import lazy would both let this run on CI and let the MCP server come
+up on a box with no vector backend — consistent with `search_media`'s existing
+"degrade to SQL" behaviour. It is not free (`except vdb.EmbeddingDimensionMismatch`
+would reference an unbound name if the import failed), so it is tracked as its
+own change rather than folded in here.
+
+> This section previously described an end-to-end stdio smoke that had never
+> been checked in — it was an ad-hoc manual run. `tests/test_mcp_e2e.py` is that
+> claim made real (2026-07-16).
 
 ## Known limitations / follow-ups
 

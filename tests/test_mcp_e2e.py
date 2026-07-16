@@ -1,0 +1,202 @@
+"""End-to-end stdio smoke for the MCP server — a real subprocess, a real client.
+
+docs/phase-14-mcp-handover.md and CHANGELOG both claimed "an end-to-end stdio
+smoke" since Phase 14, but no such artifact was ever checked in: it was an ad-hoc
+manual run. This is that claim, made true.
+
+It earns its keep beyond the unit tests, which all call `*_impl` functions
+directly and so never touch the MCP layer at all. Everything between an agent and
+those impls — FastMCP registration, the stdio JSON-RPC framing, tool dispatch,
+schema coercion of arguments, `_j` serialisation — is exercised only here. A tool
+can be perfectly correct at the impl level and still be unreachable, misnamed, or
+carry a broken schema.
+
+Skipped on the 3.9 leg with the rest of the MCP suite (the SDK needs 3.10+), and
+on any env without a real chromadb — see _REAL_CHROMADB below.
+"""
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("mcp")
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def _real_chromadb() -> bool:
+    """Is chromadb importable in a FRESH interpreter?
+
+    Not `importorskip("chromadb")`: conftest.py:101-114 injects a fake chromadb
+    into sys.modules, so an in-process import always succeeds and would tell us
+    nothing. The server here runs as a real subprocess, which loads no conftest
+    and so needs the real package — and CI deliberately does not install it
+    ("Heavy backends faked in tests/conftest.py are deliberately NOT installed",
+    .github/workflows/ci.yml). Ask the environment that actually matters.
+
+    mcp_server imports vectordb at module level and vectordb imports chromadb at
+    module level, so the server currently cannot boot without it — even though
+    six of its seven tools never touch a vector index. Making that import lazy
+    would let this run on CI too; it is a real improvement, but it tangles with
+    `except vdb.EmbeddingDimensionMismatch` (an unbound name if the import fails)
+    and belongs in its own change rather than smuggled in here.
+    """
+    return subprocess.run(
+        [sys.executable, "-c", "import chromadb"],
+        capture_output=True, timeout=120,
+    ).returncode == 0
+
+
+pytestmark = pytest.mark.skipif(
+    not _real_chromadb(),
+    reason="mcp_server subprocess needs a real chromadb (conftest's fake doesn't "
+           "reach a subprocess); CI installs no heavy backends",
+)
+
+# Seeds a project the same way an ingest would, in a subprocess so that this
+# test's own config/db import state is untouched — the server subprocess must
+# read the DB from disk exactly as a real deployment does.
+_SEED = """
+import db
+db.init_db()
+db.upsert({
+    "path": "clips/e2e.mp4", "filename": "e2e.mp4", "ext": ".mp4",
+    "duration_s": 30.0, "size_mb": 5.0, "width": 1920, "height": 1080,
+    "fps": 25.0, "has_audio": 1, "lang": "zh",
+    "transcript": "第一句第二句",
+    "segments_json": '[{"id":0,"seek":0,"start":0.0,"end":2.4,"text":"第一句",'
+                     '"tokens":[50364,2503],"temperature":0.0,"avg_logprob":-0.3,'
+                     '"compression_ratio":1.2,"no_speech_prob":0.01}]',
+    "words_json": '[{"word":"第一","start":0.1,"end":0.4,"score":0.98}]',
+    "processed_at": "2026-07-16T00:00:00",
+})
+db.upsert_frame(
+    media_id=1, frame_index=0, timestamp_s=0.0,
+    thumbnail_path="thumbnails/e2e_f0.jpg",
+    description="手持走入店內", content_type="Establishing",
+    focus_score=3, atmosphere="紀實",
+)
+db.upsert_frame(media_id=1, frame_index=1, timestamp_s=12.0, description="seg 1")
+"""
+
+
+@pytest.fixture
+def seeded_project(tmp_path):
+    env = dict(os.environ, ARKIV_PROJECT_ROOT=str(tmp_path))
+    env.pop("ARKIV_DB_PATH", None)
+    proc = subprocess.run(
+        [sys.executable, "-c", _SEED],
+        cwd=str(_REPO), env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode == 0, "seed failed:\n{0}\n{1}".format(proc.stdout, proc.stderr)
+    return env
+
+
+async def _call(session, name, **args):
+    result = await session.call_tool(name, args)
+    return json.loads(result.content[0].text)
+
+
+@pytest.mark.asyncio
+async def test_mcp_stdio_end_to_end(seeded_project):
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=[str(_REPO / "mcp_server.py")],
+        env=seeded_project,
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # ── the server is reachable and advertises what it should ──────────
+            tools = {t.name for t in (await session.list_tools()).tools}
+            assert {
+                "search_media", "get_media", "get_transcript",
+                "list_recent", "library_stats", "list_tags", "get_scenes",
+            } <= tools
+
+            # ── get_scenes: the timecoded breakdown, over the real protocol ────
+            scenes = await _call(session, "get_scenes", media_id=1)
+            assert scenes["media_id"] == 1
+            assert scenes["media_duration_s"] == 30.0
+            assert scenes["total"] == 2
+            first = scenes["scenes"][0]
+            assert first["start_s"] == 0.0
+            assert first["end_s"] == 12.0            # next frame's start
+            assert first["description"] == "手持走入店內"
+            assert first["keyframe_path"] == "thumbnails/e2e_f0.jpg"
+            assert scenes["scenes"][1]["end_s"] == 30.0   # last → media duration
+            # the MCP surface must never emit the HTTP URL form
+            assert "keyframe_url" not in first
+
+            # ── unknown id is null, not an error and not an empty list ─────────
+            assert await _call(session, "get_scenes", media_id=999999) is None
+
+            # ── get_transcript: segments on by default, words off ─────────────
+            tr = await _call(session, "get_transcript", media_id=1)
+            assert tr["duration_s"] == 30.0
+            assert tr["segments"] == [{"start": 0.0, "end": 2.4, "text": "第一句"}]
+            assert tr["has_words"] is True
+            assert "words" not in tr
+            # decoder internals must not survive the round trip
+            assert "tokens" not in json.dumps(tr)
+
+            # ── …and on request ───────────────────────────────────────────────
+            tr_w = await _call(session, "get_transcript", media_id=1, include_words=True)
+            assert tr_w["words"] == [
+                {"word": "第一", "start": 0.1, "end": 0.4, "score": 0.98}
+            ]
+            assert tr_w["words_truncated"] is False
+
+            # ── the pre-existing tools still answer ────────────────────────────
+            stats = await _call(session, "library_stats")
+            assert stats["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_stdio_never_leaks_absolute_paths(tmp_path):
+    """The server's stated red line, checked at the far end of the wire rather
+    than at the impl. Seeded with an out-of-root absolute path — what a legacy
+    row from another machine looks like."""
+    env = dict(os.environ, ARKIV_PROJECT_ROOT=str(tmp_path))
+    env.pop("ARKIV_DB_PATH", None)
+    seed = """
+import db
+db.init_db()
+db.upsert({
+    "path": "/Volumes/SomeoneElse/private/secret.mp4", "filename": "secret.mp4",
+    "ext": ".mp4", "duration_s": 10.0, "lang": "zh",
+    "thumbnail_path": "C:/Users/me/private/secret.jpg",
+    "processed_at": "2026-07-16T00:00:00",
+})
+db.upsert_frame(media_id=1, frame_index=0, timestamp_s=0.0,
+                thumbnail_path="C:/Users/me/private/f0.jpg", description="x")
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", seed],
+        cwd=str(_REPO), env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    params = StdioServerParameters(
+        command=sys.executable, args=[str(_REPO / "mcp_server.py")], env=env,
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            media = json.dumps(await _call(session, "get_media", media_id=1))
+            scenes = json.dumps(await _call(session, "get_scenes", media_id=1))
+            recent = json.dumps(await _call(session, "list_recent"))
+
+    for surface, payload in (("get_media", media), ("get_scenes", scenes),
+                             ("list_recent", recent)):
+        assert "/Volumes/SomeoneElse" not in payload, surface
+        assert "C:/Users/me" not in payload, surface
+        assert "private" not in payload, surface
