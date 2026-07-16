@@ -13,8 +13,9 @@ footage library directly — no HTTP round-trip, no auth token.
 - `mcp_server.py` — a `FastMCP("arkiv")` stdio server.
 - `tests/test_mcp_server.py` — 47 unit tests (mocked db/vectordb) + 1 async
   tool-registration test.
-- `tests/test_mcp_e2e.py` — 2 end-to-end stdio tests (real subprocess, real
-  `mcp` client).
+- `tests/test_mcp_e2e.py` — 3 end-to-end tests: two real-subprocess/real-`mcp`-
+  client stdio smokes, plus one that boots the server with chromadb blocked and
+  asserts it still serves + degrades search to SQL.
 - `requirements.txt` — adds optional `mcp>=1.2` (3.10+ only; the SDK is gated out
   on the 3.9 NAS floor, and both test modules `importorskip` accordingly).
 
@@ -115,13 +116,16 @@ Claude Desktop / Claude Code (`.mcp.json` or `claude_desktop_config.json`):
 ## Verification
 
 - `pytest tests/test_mcp_server.py` → 47 passed.
-- `pytest tests/test_mcp_e2e.py` → 2 passed. Real subprocess + real `mcp` stdio
+- `pytest tests/test_mcp_e2e.py` → 3 passed. Real subprocess + real `mcp` stdio
   client against a seeded temp project: `tools/list` returns all 7 tools;
-  `get_scenes` / `get_transcript` / `library_stats` round-trip correctly; an
-  unknown id returns `null`; and a library seeded with out-of-root absolute paths
-  (`/Volumes/…`, `C:/Users/…`) leaks none of them across `get_media`,
-  `get_scenes` or `list_recent`.
-- Full suite → 976 passed / 6 skipped.
+  `get_scenes` / `get_transcript` / `library_stats` round-trip correctly;
+  `search_media` returns the seeded row via SQL text match when no vector backend
+  is present; an unknown id returns `null`; and a library seeded with out-of-root
+  absolute paths (`/Volumes/…`, `C:/Users/…`) leaks none of them across
+  `get_media`, `get_scenes` or `list_recent`. A third test blocks chromadb in a
+  fresh interpreter and asserts the server still imports and serves.
+- Full suite → 977 passed / 6 skipped (local; chromadb present). On CI 3.12 the
+  three e2e tests run instead of skipping.
 
 The e2e module is the only thing that exercises the MCP layer itself: every unit
 test calls the `*_impl` functions directly, so FastMCP registration, stdio
@@ -129,25 +133,22 @@ JSON-RPC framing, tool dispatch, argument coercion and `_j` serialisation are
 covered here and nowhere else. A tool can be perfectly correct at the impl level
 and still be unreachable or carry a broken schema.
 
-**It does not run on CI, by necessity, not choice.** The server runs as a real
-subprocess, which loads no conftest and therefore needs the real `chromadb` —
-`mcp_server` imports `vectordb`, which imports `chromadb`, both at module level.
-CI deliberately installs no heavy backends (they are faked in `conftest.py`), so
-the module self-skips there after probing for a real chromadb in a fresh
-interpreter. It runs on any box with a working install, which is where it was
-verified.
-
-That gap has a cause worth fixing separately: **six of the seven tools never
-touch a vector index, yet the server cannot start without chromadb.** Making the
-`vectordb` import lazy would both let this run on CI and let the MCP server come
-up on a box with no vector backend — consistent with `search_media`'s existing
-"degrade to SQL" behaviour. It is not free (`except vdb.EmbeddingDimensionMismatch`
-would reference an unbound name if the import failed), so it is tracked as its
-own change rather than folded in here.
+**It runs on CI** (3.12; the 3.9 leg skips the whole MCP suite because the SDK
+needs 3.10+). It used not to: the server ran as a real subprocess needing the
+real `chromadb`, `mcp_server` imported `vectordb` → `chromadb` at module level,
+and CI installs no heavy backends — so the module self-skipped after probing a
+fresh interpreter for chromadb. That import is now lazy: only `search_media`
+imports `vectordb`, inside a try that binds it to `None` and degrades to SQL when
+it (or chromadb) is absent. **Six of the seven tools never touch a vector index,
+so the server boots and serves on a box with no vector backend** — which is both
+the CI condition and a real deployment case (an MCP server on a machine with no
+chromadb). The dim-mismatch branch stays safe because `vdb` is bound before the
+`except vdb.EmbeddingDimensionMismatch` clause is ever evaluated.
 
 > This section previously described an end-to-end stdio smoke that had never
 > been checked in — it was an ad-hoc manual run. `tests/test_mcp_e2e.py` is that
-> claim made real (2026-07-16).
+> claim made real (2026-07-16), and the lazy-import change (same day) is what let
+> it stop self-skipping on CI.
 
 ## Known limitations / follow-ups
 

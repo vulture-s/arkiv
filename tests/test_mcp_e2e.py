@@ -11,13 +11,18 @@ schema coercion of arguments, `_j` serialisation — is exercised only here. A t
 can be perfectly correct at the impl level and still be unreachable, misnamed, or
 carry a broken schema.
 
-Skipped on the 3.9 leg with the rest of the MCP suite (the SDK needs 3.10+), and
-on any env without a real chromadb — see _REAL_CHROMADB below.
+Runs anywhere `mcp` is importable — including CI. It used to self-skip on any
+env without a real chromadb, because `mcp_server` imported `vectordb` (→ chromadb)
+at module scope and the server could not boot without it. That import is now lazy
+(only `search_media` pulls it in, inside a try that degrades to SQL), so the
+server starts on a box with no vector backend and this smoke needs no skip. Only
+gate left is the 3.9 leg, where the MCP SDK is absent (`importorskip("mcp")`).
 """
 import json
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -28,36 +33,6 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 _REPO = Path(__file__).resolve().parent.parent
-
-
-def _real_chromadb() -> bool:
-    """Is chromadb importable in a FRESH interpreter?
-
-    Not `importorskip("chromadb")`: conftest.py:101-114 injects a fake chromadb
-    into sys.modules, so an in-process import always succeeds and would tell us
-    nothing. The server here runs as a real subprocess, which loads no conftest
-    and so needs the real package — and CI deliberately does not install it
-    ("Heavy backends faked in tests/conftest.py are deliberately NOT installed",
-    .github/workflows/ci.yml). Ask the environment that actually matters.
-
-    mcp_server imports vectordb at module level and vectordb imports chromadb at
-    module level, so the server currently cannot boot without it — even though
-    six of its seven tools never touch a vector index. Making that import lazy
-    would let this run on CI too; it is a real improvement, but it tangles with
-    `except vdb.EmbeddingDimensionMismatch` (an unbound name if the import fails)
-    and belongs in its own change rather than smuggled in here.
-    """
-    return subprocess.run(
-        [sys.executable, "-c", "import chromadb"],
-        capture_output=True, timeout=120,
-    ).returncode == 0
-
-
-pytestmark = pytest.mark.skipif(
-    not _real_chromadb(),
-    reason="mcp_server subprocess needs a real chromadb (conftest's fake doesn't "
-           "reach a subprocess); CI installs no heavy backends",
-)
 
 # Seeds a project the same way an ingest would, in a subprocess so that this
 # test's own config/db import state is untouched — the server subprocess must
@@ -158,6 +133,16 @@ async def test_mcp_stdio_end_to_end(seeded_project):
             stats = await _call(session, "library_stats")
             assert stats["total"] == 1
 
+            # ── search_media works with NO vector backend (the CI reality) ─────
+            # On CI chromadb isn't installed, so the lazy `import vectordb` in
+            # search_media_impl fails and it degrades to a SQL filename/transcript
+            # LIKE. The seeded row is filename "e2e.mp4" — a text match finds it.
+            # (Normal shape is a bare list; a stale index would wrap it in
+            # {items, search_degraded} — accept either.)
+            sm = await _call(session, "search_media", query="e2e")
+            hits = sm["items"] if isinstance(sm, dict) else sm
+            assert any(h["id"] == 1 for h in hits), sm
+
 
 @pytest.mark.asyncio
 async def test_mcp_stdio_never_leaks_absolute_paths(tmp_path):
@@ -200,3 +185,43 @@ db.upsert_frame(media_id=1, frame_index=0, timestamp_s=0.0,
         assert "/Volumes/SomeoneElse" not in payload, surface
         assert "C:/Users/me" not in payload, surface
         assert "private" not in payload, surface
+
+
+def test_mcp_boots_and_degrades_without_chromadb(seeded_project):
+    """The server must import and serve on a box with NO vector backend.
+
+    Six of the seven tools never touch a vector index, yet before the lazy-import
+    change `import mcp_server` died at module load if chromadb was missing. Here a
+    FRESH interpreter (no conftest fake) blocks both `vectordb` and `chromadb`,
+    imports the server, and drives the impls: the non-vector tools work and
+    `search_media` degrades to a SQL text match instead of raising. This is the
+    condition that let the stdio smoke above stop self-skipping on CI.
+    """
+    script = textwrap.dedent(
+        """
+        import sys
+        # simulate a machine with no vector backend installed
+        sys.modules["chromadb"] = None
+        sys.modules["vectordb"] = None
+
+        import mcp_server  # must NOT import vectordb at module scope anymore
+
+        st = mcp_server.library_stats_impl()
+        assert st["total"] == 1, st
+        assert mcp_server.get_scenes_impl(1)["total"] == 2
+
+        # the lazy `import vectordb` fails -> vdb=None -> SQL filename LIKE
+        hits = mcp_server.search_media_impl("e2e", limit=5)
+        assert any(h["id"] == 1 for h in hits), hits
+
+        print("NOCHROMA_OK")
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(_REPO), env=seeded_project, capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode == 0, "boot-without-chromadb failed:\n{0}\n{1}".format(
+        proc.stdout, proc.stderr
+    )
+    assert "NOCHROMA_OK" in proc.stdout, proc.stdout
