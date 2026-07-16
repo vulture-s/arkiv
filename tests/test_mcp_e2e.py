@@ -11,7 +11,8 @@ schema coercion of arguments, `_j` serialisation — is exercised only here. A t
 can be perfectly correct at the impl level and still be unreachable, misnamed, or
 carry a broken schema.
 
-Skipped on the 3.9 leg with the rest of the MCP suite (the SDK needs 3.10+).
+Skipped on the 3.9 leg with the rest of the MCP suite (the SDK needs 3.10+), and
+on any env without a real chromadb — see _REAL_CHROMADB below.
 """
 import json
 import os
@@ -27,6 +28,36 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 _REPO = Path(__file__).resolve().parent.parent
+
+
+def _real_chromadb() -> bool:
+    """Is chromadb importable in a FRESH interpreter?
+
+    Not `importorskip("chromadb")`: conftest.py:101-114 injects a fake chromadb
+    into sys.modules, so an in-process import always succeeds and would tell us
+    nothing. The server here runs as a real subprocess, which loads no conftest
+    and so needs the real package — and CI deliberately does not install it
+    ("Heavy backends faked in tests/conftest.py are deliberately NOT installed",
+    .github/workflows/ci.yml). Ask the environment that actually matters.
+
+    mcp_server imports vectordb at module level and vectordb imports chromadb at
+    module level, so the server currently cannot boot without it — even though
+    six of its seven tools never touch a vector index. Making that import lazy
+    would let this run on CI too; it is a real improvement, but it tangles with
+    `except vdb.EmbeddingDimensionMismatch` (an unbound name if the import fails)
+    and belongs in its own change rather than smuggled in here.
+    """
+    return subprocess.run(
+        [sys.executable, "-c", "import chromadb"],
+        capture_output=True, timeout=120,
+    ).returncode == 0
+
+
+pytestmark = pytest.mark.skipif(
+    not _real_chromadb(),
+    reason="mcp_server subprocess needs a real chromadb (conftest's fake doesn't "
+           "reach a subprocess); CI installs no heavy backends",
+)
 
 # Seeds a project the same way an ingest would, in a subprocess so that this
 # test's own config/db import state is untouched — the server subprocess must

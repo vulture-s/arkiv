@@ -129,6 +129,22 @@ JSON-RPC framing, tool dispatch, argument coercion and `_j` serialisation are
 covered here and nowhere else. A tool can be perfectly correct at the impl level
 and still be unreachable or carry a broken schema.
 
+**It does not run on CI, by necessity, not choice.** The server runs as a real
+subprocess, which loads no conftest and therefore needs the real `chromadb` —
+`mcp_server` imports `vectordb`, which imports `chromadb`, both at module level.
+CI deliberately installs no heavy backends (they are faked in `conftest.py`), so
+the module self-skips there after probing for a real chromadb in a fresh
+interpreter. It runs on any box with a working install, which is where it was
+verified.
+
+That gap has a cause worth fixing separately: **six of the seven tools never
+touch a vector index, yet the server cannot start without chromadb.** Making the
+`vectordb` import lazy would both let this run on CI and let the MCP server come
+up on a box with no vector backend — consistent with `search_media`'s existing
+"degrade to SQL" behaviour. It is not free (`except vdb.EmbeddingDimensionMismatch`
+would reference an unbound name if the import failed), so it is tracked as its
+own change rather than folded in here.
+
 > This section previously described an end-to-end stdio smoke that had never
 > been checked in — it was an ad-hoc manual run. `tests/test_mcp_e2e.py` is that
 > claim made real (2026-07-16).
