@@ -1171,6 +1171,53 @@ def test_timeline_fcpxml_clip_start_within_asset_range_for_nonzero_tc(fastapi_cl
     assert a_start <= c_start <= a_start + a_dur  # clip start within asset range
 
 
+# ── D2: the timeline lays the MARKED sub-clip, not the whole file ─────────────
+
+def _mark(fastapi_client, mid, in_point, out_point):
+    r = fastapi_client.patch(f"/api/media/{mid}/inout", json={"in_point": in_point, "out_point": out_point})
+    assert r.status_code == 200
+
+
+def test_timeline_edl_honors_persisted_inout_marks(fastapi_client, sample_record):
+    _insert_two_clips_with_segments(sample_record)  # A 30s@30 TC 01:00:00:00; B 20s@30
+    _mark(fastapi_client, 1, 10.0, 25.0)  # clip A → 15s window [10,25]; B unmarked → full 20s
+    body = fastapi_client.get("/api/export/timeline/edl", params={"ids": "1,2"}).text
+    # A is cut from its IN point: source runs 01:00:10:00 → 01:00:25:00 (15s, not the whole 30s)
+    assert "01:00:10:00 01:00:25:00" in body
+    # so B's record-in is 01:00:15:00 — A now contributes 15s, not 30s (the D2 effect;
+    # baseline placed B at 01:00:30:00)
+    assert "01:00:15:00" in body
+
+
+def test_timeline_srt_trims_and_rebases_captions_to_marks(fastapi_client, sample_record):
+    _insert_two_clips_with_segments(sample_record)  # A caption [0-5]; B caption [0-4]
+    _mark(fastapi_client, 1, 2.0, 10.0)  # clip A window [2,10] (8s); B unmarked (20s)
+    body = fastapi_client.get("/api/export/timeline/srt", params={"ids": "1,2"}).text
+    # A's caption [0-5] is clipped to the window [2,10] → the [2-5] part, re-based to [0-3]
+    assert "00:00:00,000 --> 00:00:03,000" in body
+    assert "甲段台詞" in body
+    # B is pushed by A's 8s window (not A's full 30s): its [0-4] caption lands at [8-12]
+    assert "00:00:08,000 --> 00:00:12,000" in body
+    assert "乙段台詞" in body
+
+
+def test_timeline_fcpxml_clip_duration_and_start_reflect_marks(fastapi_client, sample_record):
+    import xml.dom.minidom as _minidom
+    _insert_two_clips_with_segments(sample_record)  # A 30s; B 20s; both TC 01:00:00:00
+    _mark(fastapi_client, 1, 5.0, 15.0)  # A → 10s window, cut 5s in
+    _mark(fastapi_client, 2, 0.0, 20.0)  # B → full 20s, from the head
+    body = fastapi_client.get("/api/export/timeline/fcpxml", params={"ids": "1,2"}).text
+    dom = _minidom.parseString(body)
+    clips = dom.getElementsByTagName("asset-clip")
+    # numerators share the timeline denominator, so compare them directly
+    dur = {c.getAttribute("ref"): int(c.getAttribute("duration").split("/")[0]) for c in clips}
+    start = {c.getAttribute("ref"): int(c.getAttribute("start").split("/")[0]) for c in clips}
+    # A's window (10s) is exactly half of B's (20s) — proves A was trimmed, not laid full (30s)
+    assert dur["r2"] * 2 == dur["r3"]
+    # A starts 5s into its source (camera TC + IN); B starts at its head → A start > B start
+    assert start["r2"] > start["r3"]
+
+
 def test_timeline_fcpxml_escapes_quotes_in_filenames(fastapi_client, sample_record):
     """A filename with a double quote must not break the name="..." attribute —
     xml_esc leaves quotes alone by default (Codex review P2)."""
