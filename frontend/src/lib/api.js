@@ -339,6 +339,12 @@ export const metadataCsvPath = (ids = null) =>
 export const setRating = (id, rating, note = null, opts) =>
   req(`/api/media/${id}/rating`, { method: 'PATCH', body: { rating, note }, ...opts })
 
+// PATCH /api/media/{id}/inout {in_point, out_point} → persist the IN/OUT trim
+// window (seconds; null clears a mark). Lets the inspector restore a clip's range
+// on re-open instead of losing it on clip-switch. Requires videos_write.
+export const setInOut = (id, in_point, out_point, opts) =>
+  req(`/api/media/${id}/inout`, { method: 'PATCH', body: { in_point, out_point }, ...opts })
+
 // ---- tag editing ----
 // POST /api/media/{id}/tags {name, source:'manual'} → {ok, tags:[{id,name,source}]}
 // Backend forces source='manual' for user-added tags (only vision mints 'auto').

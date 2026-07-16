@@ -293,6 +293,15 @@ def init_db():
             # UI can toggle raw ↔ canonical; populated on demand by the re-tag
             # command, NULL until then.
             ("canonical_tags", "TEXT"),
+            # FX30 editing (D1): persisted per-clip IN/OUT trim points, in seconds.
+            # The inspector marks were otherwise UI-ephemeral (lost on clip-switch);
+            # persisting them lets the inspector restore a clip's range and lets the
+            # multi-clip timeline export assemble a cut list of the marked sub-clips
+            # (D2) instead of laying full clips end-to-end. Written ONLY by the
+            # dedicated /api/media/{id}/inout endpoint (kept out of _ALLOWED_COLS so a
+            # re-ingest/refresh can never clobber a user's marks), same as canonical_tags.
+            ("in_point", "REAL"),
+            ("out_point", "REAL"),
         ]:
             _add_column_if_missing(conn, "media", col, typ)  # audit L10
         for col, typ in [

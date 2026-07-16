@@ -94,6 +94,44 @@ def test_rating_update_set_clear_and_missing_record(fastapi_client, sample_recor
     assert missing.status_code == 404
 
 
+def test_inout_update_persist_restore_semantics_and_validation(fastapi_client, sample_record):
+    db = _insert_media(sample_record)
+
+    # set a trim window
+    r = fastapi_client.patch("/api/media/1/inout", json={"in_point": 1.5, "out_point": 4.0})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "in_point": 1.5, "out_point": 4.0}
+    rec = db.get_record_by_id(1)
+    assert rec["in_point"] == 1.5 and rec["out_point"] == 4.0
+
+    # the detail endpoint surfaces the marks so the inspector can restore them
+    detail = fastapi_client.get("/api/media/1").json()
+    assert detail["in_point"] == 1.5 and detail["out_point"] == 4.0
+
+    # PATCH semantics: an omitted field is untouched (move IN, keep OUT)
+    r = fastapi_client.patch("/api/media/1/inout", json={"in_point": 2.0})
+    assert r.status_code == 200
+    rec = db.get_record_by_id(1)
+    assert rec["in_point"] == 2.0 and rec["out_point"] == 4.0
+
+    # explicit null clears a mark
+    r = fastapi_client.patch("/api/media/1/inout", json={"in_point": None, "out_point": None})
+    assert r.status_code == 200
+    rec = db.get_record_by_id(1)
+    assert rec["in_point"] is None and rec["out_point"] is None
+
+    # an inverted window (in >= out) is rejected, not silently persisted
+    bad = fastapi_client.patch("/api/media/1/inout", json={"in_point": 5.0, "out_point": 3.0})
+    assert bad.status_code == 422
+    assert db.get_record_by_id(1)["in_point"] is None  # unchanged
+
+    # non-finite / negative values are rejected by the model
+    assert fastapi_client.patch("/api/media/1/inout", json={"in_point": -1.0}).status_code == 422
+
+    # missing record → 404
+    assert fastapi_client.patch("/api/media/999/inout", json={"in_point": 1.0}).status_code == 404
+
+
 def test_tag_stats_and_tag_catalog_endpoints(fastapi_client, sample_record):
     _insert_media(sample_record)
 
