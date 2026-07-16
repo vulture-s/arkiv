@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 from typing import Any, Dict, List, Optional
 
 import db
@@ -31,6 +32,35 @@ from pathres import _display_path
 LOGGER = logging.getLogger(__name__)
 
 mcp = FastMCP("arkiv")
+
+
+# ── readiness ───────────────────────────────────────────────────────────────
+_DB_READY = False
+
+
+def _require_ready() -> None:
+    """Fail a tool call with a clear, actionable message when the project root
+    has no initialised database — instead of leaking a raw `no such table: media`
+    to a downstream agent.
+
+    Deliberately does NOT create the schema: this server is read-only, and
+    `db.init_db()` prints progress to stdout (db.py), which would corrupt the
+    stdio JSON-RPC channel. Cached once ready — the table does not un-exist.
+    """
+    global _DB_READY
+    if _DB_READY:
+        return
+    with db.get_conn() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media'"
+        ).fetchone()
+    if not exists:
+        raise RuntimeError(
+            "arkiv project root has no 'media' table — it is not initialised. "
+            "Point ARKIV_PROJECT_ROOT at an existing arkiv library, or run an "
+            "ingest there first. (db: {0})".format(db.get_db_path())
+        )
+    _DB_READY = True
 
 
 # ── path safety ───────────────────────────────────────────────────────────────
@@ -148,23 +178,29 @@ def search_media_impl(
             enriched, seen = [], set()
 
     # 2. SQL text fallback (filename / transcript) when semantic found nothing.
+    #    Wrapped so a genuine DB fault here surfaces as a clear error, kept
+    #    distinct from the "vector index unavailable" degrade above — and not
+    #    leaking a raw sqlite driver string to the agent.
     if not enriched:
         like = f"%{query}%"
-        with db.get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM media WHERE filename LIKE ? OR transcript LIKE ? "
-                "ORDER BY id LIMIT ?",
-                (like, like, limit),
-            ).fetchall()
-            for row in rows:
-                rec = dict(row)
-                mid = rec["id"]
-                if mid in seen:
-                    continue
-                seen.add(mid)
-                item = _light(rec)
-                item["tags"] = _tag_names(mid)
-                enriched.append(item)
+        try:
+            with db.get_conn() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM media WHERE filename LIKE ? OR transcript LIKE ? "
+                    "ORDER BY id LIMIT ?",
+                    (like, like, limit),
+                ).fetchall()
+                for row in rows:
+                    rec = dict(row)
+                    mid = rec["id"]
+                    if mid in seen:
+                        continue
+                    seen.add(mid)
+                    item = _light(rec)
+                    item["tags"] = _tag_names(mid)
+                    enriched.append(item)
+        except sqlite3.OperationalError as exc:
+            raise RuntimeError("arkiv database error during search: {0}".format(exc))
 
     return enriched[:limit]
 
@@ -301,6 +337,7 @@ def search_media(query: str, limit: int = 20) -> str:
     If semantic search is degraded (e.g. embedding index needs a rebuild), the
     response is instead {items, search_degraded: true, warning}.
     """
+    _require_ready()
     # audit M17: surface degraded-search hint instead of silently falling back.
     warnings: List[str] = []
     items = search_media_impl(query, limit, _warnings=warnings)
@@ -315,6 +352,7 @@ def get_media(media_id: int) -> str:
 
     Returns a JSON object, or null if the id is unknown.
     """
+    _require_ready()
     return _j(get_media_impl(media_id))
 
 
@@ -352,6 +390,7 @@ def get_scenes(media_id: int) -> str:
     not been analysed — check for null rather than for the key. Values are in the
     library's own language (typically Chinese).
     """
+    _require_ready()
     return _j(get_scenes_impl(media_id))
 
 
@@ -384,12 +423,14 @@ def get_transcript(media_id: int, include_words: bool = False) -> str:
     and cut a quote. Check has_words first — asking for words on a clip that has
     none just returns [].
     """
+    _require_ready()
     return _j(get_transcript_impl(media_id, include_words=include_words))
 
 
 @mcp.tool()
 def list_recent(limit: int = 20) -> str:
     """Most recently ingested media (lightweight). Returns a JSON list."""
+    _require_ready()
     return _j(list_recent_impl(limit))
 
 
@@ -399,12 +440,14 @@ def library_stats() -> str:
 
     Returns a JSON object.
     """
+    _require_ready()
     return _j(library_stats_impl())
 
 
 @mcp.tool()
 def list_tags(limit: int = 30) -> str:
     """Top tags in the library by frequency. Returns a JSON list of {name, count}."""
+    _require_ready()
     return _j(list_tags_impl(limit))
 
 
