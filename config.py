@@ -298,6 +298,18 @@ FFPROBE_PATH = _detect_ffmpeg_tool("ffprobe", "ARKIV_FFPROBE_PATH")
 import platform as _plat
 
 _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
+
+# Proxy generation (D3). PROXY_HEIGHT = the browser-playback proxy's height (the
+# resolution selector in Settings drives this once wired). PROXY_HWDECODE_DEFAULT:
+# use Apple Silicon VideoToolbox for hardware DECODE of the 4K source — that decode
+# is the proxy bottleneck, NOT the 720p encode (measured on M2 Max: 26% wall / 59%
+# CPU off a 140 Mbps 4K clip; the videotoolbox *encoder* was slower and far larger,
+# so encode stays libx264). Defaults on for arm64 macOS, off elsewhere; the encoder
+# retries in software if a source's codec/pix_fmt isn't hardware-decodable.
+PROXY_HEIGHT = int(os.getenv("ARKIV_PROXY_HEIGHT", "720"))
+_hwd = os.getenv("ARKIV_PROXY_HWDECODE", "auto").strip().lower()
+PROXY_HWDECODE_DEFAULT = _IS_MLX if _hwd in ("", "auto") else _hwd in ("1", "true", "yes", "on")
+
 _DEFAULT_WHISPER = "mlx-community/whisper-large-v3-turbo" if _IS_MLX else "large-v3-turbo"
 WHISPER_MODEL = os.getenv("ARKIV_WHISPER_MODEL", _DEFAULT_WHISPER)
 
