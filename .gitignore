@@ -53,6 +53,12 @@ venv/
 *.db-journal
 pages/
 src-tauri/target/
+# Assembled backend bundle (~1.3 GB portable python + site-packages + src).
+# Rebuilt by src-tauri/assemble-backend.sh before `cargo tauri build`. The empty
+# dir shell is kept (.gitkeep) so tauri-build's compile-time resource check passes.
+src-tauri/backend/python/
+src-tauri/backend/site-packages/
+src-tauri/backend/src/
 
 # Frontend (Svelte 4 + Vite) — deps + build + local audit artifacts
 frontend/node_modules/
