@@ -34,6 +34,7 @@ from config import BASE_DIR
 from mediarecords import _get_light_records_by_ids, _get_tags_bulk
 from pathres import _display_path, _resolve_frame, _resolve_media_path, _resolve_record
 from reqopts import _parse_ids_query
+from scenes import _scenes_payload
 from webguard import _assert_same_site
 
 router = APIRouter()
@@ -459,52 +460,14 @@ def get_media_scenes(
     media_id: int,
     _tok: dict = Depends(require_scopes("media_read")),
 ):
-    # Per-scene shape (breaking change 2026-06-29): each scene = one scene-detect
-    # boundary persisted in frames table, with computed end_s from the next
-    # frame's start (or media.duration_s for the last). Consumers (smart-edit,
-    # OpenMontage arkiv_clip_search, Vyra, Palmier) expect start/end/duration +
-    # vision metadata per scene, not per-frame flat list.
+    # Per-scene derivation lives in the scenes leaf — mcp_server needs the same
+    # shape and cannot import this module (it refuses `server`/fastapi), so a
+    # copy here would fork the contract. See scenes.py; the body is byte-frozen
+    # by tests/test_scenes_contract.py.
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
-    frames = db.get_frames(media_id)
-    media_duration_s = float(rec.get("duration_s") or 0.0)
-    scenes = []
-    for i, frame in enumerate(frames):
-        start_s = float(frame["timestamp_s"])
-        if i + 1 < len(frames):
-            end_s = float(frames[i + 1]["timestamp_s"])
-        else:
-            end_s = media_duration_s
-        if end_s < start_s:
-            end_s = start_s
-        scene = {
-            "scene_index": frame["frame_index"],
-            "start_s": start_s,
-            "end_s": end_s,
-            "duration_s": end_s - start_s,
-            "description": frame.get("description", ""),
-            "content_type": frame.get("content_type"),
-            "focus_score": frame.get("focus_score"),
-            "atmosphere": frame.get("atmosphere"),
-            "energy": frame.get("energy"),
-            "edit_position": frame.get("edit_position"),
-            "edit_reason": frame.get("edit_reason"),
-            "stability": frame.get("stability"),
-            "exposure": frame.get("exposure"),
-            "audio_quality": frame.get("audio_quality"),
-        }
-        if frame.get("thumbnail_path"):
-            scene["keyframe_url"] = "/thumbnails/{0}".format(
-                Path(_resolve_media_path(frame["thumbnail_path"])).name
-            )
-        scenes.append(scene)
-    return {
-        "media_id": media_id,
-        "media_duration_s": media_duration_s,
-        "scenes": scenes,
-        "total": len(scenes),
-    }
+    return _scenes_payload(media_id, rec, db.get_frames(media_id))
 
 
 @router.get("/api/media/{media_id}/chapters")
