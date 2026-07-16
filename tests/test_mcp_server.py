@@ -20,6 +20,16 @@ import vectordb as vdb
 import mcp_server as m
 
 
+@pytest.fixture(autouse=True)
+def _readiness_ok(monkeypatch):
+    """These unit tests drive the tool wrappers with individual db functions
+    mocked; they do not seed a real DB. The wrappers' readiness guard probes
+    db.get_conn() for the `media` table, which those mocks don't cover — so
+    bypass it here (monkeypatch auto-resets). Readiness itself is exercised over
+    the real protocol in tests/test_mcp_e2e.py, which is where it belongs."""
+    monkeypatch.setattr(m, "_DB_READY", True)
+
+
 # ── fakes ─────────────────────────────────────────────────────────────────────
 class _FakeCursor:
     def __init__(self, rows):
