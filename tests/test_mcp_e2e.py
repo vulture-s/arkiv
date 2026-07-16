@@ -225,3 +225,30 @@ def test_mcp_boots_and_degrades_without_chromadb(seeded_project):
         proc.stdout, proc.stderr
     )
     assert "NOCHROMA_OK" in proc.stdout, proc.stdout
+
+
+@pytest.mark.asyncio
+async def test_mcp_uninitialised_root_gives_clear_error(tmp_path):
+    """Pointed at an empty project root (nothing ingested), a tool call must fail
+    with an actionable 'not initialised' message rather than leaking a raw
+    `no such table: media` to the agent. The server still starts and lists its
+    tools — only the call fails, and legibly."""
+    env = dict(os.environ, ARKIV_PROJECT_ROOT=str(tmp_path))
+    env.pop("ARKIV_DB_PATH", None)
+    params = StdioServerParameters(
+        command=sys.executable, args=[str(_REPO / "mcp_server.py")], env=env,
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            # the server is up and advertises its tools despite the empty root
+            tools = {t.name for t in (await session.list_tools()).tools}
+            assert "library_stats" in tools
+            # …but a call fails with a clear, actionable message
+            result = await session.call_tool("library_stats", {})
+            assert result.isError
+            msg = result.content[0].text
+            assert "not initialised" in msg, msg
+            assert "media" in msg, msg
+            # the raw driver string must NOT be what reaches the agent
+            assert "no such table" not in msg, msg
