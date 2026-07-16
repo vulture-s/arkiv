@@ -409,6 +409,10 @@
         id: selected.id, name: selected.name, kind: selected.kind,
         dur: selected.dur, size: selected.size,
         fps: selected._raw.fps ? Math.round(selected._raw.fps) : 24,
+        // Precise, unrounded fps for frame-exact IN/OUT. Rounding 23.976→24
+        // would drift frame boundaries over a long clip, so keep the raw value
+        // separate from the display `fps` above. null → frame features off.
+        fpsExact: selected._raw.fps || null,
         res: selected._raw.width ? `${selected._raw.width}×${selected._raw.height}` : '—',
         cam: [selected._raw.camera_make, selected._raw.camera_model].filter(Boolean).join(' ') || '—',
         lens: selected._raw.lens_model || '—',
@@ -758,6 +762,7 @@
         live={true}
         thumbUrl={inspThumb}
         videoSrc={inspVideoSrc}
+        fps={inspectorMedia ? inspectorMedia.fpsExact : null}
         peaks={inspPeaks}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}

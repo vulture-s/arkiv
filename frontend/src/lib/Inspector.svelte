@@ -20,8 +20,57 @@
   // mock-derived inspector was missing (the old .controls overlay was a fake
   // scrubber on a still image). null → poster/placeholder behaviour unchanged.
   export let videoSrc = null
+  // Precise frames-per-second (unrounded, e.g. 23.976). When set on a video, the
+  // IN/OUT marks snap to exact frame boundaries and frame stepping is enabled.
+  // null → the old second-based behaviour (audio, or fps unknown) is unchanged.
+  export let fps = null
   $: useVideo = !!videoSrc && !is360 && !!media && media.kind !== 'audio'
   $: useAudio = !!videoSrc && !!media && media.kind === 'audio'
+  // Frame features only make sense for a video with a known, sane fps.
+  $: frameExact = useVideo && typeof fps === 'number' && fps > 0
+
+  // ---- frame-exact machinery ------------------------------------------------
+  // The trick is entirely native: seeking an H.264 <video> IS frame-accurate
+  // (just not instant), and requestVideoFrameCallback's `mediaTime` reports the
+  // EXACT presentation time of the frame now on screen — so we always know which
+  // frame we're looking at, independent of any bookkeeping. No WebCodecs, no
+  // demuxer, no new dependency. (WebCodecs would only earn its place for fast
+  // multi-frame scrubbing or a seamless trim-loop — see the roadmap.)
+  let curFrame = 0 // the frame index actually displayed, from rVFC mediaTime
+  let rvfcId = 0
+  const secToFrame = (s) => Math.round(s * fps)
+  // Seek to a frame's MIDPOINT: nudging past the frame's start time avoids the
+  // browser landing on the previous frame due to float/PTS rounding at the edge.
+  const frameToSeekSec = (f) => (f + 0.5) / fps
+
+  function trackFrame() {
+    if (!playerEl || !playerEl.requestVideoFrameCallback) return
+    rvfcId = playerEl.requestVideoFrameCallback((_now, meta) => {
+      if (frameExact) curFrame = Math.round(meta.mediaTime * fps)
+      trackFrame() // re-arm; rVFC is one-shot
+    })
+  }
+  function stepFrame(delta) {
+    if (!playerEl || !frameExact) return
+    if (playerEl.pause) playerEl.pause()
+    const total = mediaDuration ? Math.round(mediaDuration * fps) : Infinity
+    const target = Math.max(0, Math.min(total - 1, curFrame + delta))
+    playerEl.currentTime = frameToSeekSec(target)
+    curFrame = target // optimistic; rVFC will confirm the true displayed frame
+  }
+  // Timecode with frames: HH:MM:SS:FF (non-drop). Falls back to MM:SS if no fps.
+  function _tcf(sec) {
+    if (sec == null) return '—'
+    if (!frameExact) return _tc(sec)
+    const f = secToFrame(sec)
+    const ff = f % Math.round(fps)
+    const s = Math.floor(f / fps)
+    const hh = Math.floor(s / 3600)
+    const mm = Math.floor((s % 3600) / 60)
+    const ss = s % 60
+    const p2 = (n) => String(n).padStart(2, '0')
+    return `${p2(hh)}:${p2(mm)}:${p2(ss)}:${p2(ff)}`
+  }
   // Real audio waveform peaks (0..1) from the backend; null → flat fallback.
   export let peaks = null
   // The player element (video or audio) — bound so clicking a transcript line or
@@ -48,14 +97,23 @@
   // set range exports just that sub-clip (EDL/SRT/FCPXML). Set at the playhead.
   let inSec = null
   let outSec = null
+  // When frameExact, mark at the exact frame boundary (curFrame from rVFC),
+  // expressed back in seconds so the ?in_s/out_s export contract is unchanged —
+  // the value just now lands precisely on a frame edge instead of wherever the
+  // decoder happened to be.
+  const markSec = () => (frameExact ? curFrame / fps : (playerEl ? playerEl.currentTime : null))
   function setIn() {
     if (!playerEl) return
-    inSec = playerEl.currentTime
+    const t = markSec()
+    if (t == null) return
+    inSec = t
     if (outSec != null && outSec <= inSec) outSec = null
   }
   function setOut() {
     if (!playerEl) return
-    outSec = playerEl.currentTime
+    const t = markSec()
+    if (t == null) return
+    outSec = t
     if (inSec != null && inSec >= outSec) inSec = null
   }
   function clearInOut() { inSec = null; outSec = null }
@@ -73,6 +131,7 @@
   }
   function onLoadedMeta() {
     if (playerEl && playerEl.duration) mediaDuration = playerEl.duration
+    if (frameExact) { curFrame = 0; trackFrame() }
   }
   const _tc = (s) => {
     if (s == null) return '—'
@@ -153,6 +212,13 @@
     inSec = null
     outSec = null
     mediaDuration = 0
+    curFrame = 0
+    // The <video> element is reused across clips (same bind), so a live rVFC
+    // callback from the previous clip must be cancelled; onLoadedMeta re-arms it.
+    if (playerEl && playerEl.cancelVideoFrameCallback && rvfcId) {
+      playerEl.cancelVideoFrameCallback(rvfcId)
+      rvfcId = 0
+    }
   }
   async function doReprocess(action) {
     if (!onReprocess || reBusy) return
@@ -289,16 +355,29 @@
   <div class="block">
     <div class="blockhead">
       <Eyebrow>Waveform</Eyebrow>
-      <Mono dim style="font-size:9.5px;">IN {_tc(inSec)} · OUT {_tc(outSec)}</Mono>
+      <Mono dim style="font-size:9.5px;">IN {_tcf(inSec)} · OUT {_tcf(outSec)}</Mono>
     </div>
     <Waveform {peaks} progress={playProgress} {inFrac} {outFrac} on:seek={(e) => seekFraction(e.detail)} on:trim={onTrim} />
+    {#if frameExact}
+      <!-- frame-exact stepper: step one frame, mark at the exact frame boundary.
+           The readout shows the frame rVFC confirms is actually on screen. -->
+      <div class="frametools">
+        <button class="ak-btn fstep" on:click={() => stepFrame(-1)} title="上一格">◂ 格</button>
+        <button class="ak-btn fstep" on:click={() => stepFrame(1)} title="下一格">格 ▸</button>
+        <Mono dim style="font-size:9.5px;margin-left:6px;align-self:center;">
+          f{curFrame} · {_tcf(curFrame / fps)} · {fps.toFixed(fps % 1 ? 3 : 0)}fps
+        </Mono>
+      </div>
+    {/if}
     {#if useVideo || useAudio}
       <div class="inout">
-        <button class="ak-btn io" on:click={setIn} title="設 IN（目前播放位置）">設 IN</button>
-        <button class="ak-btn io" on:click={setOut} title="設 OUT（目前播放位置）">設 OUT</button>
+        <button class="ak-btn io" on:click={setIn} title={frameExact ? '設 IN（貼齊目前影格）' : '設 IN（目前播放位置）'}>設 IN</button>
+        <button class="ak-btn io" on:click={setOut} title={frameExact ? '設 OUT（貼齊目前影格）' : '設 OUT（目前播放位置）'}>設 OUT</button>
         {#if inSec != null || outSec != null}
           <button class="ak-btn io clr" on:click={clearInOut} title="清除 IN/OUT">清除</button>
-          <Mono dim style="font-size:9.5px;margin-left:auto;align-self:center;">匯出將套用此區間</Mono>
+          <Mono dim style="font-size:9.5px;margin-left:auto;align-self:center;">
+            {#if frameExact && inSec != null && outSec != null}{secToFrame(outSec) - secToFrame(inSec)} 格{:else}匯出將套用此區間{/if}
+          </Mono>
         {/if}
       </div>
     {/if}
@@ -485,6 +564,8 @@
   .inout { display: flex; gap: 6px; margin-top: 8px; }
   .io { font-size: 10.5px; padding: 3px 8px; }
   .io.clr { color: var(--quiet); }
+  .frametools { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+  .fstep { font-size: 10.5px; padding: 3px 8px; font-variant-numeric: tabular-nums; }
   .previmg { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* the real player: contain (don't crop footage) on black; audio sits at the bottom */
   video.previmg { object-fit: contain; background: #000; }
