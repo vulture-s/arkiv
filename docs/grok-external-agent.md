@@ -83,3 +83,16 @@ Model agreement is not verification; the main thread must still verify claims.
 - **Web search disabled** in the wrapper (`--disable-web-search`) to keep
   consultations grounded in the provided context; drop that flag if you want Grok
   to browse.
+
+## Follow-ups (TODO)
+
+- [ ] **Add a pytest for `scripts/grok-consult.sh`** (mirror `tests/test_install.py`).
+      Cover the CI-safe paths that need no Grok auth:
+      - no prompt (empty stdin, no arg) → exit `2`
+      - unknown `--mode` → exit `2`
+      - grok binary missing (run with `HOME` pointed at an empty tmp dir + scrubbed
+        `PATH`) → exit `3`
+      - not-authenticated detection → exit `4` (stub a fake `grok` on `PATH` that
+        prints `not signed in` and exits 0, assert the wrapper maps it to `4`)
+      Skip the live round-trip in CI (needs `grok login`); gate it behind an
+      env flag like `ARKIV_GROK_LIVE=1` for local-only runs.
