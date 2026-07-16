@@ -18,7 +18,7 @@ git clone https://github.com/vulture-s/arkiv.git && cd arkiv
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install mlx-whisper          # Apple Silicon
-ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b   # + minicpm-v (optional vision fallback)
 python health.py
 ```
 
@@ -35,7 +35,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA GPU
 # pip install faster-whisper      # CPU fallback
-ollama pull nomic-embed-text && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b   # + minicpm-v (optional vision fallback)
 python health.py
 ```
 

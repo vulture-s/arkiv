@@ -235,8 +235,9 @@ def main():
         models = [m["name"] for m in r.json().get("models", [])]
         check("ollama server", True, f"({len(models)} models)")
 
-        has_embed = any("nomic-embed" in m for m in models)
-        check("nomic-embed-text", has_embed, "" if has_embed else "(run: ollama pull nomic-embed-text)")
+        embed_model = config.OLLAMA_EMBED_MODEL.split(":")[0]
+        has_embed = any(embed_model in m for m in models)
+        check(config.OLLAMA_EMBED_MODEL, has_embed, "" if has_embed else f"(run: ollama pull {config.OLLAMA_EMBED_MODEL})")
 
         vision_model = config.VISION_MODEL.split(":")[0]
         has_vision = any(vision_model in m for m in models)
