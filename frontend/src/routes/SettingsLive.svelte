@@ -17,7 +17,7 @@
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
 
-  const VERSION = 'v0.9.2'
+  import { VERSION } from '../lib/version.js'
   // G5 step ①: nav expanded to the design's tab set. Real-backed tabs are
   // interactive; tabs without backend (vision/export) show honest pending rows.
   let section = 'general'

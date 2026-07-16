@@ -1,6 +1,7 @@
 <!-- Top bar: logo · search · all-projects toggle · actions. crossProject is bindable. -->
 <script>
   import { onMount, onDestroy } from 'svelte'
+  import { VERSION } from './version.js'
   import { push } from 'svelte-spa-router'
   import ArkivLogo from './ArkivLogo.svelte'
   import Mono from './Mono.svelte'
@@ -33,7 +34,7 @@
 <div class="topbar">
   <div class="logo">
     <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;letter-spacing:0.05em;">v0.9.2</Mono>
+    <Mono dim style="font-size:10px;letter-spacing:0.05em;">{VERSION}</Mono>
   </div>
 
   <div class="search">
