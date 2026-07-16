@@ -5,6 +5,8 @@ exercise the impl functions (the testable core) plus the path-safety red line
 and the JSON tool wrappers.
 """
 import json
+import pathlib
+import re
 
 import pytest
 
@@ -200,8 +202,51 @@ def test_safe_path_windows_and_unc_absolute(monkeypatch):
     monkeypatch.setattr(db, "to_relative", lambda p: p)  # passthrough (out-of-root)
     assert m._safe_path("C:\\Users\\me\\footage\\x.mov") == "x.mov"
     assert m._safe_path("\\\\nas\\share\\clip.mov") == "clip.mov"
-    # forward-slash drive-like dir is a POSIX relative path — preserved
-    assert m._safe_path("C:/camera/clip.mov") == "C:/camera/clip.mov"
+    # `C:/` is a Windows absolute too, and must basename like every other absolute.
+    # This asserted the exact opposite until 2026-07-16: Codex round-1 read `C:/x`
+    # as a POSIX relative path under a drive-letter-named dir and preserved it.
+    # Round-2 (fc35b8f, four hours later) overruled that — "a Unix media dir
+    # literally named 'C:' is pathological… no-leak wins" — but only patched
+    # server.py, so this surface kept leaking `C:/…` whole. See _safe_path's
+    # docstring; the guard is now shared with the HTTP API rather than copied.
+    assert m._safe_path("C:/camera/clip.mov") == "clip.mov"
+
+
+def test_safe_path_is_the_http_guard_not_a_copy(monkeypatch):
+    """Anti-fork pin: the MCP leak guard IS pathres._display_path, not a twin.
+
+    The 38-day `C:/` leak happened because this module had to inline its own copy
+    (the logic lived in server.py, which mcp_server must not import) and the copy
+    missed a later fix to the original. pathres exists now, so there is no reason
+    for a second implementation — and an "inline it to avoid the import" change
+    would silently reopen exactly that drift. Assert parity across the whole
+    input space, not just the case that broke.
+    """
+    import pathres
+
+    monkeypatch.setattr(db, "to_relative", lambda p: p)  # passthrough (out-of-root)
+    for p in (
+        "/abs/posix/x.mov",
+        "C:\\Users\\me\\x.mov",
+        "C:/Users/me/x.mov",
+        "\\\\nas\\share\\x.mov",
+        "footage/clip.mov",
+        "clip.mov",
+        "",
+        None,
+    ):
+        assert m._safe_path(p) == pathres._display_path(p), p
+
+
+def test_mcp_carries_no_second_leak_guard():
+    """Source-level twin of the test above — catches a re-inlined copy even if it
+    is behaviourally identical *on the day it lands* (which the 6/08 copy was).
+    Same idiom as the R5-25 leaf tests: read the source, never import-and-inspect.
+    """
+    src = (pathlib.Path(__file__).resolve().parent.parent / "mcp_server.py").read_text(
+        encoding="utf-8"
+    )
+    assert not re.search(r"^def _looks_absolute\b", src, re.M)
 
 
 def test_library_stats(monkeypatch):

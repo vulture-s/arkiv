@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 import db
 import vectordb as vdb
 from mcp.server.fastmcp import FastMCP
+from pathres import _display_path
 
 # Logging goes to stderr (never stdout — stdout is the MCP stdio channel).
 LOGGER = logging.getLogger(__name__)
@@ -33,36 +34,30 @@ mcp = FastMCP("arkiv")
 
 
 # ── path safety ───────────────────────────────────────────────────────────────
-def _looks_absolute(p: str) -> bool:
-    """True for POSIX (`/x`), Windows drive (`C:\\x`), or UNC (`\\\\host`) absolutes.
-    `os.path.isabs` on a POSIX host misses the Windows forms, which would let a
-    legacy/cross-platform row leak its full path. The Windows drive form requires
-    a backslash after the colon (`C:\\`); a forward-slash `C:/x` is a POSIX
-    relative path under a dir named like a drive letter."""
-    if not p:
-        return False
-    return (
-        p.startswith("/")
-        or p.startswith("\\\\")
-        or (len(p) >= 3 and p[0].isalpha() and p[1] == ":" and p[2] == "\\")
-    )
-
-
 def _safe_path(p: Optional[str]) -> Optional[str]:
     """Return a PROJECT_ROOT-relative path, never an absolute one.
 
-    `db.to_relative` relativizes paths under PROJECT_ROOT but passes out-of-root
-    absolute paths through unchanged — which would leak the operator's directory
-    tree. Fall back to a separator-agnostic basename in that case so a response
-    can never expose an absolute path, POSIX **or** Windows/UNC (red line,
-    mirrors the HTTP API's Phase 16.2 `_display_path`).
+    Thin alias for the HTTP API's `pathres._display_path` — deliberately the SAME
+    guard object, not a same-looking copy. Both do: `db.to_relative`, and if the
+    result is still absolute (out-of-root legacy row) fall back to a
+    separator-agnostic basename, so a response can never expose the operator's
+    directory tree — POSIX, Windows **or** UNC. Red line for this server (see the
+    module docstring).
+
+    This module carried its own copy from 2026-06-08 (a9c0838) because the logic
+    lived in `server.py`, and importing that here would drag in the whole FastAPI
+    app — there was nowhere to share from. R5-25 / round-5 #51 extracted it to the
+    `pathres` leaf (70490fa, 2026-07-13), which is what finally makes one guard
+    possible. And the copy had already drifted: it kept Codex round-1's reading
+    that `C:/x` is a POSIX relative path under a drive-letter-named dir, while
+    round-2 (fc35b8f, four hours later the same day) overruled that — "a Unix
+    media dir literally named 'C:' is pathological… no-leak wins" — and treated
+    `C:/` as a Windows absolute. That correction landed in `server.py` only and
+    never reached here, so `C:/Users/me/x.mov` leaked whole over MCP for 38 days:
+    on the one surface whose stated red line is "no absolute-path leak", and the
+    only one facing untrusted downstream agents.
     """
-    if not p:
-        return p
-    rel = db.to_relative(p)
-    if _looks_absolute(rel):
-        return rel.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-    return rel
+    return _display_path(p)
 
 
 # ── shaping ───────────────────────────────────────────────────────────────────
