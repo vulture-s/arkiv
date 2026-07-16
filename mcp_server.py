@@ -183,17 +183,67 @@ def get_scenes_impl(media_id: int) -> Optional[Dict[str, Any]]:
     return scenes._scenes_for_mcp(int(media_id), rec, frames)
 
 
-def get_transcript_impl(media_id: int) -> Optional[Dict[str, Any]]:
-    """Transcript text for one media item, or None."""
+# segments_json / words_json hold whatever the transcribe backend produced, and
+# the three backends do NOT agree: faster-whisper appends
+# {text,start,end,no_speech_prob,avg_logprob,compression_ratio}; mlx-whisper
+# (Darwin/arm64, i.e. every Mac ingest) passes its native dict through untouched,
+# which additionally carries `seek`, `temperature` and a full `tokens` list —
+# hundreds of token ids per segment; whisperx builds a third shape. So a verbatim
+# passthrough would hand agents a payload whose shape depends on which machine
+# ingested the clip, padded with decoder internals. Project onto the stable
+# subset instead — which is exactly what transcribe.py:223-224 documents as the
+# contract, and all the consumers (export.py, remotion-props) already assume.
+_SEGMENT_KEYS = ("start", "end", "text")
+_WORD_KEYS = ("word", "start", "end", "score")
+
+
+def _json_rows(raw: Optional[str]) -> List[Dict[str, Any]]:
+    """Parse a TEXT column holding a JSON list of dicts. Never raises: a corrupt
+    column degrades to [] rather than taking the tool down (mirrors the defensive
+    parse in export.py:134-141)."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [row for row in parsed if isinstance(row, dict)]
+
+
+def _project(rows: List[Dict[str, Any]], keys: tuple) -> List[Dict[str, Any]]:
+    return [{k: row.get(k) for k in keys} for row in rows]
+
+
+def get_transcript_impl(
+    media_id: int,
+    include_words: bool = False,
+    max_words: int = 5000,
+) -> Optional[Dict[str, Any]]:
+    """Transcript + timecodes for one media item, or None."""
     rec = db.get_record_by_id(int(media_id))
     if not rec:
         return None
-    return {
+    word_rows = _json_rows(rec.get("words_json"))
+    out = {
+        # unchanged keys — pre-existing consumers keep working verbatim
         "id": rec.get("id"),
         "filename": rec.get("filename"),
         "lang": rec.get("lang"),
         "transcript": rec.get("transcript"),
+        # new: the timecodes. `segments` is the point of this tool — an agent
+        # that only gets flat text cannot cut on a quote.
+        "duration_s": rec.get("duration_s"),
+        "segments": _project(_json_rows(rec.get("segments_json")), _SEGMENT_KEYS),
+        # advertise word-level availability without paying for it
+        "has_words": bool(word_rows),
     }
+    if include_words:
+        words = _project(word_rows, _WORD_KEYS)
+        out["words"] = words[:max_words]
+        out["words_truncated"] = len(words) > max_words
+    return out
 
 
 def list_recent_impl(limit: int = 20) -> List[Dict[str, Any]]:
@@ -295,12 +345,35 @@ def get_scenes(media_id: int) -> str:
 
 
 @mcp.tool()
-def get_transcript(media_id: int) -> str:
-    """Full transcript text for one media item.
+def get_transcript(media_id: int, include_words: bool = False) -> str:
+    """Speech transcript for one media item, with per-segment timecodes.
 
-    Returns JSON {id, filename, lang, transcript}, or null if unknown.
+    Use `segments` to locate a quote in time: the flat `transcript` string tells
+    you WHAT was said, `segments` tells you WHEN — which is what you need in order
+    to cut on it. Pair with get_scenes for the visual side.
+
+    Returns a JSON object, or null if the id is unknown:
+      id           int
+      filename     str
+      lang         str    detected language, e.g. "zh"
+      transcript   str    the whole transcript as flat text
+      duration_s   float  clip duration, bounding the timecodes below
+      segments     list   [{start, end, text}] — seconds from clip start.
+                          EMPTY for clips transcribed before segment timing was
+                          stored; fall back to `transcript` in that case.
+      has_words    bool   whether word-level timing exists for this clip
+
+    With include_words=true, adds:
+      words            list  [{word, start, end, score}] — score is 0-1 confidence
+      words_truncated  bool  true if the list was capped (at 5000 words)
+
+    Leave include_words FALSE unless you specifically need word-level timing (for
+    caption building, say): a feature-length clip holds tens of thousands of words
+    and that payload can swamp your context. Segment timing is enough to locate
+    and cut a quote. Check has_words first — asking for words on a clip that has
+    none just returns [].
     """
-    return _j(get_transcript_impl(media_id))
+    return _j(get_transcript_impl(media_id, include_words=include_words))
 
 
 @mcp.tool()

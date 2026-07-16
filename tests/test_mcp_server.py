@@ -162,7 +162,13 @@ def test_get_transcript(monkeypatch):
         lambda mid: {"id": 2, "filename": "c.mp4", "lang": "ja", "transcript": "テスト"},
     )
     out = m.get_transcript_impl(2)
-    assert out == {"id": 2, "filename": "c.mp4", "lang": "ja", "transcript": "テスト"}
+    # The four original keys are unchanged — pre-existing consumers keep working.
+    # duration_s/segments/has_words joined them when timecodes were added; a clip
+    # with no segment timing (this one) still reports segments: [].
+    assert out == {
+        "id": 2, "filename": "c.mp4", "lang": "ja", "transcript": "テスト",
+        "duration_s": None, "segments": [], "has_words": False,
+    }
 
 
 def test_get_transcript_not_found(monkeypatch):
@@ -274,6 +280,147 @@ def test_tool_json_keeps_cjk_readable(monkeypatch):
     raw = m.get_transcript(1)
     assert "中文" in raw                      # ensure_ascii=False
     assert json.loads(raw)["transcript"] == "中文"
+
+
+# ── get_transcript timecodes ──────────────────────────────────────────────────
+# The shapes below are what the backends ACTUALLY write, not what
+# transcribe.py:223's docstring says. They disagree with each other, which is the
+# whole reason the impl projects rather than passes through.
+_MLX_SEGMENTS = json.dumps([  # transcribe._transcribe_mlx → mlx_whisper native.
+    # These 10 keys are verified, not guessed: mlx-whisper large-v3-turbo run
+    # against 8s of real footage returned exactly
+    #   ['avg_logprob','compression_ratio','end','id','no_speech_prob','seek',
+    #    'start','temperature','text','tokens']
+    {"id": 0, "seek": 0, "start": 0.0, "end": 2.4, "text": "第一句",
+     "tokens": [50364, 2503, 41200, 50484], "temperature": 0.0,
+     "avg_logprob": -0.31, "compression_ratio": 1.2, "no_speech_prob": 0.01},
+    {"id": 1, "seek": 240, "start": 2.4, "end": 5.0, "text": "第二句",
+     "tokens": [50484, 17155, 50614], "temperature": 0.0,
+     "avg_logprob": -0.28, "compression_ratio": 1.1, "no_speech_prob": 0.02},
+], ensure_ascii=False)
+
+_FW_SEGMENTS = json.dumps([  # transcribe._transcribe_faster_whisper
+    {"text": "第一句", "start": 0.0, "end": 2.4, "no_speech_prob": 0.01,
+     "avg_logprob": -0.31, "compression_ratio": 1.2},
+], ensure_ascii=False)
+
+_WORDS = json.dumps(
+    [{"word": "第一", "start": 0.1, "end": 0.4, "score": 0.98},
+     {"word": "句", "start": 0.4, "end": 0.6, "score": 0.97}],
+    ensure_ascii=False,
+)
+
+
+def _rec(**over):
+    base = {"id": 1, "filename": "a.mp4", "lang": "zh", "transcript": "第一句第二句",
+            "duration_s": 5.0, "segments_json": _MLX_SEGMENTS, "words_json": _WORDS}
+    base.update(over)
+    return base
+
+
+def test_get_transcript_parses_segments_into_objects(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec())
+    out = m.get_transcript_impl(1)
+    assert out["segments"] == [
+        {"start": 0.0, "end": 2.4, "text": "第一句"},
+        {"start": 2.4, "end": 5.0, "text": "第二句"},
+    ]
+    assert out["duration_s"] == 5.0
+    assert isinstance(out["segments"][0]["start"], float)   # number, not a string
+
+
+def test_get_transcript_strips_decoder_internals(monkeypatch):
+    """mlx-whisper (every Mac ingest) stores `tokens` — the raw token ids — plus
+    seek/id/temperature/logprob internals. An agent needs none of it. Measured on
+    8s of real footage: 1128 bytes verbatim vs 213 projected, an 81% cut, and it
+    scales linearly with clip length."""
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec())
+    out = m.get_transcript_impl(1)
+    for seg in out["segments"]:
+        assert set(seg) == {"start", "end", "text"}
+    dumped = json.dumps(out)
+    for internal in ("tokens", "seek", "temperature", "avg_logprob",
+                     "compression_ratio", "no_speech_prob"):
+        assert internal not in dumped
+
+
+def test_get_transcript_shape_is_backend_independent(monkeypatch):
+    """mlx-whisper and faster-whisper write different segment dicts, so without
+    the projection the payload shape would depend on which machine ingested the
+    clip. Same input, same output, either way."""
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec(segments_json=_MLX_SEGMENTS))
+    mlx = m.get_transcript_impl(1)["segments"][0]
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec(segments_json=_FW_SEGMENTS))
+    fw = m.get_transcript_impl(1)["segments"][0]
+    assert mlx == fw == {"start": 0.0, "end": 2.4, "text": "第一句"}
+
+
+def test_get_transcript_omits_words_by_default(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec())
+    out = m.get_transcript_impl(1)
+    assert "words" not in out            # omitted, not null — you don't pay for it
+    assert out["has_words"] is True      # …but you're told it exists
+
+
+def test_get_transcript_include_words(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec())
+    out = m.get_transcript_impl(1, include_words=True)
+    assert out["words"] == [
+        {"word": "第一", "start": 0.1, "end": 0.4, "score": 0.98},
+        {"word": "句", "start": 0.4, "end": 0.6, "score": 0.97},
+    ]
+    assert out["words_truncated"] is False
+
+
+def test_get_transcript_truncates_words(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec())
+    out = m.get_transcript_impl(1, include_words=True, max_words=1)
+    assert len(out["words"]) == 1
+    assert out["words_truncated"] is True
+
+
+def test_get_transcript_has_words_false_without_word_timing(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec(words_json=None))
+    out = m.get_transcript_impl(1)
+    assert out["has_words"] is False
+    assert m.get_transcript_impl(1, include_words=True)["words"] == []
+
+
+@pytest.mark.parametrize("bad", [
+    "{not json",           # corrupt
+    '{"a": 1}',            # valid JSON, wrong type (an object, not a list)
+    "[1, 2, 3]",           # a list, but not of dicts
+    "null",
+    "",
+])
+def test_get_transcript_degrades_on_malformed_json(monkeypatch, bad):
+    """A corrupt column must not take the tool down — mirrors export.py:134-141."""
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec(segments_json=bad, words_json=bad))
+    out = m.get_transcript_impl(1, include_words=True)
+    assert out["segments"] == []
+    assert out["words"] == []
+    assert out["has_words"] is False
+    assert out["transcript"] == "第一句第二句"   # flat text still served
+
+
+def test_get_transcript_pre_segment_era_clip(monkeypatch):
+    """Real case, not hypothetical: the live library's 37 transcripts predate
+    Phase 9.4, so segments_json is NULL on every one. They must still answer."""
+    monkeypatch.setattr(
+        db, "get_record_by_id",
+        lambda mid: {"id": 1, "filename": "old.mp4", "lang": "zh",
+                     "transcript": "舊的逐字稿", "duration_s": 31.0},
+    )
+    out = m.get_transcript_impl(1)
+    assert out["segments"] == []
+    assert out["has_words"] is False
+    assert out["transcript"] == "舊的逐字稿"
+
+
+def test_get_transcript_tool_passes_include_words_through(monkeypatch):
+    monkeypatch.setattr(db, "get_record_by_id", lambda mid: _rec())
+    assert "words" not in json.loads(m.get_transcript(1))
+    assert len(json.loads(m.get_transcript(1, include_words=True))["words"]) == 2
 
 
 # ── get_scenes ────────────────────────────────────────────────────────────────
