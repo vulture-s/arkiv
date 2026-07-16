@@ -638,7 +638,7 @@
       <div class="toolrow">
         <div class="proj">
           <div class="ak-display projtitle">{projectName}</div>
-          <Mono dim style="font-size:11px;margin-top:5px;letter-spacing:0.04em;">
+          <Mono dim style="font-size:11px;margin-top:5px;letter-spacing:0.04em;white-space:nowrap;">
             {#if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB · live{:else}loading…{/if}
           </Mono>
         </div>
@@ -808,10 +808,15 @@
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; position: relative; display: grid; grid-template-rows: 52px 1fr; background: var(--bg); color: var(--ink); overflow: hidden; margin: 0 auto; }
   .body { display: grid; grid-template-columns: 220px 1fr 340px; min-height: 0; }
   .center { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-  .toolrow { display: flex; align-items: center; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--rule); }
+  /* flex-wrap so the controls reflow onto a second line on a narrow window instead
+     of clipping off the right edge (the artboard is overflow:hidden, so a non-
+     wrapping toolrow made VIDEO/AUDIO/GOOD/…/GRID-LIST unreachable below ~1000px). */
+  .toolrow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 14px 22px; border-bottom: 1px solid var(--rule); }
   .proj { min-width: 0; }
   .projtitle { font-size: 28px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
-  .livesearch { flex: 1; max-width: 360px; font-size: 12px; }
+  /* min-width so the search shrinks then WRAPS rather than collapsing the buttons
+     off-screen; the stats line stays on one row (see the nowrap on the Mono). */
+  .livesearch { flex: 1 1 200px; min-width: 160px; max-width: 360px; font-size: 12px; }
   .ranked { font-size: 10px; padding: 6px 10px; }
   .metacsv { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
