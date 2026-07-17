@@ -15,6 +15,7 @@ from silero_vad import load_silero_vad, get_speech_timestamps
 import torch
 
 import whisper_guard
+import zh_convert
 
 from config import (
     WHISPER_MODEL,
@@ -236,23 +237,26 @@ def transcribe(media_path: str, language=None) -> tuple:
             if vad_wav is None:
                 return "", "", [], []
             try:
-                return _transcribe_mlx(vad_wav, language)
+                result = _transcribe_mlx(vad_wav, language)
             finally:
                 if vad_wav != wav:
                     Path(vad_wav).unlink(missing_ok=True)
         elif _non_mac_backend() == "whisperx":
-            return _transcribe_whisperx(wav, language)
+            result = _transcribe_whisperx(wav, language)
         else:
             vad_wav = _vad_filter(wav)
             if vad_wav is None:
                 return "", "", [], []
             try:
-                return _transcribe_faster_whisper(vad_wav, language)
+                result = _transcribe_faster_whisper(vad_wav, language)
             finally:
                 if vad_wav != wav:
                     Path(vad_wav).unlink(missing_ok=True)
     finally:
         Path(wav).unlink(missing_ok=True)
+    # Phase 9.8b: whisper emits Simplified for zh — store Taiwan Traditional so the
+    # search index / UI / every export are Traditional (write-path; see zh_convert).
+    return zh_convert.convert_result(*result)
 
 def _custom_terms() -> list:
     """Merged hotword list: comma-separated ARKIV_CUSTOM_VOCABULARY env first,
