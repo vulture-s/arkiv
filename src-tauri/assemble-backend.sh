@@ -69,4 +69,8 @@ fi
 
 echo "[assemble] done:"
 du -sh "$BACKEND" "$BACKEND"/python "$BACKEND"/site-packages "$BACKEND"/src 2>/dev/null || true
-echo "[assemble] next: cargo tauri build  (from src-tauri/)"
+echo "[assemble] next:  CI=true cargo tauri build   (from src-tauri/)"
+echo "[assemble]        ^^^^^^^ CI=true makes tauri pass --skip-jenkins to bundle_dmg.sh,"
+echo "[assemble]        skipping the Finder-prettifying AppleScript. Without it the dmg step"
+echo "[assemble]        fails with AppleEvent timeout -1712 in any non-GUI / background build"
+echo "[assemble]        (the .app still builds; only the cosmetic dmg layout needs a live Finder)."
