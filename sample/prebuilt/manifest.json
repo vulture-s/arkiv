@@ -1,0 +1,26 @@
+{
+  "artifact": "arkiv-sample.tar",
+  "size_mb": 0.9,
+  "store_parts": [
+    "project.db",
+    "chroma_db",
+    "thumbnails"
+  ],
+  "project_root_at_build": "sample/ (paths stored relative to <bundle>/sample)",
+  "clips": [
+    "caminandes_llama.mp4",
+    "coffee_run.mp4",
+    "glass_half.mp4",
+    "wing_it.mp4"
+  ],
+  "validation": {
+    "media": 4,
+    "abs_path_leak": [],
+    "transcripts": 1,
+    "frames": 12,
+    "frame_desc_nulls": 0,
+    "chroma_present": true,
+    "thumbnails": 16
+  },
+  "note": "Pre-indexed CC-BY sample. Runtime loader: routers/sample.py (PR2). Redirect store to a writable copy via ARKIV_DB_PATH / ARKIV_CHROMA_PATH / ARKIV_THUMBNAILS_DIR."
+}
