@@ -51,7 +51,7 @@ python -m venv .venv; .\.venv\Scripts\activate
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA GPU
 # pip install faster-whisper      # CPU fallback
-ollama pull nomic-embed-text; ollama pull qwen3-vl:8b; ollama pull qwen2.5:14b
+ollama pull bge-m3; ollama pull qwen2.5vl:7b; ollama pull qwen2.5:14b
 $env:PYTHONUTF8=1; python health.py
 ```
 
