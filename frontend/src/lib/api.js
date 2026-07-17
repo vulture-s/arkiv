@@ -76,6 +76,10 @@ export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
 export const getVersion = (opts) => req('/api/version', opts)
 export const seedSample = (opts) => req('/api/sample/seed', { method: 'POST', ...opts })
 export const getSeedStatus = (opts) => req('/api/sample/seed/status', opts)
+// A1 pre-built (instant) sample library — distinct from seedSample (re-ingest).
+export const sampleStatus = (opts) => req('/api/sample/status', opts)
+export const loadSample = (opts) => req('/api/sample/load', { method: 'POST', ...opts })
+export const removeSample = (opts) => req('/api/sample/remove', { method: 'POST', ...opts })
 export const getLogsTail = (n = 200, opts) => req(`/api/logs/tail${qs({ n })}`, opts)
 
 // /api/health returns 503 when deps are missing — req() would throw ApiError and

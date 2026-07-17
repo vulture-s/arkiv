@@ -36,6 +36,10 @@
   let health = null
   let readyState = 'checking'
   let seeding = false
+  // A1 pre-built sample: {available, loaded, dismissed, media_ids}. Drives the
+  // "範例素材" chip (shown when loaded) so a seeded demo reads as demo + is removable.
+  let sampleInfo = null
+  let removingSample = false
   let selectedId = null
   let hoverId = null
   let activeFilter = 'all'
@@ -196,12 +200,31 @@
     if (seeding) return
     seeding = true
     try {
+      // Prefer the instant pre-built load (zero re-ingest). Fall back to the v1
+      // on-demand seed only when there's no artifact (404) or the project isn't
+      // fresh (409) — there a merge isn't safe, so re-ingest adds fresh rows.
+      if (sampleInfo?.available) {
+        try { await api.loadSample(); await load(); return }
+        catch (e) { if (e.status !== 404 && e.status !== 409) throw e }
+      }
       const r = await api.seedSample()
       if (r.queued === 0) { await load(); return } // already loaded
       await pollSeed()
     } catch (e) {
       pushToast(e.status === 409 ? '有匯入任務進行中，稍後再試' : '載入失敗: ' + e.message, 'error')
     } finally { seeding = false }
+  }
+
+  async function removeSampleAction() {
+    if (removingSample) return
+    removingSample = true
+    try {
+      await api.removeSample()
+      pushToast('已移除範例素材')
+      await load()
+    } catch (e) {
+      pushToast('移除失敗: ' + e.message, 'error')
+    } finally { removingSample = false }
   }
 
   async function pollSeed() {
@@ -225,10 +248,12 @@
     readyState = await checkReady()
     if (readyState === 'unreachable') { state = 'ok'; return } // panel renders via readyState
     try {
-      const [s, m, t, c] = await Promise.all([
+      const [s, m, t, c, si] = await Promise.all([
         api.getStats(), api.getMedia({ limit: PAGE }), api.getTags(), api.getCollections(),
+        api.sampleStatus().catch(() => null), // non-fatal: chip just stays hidden
       ])
       stats = s
+      sampleInfo = si
       items = (m.items || []).map(toCard)
       total = m.total ?? items.length
       moreParams = { limit: PAGE }
@@ -736,6 +761,14 @@
       {/if}
 
       <div class="gridwrap">
+        {#if sampleInfo?.loaded && stats?.total}
+          <div class="samplebar">
+            <Mono dim>範例素材 · {sampleInfo.media_ids?.length || 4} 支 CC-BY 示範片 — 換成你自己的素材時可移除</Mono>
+            <button class="ak-btn sm" on:click={removeSampleAction} disabled={removingSample}>
+              {removingSample ? '移除中…' : '移除範例'}
+            </button>
+          </div>
+        {/if}
         {#if state === 'loading'}
           <div class="msg"><Mono dim>loading…</Mono></div>
         {:else if readyState === 'unreachable'}
@@ -897,6 +930,13 @@
   .ranked { font-size: 10px; padding: 6px 10px; }
   .metacsv { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
+  /* A1: pre-built sample demo bar — flags the seeded clips as demo + one-click remove */
+  .samplebar {
+    position: sticky; top: 0; z-index: 3;
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 8px 22px; border-bottom: 1px solid var(--rule); background: var(--surface-2);
+  }
+  .samplebar .ak-btn.sm { padding: 3px 10px; font-size: 11px; }
   /* G9: prototype card width = 198px (runtime-measured from the 1400px design canvas).
      repeat(4,1fr) ballooned cards on wide windows (310px @1920) and squeezed them on
      narrow (168px @1280). auto-fill holds the design rhythm and reflows column count;

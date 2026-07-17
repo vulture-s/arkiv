@@ -96,6 +96,15 @@ async def _lifespan(app: FastAPI):
     db.init_db()  # R5-23 (#53): create/migrate the db on startup, not at import
     _install_token_redaction_filter()
     _bootstrap_admin_token()  # late-bound; defined below near the admin routes
+    try:
+        # First-run demo library (A1): seed the pre-indexed sample into a fresh,
+        # explicitly-configured project so the main grid is instantly searchable.
+        # Self-guarding (fresh + never-dismissed + non-install root only) and it
+        # swallows its own errors — a sample glitch must never block startup.
+        import sample_prebuilt
+        sample_prebuilt.maybe_autoseed()
+    except Exception:  # noqa: BLE001
+        pass
     yield
     # no shutdown work today; add teardown after the yield when needed
 
