@@ -36,9 +36,10 @@ def test_router_owns_misc_routes_and_helpers():
         ("/api/client-log", "POST"),
         ("/api/version", "GET"),
         ("/api/health", "GET"),
+        ("/api/logs/tail", "GET"),
     }
     for name in ("stream_media", "embed_rebuild", "open_file", "client_log",
-                 "api_version", "api_health",
+                 "api_version", "api_health", "logs_tail",
                  "_log_safe", "OpenFileRequest", "ClientLogRequest"):
         assert hasattr(rm, name)
 
@@ -79,4 +80,25 @@ def test_misc_routes_mounted_and_auth_guarded(server_module):
         assert c.post("/api/open-file", json={"path": "/x"}).status_code == 401
         # client-log is deliberately unauthenticated (WebView diagnostics sink)
         assert c.post("/api/client-log", json={"level": "info", "msg": "hi"}).status_code == 200
+        # logs/tail is AUTHED (raw log may carry paths) — 401 without a token
+        assert c.get("/api/logs/tail").status_code in (401, 403)
         assert c.get("/api/streamzz/1").status_code == 404
+
+
+def test_logs_tail_missing_file_graceful(monkeypatch, tmp_path):
+    import routers.misc as rm
+    import config
+    monkeypatch.setattr(config, "LOGS_DIR", tmp_path)  # no backend.log here
+    res = rm.logs_tail(n=50, _tok={})
+    assert res["available"] is False and res["lines"] == []
+
+
+def test_logs_tail_reads_and_sanitizes(monkeypatch, tmp_path):
+    import routers.misc as rm
+    import config
+    (tmp_path / "backend.log").write_text("line1\nFAKE\x1b[31m evil\nline3\n", encoding="utf-8")
+    monkeypatch.setattr(config, "LOGS_DIR", tmp_path)
+    res = rm.logs_tail(n=2, _tok={})
+    assert res["available"] is True
+    assert len(res["lines"]) == 2 and "line3" in res["lines"][-1]
+    assert all("\x1b" not in ln for ln in res["lines"])  # sanitized per line

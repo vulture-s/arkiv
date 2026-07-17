@@ -76,6 +76,10 @@ PROJECT_ROOT = _validate_writable_path(
 )
 _ARKIV_DIR = PROJECT_ROOT / ".arkiv"
 _ASCMHL_DIR = PROJECT_ROOT / "ascmhl"
+# The Tauri sidecar writes the backend's stdout/stderr here (src-tauri/src/main.rs);
+# GET /api/logs/tail reads it for the in-app "Report a problem". Not created here —
+# under bare uvicorn PROJECT_ROOT falls back to BASE_DIR and the dir simply won't exist.
+LOGS_DIR = PROJECT_ROOT / "logs"
 
 DB_PATH = _validate_writable_path(
     Path(os.getenv("ARKIV_DB_PATH", str(_ARKIV_DIR / "project.db"))), "ARKIV_DB_PATH"
