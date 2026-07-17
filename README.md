@@ -41,7 +41,7 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
   Phase 2: Vision (after unloading LLM from VRAM)
   ┌─────────┐  ┌──────────────┐
   │frames.py│→ │  vision.py   │
-  │(extract)│  │(qwen3-vl:8b) │
+  │(extract)│  │(qwen2.5vl:7b) │
   └─────────┘  └──────────────┘
 ```
 
@@ -57,7 +57,7 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **Chat RAG over your video library** — 5-intent assistant for compilation searches, refinement, similarity, analytics, and general questions with persisted conversation memory
 - **AI transcription** — Whisper large-v3-turbo + Silero VAD + LLM polish (Apple Silicon MLX / NVIDIA CUDA)
 - **4-layer anti-hallucination guard** — VAD silence filter → no_speech threshold → blank/repeat filter → LLM correction
-- **Frame analysis** — qwen3-vl:8b vision descriptions with brand/object recognition
+- **Frame analysis** — qwen2.5vl:7b vision descriptions with brand/object recognition
 - **2-phase pipeline** — transcribe first, unload LLM, then vision (avoids VRAM conflict on 12GB GPUs)
 - **Rating system** — GOOD / NG / Review with notes + clip color in Resolve
 - **Tag system** — auto (AI) + manual tags with autocomplete
@@ -169,7 +169,7 @@ cd arkiv
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install mlx-whisper          # Apple Silicon (Metal GPU)
-ollama pull bge-m3 && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b
 python health.py
 ```
 
@@ -183,7 +183,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA CUDA GPU
 # pip install faster-whisper      # CPU fallback
-ollama pull bge-m3 && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b
 python health.py
 ```
 
@@ -198,7 +198,7 @@ python -m venv .venv
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA CUDA GPU
 # pip install faster-whisper      # CPU fallback
-ollama pull bge-m3; ollama pull qwen3-vl:8b; ollama pull qwen2.5:14b
+ollama pull bge-m3; ollama pull qwen2.5vl:7b; ollama pull qwen2.5:14b
 $env:PYTHONUTF8=1; python health.py
 ```
 
@@ -297,7 +297,7 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | Thumbnail output dir |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `ARKIV_EMBED_MODEL` | `bge-m3` | Embedding model — **do not change after indexing** (see note below) |
-| `ARKIV_VISION_MODEL` | `qwen3-vl:8b` | Vision model for frame descriptions |
+| `ARKIV_VISION_MODEL` | `qwen2.5vl:7b` | Vision model for frame descriptions |
 | `ARKIV_CHAT_MODEL` | `qwen2.5:14b` | Chat model — answers and (by default) intent classification |
 | `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | Optional faster model for intent classification only; must be installed |
 | `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (other) | Whisper model |
@@ -325,7 +325,7 @@ Copy `.env.example` to `.env` and customize:
 | Transcription | mlx-whisper / faster-whisper (large-v3-turbo) |
 | VAD | Silero VAD (silence filter before Whisper) |
 | LLM Polish + Chat | Ollama qwen2.5:14b (transcript polish + 5-intent chat RAG) |
-| Vision | Ollama qwen3-vl:8b (brand/object recognition) |
+| Vision | Ollama qwen2.5vl:7b (brand/object recognition) |
 | Media | FFmpeg (probe, thumbnails, frame extraction) |
 | Metadata | ExifTool (12 fields, sidecar-aware, cross-platform auto-detect) |
 | Export | SRT, VTT, TXT, EDL (DF/NDF), FCPXML 1.8 |
@@ -378,7 +378,7 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 | FFmpeg / ffprobe | Required | Required | Required | |
 | Ollama server | Required | Required | Required | |
 | bge-m3 | Required | Required | Required | |
-| qwen3-vl:8b | Optional | Optional | Optional | For frame descriptions |
+| qwen2.5vl:7b | Optional | Optional | Optional | For frame descriptions |
 | qwen2.5:14b | Optional | Optional | Optional | Transcript polish + chat (required for `/api/chat`) |
 | ExifTool | Optional | Optional | Optional | For rich metadata |
 | faster-whisper | Required | Optional | Required | CUDA/CPU whisper |
