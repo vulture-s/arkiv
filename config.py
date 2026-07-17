@@ -7,6 +7,11 @@ from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).parent
 
+# Backend product version. Keep in sync with the release tag + frontend
+# version.js at release time. Served by GET /api/version and included in
+# GET /api/health so a user/support can identify the build.
+VERSION = "0.10.0"
+
 # Codex Round-2 audit (J3): without bounds, ARKIV_PROXIES_DIR=/etc would have
 # arkiv write generated proxy mp4 files into /etc on every HEVC ingest. Same
 # risk for THUMBNAILS_DIR / CHROMA_PATH / DB_PATH (any operator-tunable
