@@ -17,6 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 import config
 import db
+import sample_prebuilt
 from auth import require_scopes
 from state import (
     sample_seed as _sample_guard,
@@ -104,3 +105,53 @@ def sample_seed(
 def sample_seed_status(_tok: dict = Depends(require_scopes("projects_read"))):
     """Poll sample-seed progress {running, ok, returncode, message, clips}."""
     return dict(_sample_guard.progress)
+
+
+# ── Pre-built (instant) sample library — A1 · launch Wave-0 ───────────────────
+# Distinct from /api/sample/seed above (that re-ingests on demand = minutes +
+# needs Ollama). These load the PRE-INDEXED artifact with zero pipeline. The
+# server lifespan auto-seeds a fresh project; these back the in-app "Sample data"
+# chip so the user can load-it-back-after-dismiss or remove it one-click.
+
+
+@router.get("/api/sample/status")
+def sample_prebuilt_status(_tok: dict = Depends(require_scopes("projects_read"))):
+    """{available, loaded, dismissed, media_ids} — drives the 'Sample data' chip."""
+    return sample_prebuilt.status()
+
+
+@router.post("/api/sample/load")
+def sample_prebuilt_load(
+    request: Request,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
+    """Instant-load the pre-indexed sample into the current project (no re-ingest).
+    Refuses a non-fresh project (409) — the caller falls back to /api/sample/seed
+    there. Idempotent when already loaded."""
+    _assert_same_site(request)
+    # Hold the shared H3 ingest slot across the merge so a concurrent /api/ingest
+    # can't interleave writes with the freshness-check → seed (same discipline as
+    # /api/sample/seed).
+    if not _acquire_ingest_slot():
+        raise HTTPException(409, "已有匯入任務進行中，請稍候")
+    try:
+        res = sample_prebuilt.load_prebuilt()
+    finally:
+        _release_ingest_slot()
+    if not res.get("ok"):
+        reason = res.get("reason")
+        if reason == "project-not-fresh":
+            raise HTTPException(409, "專案已有內容，請改用重新索引的範例載入")
+        raise HTTPException(404, "找不到預建範例（尚未打包）" if reason == "artifact-missing" else str(reason))
+    return res
+
+
+@router.post("/api/sample/remove")
+def sample_prebuilt_remove(
+    request: Request,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
+    """Remove exactly the seeded sample media (rows + vectors + files) and set the
+    dismiss flag so auto-seed won't resurrect it. A user's own footage is untouched."""
+    _assert_same_site(request)
+    return sample_prebuilt.remove_sample()

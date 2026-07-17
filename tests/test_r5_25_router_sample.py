@@ -16,12 +16,19 @@ def test_sample_router_is_a_leaf_module():
     assert not re.search(r"^\s*from\s+server\b", src, re.M)
 
 
-def test_router_owns_exactly_the_two_sample_routes():
+def test_router_owns_exactly_the_sample_routes():
     import routers.sample as rs
     pairs = {(r.path, m) for r in rs.router.routes for m in r.methods if m != "HEAD"}
-    assert pairs == {("/api/sample/seed", "POST"), ("/api/sample/seed/status", "GET")}
+    assert pairs == {
+        # v1 on-demand re-ingest seed
+        ("/api/sample/seed", "POST"), ("/api/sample/seed/status", "GET"),
+        # A1 pre-built (instant) sample library
+        ("/api/sample/status", "GET"), ("/api/sample/load", "POST"),
+        ("/api/sample/remove", "POST"),
+    }
     for name in ("sample_seed", "sample_seed_status", "_run_sample_seed",
-                 "_sample_basenames", "_already_seeded"):
+                 "_sample_basenames", "_already_seeded",
+                 "sample_prebuilt_status", "sample_prebuilt_load", "sample_prebuilt_remove"):
         assert hasattr(rs, name)
 
 

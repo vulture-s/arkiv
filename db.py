@@ -983,6 +983,34 @@ def delete_frames(media_id: int, _conn=None):
             _do(conn)
 
 
+def delete_media(media_id: int, _conn=None):
+    """Delete one media row; its frames / tags / transcripts drop via ON DELETE
+    CASCADE (get_conn sets PRAGMA foreign_keys=ON). Returns the media + frame
+    thumbnail_path values (so the caller can unlink the .jpg files), or None if no
+    such media. Chroma vectors are the caller's job (vectordb.delete_media) — this
+    layer has no vector-store dependency. Used by the sample-library 'remove' flow
+    (routers/sample.py); the UI has no general delete-media action today."""
+    def _do(c):
+        row = c.execute("SELECT id FROM media WHERE id = ?", (media_id,)).fetchone()
+        if row is None:
+            return None
+        thumbs = []
+        m = c.execute("SELECT thumbnail_path FROM media WHERE id = ?", (media_id,)).fetchone()
+        if m and m["thumbnail_path"]:
+            thumbs.append(m["thumbnail_path"])
+        for fr in c.execute(
+            "SELECT thumbnail_path FROM frames WHERE media_id = ? AND thumbnail_path IS NOT NULL",
+            (media_id,),
+        ).fetchall():
+            thumbs.append(fr["thumbnail_path"])
+        c.execute("DELETE FROM media WHERE id = ?", (media_id,))  # cascades children
+        return thumbs
+    if _conn is not None:
+        return _do(_conn)
+    with get_conn() as conn:
+        return _do(conn)
+
+
 # ── Enhanced Queries (Phase 4 UI) ─────────────────────────────────────────────
 
 def _build_filter_clause(
