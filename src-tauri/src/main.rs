@@ -16,7 +16,7 @@
 //   2. bundled resources: <resources>/backend/{python,site-packages,src}.
 
 use std::net::{TcpListener, TcpStream};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -108,22 +108,56 @@ fn main() {
                 proj_root.display()
             );
 
-            let child = Command::new(&python)
-                .args([
-                    "-m",
-                    "uvicorn",
-                    "server:app",
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    &port.to_string(),
-                ])
-                .current_dir(&src_dir)
-                .env("PYTHONPATH", &pythonpath)
-                .env("ARKIV_PROJECT_ROOT", &proj_root)
-                .env("ARKIV_PORT", port.to_string())
-                .env("ARKIV_TRUST_LOOPBACK", "1")
-                .spawn();
+            // Capture the backend's stdout+stderr to a log file under the writable
+            // project root. Without this a Finder-launched .app throws every uvicorn
+            // access line, print(), and traceback into the void — so a broken tester
+            // box is un-debuggable remotely. One-file rotation keeps the previous run.
+            let log_dir = proj_root.join("logs");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let log_path = log_dir.join("backend.log");
+            let _ = std::fs::rename(&log_path, log_dir.join("backend.log.prev"));
+            let (stdout_cfg, stderr_cfg) = match std::fs::File::create(&log_path) {
+                Ok(f) => {
+                    // header first (shared O_APPEND-less fd; written before the child starts)
+                    let mut hdr: &std::fs::File = &f;
+                    use std::io::Write;
+                    let _ = writeln!(
+                        hdr,
+                        "[arkiv-tauri] backend {python} (cwd={src_dir}) 127.0.0.1:{port} root={}",
+                        proj_root.display()
+                    );
+                    // dup the handle so stdout+stderr share one file offset → interleave cleanly
+                    let err = f.try_clone().ok();
+                    (Some(Stdio::from(f)), err.map(Stdio::from))
+                }
+                Err(e) => {
+                    eprintln!("[arkiv-tauri] could not open {}: {e}; backend output not captured", log_path.display());
+                    (None, None)
+                }
+            };
+
+            let mut cmd = Command::new(&python);
+            cmd.args([
+                "-m",
+                "uvicorn",
+                "server:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &port.to_string(),
+            ])
+            .current_dir(&src_dir)
+            .env("PYTHONPATH", &pythonpath)
+            .env("ARKIV_PROJECT_ROOT", &proj_root)
+            .env("ARKIV_PORT", port.to_string())
+            .env("ARKIV_TRUST_LOOPBACK", "1");
+            if let Some(out) = stdout_cfg {
+                cmd.stdout(out);
+            }
+            if let Some(err) = stderr_cfg {
+                cmd.stderr(err);
+            }
+            let child = cmd.spawn();
 
             let child = match child {
                 Ok(c) => c,
