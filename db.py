@@ -745,6 +745,45 @@ def get_transcript(media_id, lang) -> Optional[Dict]:
     return dict(row) if row else None
 
 
+# ── Phase 9.8b backfill: retro-convert existing Simplified zh transcripts ─────
+# (see retraditionalize.py — write-path 9.8b only converts NEW transcribes)
+
+def iter_zh_media(_conn=None):
+    """All zh media rows carrying a non-empty ACTIVE transcript, for the 9.8b
+    backfill. Returns id/lang/transcript/segments_json/words_json. Pass _conn to
+    read inside the caller's transaction."""
+    sql = ("SELECT id, lang, transcript, segments_json, words_json FROM media "
+           "WHERE lang LIKE 'zh%' AND transcript IS NOT NULL AND transcript != ''")
+    if _conn is not None:
+        return [dict(r) for r in _conn.execute(sql).fetchall()]
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def update_media_transcript_fields(media_id, transcript, segments_json, words_json, _conn=None):
+    """Overwrite ONLY the ACTIVE transcript text columns on a media row (9.8b
+    backfill). Duration / frames / tags / timings are untouched — the caller passes
+    already-converted, timing-safe JSON. Pass _conn to join an open transaction."""
+    sql = "UPDATE media SET transcript=?, segments_json=?, words_json=? WHERE id=?"
+    params = (transcript, segments_json, words_json, media_id)
+    if _conn is not None:
+        _conn.execute(sql, params)
+    else:
+        with get_conn() as conn:
+            conn.execute(sql, params)
+
+
+def iter_zh_transcript_archive(_conn=None):
+    """All zh rows in the per-language transcript archive (9.7 G2 table), for the
+    9.8b backfill. Returns media_id/lang/transcript/segments_json/words_json."""
+    sql = ("SELECT media_id, lang, transcript, segments_json, words_json FROM transcripts "
+           "WHERE lang LIKE 'zh%'")
+    if _conn is not None:
+        return [dict(r) for r in _conn.execute(sql).fetchall()]
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
 def set_canonical_tags(media_id: int, tags: list) -> None:
     """Store the LLM-canonicalized tag list (JSON) for a media. Separate from the
     raw vision tags — never touches frame_tags / the tags table."""

@@ -1496,6 +1496,8 @@ def main():
     parser.add_argument("--job-id", type=int, default=0, help="Job id for --queue cancel/retry")
     parser.add_argument("--status", action="store_true", help="Phase 11.5e: print resource + queue status (--json for machine-readable)")
     parser.add_argument("--json", action="store_true", help="With --status: emit JSON instead of human-readable")
+    parser.add_argument("--retraditionalize", action="store_true", help="Phase 9.8b backfill: retro-convert existing SIMPLIFIED zh transcripts (transcript + segments + words + the per-language archive) to Taiwan Traditional (s2twp), so the pre-9.8b backlog stops missing a 記憶體 query on a 內存 clip. GATED: only genuine Simplified rows convert; already-Traditional / mixed rows are skipped (never fed to the phrase layer, so never corrupted). Idempotent, timing-safe. Follow with `embed.py --rebuild`. No --dir / re-transcribe needed.")
+    parser.add_argument("--dry-run", action="store_true", help="With --retraditionalize: report what would convert without writing.")
     args = parser.parse_args()
 
     # brick 4: apply the per-run whisper preset + language override before any
@@ -1521,6 +1523,7 @@ def main():
         or args.regenerate_proxies or args.regenerate_thumbnails or args.vision_only
         or args.canonicalize_tags
         or args.propose_aliases or args.apply_aliases
+        or args.retraditionalize
         or bool(args.queue) or args.status
     )
     if not maintenance_mode and not args.dir and not args.files:
@@ -1538,7 +1541,7 @@ def main():
 
     # Phase 8.0e: pre-flight storage check before any pipeline work.
     # Skip for maintenance modes (they're the tools that fix broken state).
-    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status or args.canonicalize_tags or args.propose_aliases or args.apply_aliases):
+    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status or args.canonicalize_tags or args.propose_aliases or args.apply_aliases or args.retraditionalize):
         import health
         ok_pf, errors_pf = health.preflight_paths()
         if not ok_pf:
@@ -1588,6 +1591,13 @@ def main():
         return
     if args.apply_aliases:
         _run_apply_aliases(args)
+        return
+
+    # ── Phase 9.8b backfill: retro-convert Simplified zh transcripts ──────
+    if args.retraditionalize:
+        import retraditionalize
+        counts = retraditionalize.backfill(dry_run=args.dry_run)
+        print(retraditionalize.format_summary(counts, dry_run=args.dry_run))
         return
 
     # Warm up models before batch processing
