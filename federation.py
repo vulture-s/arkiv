@@ -12,8 +12,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import chromadb
 
 import config
+import db
 from health import HealthStatus, project_health
-from projects import ProjectMeta
+from projects import ProjectMeta, resolve_project_db
 
 
 LOGGER = logging.getLogger(__name__)
@@ -134,8 +135,25 @@ def _resolve_paths(project: ProjectMeta, stored_path: str) -> Tuple[str, str]:
     return str(stored), absolute
 
 
+def _explicit_db_for(project: ProjectMeta) -> Optional[Path]:
+    """The configured DB override to honor for `project`, or None.
+
+    A single global override (ARKIV_DB_PATH / a ``--db`` run) can only
+    meaningfully apply to the current install's OWN root, so we honor
+    db.get_db_path() only when this federated project IS that root. Every other
+    project falls through to resolve_project_db's project.db → media.db
+    resolution. Returns None on any resolution error (best-effort, never fatal)."""
+    try:
+        root = _project_root(project).resolve(strict=False)
+        if root == config.PROJECT_ROOT.expanduser().resolve(strict=False):
+            return db.get_db_path()
+    except OSError:
+        pass
+    return None
+
+
 def _connect_project_db(project: ProjectMeta) -> sqlite3.Connection:
-    db_path = _project_root(project) / ".arkiv" / "project.db"
+    db_path = resolve_project_db(_project_root(project), explicit=_explicit_db_for(project))
     conn = sqlite3.connect(str(db_path), timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn

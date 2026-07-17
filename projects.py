@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -45,6 +46,67 @@ def _split_roots(value: str) -> List[str]:
             if part:
                 roots.append(part)
     return roots
+
+
+# Phase 8.0c renamed the per-project SQLite DB media.db → project.db. Libraries
+# indexed before that rename still keep their corpus in the legacy
+# .arkiv/media.db and may carry only an EMPTY .arkiv/project.db stub, so any code
+# that hardcodes project.db (federation search, registry sync) reads an empty DB
+# and returns nothing for those projects. resolve_project_db() falls back to the
+# legacy name in exactly that case, while a real, populated project.db (the
+# common case) is unaffected. Mirrors config.DB_PATH's env-override-then-default
+# style: an explicit path always wins.
+_DEFAULT_DB_NAME = "project.db"
+_LEGACY_DB_NAME = "media.db"
+
+
+def _media_row_count(db_path: Path) -> int:
+    """Rows in the ``media`` table, or -1 when the DB is missing / unreadable /
+    has no media table. Opened read-only (URI ``mode=ro``) so probing a project's
+    DB never creates a stub file nor writes -wal/-shm side files against it."""
+    try:
+        if not db_path.exists():
+            return -1
+        uri = db_path.resolve(strict=False).as_uri() + "?mode=ro"
+    except (OSError, ValueError):
+        return -1
+    try:
+        conn = sqlite3.connect(uri, uri=True, timeout=5)
+    except sqlite3.Error:
+        return -1
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM media").fetchone()
+        return int(row[0]) if row else 0
+    except sqlite3.Error:
+        return -1
+    finally:
+        conn.close()
+
+
+def resolve_project_db(project_root, explicit=None) -> Path:
+    """Resolve the SQLite DB path for a project root.
+
+    Precedence:
+      1. ``explicit`` — an operator-configured override (e.g. ARKIV_DB_PATH /
+         ``--db`` for the current install) — when provided;
+      2. ``.arkiv/project.db`` — the Phase 8.0c default;
+      3. ``.arkiv/media.db`` — the pre-8.0c legacy name — but ONLY as a fallback
+         when project.db is absent or an empty stub (0 media rows) while media.db
+         exists and holds data.
+
+    A project with a real, populated project.db always resolves to it (the legacy
+    DB is not even opened), so existing libraries are completely unaffected."""
+    if explicit is not None:
+        return Path(explicit).expanduser()
+    arkiv_dir = Path(project_root).expanduser() / ".arkiv"
+    project_db = arkiv_dir / _DEFAULT_DB_NAME
+    # Short-circuit on the common case: a populated project.db wins immediately
+    # and media.db is never touched.
+    if _media_row_count(project_db) <= 0:
+        legacy_db = arkiv_dir / _LEGACY_DB_NAME
+        if _media_row_count(legacy_db) > 0:
+            return legacy_db
+    return project_db
 
 
 @dataclass
@@ -237,7 +299,7 @@ def sync_projects() -> List[ProjectMeta]:
         projects = [ProjectMeta.from_mapping(raw) for raw in registry.get("projects", [])]
         updated = []
         for project in projects:
-            db_path = project.path / ".arkiv" / "project.db"
+            db_path = resolve_project_db(project.path)
             if db_path.exists():
                 project.last_indexed_at = _iso_from_mtime(db_path)
             updated.append(project)
