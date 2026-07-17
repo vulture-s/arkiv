@@ -72,6 +72,21 @@ const qs = (params = {}) => {
 export const getStats = (opts) => req('/api/stats', opts)
 export const getProjects = (opts) => req('/api/projects', opts)
 export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
+// ---- first-run: version / sample seed / log tail ----
+export const getVersion = (opts) => req('/api/version', opts)
+export const seedSample = (opts) => req('/api/sample/seed', { method: 'POST', ...opts })
+export const getSeedStatus = (opts) => req('/api/sample/seed/status', opts)
+export const getLogsTail = (n = 200, opts) => req(`/api/logs/tail${qs({ n })}`, opts)
+
+// /api/health returns 503 when deps are missing — req() would throw ApiError and
+// collapse "not ready" into "server down". Bespoke fetch so 200 AND 503 both
+// surface `checks`; a fetch rejection distinguishes an unreachable backend.
+export async function getHealth({ signal } = {}) {
+  const res = await fetch(`${BASE}/api/health`, { cache: 'no-store', signal })
+  let body = null
+  try { body = await res.json() } catch { /* non-json */ }
+  return { ok: res.ok, status: res.status, ...(body || {}) }
+}
 // ---- project registry mutations (projects_write; token-free on loopback) ----
 // POST /api/projects {name, path, tags} → project dict (409 if name exists).
 export const addProject = (body, opts) => req('/api/projects', { method: 'POST', body, ...opts })
