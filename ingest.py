@@ -48,6 +48,34 @@ _STAGE_EVENTS = os.environ.get("ARKIV_STAGE_EVENTS") == "1"
 # hint, the default). Set from --language in main(), read at the transcribe call.
 _LANGUAGE_OVERRIDE = None
 
+# Pro/cinema codecs ffmpeg can't decode without vendor SDKs — a --dir scan drops
+# them silently, so a user who dumps a C300/RED/BRAW card sees "Found 0 media
+# files" and thinks arkiv is broken. Named here so the skip notice can call them out.
+_PRO_UNSUPPORTED_EXT = {".mxf", ".braw", ".r3d", ".m2ts", ".ari", ".dng", ".cine", ".crm", ".rmf"}
+
+
+def _report_unsupported(all_files, supported_files):
+    """Print a visible summary of files a --dir scan skipped (unsupported ext),
+    so pro-format footage isn't dropped with zero feedback. No-op if none."""
+    n = len(all_files) - len(supported_files)
+    if n <= 0:
+        return
+    from collections import Counter
+    exts = Counter(
+        (f.suffix.lower() or "(no ext)")
+        for f in all_files
+        if f.suffix.lower() not in SUPPORTED
+    )
+    top = ", ".join("{0}×{1}".format(e, c) for e, c in exts.most_common(6))
+    print("⚠  Skipped {0} unsupported file(s): {1}".format(n, top))
+    pro = sorted(e for e in exts if e in _PRO_UNSUPPORTED_EXT)
+    if pro:
+        print(
+            "   Pro/cinema formats {0} aren't indexable (ffmpeg has no decoder "
+            "without vendor SDKs).".format(", ".join(pro))
+        )
+    print("   arkiv indexes: {0}".format(", ".join(sorted(SUPPORTED))))
+
 
 def _emit_progress(obj: Dict) -> None:
     """One JSON progress event on its own flushed line (sentinel-prefixed). No-op
@@ -1460,6 +1488,14 @@ def main():
         tr._apply_whisper_guard_mode(tr._resolve_whisper_guard_mode(args.whisper_guard))
     global _LANGUAGE_OVERRIDE
     _LANGUAGE_OVERRIDE = args.language or None
+    # One-time notice: with no explicit --language, Whisper falls back to zh, so
+    # English/Japanese footage gets silently transcribed as garbled Chinese.
+    if _LANGUAGE_OVERRIDE is None and (getattr(args, "dir", None) or getattr(args, "files", None)):
+        print(
+            "ℹ  No --language given; non-Chinese audio will transcribe as 'zh' "
+            "(Whisper default) and come out garbled. Pass --language en/ja/ko if "
+            "your footage isn't Chinese.\n"
+        )
 
     # --dir validation: required only when actually ingesting
     maintenance_mode = (
@@ -1575,15 +1611,19 @@ def main():
             # Single-file mode (used by watch.py for new-arrival ingest)
             files = [media_dir] if media_dir.suffix.lower() in SUPPORTED else []
         elif args.recursive:
-            files = sorted(
+            all_files = [
                 f for f in media_dir.rglob("*")
-                if f.is_file() and f.suffix.lower() in SUPPORTED
-            )
+                if f.is_file() and not f.name.startswith(".")
+            ]
+            files = sorted(f for f in all_files if f.suffix.lower() in SUPPORTED)
+            _report_unsupported(all_files, files)
         else:
-            files = sorted(
+            all_files = [
                 f for f in media_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in SUPPORTED
-            )
+                if f.is_file() and not f.name.startswith(".")
+            ]
+            files = sorted(f for f in all_files if f.suffix.lower() in SUPPORTED)
+            _report_unsupported(all_files, files)
 
     total = len(files)
 

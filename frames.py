@@ -253,7 +253,10 @@ def _extract_scene_persistent(
     # Full-file scene-detect pass scales with clip length — bound it so one
     # bad file can't hang the whole batch; timeout falls back to fixed frames
     # via the caller (audit H6).
-    scene_timeout = max(120.0, duration_s * 2)
+    # Cap at 30 min: a corrupt/misauthored file can report a bogus huge duration,
+    # and duration_s*2 would let one wedged ffmpeg hang the whole batch for hours.
+    # (The audio path already uses a fixed cap; this mirrors it for scene-detect.)
+    scene_timeout = min(max(120.0, duration_s * 2), 1800.0)
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
