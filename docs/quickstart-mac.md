@@ -76,6 +76,22 @@ or a model not pulled yet (step 1).
 
 ---
 
+## 3.5 (Optional) Try search instantly with the sample library
+
+Want to feel the search before ingesting your own footage? Load four tiny bundled
+sample clips (CC-BY Blender open movies):
+
+```bash
+python scripts/seed_sample.py
+```
+
+Then search **llama**, **駝羊**, **cat**, or **city** — the matching clip surfaces
+from its AI vision tags. (Needs Ollama + models, same as any ingest; the vision
+pass takes several minutes the first time while the models warm up.) Licenses:
+`sample/LICENSES.md`.
+
+---
+
 ## 4. Ingest your first footage
 
 Point arkiv at a folder of clips. **If your footage is not Chinese, pass the
