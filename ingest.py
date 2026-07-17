@@ -853,6 +853,24 @@ def _run_status_cmd(args):
 # halt fast instead of spinning all night writing the same error.
 _VISION_CONSECUTIVE_HALT = 20
 
+# Phase-1 counterpart to _VISION_CONSECUTIVE_HALT. Phase 1 (probe+whisper+frames)
+# had no halt, so an external/network drive unplugged mid-batch would spin through
+# every remaining file at up to ~240s each (probe() = 2×120s + 2s retry) — hours on
+# a large queue. This many WHOLE-FILE failures in a row = the drive/source is gone,
+# so halt fast. The counter resets on any ok/skip/move (proof the drive is readable),
+# so a few genuinely-corrupt clips never trip it. Env-tunable; 0 disables.
+_INGEST_CONSECUTIVE_HALT = int(os.getenv("ARKIV_INGEST_HALT_STREAK", "5") or 0)
+
+
+def _ingest_halt_decision(consecutive_failed, threshold=None):
+    """Decide whether Phase 1 should halt after `consecutive_failed` whole files
+    failed in a row. Returns (should_halt, reason); reason is "" when continuing.
+    Pure — no I/O — so it's unit-testable. threshold<=0 disables the guard."""
+    thr = _INGEST_CONSECUTIVE_HALT if threshold is None else threshold
+    if thr > 0 and consecutive_failed >= thr:
+        return True, "{0} consecutive file failures — source/drive likely gone".format(consecutive_failed)
+    return False, ""
+
 
 def _describe_frames_with_fallback(frame_paths):
     """Primary vision model, then minicpm-v fallback for any failed frame.
@@ -1654,6 +1672,7 @@ def main():
     import time as _time
 
     ok, skipped, failed, moved = 0, 0, 0, 0
+    consecutive_ingest_fail = 0  # whole-file failures in a row → drive-gone halt
     refreshed_ids = set()  # already-indexed ids re-processed this run → force re-embed
     bench_log = []  # per-file benchmark records
     batch_start = _time.time()
@@ -1670,6 +1689,7 @@ def main():
         if already and not args.refresh:
             print(f"[{i}/{len(files)}] SKIP {f.name}")
             skipped += 1
+            consecutive_ingest_fail = 0  # a readable skip proves the drive is alive
             continue
 
         # Move-detection (round-5 #8): an UNKNOWN path whose content hash matches a
@@ -1687,6 +1707,7 @@ def main():
                     db.repoint_media_path(mrow["id"], str(f))
                     print(f"[{i}/{len(files)}] MOVED {f.name} → re-pointed id={mrow['id']}")
                     moved += 1
+                    consecutive_ingest_fail = 0  # a readable move proves the drive is alive
                     continue
 
         existing = None
@@ -1781,12 +1802,29 @@ def main():
                 })
                 print(f"  [{file_elapsed:.1f}s | {dur/max(file_elapsed,1):.1f}x RT]")
                 ok += 1
+                consecutive_ingest_fail = 0  # a healthy read resets the drive-gone streak
                 _emit_progress({"t": "file", "index": i, "total": len(files), "file": f.name, "status": "phase1_done"})
             else:
                 failed += 1
+                consecutive_ingest_fail += 1
         except Exception as e:
             print(f" [ERROR: {e}]")
             failed += 1
+            consecutive_ingest_fail += 1
+
+        # Phase-1 counterpart to the vision halt: an unbroken run of whole-file
+        # failures means the source/drive went away — stop fast instead of spinning
+        # ~240s/file (probe retry) through the rest of the queue. Resets above on
+        # any ok/skip/move, so sporadic corrupt clips never trip it.
+        should_halt, _reason = _ingest_halt_decision(consecutive_ingest_fail)
+        if should_halt:
+            print(
+                "\n[INGEST HALTED] {0}\n"
+                "  {1} ok / {2} failed, {3} file(s) not reached. Reconnect the source "
+                "and re-run — already-indexed files skip.".format(
+                    _reason, ok, failed, len(files) - i)
+            )
+            break
 
     # ── Phase 2: Vision (unload LLM first to free VRAM) ───────────────────
     # Initialized unconditionally so the exit-code logic can read them even when
