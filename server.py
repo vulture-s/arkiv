@@ -147,6 +147,7 @@ from routers.retranscribe import router as retranscribe_router  # noqa: E402
 from routers.proxy import router as proxy_router  # noqa: E402
 from routers.recorrect import router as recorrect_router  # noqa: E402
 from routers.misc import router as misc_router  # noqa: E402
+from routers.sample import router as sample_router  # noqa: E402
 from routers.export import router as export_router  # noqa: E402
 from routers.media import router as media_router  # noqa: E402
 from routers.search import router as search_router  # noqa: E402
@@ -163,6 +164,7 @@ app.include_router(retranscribe_router)
 app.include_router(proxy_router)
 app.include_router(recorrect_router)
 app.include_router(misc_router)
+app.include_router(sample_router)
 app.include_router(export_router)
 app.include_router(media_router)
 app.include_router(search_router)

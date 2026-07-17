@@ -238,3 +238,27 @@ def api_health():
         _mark("ollama", False, "unreachable — is `ollama serve` running?")
 
     return JSONResponse(out, status_code=200 if out["ready"] else 503)
+
+
+@router.get("/api/logs/tail")
+def logs_tail(n: int = 200, _tok: dict = Depends(require_scopes("projects_read"))):
+    """Last `n` lines of the backend log (the Tauri sidecar writes it) for the in-app
+    "Report a problem". AUTHED — the log can carry absolute paths / tracebacks, so it
+    is NOT open like /api/health; loopback trust lets the local WebView reach it
+    token-free. Each line is control-char sanitized. Missing file → 200 with
+    available:false (a bare-uvicorn dev run has no such log)."""
+    n = max(1, min(int(n or 200), 2000))
+    log_path = config.LOGS_DIR / "backend.log"
+    try:
+        if not log_path.exists():
+            return {"lines": [], "available": False, "detail": "no log file (bare uvicorn?)"}
+        # bounded tail read: only the last ~256 KB, so a huge log can't blow memory
+        size = log_path.stat().st_size
+        with open(log_path, "rb") as fh:
+            if size > 262144:
+                fh.seek(-262144, 2)
+            raw = fh.read()
+        lines = [_log_safe(ln, 2000) for ln in raw.decode("utf-8", "replace").splitlines()[-n:]]
+        return {"lines": lines, "available": True}
+    except Exception as e:  # noqa: BLE001
+        return {"lines": [], "available": False, "detail": "log read error: {0}".format(type(e).__name__)}
