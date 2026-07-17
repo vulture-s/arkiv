@@ -120,6 +120,40 @@
   // re-poll the status a couple of times after kicking a build off).
   let proxy = null // {total, proxied, size_mb}
   let proxyMsg = ''
+
+  // Report-a-problem: bundle version + health + backend.log tail into a diagnostic
+  // the user can copy/download and send. Each fetch degrades independently.
+  let diagBusy = false
+  let diagMsg = ''
+  async function buildDiagnostic() {
+    const [v, h] = await Promise.all([api.getVersion().catch(() => null), api.getHealth().catch(() => null)])
+    const logs = await api.getLogsTail(200).catch(() => null)
+    const checks = Object.entries(h?.checks || {}).map(
+      ([k, c]) => `  ${k}: ${c.ok ? 'ok' : 'FAIL'}${c.detail ? '  ' + c.detail : ''}`
+    )
+    return [
+      `arkiv diagnostic — ${new Date().toISOString()}`,
+      `frontend ${VERSION}   backend ${v?.version ?? '?'}   ready ${h?.ready ?? '?'}`,
+      `library ${stats?.total ?? '?'} media`,
+      'checks:',
+      ...checks,
+      '--- backend.log (last 200) ---',
+      logs?.available ? (logs.lines || []).join('\n') : 'no log file available',
+    ].join('\n')
+  }
+  async function copyDiagnostic() {
+    diagBusy = true; diagMsg = ''
+    try {
+      const text = await buildDiagnostic()
+      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); diagMsg = 'copied ✓' }
+      else { api.downloadText(text, 'arkiv-diagnostic.txt', 'text/plain'); diagMsg = 'downloaded ✓' }
+    } catch (e) { diagMsg = 'failed: ' + e.message } finally { diagBusy = false }
+  }
+  async function downloadDiagnostic() {
+    diagBusy = true; diagMsg = ''
+    try { api.downloadText(await buildDiagnostic(), 'arkiv-diagnostic.txt', 'text/plain'); diagMsg = 'downloaded ✓' }
+    catch (e) { diagMsg = 'failed: ' + e.message } finally { diagBusy = false }
+  }
   let proxyBusy = false
   async function loadProxy() {
     try { proxy = await api.getProxyStatus() } catch { proxy = null }
@@ -570,6 +604,13 @@
                 </div>
               {/if}
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Privacy</Mono><Mono dim style="font-size:11.5px;">Everything runs locally. Nothing leaves this machine.</Mono></div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Report a problem</Mono>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                  <button class="ak-btn" on:click={copyDiagnostic} disabled={diagBusy}>Copy diagnostic</button>
+                  <button class="ak-btn" on:click={downloadDiagnostic} disabled={diagBusy}>Download</button>
+                  {#if diagMsg}<Mono dim style="font-size:11.5px;">{diagMsg}</Mono>{/if}
+                </div>
+              </div>
             </div>
           </section>
         {/if}

@@ -31,6 +31,11 @@
   let moreParams = null
   let loadingMore = false
   let stats = null
+  // First-run readiness gate: 'checking' until /api/health answers, then
+  // 'ready' | 'notready' (deps missing, 503) | 'unreachable' (backend down).
+  let health = null
+  let readyState = 'checking'
+  let seeding = false
   let selectedId = null
   let hoverId = null
   let activeFilter = 'all'
@@ -176,8 +181,49 @@
     try { await api.openFile(path, true) } catch (e) { pushToast(`在 Finder 顯示失敗: ${e.message}`, 'error') }
   }
 
+  // Poll /api/health, distinguishing deps-missing (503, immediate) from a still-
+  // starting backend (fetch rejects → brief debounce before calling it unreachable).
+  async function checkReady() {
+    for (let i = 0; i < 3; i++) {
+      health = await api.getHealth().catch(() => null)
+      if (health) return health.ready ? 'ready' : 'notready' // got 200 or 503
+      await new Promise((r) => setTimeout(r, 1000 * (i + 1)))
+    }
+    return 'unreachable'
+  }
+
+  async function onSeed() {
+    if (seeding) return
+    seeding = true
+    try {
+      const r = await api.seedSample()
+      if (r.queued === 0) { await load(); return } // already loaded
+      await pollSeed()
+    } catch (e) {
+      pushToast(e.status === 409 ? '有匯入任務進行中，稍後再試' : '載入失敗: ' + e.message, 'error')
+    } finally { seeding = false }
+  }
+
+  async function pollSeed() {
+    const t0 = Date.now()
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1500))
+      let s = null
+      try { s = await api.getSeedStatus() } catch { /* transient */ }
+      if (s && !s.running) {
+        if (s.ok) { pushToast('sample library ready — 試搜 "llama"'); await load() }
+        else { pushToast('載入失敗 — 見 Settings → System', 'error') }
+        return
+      }
+      if (Date.now() - t0 > 20 * 60 * 1000) { pushToast('sample 載入逾時', 'error'); return }
+    }
+  }
+
   async function load() {
     state = 'loading'
+    readyState = 'checking'
+    readyState = await checkReady()
+    if (readyState === 'unreachable') { state = 'ok'; return } // panel renders via readyState
     try {
       const [s, m, t, c] = await Promise.all([
         api.getStats(), api.getMedia({ limit: PAGE }), api.getTags(), api.getCollections(),
@@ -692,10 +738,41 @@
       <div class="gridwrap">
         {#if state === 'loading'}
           <div class="msg"><Mono dim>loading…</Mono></div>
+        {:else if readyState === 'unreachable'}
+          <div class="msg readypanel">
+            <Eyebrow>◇ BACKEND UNREACHABLE</Eyebrow>
+            <Mono dim>後端沒有回應 — 伺服器還在啟動、或還沒開。</Mono>
+            <div class="readyactions"><button class="ak-btn" on:click={load}>Retry</button></div>
+          </div>
+        {:else if readyState === 'notready' && !stats?.total}
+          <div class="msg readypanel">
+            <Eyebrow>◇ SETUP INCOMPLETE</Eyebrow>
+            <Mono dim>arkiv 需要這些才能索引 / 搜尋：</Mono>
+            <ul class="checklist">
+              {#each Object.entries(health?.checks || {}) as [name, c]}
+                {#if !c.ok}
+                  <li><Mono>✗ {name}{c.detail ? ' — ' + c.detail : ''}</Mono></li>
+                {/if}
+              {/each}
+            </ul>
+            <div class="readyactions">
+              <button class="ak-btn" on:click={load}>Recheck</button>
+              <a class="ak-btn" href="#/settings">Settings</a>
+            </div>
+          </div>
         {:else if state === 'error'}
           <div class="msg"><Mono style="color:var(--cyan);">ERROR: {err}</Mono></div>
+        {:else if readyState === 'ready' && stats?.total === 0}
+          <div class="msg readypanel">
+            <Eyebrow>Library is empty</Eyebrow>
+            <Mono dim>打一句中文或英文，五年素材唰跳出 — 先載個範例庫試搜。</Mono>
+            <div class="readyactions">
+              <button class="ak-btn" on:click={onSeed} disabled={seeding}>{seeding ? 'Loading…' : 'Load sample library'}</button>
+              <a class="ak-btn" href="#/ingest-setup">or ingest your footage</a>
+            </div>
+          </div>
         {:else if visible.length === 0}
-          <div class="msg"><Eyebrow>No media</Eyebrow><Mono dim>ingest 一些素材,或清搜尋。</Mono></div>
+          <div class="msg"><Eyebrow>No media</Eyebrow><Mono dim>清搜尋或篩選。</Mono></div>
         {:else if view === 'list'}
           <table class="medialist">
             <thead>
@@ -851,6 +928,10 @@
   .lthumbph.audio { background: repeating-linear-gradient(90deg, var(--rule-hi) 0 2px, transparent 2px 4px); }
 
   .msg { padding: 40px 22px; display: flex; flex-direction: column; gap: 8px; }
+  .readypanel { align-items: flex-start; max-width: 580px; gap: 12px; }
+  .readypanel .checklist { list-style: none; margin: 2px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .readyactions { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+  .readyactions .ak-btn { text-decoration: none; }
   .loadmore { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 20px 22px; border-top: 1px solid var(--rule); }
   .exportbar {
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
