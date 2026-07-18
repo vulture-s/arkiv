@@ -63,9 +63,17 @@ def to_simplified(text: str) -> str:
 
 
 def _char_is_simplified(ch) -> bool:
-    """A char neutral s2t rewrites — evaluated on a SINGLE char, so there's no phrase
-    context to mis-fire (系 alone → 系, never 係)."""
-    return to_traditional(ch) != ch
+    """Does Taiwan-Traditional conversion actually rewrite this char? Evaluated on a
+    SINGLE char, so there's no phrase context to mis-fire (系 alone → 系, never 係).
+
+    Probes with s2tw, NOT neutral s2t. s2t "corrects" exactly ten Taiwan-STANDARD chars
+    to archaic variants — 吃→喫 唇→脣 峰→峯 床→牀 灶→竈 痴→癡 皂→皁 秘→祕 粽→糉 群→羣 —
+    so an s2t probe mis-flags ordinary Taiwan text as Simplified. Those are common
+    characters: a transcript with 吃 or 群 in it read as "mixed", and one that happened
+    to carry no Traditional-only char could even land in the "simplified" bucket and be
+    handed to phrase-level s2twp — the exact input that corrupts Traditional. s2tw keeps
+    all ten and still rewrites every genuinely Simplified char (软→軟)."""
+    return _convert("s2tw", ch) != ch
 
 
 def to_traditional_charwise(text: str) -> str:
@@ -94,7 +102,8 @@ def classify_zh(text):
     already-Traditional text: opencc's S→T phrase maps assume Simplified input and
     re-segment valid Traditional (系統→係統, 音樂類型→型別, 設備→裝置). Detection is
     per-CHARACTER (single chars carry no phrase context, so 系 alone → 系, never 係):
-      - simplified char  = to_traditional(ch) != ch   (s2t changes it)
+      - simplified char  = _char_is_simplified(ch)     (s2tw changes it — NOT s2t, which
+                                                        over-flags Taiwan-standard 吃/群)
       - traditional-only = to_simplified(ch) != ch     (t2s changes it)
     A genuine Mainland-Simplified whisper transcript has Simplified chars and NO
     Traditional-only chars → "simplified". Anything already carrying Traditional-only
@@ -103,7 +112,7 @@ def classify_zh(text):
     → the backfill safely converts nothing."""
     if not text or not text.strip():
         return "empty"
-    has_simp = any(to_traditional(ch) != ch for ch in text)
+    has_simp = any(_char_is_simplified(ch) for ch in text)
     has_trad_only = any(to_simplified(ch) != ch for ch in text)
     if has_simp and not has_trad_only:
         return "simplified"
