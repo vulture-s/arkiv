@@ -97,6 +97,24 @@ def test_already_traditional_row_is_never_corrupted(tmp_db):
 
 
 @_skip_no_opencc
+def test_taiwan_standard_chars_are_not_flagged_simplified():
+    """Neutral s2t "corrects" exactly ten Taiwan-STANDARD chars to archaic variants
+    (吃→喫 唇→脣 峰→峯 床→牀 灶→竈 痴→癡 皂→皁 秘→祕 粽→糉 群→羣). Probing with s2t
+    therefore mis-read ordinary Taiwan text as Simplified: such rows landed in "mixed",
+    and one carrying no Traditional-only char could reach the "simplified" bucket and be
+    handed to phrase-level s2twp — the input that corrupts Traditional. Detection probes
+    s2tw instead."""
+    for ch in "吃唇峰床灶痴皂秘粽群":
+        assert not zh._char_is_simplified(ch), ch
+        assert zh.to_traditional_charwise(ch) == ch, ch
+    # a plain Taiwan sentence carrying them reads clean, not "mixed"
+    assert zh.classify_zh("我今天吃飯，那群人在床邊") == "traditional"
+    # genuinely Simplified chars are still caught
+    assert zh._char_is_simplified("软")
+    assert zh.classify_zh("我吃软件") == "simplified"
+
+
+@_skip_no_opencc
 def test_charwise_is_corruption_free_and_carries_no_idioms():
     # already-Traditional bait: char-wise must be exact identity (no re-segmentation)
     assert zh.to_traditional_charwise(_TRAD_TRANSCRIPT) == _TRAD_TRANSCRIPT
