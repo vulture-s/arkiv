@@ -260,7 +260,7 @@ def build_doc_text(record: dict) -> str:
 
     audit Round-1 critical fix（2026-05-05）：原本只讀 frame_tags 裡的 `keywords`
     key，但 production vision pipeline（vision.py）寫的是 `description` + `tags`，
-    根本沒有 `keywords` 欄。實測恬馨庫 427 row × 5 frame 的 vision 描述 + tag
+    根本沒有 `keywords` 欄。實測某商業案素材庫 427 row × 5 frame 的 vision 描述 + tag
     全部 silently 沒進 vector index，semantic search 對視覺內容召回極差。
 
     現在順序：description（每 frame 完整敘述，最有 semantic value）+ tags list
