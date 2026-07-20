@@ -40,8 +40,16 @@ def chat(
     system: Optional[str] = None,
     conversation: Optional[List[Dict[str, Any]]] = None,
     json_mode: bool = False,
+    schema: Optional[Dict[str, Any]] = None,
     provider: Provider = Provider.OLLAMA,
 ) -> Dict[str, Any]:
+    """Call the chat model. `json_mode` asks for syntactically valid JSON; it does
+    NOT constrain the shape, so the model can answer a "return {"groups":[...]}"
+    prompt with {"慢跑":"路跑"} and the caller silently gets nothing. Pass
+    `schema` (a JSON Schema dict) to constrain the structure at the source —
+    Ollama has supported this in `format` since 0.5. Callers must STILL validate
+    the parsed result (see chat.py): schema adherence is model-dependent and a
+    non-conforming provider must not be able to crash the caller."""
     model = model or OLLAMA_CHAT_MODEL
     start = time.time()
 
@@ -55,7 +63,9 @@ def chat(
         "messages": messages,
         "stream": False,
     }
-    if json_mode:
+    if schema:
+        payload["format"] = schema
+    elif json_mode:
         payload["format"] = "json"
 
     response = _ollama_post("/api/chat", payload, timeout=120)

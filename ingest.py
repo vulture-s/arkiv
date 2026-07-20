@@ -1281,6 +1281,25 @@ _CANON_PROMPT = (
 )
 
 
+# Shape contract for the merge proposal. json_mode alone only guarantees valid
+# JSON — qwen2.5:14b answers this very prompt with {"慢跑":"路跑"}, which has no
+# "tags" key at all, so the merge was silently dropped. Constrain at the source.
+_CANON_SCHEMA = {
+    "type": "object",
+    "properties": {"tags": {"type": "array", "items": {"type": "string"}}},
+    "required": ["tags"],
+}
+
+
+def _str_list(value) -> list:
+    """Keep only the strings in a parsed LLM list. Schema adherence is
+    model-dependent, so a stray dict/int must degrade to "ignored", never reach
+    canonicalize() and raise AttributeError mid-run (same discipline as chat.py)."""
+    if not isinstance(value, list):
+        return []
+    return [v for v in value if isinstance(v, str)]
+
+
 def _run_canonicalize_tags(args):
     """Populate media.canonical_tags via one LLM semantic-merge per media. Reads
     the raw vision tags (rank_media_tags over frame_tags), asks the chat model to
@@ -1305,8 +1324,13 @@ def _run_canonicalize_tags(args):
             db.set_canonical_tags(r["id"], [])
             continue
         try:
-            resp = llm.chat(_CANON_PROMPT + _json.dumps(raw, ensure_ascii=False), json_mode=True)
-            proposed = _json.loads(resp["text"]).get("tags", [])
+            resp = llm.chat(
+                _CANON_PROMPT + _json.dumps(raw, ensure_ascii=False),
+                json_mode=True,
+                schema=_CANON_SCHEMA,
+            )
+            parsed = _json.loads(resp["text"])
+            proposed = _str_list(parsed.get("tags") if isinstance(parsed, dict) else None)
         except Exception as e:
             failed += 1
             print("  media {0}: LLM 失敗 ({1}) → 跳過".format(r["id"], e))
@@ -1328,6 +1352,25 @@ _ALIAS_JUDGE_PROMPT = (
     "**只能用清單裡出現的詞，絕對不可創造新詞，也不要把不同距離/不同事物硬合(例：路跑≠馬拉松)**。"
     "回傳 {\"groups\":[{\"pref\":\"...\",\"alts\":[\"...\"]}]}，只輸出 JSON。\n候選標籤："
 )
+
+
+_ALIAS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "pref": {"type": "string"},
+                    "alts": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["pref", "alts"],
+            },
+        }
+    },
+    "required": ["groups"],
+}
 
 
 def _cosine(a, b):
@@ -1389,14 +1432,25 @@ def _run_propose_aliases(args):
     for cl in clusters:
         cl_set = set(cl)
         try:
-            resp = llm.chat(_ALIAS_JUDGE_PROMPT + _json.dumps(cl, ensure_ascii=False), json_mode=True)
-            proposed = _json.loads(resp["text"]).get("groups", [])
+            resp = llm.chat(
+                _ALIAS_JUDGE_PROMPT + _json.dumps(cl, ensure_ascii=False),
+                json_mode=True,
+                schema=_ALIAS_SCHEMA,
+            )
+            parsed = _json.loads(resp["text"])
+            proposed = parsed.get("groups") if isinstance(parsed, dict) else None
+            proposed = proposed if isinstance(proposed, list) else []
         except Exception as e:
             print("  cluster {0}: LLM 失敗 ({1}) → 跳過".format(cl, e))
             continue
         for g in proposed:
+            # A bare string here used to raise AttributeError OUTSIDE the try
+            # above, killing the whole run and discarding every cluster judged so
+            # far (out_groups is only written after the loop).
+            if not isinstance(g, dict):
+                continue
             pref = tag_quality.canonicalize(g.get("pref") or "")
-            alts = [tag_quality.canonicalize(a) for a in (g.get("alts") or [])]
+            alts = [tag_quality.canonicalize(a) for a in _str_list(g.get("alts"))]
             # guard: pref + every alt must be a real tag from THIS cluster (no
             # invention, no cross-cluster bleed); need >=1 alt or there's no merge.
             alts = [a for a in alts if a and a in cl_set and a != pref]
