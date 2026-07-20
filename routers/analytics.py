@@ -71,7 +71,7 @@ def get_stats(
     # per project) each report their own name.
     stats["project"] = config.PROJECT_ROOT.name if config.PROJECT_ROOT else None
     # The REGISTRY name for the currently-loaded project (may differ from the dir
-    # basename — a library registered as "恬馨庫" can live in a dir named "tianxin").
+    # basename — a library registered as "婚禮案素材庫" can live in a dir named "wedding").
     # A cross-library 精選集 item is keyed by registry name, so the grid's
     # "加入精選集" needs this — null when the current project isn't registered
     # (then a grid-added item couldn't be resolved back → the UI disables the add).

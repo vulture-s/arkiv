@@ -1557,9 +1557,9 @@ def test_search_all_strips_absolute_and_project_paths(fastapi_client, monkeypatc
         "items": [{
             "media_id": "1", "filename": "clip.mp4",
             "relative_path": "A001/clip.mp4",
-            "absolute_path": "/Volumes/home/影片專案/恬馨/A001/clip.mp4",
-            "path": "/Volumes/home/影片專案/恬馨/A001/clip.mp4",
-            "project_path": "/Volumes/home/影片專案/恬馨",
+            "absolute_path": "/Volumes/home/影片專案/示範案/A001/clip.mp4",
+            "path": "/Volumes/home/影片專案/示範案/A001/clip.mp4",
+            "project_path": "/Volumes/home/影片專案/示範案",
         }],
         "projects_queried": 1, "projects_failed": 0,
     }
@@ -1570,7 +1570,7 @@ def test_search_all_strips_absolute_and_project_paths(fastapi_client, monkeypatc
     assert "absolute_path" not in item
     assert item["path"] == "A001/clip.mp4"
     assert "/Volumes" not in item["path"]
-    assert item["project_path"] == "恬馨"
+    assert item["project_path"] == "示範案"
     assert "/Volumes" not in item["project_path"]
 
 
