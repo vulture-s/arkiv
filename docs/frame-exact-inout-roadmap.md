@@ -1,6 +1,24 @@
 # Frame-exact IN/OUT — spike result & roadmap
 
-Status: **spike verified, ready to productize.** Branch: `worktree-frame-exact-inout-spike`.
+Status: **P1 + P2 shipped.** The spike is the shipped behaviour and the marks are
+first-class (persisted, honoured by export). P3 (WebCodecs) is deliberately out of
+scope until measured.
+
+## Shipped so far
+
+| item | where |
+|---|---|
+| Spike core — rVFC frame marking, `◂格/格▸` step, `HH:MM:SS:FF` readout, `frameExact` gate | #190 |
+| Keyboard shortcuts — `,`/`.` step, `i`/`o` mark (guarded against inputs / modifiers) | **this branch** |
+| Persist IN/OUT per clip (survives clip-switch/reload) | D1 · #193 |
+| Timeline export lays the MARKED sub-clip, not the whole file | D2 · #194 |
+| Proxy hardware-decode on Apple Silicon (adjacent perf win) | D3 · #195 |
+| `_edl_timecode` NDF/DF + fcpxml rational (29.97/23.976) pinned by test | `tests/test_r5_25_export_builders_module.py` |
+
+**Still open (minor P2 polish, not blocking):** the frame-exact readout is
+`00:00:00:00`-relative — it does not yet offset by the camera-body `start_tc`
+(already ingested, already passed to the metadata grid as `tc`), so the displayed
+TC won't match the camera. Tracked below under P2.
 
 ## Context
 
@@ -76,8 +94,11 @@ real-Chromium test confirmed the browser semantics; the midpoint seek is correct
 **P1 — land the spike as the shipped behaviour.**
 - Keep the native approach. Fold the spike's Inspector changes in behind the
   existing `frameExact` gate (already graceful for audio / unknown fps).
-- Add keyboard shortcuts on the focused player: `,`/`.` step, `i`/`o` mark
-  (guard against firing inside inputs). Editors expect these.
+- ✅ Add keyboard shortcuts on the focused player: `,`/`.` step, `i`/`o` mark
+  (guard against firing inside inputs). Editors expect these. — shipped this
+  branch: a guarded `svelte:window` `keydown` in `Inspector.svelte` (ignores
+  input/textarea/select/contenteditable targets and any modifier chord, so ⌘K etc.
+  and tag-field typing are untouched; frame steppers stay inert without a fps).
 - Guarantee `fps` reaches the inspector on the **detail** path too, not only the
   grid `_raw` (confirm `/api/media/{id}` carries `fps`; fall back to grid value).
 - Empty/So-what state: when `fps` is missing or 0, keep today's second-based
@@ -90,8 +111,10 @@ real-Chromium test confirmed the browser semantics; the midpoint seek is correct
   reproduces the intended frame (it should, since `in_s = frame/fps`); add a
   test in the export suite pinning a few (frame, fps) → timecode pairs,
   including 23.976 and 29.97 drop/non-drop.
-- Surface `start_tc` (camera-body start timecode, already ingested) so the
-  displayed TC matches the camera, not just 00:00:00:00-relative.
+- ⬜ **(still open)** Surface `start_tc` (camera-body start timecode, already
+  ingested) so the displayed TC matches the camera, not just 00:00:00:00-relative.
+  `start_tc` is already threaded to the inspector (metadata grid `tc`) but the
+  frame readout (`_tcf`) does not yet offset by it.
 
 **P3 — where WebCodecs finally earns its place (separate effort, measure first).**
 - Fast scrub: decode-forward through a GOP instead of per-frame `<video>` seek,
