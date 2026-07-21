@@ -1,7 +1,7 @@
 """R5-25 (round-5 #51): media routes peeled to routers/media.py.
 
 The 14th router peeled — the clip-centric surface. Pins the split: the leaf module
-owns exactly the 16 media routes (list + per-clip sub-resources), server.py no
+owns exactly the 18 media routes (list + per-clip sub-resources), server.py no
 longer defines them, the two specific routes (/api/media/pool + /api/media/
 position/{media_id}) precede the dynamic /api/media/{media_id} so it can't shadow
 them, and the shared bulk-fetch helpers are re-exported by identity from
@@ -22,6 +22,7 @@ _EXPECTED_ROUTES = {
     ("/api/media/{media_id}", "GET"),
     ("/api/media/{media_id}/waveform", "GET"),
     ("/api/media/{media_id}/scenes", "GET"),
+    ("/api/media/{media_id}/segments", "GET"),
     ("/api/media/{media_id}/chapters", "GET"),
     ("/api/media/{media_id}/rating", "PATCH"),
     ("/api/media/{media_id}/inout", "PATCH"),
@@ -42,7 +43,7 @@ def test_media_router_is_a_leaf_module():
     assert not re.search(r"^\s*from\s+server\b", src, re.M)
 
 
-def test_router_owns_exactly_the_17_media_routes():
+def test_router_owns_exactly_the_18_media_routes():
     import routers.media as rm
     pairs = {
         (r.path, m)
