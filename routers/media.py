@@ -487,6 +487,45 @@ def get_media_scenes(
     return _scenes_payload(media_id, rec, db.get_frames(media_id))
 
 
+def _segments_payload(segments_json):
+    """Project the stored `segments_json` TEXT column onto the stable
+    {start,end,text} subset. Never raises — a corrupt column degrades to [] rather
+    than 500ing (mirrors mcp_server._json_rows and export.py's defensive parse)."""
+    if not segments_json:
+        return []
+    try:
+        rows = json.loads(segments_json)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    return [
+        {"start": r.get("start"), "end": r.get("end"), "text": r.get("text")}
+        for r in rows
+        if isinstance(r, dict)
+    ]
+
+
+@router.get("/api/media/{media_id}/segments")
+def get_media_segments(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    """Sentence-level transcript timecodes for one clip: `[{start,end,text}]`.
+
+    The lightweight cutting surface for downstream edit agents (smart-edit). The
+    detail route ships `segments_json` only as a raw string and drops words_json
+    for transport size, so an agent that just needs to place an in/out on a quote
+    had to re-parse the whole record. This returns the projected segment array and
+    NOTHING else — no words (word-level lives in /remotion-props), no frames/tags.
+    Sentence granularity is enough to locate and cut a line; word-level would only
+    bloat the payload (the same reason MCP get_transcript defaults words off)."""
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到")
+    return _segments_payload(rec.get("segments_json"))
+
+
 @router.get("/api/media/{media_id}/chapters")
 def get_media_chapters(
     media_id: int,
