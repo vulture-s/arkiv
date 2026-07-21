@@ -147,6 +147,23 @@
     _persistInOut()
   }
   function clearInOut() { inSec = null; outSec = null; _persistInOut() }
+  // Keyboard shortcuts editors reach for: , / . step one frame, i / o mark IN/OUT.
+  // Guarded so they never fire while typing (tag/search fields) or when a modifier
+  // is held (don't hijack ⌘K etc.), and only when this clip actually has a player —
+  // so the design-mock inspector (no videoSrc) and audio-without-fps stay inert for
+  // the frame steppers while i/o still mark on any player.
+  function onKey(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    const t = e.target
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+    if (!(useVideo || useAudio)) return
+    switch (e.key) {
+      case 'i': case 'I': setIn(); e.preventDefault(); break
+      case 'o': case 'O': setOut(); e.preventDefault(); break
+      case ',': if (frameExact) { stepFrame(-1); e.preventDefault() } break
+      case '.': if (frameExact) { stepFrame(1); e.preventDefault() } break
+    }
+  }
   // Waveform marker drag → set IN/OUT directly (no need to scrub the playhead there)
   function onTrim(e) {
     if (!mediaDuration) return
@@ -294,6 +311,8 @@
   const rateBtns = [['good', 'Good'], ['rev', 'Review'], ['ng', 'N·G'], ['none', '—']]
 </script>
 
+<svelte:window on:keydown={onKey} />
+
 <aside class="inspector">
   <div class="header">
     <Eyebrow style="margin-bottom:8px;">
@@ -400,8 +419,8 @@
       <!-- frame-exact stepper: step one frame, mark at the exact frame boundary.
            The readout shows the frame rVFC confirms is actually on screen. -->
       <div class="frametools">
-        <button class="ak-btn fstep" on:click={() => stepFrame(-1)} title="上一格">◂ 格</button>
-        <button class="ak-btn fstep" on:click={() => stepFrame(1)} title="下一格">格 ▸</button>
+        <button class="ak-btn fstep" on:click={() => stepFrame(-1)} title="上一格（,）">◂ 格</button>
+        <button class="ak-btn fstep" on:click={() => stepFrame(1)} title="下一格（.）">格 ▸</button>
         <Mono dim style="font-size:9.5px;margin-left:6px;align-self:center;">
           f{curFrame} · {_tcf(curFrame / fps)} · {fps.toFixed(fps % 1 ? 3 : 0)}fps
         </Mono>
@@ -409,8 +428,8 @@
     {/if}
     {#if useVideo || useAudio}
       <div class="inout">
-        <button class="ak-btn io" on:click={setIn} title={frameExact ? '設 IN（貼齊目前影格）' : '設 IN（目前播放位置）'}>設 IN</button>
-        <button class="ak-btn io" on:click={setOut} title={frameExact ? '設 OUT（貼齊目前影格）' : '設 OUT（目前播放位置）'}>設 OUT</button>
+        <button class="ak-btn io" on:click={setIn} title={frameExact ? '設 IN（貼齊目前影格 · i）' : '設 IN（目前播放位置 · i）'}>設 IN</button>
+        <button class="ak-btn io" on:click={setOut} title={frameExact ? '設 OUT（貼齊目前影格 · o）' : '設 OUT（目前播放位置 · o）'}>設 OUT</button>
         {#if inSec != null || outSec != null}
           <button class="ak-btn io clr" on:click={clearInOut} title="清除 IN/OUT">清除</button>
           <Mono dim style="font-size:9.5px;margin-left:auto;align-self:center;">
