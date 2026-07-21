@@ -153,3 +153,38 @@ def test_postprocess_filters_configured_words_from_text_and_segments(monkeypatch
         "text": "這是保留內容",
     }]
     assert words == []
+
+
+def test_postprocess_reconciles_words_to_kept_segments(monkeypatch):
+    """A-wordfix: the per-segment filter rebuilds timed_segments from the SURVIVING
+    segments, but the raw `words` list still carries words from segments dropped as
+    hallucinations. Reconciliation keeps only words whose midpoint falls inside a
+    kept segment — so words_json can't reintroduce filtered-out content."""
+    transcribe = importlib.import_module("transcribe")
+    monkeypatch.setattr(transcribe, "LLM_POLISH", False)
+    segments = [
+        {  # KEPT — clean segment [0.0, 2.0]
+            "text": "保留這一段的語音內容。",
+            "no_speech_prob": 0.1, "avg_logprob": -0.2, "compression_ratio": 1.0,
+            "start": 0.0, "end": 2.0,
+        },
+        {  # DROPPED — low-confidence hallucination [2.8, 4.5]
+            "text": "低信心幻覺段落",
+            "no_speech_prob": 0.1, "avg_logprob": -1.6, "compression_ratio": 1.0,
+            "start": 2.8, "end": 4.5,
+        },
+    ]
+    words = [
+        {"word": "保", "start": 0.2, "end": 0.5, "score": 0.9},   # inside kept
+        {"word": "留", "start": 1.4, "end": 1.8, "score": 0.9},   # inside kept
+        {"word": "幻", "start": 3.0, "end": 3.4, "score": 0.4},   # inside dropped seg
+        {"word": "覺", "start": 4.0, "end": 4.3, "score": 0.4},   # inside dropped seg
+    ]
+    cleaned, _, timed_segments, out_words = transcribe._postprocess(
+        "原始文字", "zh", segments, "zh", words=words,
+    )
+    assert timed_segments == [{
+        "start": 0.0, "end": 2.0, "text": "保留這一段的語音內容。",
+    }]
+    # only words landing inside the surviving segment survive; dropped-segment words gone
+    assert [w["word"] for w in out_words] == ["保", "留"]

@@ -499,6 +499,27 @@ def _postprocess(text: str, lang: str, segments: list, language: str, words: lis
     if LLM_POLISH and len(filtered_text) > 10:
         filtered_text = _llm_polish(filtered_text, language)
 
+    # Step 6: words_json reconciliation. The per-segment filter above rebuilt
+    # timed_segments from the SURVIVING segments, but `words` still carries every
+    # word from the raw segment list — including words that belonged to segments
+    # dropped as hallucinations (silence / low-logprob / high compression). Keep
+    # only words whose midpoint falls inside a kept segment's time range, so
+    # words_json can't reintroduce content the text/segment filters already removed
+    # (frame-accurate cutting and subtitle rendering read words_json directly).
+    if words:
+        kept_ranges = [(ts["start"], ts["end"]) for ts in timed_segments]
+        eps = 0.05  # tolerance for start/end rounded to 3 dp above vs raw word times
+
+        def _in_kept_segment(w):
+            ws = w.get("start")
+            if ws is None:
+                return False
+            we = w.get("end")
+            mid = ws if we is None else (ws + we) / 2.0
+            return any(lo - eps <= mid <= hi + eps for lo, hi in kept_ranges)
+
+        words = [w for w in words if _in_kept_segment(w)]
+
     return filtered_text, lang, timed_segments, words or []
 
 
