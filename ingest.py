@@ -214,6 +214,40 @@ def _ensure_vision_ready(max_wait_s=None, _probe=None, _sleep=None):
     return result
 
 
+def _vision_model_abort_message(model, installed_vision_models):
+    """Actionable error shown when the effective vision model isn't installed
+    (issue #218). Kept pure (no I/O) so it's unit-testable."""
+    lines = [
+        "",
+        "!" * 60,
+        "VISION ABORTED: model '{0}' is not installed in Ollama.".format(model),
+        "  Every frame would 404. Fix one of:",
+    ]
+    if installed_vision_models:
+        lines.append("    - use an installed vision model: {0}".format(", ".join(installed_vision_models)))
+        lines.append("      set ARKIV_OLLAMA_VISION_MODEL=<model>  (or vision.model via PUT /api/settings)")
+    else:
+        lines.append("    - no vision models installed — pull one, e.g. `ollama pull qwen3-vl:8b`,")
+        lines.append("      then set ARKIV_OLLAMA_VISION_MODEL=<model>")
+    lines.append("    - or install this exact tag: `ollama pull {0}`".format(model))
+    lines.append("!" * 60)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _preflight_vision_model():
+    """Fail loud before a vision batch when the effective model is confirmably not
+    installed (issue #218) — instead of 404-spamming every frame and then halting
+    with a confusing 'Fix Ollama' message. No-op when Ollama is unreachable (the
+    strict check returns None → absence unconfirmable), respecting the
+    sensor-not-gate philosophy; warm-up surfaces that case."""
+    import settings as _settings
+    model = _settings.vision_model()
+    if vis.is_model_installed(model) is False:
+        print(_vision_model_abort_message(model, vis.list_vision_models()))
+        sys.exit(2)
+
+
 def _normalize_bmd_tag(value):
     if value is None:
         return None
@@ -904,19 +938,39 @@ def _describe_frames_with_fallback(frame_paths):
 def _vision_halt_decision(file_failed, file_total, total_failed, consecutive_failed,
                           max_failures, skip_failed):
     """Decide whether to halt after a file with `file_failed`/`file_total` still-failing
-    frames. Returns (should_halt, reason); reason is "" when continuing.
+    frames. Returns (should_halt, reason, ollama_suspected); reason is "" when
+    continuing and ollama_suspected says whether the halt implicates Ollama.
 
     Order matters: the consecutive-failure guard is checked first and ignores the
     tolerance flags — an Ollama outage must stop an unattended run even under
-    --skip-failed.
+    --skip-failed. The two halt reasons are semantically different (issue #219):
+    a consecutive streak points at Ollama being down; exceeding --max-failures is
+    just isolated frame failures with Ollama healthy — the caller must not tell
+    the operator to "Fix Ollama" in the latter case.
     """
     if consecutive_failed >= _VISION_CONSECUTIVE_HALT:
-        return True, "{0} consecutive frame failures — Ollama likely down / model crash".format(consecutive_failed)
+        return True, "{0} consecutive frame failures — Ollama likely down / model crash".format(consecutive_failed), True
     if skip_failed:
-        return False, ""
+        return False, "", False
     if total_failed > max_failures:
-        return True, "{0} failed frame(s) exceeded --max-failures={1}".format(total_failed, max_failures)
-    return False, ""
+        return True, "{0} failed frame(s) exceeded --max-failures={1}".format(total_failed, max_failures), False
+    return False, "", False
+
+
+def _vision_halt_remedy(ollama_suspected):
+    """Cause-accurate remedy lines for a vision halt (issue #219). Only points at
+    Ollama when the halt actually implicates it (consecutive-failure streak); an
+    exceeded --max-failures is just isolated frames with Ollama healthy, so the
+    remedy there is --skip-failed, not 'Fix Ollama'."""
+    if ollama_suspected:
+        return [
+            "  Ollama looks down — check it's running (`ollama ps`, restart if needed),",
+            "  then resume: py -3.12 ingest.py --vision-only",
+        ]
+    return [
+        "  Ollama is up — the frame(s) above failed to parse. Resume skipping them:",
+        "    py -3.12 ingest.py --vision-only --skip-failed   (or tolerate more: --max-failures N)",
+    ]
 
 
 def _run_vision_only(args):
@@ -949,6 +1003,7 @@ def _run_vision_only(args):
 
     print(f"Found {len(rows)} frames across {len(media_frames)} files\n")
 
+    _preflight_vision_model()  # issue #218: fail loud if the model isn't installed
     _unload_ollama_model("qwen2.5:14b")
     _ensure_vision_ready()
 
@@ -1021,15 +1076,15 @@ def _run_vision_only(args):
             consecutive_failed = consecutive_failed + n_failed if n_failed == len(frame_paths) else 0
             failed_files.append((fname, n_failed, len(frame_paths)))
             print(f" [{v_elapsed:.1f}s] [{n_failed}/{len(frame_paths)} FAILED]")
-            should_halt, reason = _vision_halt_decision(
+            should_halt, reason, ollama_suspected = _vision_halt_decision(
                 n_failed, len(frame_paths), total_failed, consecutive_failed, max_failures, skip_failed)
             if should_halt:
                 remaining = len(media_frames) - vi
                 print(f"\n\n{'!'*60}")
                 print(f"VISION HALTED: {reason}")
                 print(f"  Completed: {ok}  |  Remaining: {remaining}  |  Failed frames: {total_failed}")
-                print(f"  Fix Ollama, then resume: py -3.12 ingest.py --vision-only")
-                print(f"  (skip persistent failures: add --skip-failed)")
+                for _line in _vision_halt_remedy(ollama_suspected):
+                    print(_line)
                 print(f"{'!'*60}\n")
                 halted = True
                 break
@@ -1905,6 +1960,7 @@ def main():
     if phase1_results:
         print(f"\n{'─'*60}")
         print(f"Phase 2: Vision — {len(phase1_results)} files, unloading LLM to free VRAM...")
+        _preflight_vision_model()  # issue #218: fail loud if the model isn't installed
         _unload_ollama_model("qwen2.5:14b")
         _ensure_vision_ready()
         for vi, (fpath, (record, frames)) in enumerate(phase1_results.items(), 1):
@@ -1997,7 +2053,7 @@ def main():
                     consecutive_empty_frames = consecutive_empty_frames + n_failed if n_failed == len(video_frames) else 0
                     vision_failed_files.append((fname, n_failed, len(video_frames)))
                     print(f" [{v_elapsed:.1f}s] [{n_failed}/{len(video_frames)} FAILED]")
-                    should_halt, reason = _vision_halt_decision(
+                    should_halt, reason, ollama_suspected = _vision_halt_decision(
                         n_failed, len(video_frames), total_failed, consecutive_empty_frames, max_failures, skip_failed)
                     if should_halt:
                         vision_halted = True
@@ -2005,8 +2061,8 @@ def main():
                         print(f"\n\n{'!'*60}")
                         print(f"VISION HALTED: {reason}")
                         print(f"  Completed: {vision_ok}  |  Remaining: {remaining}  |  Failed frames: {total_failed}")
-                        print(f"  Fix Ollama, then resume: py -3.12 ingest.py --vision-only")
-                        print(f"  (skip persistent failures: add --skip-failed)")
+                        for _line in _vision_halt_remedy(ollama_suspected):
+                            print(_line)
                         print(f"{'!'*60}\n")
                         break
                 else:
