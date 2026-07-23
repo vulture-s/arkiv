@@ -34,6 +34,38 @@ def model_available(name: str) -> bool:
     return avail
 
 
+def _norm_tag(name: str) -> str:
+    """Normalize an Ollama model reference the way the daemon resolves it: a bare
+    name (no ':') means the ':latest' tag. Used for exact install checks."""
+    return name if ":" in name else name + ":latest"
+
+
+def is_model_installed(name: str) -> Optional[bool]:
+    """Strict, tag-exact install check for the ingest preflight (issue #218).
+
+    Unlike model_available() — which matches by base name and so can say "yes"
+    when only a *different* tag of the same base is pulled — this compares the
+    exact tag Ollama's /api/generate would need (bare name → ':latest'). Returns:
+      True  — the exact tag is installed,
+      False — Ollama is reachable and the exact tag is definitively absent,
+      None  — Ollama is unreachable, so absence can't be confirmed (caller should
+              proceed rather than block; warm-up surfaces the real error).
+    A confirmed False is what lets the preflight fail loud instead of grinding
+    every frame into a 404 on a fresh project."""
+    if not name:
+        return None
+    try:
+        r = requests.get(f"{config.OLLAMA_URL}/api/tags", timeout=5)
+        installed = {_norm_tag(m.get("name", "")) for m in r.json().get("models", []) if m.get("name")}
+    except Exception:
+        return None
+    if not installed:
+        # Reachable but no models at all — treat as unconfirmable (don't hard-fail
+        # on a transient empty/garbled /api/tags reading).
+        return None
+    return _norm_tag(name) in installed
+
+
 # Vision-capable model name families — used as a fallback when Ollama's
 # /api/show doesn't report capabilities (older Ollama) or is unreachable.
 _VISION_NAME_RE = re.compile(
