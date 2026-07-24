@@ -114,7 +114,15 @@ def list_collections(
             "rating, processed_at "
             "FROM media ORDER BY id"
         ).fetchall()
+        # Manual/confirmed tags live in the `tags` table, not frame_tags. Pull
+        # them (one bulk query) so tag-keyed collections match USER tags, not
+        # only vision output — otherwise a hand-tagged a-roll/b-roll can never
+        # form a collection. media_signal already merges media["tags"].
+        tag_map = {}
+        for tid, tname in conn.execute("SELECT media_id, name FROM tags"):
+            tag_map.setdefault(tid, []).append(tname)
     for rec in (dict(r) for r in rows):
+        rec["tags"] = tag_map.get(rec["id"], [])
         for hit in smart_collections.classify(rec, defs):
             buckets[hit["key"]]["items"].append({
                 "id": rec["id"],
