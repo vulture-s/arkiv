@@ -64,3 +64,42 @@ def test_analytics_routes_mounted_and_auth_guarded(server_module):
                      "/api/duration-by-lang", "/api/size-by-ext"):
             assert c.get(path).status_code == 401, path
         assert c.get("/api/statszz").status_code == 404
+
+
+# ── manual-tag collections end-to-end (list_collections joins the tags table) ─
+def _seed_clip(db, name):
+    db.upsert({
+        "path": "/tmp/{0}".format(name), "filename": name, "ext": ".mp4",
+        "duration_s": 30.0, "size_mb": 5.0, "width": 1920, "height": 1080,
+        "fps": 30.0, "has_audio": 1, "transcript": "", "lang": "zh",
+        "frame_tags": "", "thumbnail_path": "",
+        "processed_at": "2026-05-01T09:00:00",
+    })
+
+
+def test_collections_surfaces_manual_tag_collection(fastapi_client):
+    import importlib
+    db = importlib.import_module("db")
+    _seed_clip(db, "a.mp4")
+    db.add_tag(1, "a-roll", "manual")
+    r = fastapi_client.get("/api/collections")
+    assert r.status_code == 200, r.text
+    cols = {c["key"]: c for c in r.json()["collections"]}
+    assert "a_roll" in cols, "manual a-roll tag should form the a_roll collection"
+    assert any(it["id"] == 1 for it in cols["a_roll"]["items"])
+
+
+def test_collections_ignore_auto_source_editorial_tag(fastapi_client):
+    # An auto (vision) tag that happens to be named 'a-roll' must NOT enter an
+    # editorial collection without the user's hand — list_collections filters
+    # the tags table to source='manual' (Codex audit).
+    import importlib
+    db = importlib.import_module("db")
+    _seed_clip(db, "b.mp4")
+    db.add_tag(1, "a-roll", "auto")
+    r = fastapi_client.get("/api/collections")
+    assert r.status_code == 200, r.text
+    cols = {c["key"]: c for c in r.json()["collections"]}
+    assert "a_roll" not in cols or all(
+        it["id"] != 1 for it in cols["a_roll"]["items"]
+    ), "an auto-source 'a-roll' tag must not create editorial membership"
