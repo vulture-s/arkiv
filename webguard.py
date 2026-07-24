@@ -111,17 +111,69 @@ _OFFLOAD_DENY_SUBSTR = (
 _OFFLOAD_DENY_ROOTS = (
     "/system", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/etc", "/private/etc",
 )
+# Windows-native equivalents. On Windows resolve() anchors a rootless/POSIX path
+# to the CURRENT drive (Path('/etc') -> C:\etc; Path('C:\\Windows') stays), so
+# these match against a drive-letter-stripped form and are themselves drive-
+# agnostic (X:\Windows, D:\Windows, …). The per-user Startup folder is the
+# Windows analog of LaunchAgents — a file copied there gains logon persistence.
+_OFFLOAD_DENY_WIN_ROOTS = (
+    "/windows", "/program files", "/program files (x86)", "/programdata",
+)
+_OFFLOAD_DENY_WIN_SUBSTR = (
+    "/appdata/roaming/microsoft/windows/start menu/programs/startup",
+)
+
+
+def _norm_offload_path(path_str):
+    """Fold to the lower-case, forward-slash, no-trailing-slash form the offload
+    denylist compares against."""
+    return path_str.replace("\\", "/").lower().rstrip("/")
+
+
+def _strip_win_drive(path):
+    """Drop a leading Windows drive letter, keeping the path root-anchored
+    ('c:/etc' -> '/etc', 'c:/windows' -> '/windows'), so a POSIX deny root or a
+    (also root-anchored) Windows deny root matches regardless of which drive
+    resolve() anchored the path to."""
+    if len(path) >= 2 and path[1] == ":":
+        return path[2:]
+    return path
+
+
+def _offload_deny_reason(path):
+    """Deny category for ONE already-normalised path (see _norm_offload_path), or
+    '' if allowed. 'sensitive' = an execution/persistence location; 'system' = an
+    OS system root. Pure and host-independent: it evaluates the denylist over both
+    the path as given AND its drive-stripped form, so a POSIX literal that resolve()
+    drive-anchored on Windows ('/etc' -> 'c:/etc') still matches the '/etc' root."""
+    for form in (path, _strip_win_drive(path)):
+        probe = form + "/"
+        for bad in _OFFLOAD_DENY_SUBSTR + _OFFLOAD_DENY_WIN_SUBSTR:
+            if bad in probe:
+                return "sensitive"
+        for root in _OFFLOAD_DENY_ROOTS + _OFFLOAD_DENY_WIN_ROOTS:
+            if form == root or probe.startswith(root + "/"):
+                return "system"
+    return ""
 
 
 def _assert_offload_dst_safe(dst: str) -> None:
-    """Reject offload destinations that land inside OS-sensitive/executable dirs."""
-    canonical = str(Path(dst).expanduser().resolve()).replace("\\", "/").lower().rstrip("/")
-    probe = canonical + "/"
-    for bad in _OFFLOAD_DENY_SUBSTR:
-        if bad in probe:
+    """Reject offload destinations that land inside OS-sensitive/executable dirs.
+
+    Windows-correctness (2026-07-25): the deny roots are POSIX-anchored literals
+    (/etc, /system, …). On Windows, Path('/etc').resolve() drive-anchors to
+    'C:\\etc', which no longer string-matches '/etc' — silently opening the 403
+    gate (tests/test_hardening_round4.py went 4-fail on windows-latest). Fix:
+    evaluate the denylist over BOTH the raw (pre-resolve) literal AND the resolved
+    canonical path, so a POSIX-absolute sensitive literal denies on any host; and
+    add drive-agnostic Windows system/persistence roots. resolve() still catches
+    '..' escapes; the raw pass catches the drive-anchor bypass."""
+    expanded = Path(dst).expanduser()
+    for candidate in (str(expanded), str(expanded.resolve())):
+        reason = _offload_deny_reason(_norm_offload_path(candidate))
+        if reason == "sensitive":
             raise HTTPException(403, "拒絕寫入系統敏感目錄（LaunchAgents / .ssh / cron / systemd 等）")
-    for root in _OFFLOAD_DENY_ROOTS:
-        if canonical == root or probe.startswith(root + "/"):
+        if reason == "system":
             raise HTTPException(403, "拒絕寫入系統目錄")
 
 

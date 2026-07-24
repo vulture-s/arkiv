@@ -145,6 +145,50 @@ def test_offload_route_403s_system_dst_without_spawning(fastapi_client, tmp_path
     assert resp.status_code == 403
 
 
+# ── #1 (Windows correctness, 2026-07-25): the deny decision is host-independent ─
+# On Windows, Path('/etc').resolve() drive-anchors to 'C:\etc', so the old
+# '/'-rooted string match silently opened the 403 gate (4-fail on windows-latest).
+# These feed already-normalised Windows-shaped strings straight to the pure
+# denylist helper, so the Windows behaviour is provable on ANY host — no Windows
+# runner needed. (The full-suite Windows run is separate evidence; see the
+# 2026-07-24 arkiv-health-hardening handoff.)
+
+@pytest.mark.parametrize("denied", [
+    "c:/etc",                          # a POSIX literal after resolve() drive-anchors it
+    "c:/windows",
+    "c:/windows/system32",
+    "d:/windows/system32/drivers",     # drive-agnostic
+    "c:/program files",
+    "c:/program files (x86)/evil",
+    "c:/programdata/evil",
+    "c:/users/me/appdata/roaming/microsoft/windows/start menu/programs/startup",
+])
+def test_offload_deny_reason_denies_windows_system_dirs(denied):
+    import webguard
+    assert webguard._offload_deny_reason(denied) != ""
+
+
+@pytest.mark.parametrize("allowed", [
+    "d:/backup/2026",
+    "e:/dit/card01",
+    "f:/volumes/program files backup",  # 'program files' as a leaf, not a root
+    "c:/users/me/movies/exports",
+])
+def test_offload_deny_reason_allows_windows_backup_targets(allowed):
+    import webguard
+    assert webguard._offload_deny_reason(allowed) == ""
+
+
+def test_offload_deny_reason_denies_posix_literal_host_independently():
+    # The raw (pre-resolve) pass must deny a POSIX-absolute sensitive literal even
+    # where resolve() would drive-anchor it off the '/'-rooted denylist — the exact
+    # bug that let '/etc' through on windows-latest.
+    import webguard
+    assert webguard._offload_deny_reason("/etc") == "system"
+    assert webguard._offload_deny_reason("/system/library") == "system"
+    assert webguard._offload_deny_reason("/users/me/.ssh") == "sensitive"
+
+
 # ── #10: /api/retranscribe-all language validator ────────────────────────────
 
 def test_retranscribe_all_rejects_non_iso639_language(fastapi_client):
