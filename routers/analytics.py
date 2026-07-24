@@ -114,12 +114,17 @@ def list_collections(
             "rating, processed_at "
             "FROM media ORDER BY id"
         ).fetchall()
-        # Manual/confirmed tags live in the `tags` table, not frame_tags. Pull
-        # them (one bulk query) so tag-keyed collections match USER tags, not
-        # only vision output — otherwise a hand-tagged a-roll/b-roll can never
-        # form a collection. media_signal already merges media["tags"].
+        # Manual tags live in the `tags` table, not frame_tags. Pull them (one
+        # bulk query) so tag-keyed collections match USER tags, not only vision
+        # output. Filter to source='manual': the tags table ALSO holds
+        # source='auto' vision copies (ingest.py), and an auto tag that happened
+        # to be named 'a-roll' must not silently join an editorial collection
+        # without the user's hand (Codex audit). media_signal merges
+        # media["tags"] into the scored signal.
         tag_map = {}
-        for tid, tname in conn.execute("SELECT media_id, name FROM tags"):
+        for tid, tname in conn.execute(
+            "SELECT media_id, name FROM tags WHERE source = 'manual'"
+        ):
             tag_map.setdefault(tid, []).append(tname)
     for rec in (dict(r) for r in rows):
         rec["tags"] = tag_map.get(rec["id"], [])
