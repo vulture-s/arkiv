@@ -124,18 +124,45 @@ _OFFLOAD_DENY_WIN_SUBSTR = (
 )
 
 
+def _strip_offload_segment(seg):
+    """Drop trailing dots/spaces that Win32 ignores ('windows.' -> 'windows'),
+    but keep '.'/'..' navigation and any all-dot/space segment intact."""
+    stripped = seg.rstrip(" .")
+    return stripped if stripped else seg
+
+
 def _norm_offload_path(path_str):
-    """Fold to the lower-case, forward-slash, no-trailing-slash form the offload
-    denylist compares against."""
-    return path_str.replace("\\", "/").lower().rstrip("/")
+    r"""Fold to the lower-case, forward-slash, no-trailing-slash form the offload
+    denylist compares against, canonicalising the Windows forms that would else
+    slip past the deny roots (2026-07-25 audit follow-up):
+      \\?\C:\..  and  \\.\C:\..  (extended-length / DOS-device)  -> c:/..
+      \\?\UNC\host\share\..                                       -> //host/share/..
+      \\host\C$\..              (admin drive share)               -> c:/..
+      plus trailing dots/spaces Win32 strips from each path segment.
+    Residual (accepted): 8.3 short names (C:\PROGRA~1) and other existing-dir
+    aliases are left to Windows resolve() in the caller, which only expands them
+    for paths that actually exist on disk."""
+    p = path_str.replace("\\", "/").lower()
+    if p.startswith("//?/unc/"):
+        p = "//" + p[len("//?/unc/"):]          # device-namespace UNC -> plain UNC
+    elif p.startswith(("//?/", "//./")):
+        p = p[4:]                                 # //?/c:/windows -> c:/windows
+    if p.startswith("//"):
+        host, _sep, tail = p[2:].partition("/")   # host, '/', 'share/rest'
+        share, _sep2, rest = tail.partition("/")
+        if len(share) == 2 and "a" <= share[0] <= "z" and share[1] == "$":
+            p = share[0] + ":/" + rest            # \\host\C$\.. addresses the whole drive
+    p = "/".join(_strip_offload_segment(seg) for seg in p.split("/"))
+    return p.rstrip("/")
 
 
 def _strip_win_drive(path):
     """Drop a leading Windows drive letter, keeping the path root-anchored
     ('c:/etc' -> '/etc', 'c:/windows' -> '/windows'), so a POSIX deny root or a
     (also root-anchored) Windows deny root matches regardless of which drive
-    resolve() anchored the path to."""
-    if len(path) >= 2 and path[1] == ":":
+    resolve() anchored the path to. Requires an ASCII letter drive so a POSIX
+    path like '1:/etc' is not mistaken for a drive and wrongly denied."""
+    if len(path) >= 2 and "a" <= path[0] <= "z" and path[1] == ":":
         return path[2:]
     return path
 
@@ -169,7 +196,13 @@ def _assert_offload_dst_safe(dst: str) -> None:
     add drive-agnostic Windows system/persistence roots. resolve() still catches
     '..' escapes; the raw pass catches the drive-anchor bypass."""
     expanded = Path(dst).expanduser()
-    for candidate in (str(expanded), str(expanded.resolve())):
+    candidates = [str(expanded)]
+    try:
+        candidates.append(str(expanded.resolve()))
+    except (OSError, ValueError):
+        pass  # malformed dst (reserved name / illegal char) can make resolve() raise
+              # on Windows; the raw pass above still guards and no write has happened.
+    for candidate in candidates:
         reason = _offload_deny_reason(_norm_offload_path(candidate))
         if reason == "sensitive":
             raise HTTPException(403, "拒絕寫入系統敏感目錄（LaunchAgents / .ssh / cron / systemd 等）")

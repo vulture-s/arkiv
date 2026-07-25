@@ -189,6 +189,36 @@ def test_offload_deny_reason_denies_posix_literal_host_independently():
     assert webguard._offload_deny_reason("/users/me/.ssh") == "sensitive"
 
 
+# ── #1 (2026-07-25 audit follow-up): Windows namespace / DOS-device / admin-share
+# forms must not slip past the deny roots, and a non-letter "drive" must not be
+# stripped. These run the FULL pipeline (_norm_offload_path -> _offload_deny_reason)
+# so the prefix canonicalisation is exercised. \\?\C:\Windows etc. previously
+# normalised to '//?/c:/windows' and returned '' (a false negative on windows-latest).
+
+@pytest.mark.parametrize("raw", [
+    r"\\?\C:\Windows\System32",              # extended-length device path
+    r"\\.\C:\Windows",                        # DOS-device path
+    r"\\localhost\C$\Windows",               # admin drive share (\\host\C$)
+    r"\\127.0.0.1\C$\Windows\System32",      # admin share addressed by IP
+    r"\\?\UNC\fileserver\C$\Windows",        # UNC via the device namespace
+    "C:\\Windows.",                          # trailing dot — Win32 strips it
+    "C:\\Windows ",                          # trailing space — Win32 strips it
+])
+def test_offload_deny_reason_denies_windows_namespace_forms(raw):
+    import webguard
+    assert webguard._offload_deny_reason(webguard._norm_offload_path(raw)) != ""
+
+
+@pytest.mark.parametrize("raw", [
+    r"\\NAS\media\footage\2026",             # legit network share — not a system dir
+    r"\\?\D:\Backup\2026",                    # extended-length path to a backup drive
+    "1:/etc",                                 # non-letter 'drive' must NOT be drive-stripped
+])
+def test_offload_deny_reason_allows_legit_unc_extended_and_nonletter_drive(raw):
+    import webguard
+    assert webguard._offload_deny_reason(webguard._norm_offload_path(raw)) == ""
+
+
 # ── #10: /api/retranscribe-all language validator ────────────────────────────
 
 def test_retranscribe_all_rejects_non_iso639_language(fastapi_client):

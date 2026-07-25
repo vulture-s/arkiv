@@ -169,13 +169,18 @@ jobs:
       - name: pip-audit
         run: |
           python -m pip install --upgrade pip pip-audit
-          # PYSEC-2026-311 (chromadb, CVE-2026-45829): a pre-auth code-injection in
-          # chromadb's SERVER mode with NO fixed version (OSV: affected 1.0.0+, fix
-          # none). Arkiv embeds chromadb in-process (PersistentClient) and never runs
-          # its HTTP server, so the vulnerable surface isn't reachable. Ignored
-          # EXPLICITLY (not `|| true`) so the gate still blocks on any other/new
-          # advisory; revisit when a fix ships or chromadb is dropped.
-          pip-audit -r requirements.txt -r requirements-dev.txt --ignore-vuln PYSEC-2026-311
+          # chromadb PYSEC-2026-311 / CVE-2026-45829 / GHSA-f4j7-r4q5-qw2c: a
+          # pre-auth code-injection in chromadb's SERVER mode with NO fixed version
+          # (OSV: affected 1.0.0+, fix none). Arkiv embeds chromadb in-process
+          # (PersistentClient) and never runs its HTTP server, so the vulnerable
+          # surface isn't reachable. Ignored EXPLICITLY (not `|| true`) by BOTH the
+          # PYSEC id and its GHSA alias, so a pip-audit id switch can't red the gate
+          # on the very advisory it means to skip — the gate still blocks on any
+          # other/new advisory. Revisit when a fix ships or chromadb is dropped.
+          # NOTE: this only gates MERGES if `dependency-audit` (and `test-windows`)
+          # are set as REQUIRED checks in branch protection — verify in repo settings.
+          pip-audit -r requirements.txt -r requirements-dev.txt \
+            --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

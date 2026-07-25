@@ -59,8 +59,11 @@ async def _run_bounded_mcp(params, body):
                     stage = "initialize"
                     await session.initialize()
                     stage = "call"
-                    result = await body(session)
-                    stage = "cleanup"  # body done; the async-with exits (teardown) next
+                    try:
+                        result = await body(session)
+                    finally:
+                        stage = "cleanup"  # even if body raised: teardown runs next,
+                        # still inside fail_after, so a cleanup hang is labelled correctly
     except TimeoutError:
         pytest.fail("MCP stdio E2E timed out (stage: {0})".format(stage))
     return result
