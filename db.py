@@ -302,6 +302,15 @@ def init_db():
             # re-ingest/refresh can never clobber a user's marks), same as canonical_tags.
             ("in_point", "REAL"),
             ("out_point", "REAL"),
+            # A-cam (multicam): which physical camera a clip is from (camera_id,
+            # e.g. "A"/"B") and its framing (angle, e.g. "wide"/"CU"). arkiv already
+            # carries camera *identity* (make/model/reel) but not which angle in a
+            # multicam shoot — that is editorial, written ONLY by the dedicated
+            # /api/media/{id}/camera endpoint and, like in/out, kept OUT of
+            # _ALLOWED_COLS so a re-ingest/refresh can never clobber it. This is the
+            # data premise for multicam edit decisions (S-cam).
+            ("camera_id", "TEXT"),
+            ("angle", "TEXT"),
         ]:
             _add_column_if_missing(conn, "media", col, typ)  # audit L10
         for col, typ in [
@@ -655,7 +664,9 @@ LIGHT_COLS = (
     "editability_score, "
     # so the grid/inspector can show camera provenance without a per-clip detail
     # fetch (these live in the DB but were absent from the list shape).
-    "camera_make, camera_model, lens_model, reel_name, start_tc, codec"
+    "camera_make, camera_model, lens_model, reel_name, start_tc, codec, "
+    # A-cam: multicam angle annotation, so list/grid views can group by camera.
+    "camera_id, angle"
 )
 
 

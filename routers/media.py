@@ -66,6 +66,28 @@ class InOutUpdate(BaseModel):
         return v
 
 
+class CameraUpdate(BaseModel):
+    # Per-clip multicam annotation (A-cam): which physical camera (camera_id,
+    # e.g. "A"/"B"/"cam1") and its framing (angle, e.g. "wide"/"CU"). Free-form
+    # editorial labels — a multicam rig's labelling convention is the operator's,
+    # not ours — so validated only for sanity (trimmed + bounded). A blank string
+    # normalizes to None, i.e. clears the mark, same as an explicit null.
+    camera_id: Optional[str] = None
+    angle: Optional[str] = None
+
+    @field_validator("camera_id", "angle")
+    @classmethod
+    def _clean_label(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 64:
+            raise ValueError("label too long (max 64 chars)")
+        return v
+
+
 class TagCreate(BaseModel):
     name: str
     # Public callers may not mint 'auto' tags — those are owned by the vision
@@ -620,6 +642,42 @@ def update_inout(
                 (*params, media_id),
             )
     return {"ok": True, "in_point": new_in, "out_point": new_out}
+
+
+@router.patch("/api/media/{media_id}/camera")
+def update_camera(
+    media_id: int,
+    body: CameraUpdate,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
+    """Persist a clip's multicam annotation: camera_id + angle (A-cam).
+
+    arkiv already carries camera *identity* (make/model/reel) but not which angle
+    a clip is in a multicam shoot — that is editorial, so it's a human/API mark,
+    the data premise for multicam edit decisions (S-cam). PATCH semantics (same as
+    inout/rating): an OMITTED field is left untouched; an explicit null (or blank)
+    clears it. Kept out of _ALLOWED_COLS so a re-ingest never overwrites the mark.
+    """
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到")
+    provided = body.model_fields_set
+    sets, params = [], []
+    if "camera_id" in provided:
+        sets.append("camera_id = ?")
+        params.append(body.camera_id)
+    if "angle" in provided:
+        sets.append("angle = ?")
+        params.append(body.angle)
+    if sets:
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
+                (*params, media_id),
+            )
+    new_camera_id = body.camera_id if "camera_id" in provided else rec.get("camera_id")
+    new_angle = body.angle if "angle" in provided else rec.get("angle")
+    return {"ok": True, "camera_id": new_camera_id, "angle": new_angle}
 
 
 @router.get("/api/media/{media_id}/tags")
