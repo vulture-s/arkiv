@@ -9,19 +9,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "arkiv — Media Asset Manager",
-        "width": 1400,
-        "height": 900,
-        "minWidth": 900,
-        "minHeight": 600,
-        "center": true,
-        "decorations": true,
-        "resizable": true,
-        "url": "http://localhost:8501"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:"
     }
@@ -36,10 +24,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [],
+    "resources": {
+      "backend": "backend"
+    },
     "externalBin": [],
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "12.0"
     }
   },
   "plugins": {}

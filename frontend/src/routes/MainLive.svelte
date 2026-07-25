@@ -31,6 +31,15 @@
   let moreParams = null
   let loadingMore = false
   let stats = null
+  // First-run readiness gate: 'checking' until /api/health answers, then
+  // 'ready' | 'notready' (deps missing, 503) | 'unreachable' (backend down).
+  let health = null
+  let readyState = 'checking'
+  let seeding = false
+  // A1 pre-built sample: {available, loaded, dismissed, media_ids}. Drives the
+  // "範例素材" chip (shown when loaded) so a seeded demo reads as demo + is removable.
+  let sampleInfo = null
+  let removingSample = false
   let selectedId = null
   let hoverId = null
   let activeFilter = 'all'
@@ -176,13 +185,75 @@
     try { await api.openFile(path, true) } catch (e) { pushToast(`在 Finder 顯示失敗: ${e.message}`, 'error') }
   }
 
+  // Poll /api/health, distinguishing deps-missing (503, immediate) from a still-
+  // starting backend (fetch rejects → brief debounce before calling it unreachable).
+  async function checkReady() {
+    for (let i = 0; i < 3; i++) {
+      health = await api.getHealth().catch(() => null)
+      if (health) return health.ready ? 'ready' : 'notready' // got 200 or 503
+      await new Promise((r) => setTimeout(r, 1000 * (i + 1)))
+    }
+    return 'unreachable'
+  }
+
+  async function onSeed() {
+    if (seeding) return
+    seeding = true
+    try {
+      // Prefer the instant pre-built load (zero re-ingest). Fall back to the v1
+      // on-demand seed only when there's no artifact (404) or the project isn't
+      // fresh (409) — there a merge isn't safe, so re-ingest adds fresh rows.
+      if (sampleInfo?.available) {
+        try { await api.loadSample(); await load(); return }
+        catch (e) { if (e.status !== 404 && e.status !== 409) throw e }
+      }
+      const r = await api.seedSample()
+      if (r.queued === 0) { await load(); return } // already loaded
+      await pollSeed()
+    } catch (e) {
+      pushToast(e.status === 409 ? '有匯入任務進行中，稍後再試' : '載入失敗: ' + e.message, 'error')
+    } finally { seeding = false }
+  }
+
+  async function removeSampleAction() {
+    if (removingSample) return
+    removingSample = true
+    try {
+      await api.removeSample()
+      pushToast('已移除範例素材')
+      await load()
+    } catch (e) {
+      pushToast('移除失敗: ' + e.message, 'error')
+    } finally { removingSample = false }
+  }
+
+  async function pollSeed() {
+    const t0 = Date.now()
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1500))
+      let s = null
+      try { s = await api.getSeedStatus() } catch { /* transient */ }
+      if (s && !s.running) {
+        if (s.ok) { pushToast('sample library ready — 試搜 "llama"'); await load() }
+        else { pushToast('載入失敗 — 見 Settings → System', 'error') }
+        return
+      }
+      if (Date.now() - t0 > 20 * 60 * 1000) { pushToast('sample 載入逾時', 'error'); return }
+    }
+  }
+
   async function load() {
     state = 'loading'
+    readyState = 'checking'
+    readyState = await checkReady()
+    if (readyState === 'unreachable') { state = 'ok'; return } // panel renders via readyState
     try {
-      const [s, m, t, c] = await Promise.all([
+      const [s, m, t, c, si] = await Promise.all([
         api.getStats(), api.getMedia({ limit: PAGE }), api.getTags(), api.getCollections(),
+        api.sampleStatus().catch(() => null), // non-fatal: chip just stays hidden
       ])
       stats = s
+      sampleInfo = si
       items = (m.items || []).map(toCard)
       total = m.total ?? items.length
       moreParams = { limit: PAGE }
@@ -409,6 +480,10 @@
         id: selected.id, name: selected.name, kind: selected.kind,
         dur: selected.dur, size: selected.size,
         fps: selected._raw.fps ? Math.round(selected._raw.fps) : 24,
+        // Precise, unrounded fps for frame-exact IN/OUT. Rounding 23.976→24
+        // would drift frame boundaries over a long clip, so keep the raw value
+        // separate from the display `fps` above. null → frame features off.
+        fpsExact: selected._raw.fps || null,
         res: selected._raw.width ? `${selected._raw.width}×${selected._raw.height}` : '—',
         cam: [selected._raw.camera_make, selected._raw.camera_model].filter(Boolean).join(' ') || '—',
         lens: selected._raw.lens_model || '—',
@@ -611,6 +686,18 @@
       pushToast(`rating 寫入失敗: ${e.message}`, 'error')  // round-5 #43 — was a silent revert
     }
   }
+
+  // Persist the inspector's IN/OUT marks (debounced upstream in the inspector).
+  // Optimistically fold into the local detail so re-opening the clip restores the
+  // range without a refetch; toast on write failure.
+  async function saveInOut(id, inS, outS) {
+    if (detail && detail.id === id) detail = { ...detail, in_point: inS ?? null, out_point: outS ?? null }
+    try {
+      await api.setInOut(id, inS ?? null, outS ?? null)
+    } catch (e) {
+      pushToast(`IN/OUT 寫入失敗: ${e.message}`, 'error')
+    }
+  }
 </script>
 
 <div class="artboard" data-theme={theme}>
@@ -622,7 +709,7 @@
       <div class="toolrow">
         <div class="proj">
           <div class="ak-display projtitle">{projectName}</div>
-          <Mono dim style="font-size:11px;margin-top:5px;letter-spacing:0.04em;">
+          <Mono dim style="font-size:11px;margin-top:5px;letter-spacing:0.04em;white-space:nowrap;">
             {#if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB · live{:else}loading…{/if}
           </Mono>
         </div>
@@ -674,12 +761,51 @@
       {/if}
 
       <div class="gridwrap">
+        {#if sampleInfo?.loaded && stats?.total}
+          <div class="samplebar">
+            <Mono dim>範例素材 · {sampleInfo.media_ids?.length || 4} 支 CC-BY 示範片 — 換成你自己的素材時可移除</Mono>
+            <button class="ak-btn sm" on:click={removeSampleAction} disabled={removingSample}>
+              {removingSample ? '移除中…' : '移除範例'}
+            </button>
+          </div>
+        {/if}
         {#if state === 'loading'}
           <div class="msg"><Mono dim>loading…</Mono></div>
+        {:else if readyState === 'unreachable'}
+          <div class="msg readypanel">
+            <Eyebrow>◇ BACKEND UNREACHABLE</Eyebrow>
+            <Mono dim>後端沒有回應 — 伺服器還在啟動、或還沒開。</Mono>
+            <div class="readyactions"><button class="ak-btn" on:click={load}>Retry</button></div>
+          </div>
+        {:else if readyState === 'notready' && !stats?.total}
+          <div class="msg readypanel">
+            <Eyebrow>◇ SETUP INCOMPLETE</Eyebrow>
+            <Mono dim>arkiv 需要這些才能索引 / 搜尋：</Mono>
+            <ul class="checklist">
+              {#each Object.entries(health?.checks || {}) as [name, c]}
+                {#if !c.ok}
+                  <li><Mono>✗ {name}{c.detail ? ' — ' + c.detail : ''}</Mono></li>
+                {/if}
+              {/each}
+            </ul>
+            <div class="readyactions">
+              <button class="ak-btn" on:click={load}>Recheck</button>
+              <a class="ak-btn" href="#/settings">Settings</a>
+            </div>
+          </div>
         {:else if state === 'error'}
           <div class="msg"><Mono style="color:var(--cyan);">ERROR: {err}</Mono></div>
+        {:else if readyState === 'ready' && stats?.total === 0}
+          <div class="msg readypanel">
+            <Eyebrow>Library is empty</Eyebrow>
+            <Mono dim>打一句中文或英文，五年素材唰跳出 — 先載個範例庫試搜。</Mono>
+            <div class="readyactions">
+              <button class="ak-btn" on:click={onSeed} disabled={seeding}>{seeding ? 'Loading…' : 'Load sample library'}</button>
+              <a class="ak-btn" href="#/ingest-setup">or ingest your footage</a>
+            </div>
+          </div>
         {:else if visible.length === 0}
-          <div class="msg"><Eyebrow>No media</Eyebrow><Mono dim>ingest 一些素材,或清搜尋。</Mono></div>
+          <div class="msg"><Eyebrow>No media</Eyebrow><Mono dim>清搜尋或篩選。</Mono></div>
         {:else if view === 'list'}
           <table class="medialist">
             <thead>
@@ -758,6 +884,7 @@
         live={true}
         thumbUrl={inspThumb}
         videoSrc={inspVideoSrc}
+        fps={inspectorMedia ? inspectorMedia.fpsExact : null}
         peaks={inspPeaks}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
@@ -779,6 +906,9 @@
         onRemotion={selected ? () => exportRemotion(selected.id, selected.name) : null}
         onReveal={inspPath ? () => revealFile(inspPath) : null}
         onRate={rate}
+        inPoint={detailLive ? detailLive.in_point : null}
+        outPoint={detailLive ? detailLive.out_point : null}
+        onInOut={selected ? (inS, outS) => saveInOut(selected.id, inS, outS) : null}
       />
     {/if}
   </div>
@@ -788,13 +918,25 @@
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; position: relative; display: grid; grid-template-rows: 52px 1fr; background: var(--bg); color: var(--ink); overflow: hidden; margin: 0 auto; }
   .body { display: grid; grid-template-columns: 220px 1fr 340px; min-height: 0; }
   .center { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-  .toolrow { display: flex; align-items: center; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--rule); }
+  /* flex-wrap so the controls reflow onto a second line on a narrow window instead
+     of clipping off the right edge (the artboard is overflow:hidden, so a non-
+     wrapping toolrow made VIDEO/AUDIO/GOOD/…/GRID-LIST unreachable below ~1000px). */
+  .toolrow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 14px 22px; border-bottom: 1px solid var(--rule); }
   .proj { min-width: 0; }
   .projtitle { font-size: 28px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
-  .livesearch { flex: 1; max-width: 360px; font-size: 12px; }
+  /* min-width so the search shrinks then WRAPS rather than collapsing the buttons
+     off-screen; the stats line stays on one row (see the nowrap on the Mono). */
+  .livesearch { flex: 1 1 200px; min-width: 160px; max-width: 360px; font-size: 12px; }
   .ranked { font-size: 10px; padding: 6px 10px; }
   .metacsv { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
+  /* A1: pre-built sample demo bar — flags the seeded clips as demo + one-click remove */
+  .samplebar {
+    position: sticky; top: 0; z-index: 3;
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 8px 22px; border-bottom: 1px solid var(--rule); background: var(--surface-2);
+  }
+  .samplebar .ak-btn.sm { padding: 3px 10px; font-size: 11px; }
   /* G9: prototype card width = 198px (runtime-measured from the 1400px design canvas).
      repeat(4,1fr) ballooned cards on wide windows (310px @1920) and squeezed them on
      narrow (168px @1280). auto-fill holds the design rhythm and reflows column count;
@@ -826,6 +968,10 @@
   .lthumbph.audio { background: repeating-linear-gradient(90deg, var(--rule-hi) 0 2px, transparent 2px 4px); }
 
   .msg { padding: 40px 22px; display: flex; flex-direction: column; gap: 8px; }
+  .readypanel { align-items: flex-start; max-width: 580px; gap: 12px; }
+  .readypanel .checklist { list-style: none; margin: 2px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .readyactions { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+  .readyactions .ak-btn { text-decoration: none; }
   .loadmore { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 20px 22px; border-top: 1px solid var(--rule); }
   .exportbar {
     display: flex; align-items: center; justify-content: space-between; gap: 14px;

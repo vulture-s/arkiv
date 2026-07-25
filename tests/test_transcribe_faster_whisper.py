@@ -170,11 +170,11 @@ def test_custom_terms_env_only(monkeypatch):
 
 def test_custom_terms_file_only(monkeypatch, tmp_path):
     vf = tmp_path / "vocabulary.txt"
-    vf.write_text("# 影視人名詞庫\n恬馨\n\nWaffle House\n  明燒肉  \n", encoding="utf-8")
+    vf.write_text("# 影視人名詞庫\n王小明\n\nWaffle House\n  明燒肉  \n", encoding="utf-8")
     monkeypatch.setattr(transcribe, "CUSTOM_VOCABULARY", "")
     monkeypatch.setattr(transcribe, "VOCABULARY_FILE", str(vf))
     # comments + blank lines ignored, surrounding whitespace trimmed
-    assert transcribe._custom_terms() == ["恬馨", "Waffle House", "明燒肉"]
+    assert transcribe._custom_terms() == ["王小明", "Waffle House", "明燒肉"]
 
 
 def test_custom_terms_env_and_file_merge_dedup(monkeypatch, tmp_path):

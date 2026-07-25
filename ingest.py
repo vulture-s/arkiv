@@ -48,6 +48,34 @@ _STAGE_EVENTS = os.environ.get("ARKIV_STAGE_EVENTS") == "1"
 # hint, the default). Set from --language in main(), read at the transcribe call.
 _LANGUAGE_OVERRIDE = None
 
+# Pro/cinema codecs ffmpeg can't decode without vendor SDKs — a --dir scan drops
+# them silently, so a user who dumps a C300/RED/BRAW card sees "Found 0 media
+# files" and thinks arkiv is broken. Named here so the skip notice can call them out.
+_PRO_UNSUPPORTED_EXT = {".mxf", ".braw", ".r3d", ".m2ts", ".ari", ".dng", ".cine", ".crm", ".rmf"}
+
+
+def _report_unsupported(all_files, supported_files):
+    """Print a visible summary of files a --dir scan skipped (unsupported ext),
+    so pro-format footage isn't dropped with zero feedback. No-op if none."""
+    n = len(all_files) - len(supported_files)
+    if n <= 0:
+        return
+    from collections import Counter
+    exts = Counter(
+        (f.suffix.lower() or "(no ext)")
+        for f in all_files
+        if f.suffix.lower() not in SUPPORTED
+    )
+    top = ", ".join("{0}×{1}".format(e, c) for e, c in exts.most_common(6))
+    print("⚠  Skipped {0} unsupported file(s): {1}".format(n, top))
+    pro = sorted(e for e in exts if e in _PRO_UNSUPPORTED_EXT)
+    if pro:
+        print(
+            "   Pro/cinema formats {0} aren't indexable (ffmpeg has no decoder "
+            "without vendor SDKs).".format(", ".join(pro))
+        )
+    print("   arkiv indexes: {0}".format(", ".join(sorted(SUPPORTED))))
+
 
 def _emit_progress(obj: Dict) -> None:
     """One JSON progress event on its own flushed line (sentinel-prefixed). No-op
@@ -184,6 +212,40 @@ def _ensure_vision_ready(max_wait_s=None, _probe=None, _sleep=None):
     if not rp.is_model_loaded(result, _settings.vision_model()):
         _warm_up_vision_model()
     return result
+
+
+def _vision_model_abort_message(model, installed_vision_models):
+    """Actionable error shown when the effective vision model isn't installed
+    (issue #218). Kept pure (no I/O) so it's unit-testable."""
+    lines = [
+        "",
+        "!" * 60,
+        "VISION ABORTED: model '{0}' is not installed in Ollama.".format(model),
+        "  Every frame would 404. Fix one of:",
+    ]
+    if installed_vision_models:
+        lines.append("    - use an installed vision model: {0}".format(", ".join(installed_vision_models)))
+        lines.append("      set ARKIV_OLLAMA_VISION_MODEL=<model>  (or vision.model via PUT /api/settings)")
+    else:
+        lines.append("    - no vision models installed — pull one, e.g. `ollama pull qwen3-vl:8b`,")
+        lines.append("      then set ARKIV_OLLAMA_VISION_MODEL=<model>")
+    lines.append("    - or install this exact tag: `ollama pull {0}`".format(model))
+    lines.append("!" * 60)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _preflight_vision_model():
+    """Fail loud before a vision batch when the effective model is confirmably not
+    installed (issue #218) — instead of 404-spamming every frame and then halting
+    with a confusing 'Fix Ollama' message. No-op when Ollama is unreachable (the
+    strict check returns None → absence unconfirmable), respecting the
+    sensor-not-gate philosophy; warm-up surfaces that case."""
+    import settings as _settings
+    model = _settings.vision_model()
+    if vis.is_model_installed(model) is False:
+        print(_vision_model_abort_message(model, vis.list_vision_models()))
+        sys.exit(2)
 
 
 def _normalize_bmd_tag(value):
@@ -505,8 +567,42 @@ def needs_proxy(path: str) -> bool:
     return codec.needs_proxy(path) == codec.NEEDED
 
 
-def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[str]:
-    """Generate a 720p H.264 proxy for browser playback. Returns proxy path or None."""
+def _build_proxy_cmd(src: str, dst: str, height: int, hwaccel: bool) -> list:
+    """ffmpeg args for a browser-playback proxy: {height}p H.264, faststart.
+
+    hwaccel=True prepends VideoToolbox hardware DECODE — the proxy bottleneck is
+    decoding the 4K source, not encoding the small output (measured 26% wall / 59%
+    CPU on Apple Silicon). Encode stays libx264: the videotoolbox *encoder* was
+    slower and produced a far larger file. The caller retries with hwaccel=False if
+    a source's codec/pix_fmt isn't hardware-decodable. `-hwaccel` must precede `-i`."""
+    cmd = [config.FFMPEG_PATH, "-y"]
+    if hwaccel:
+        cmd += ["-hwaccel", "videotoolbox"]
+    cmd += [
+        "-i", src,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "28",
+        "-profile:v", "high", "-level:v", "4.0",
+        "-pix_fmt", "yuv420p",
+        "-g", "30",
+        "-vf", "scale=-2:{0}".format(int(height)),
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        dst,
+    ]
+    return cmd
+
+
+def generate_proxy(media_id: int, path: str, force: bool = False,
+                   height: Optional[int] = None, hwaccel: Optional[bool] = None) -> Optional[str]:
+    """Generate an H.264 proxy for browser playback. Returns proxy path or None.
+
+    height defaults to config.PROXY_HEIGHT; hwaccel defaults to
+    config.PROXY_HWDECODE_DEFAULT (Apple Silicon VideoToolbox decode). A hardware
+    decode that a given source can't support falls back to software automatically."""
+    if height is None:
+        height = config.PROXY_HEIGHT
+    if hwaccel is None:
+        hwaccel = config.PROXY_HWDECODE_DEFAULT
     proxy_dir = config.PROXIES_DIR
     proxy_dir.mkdir(parents=True, exist_ok=True)
     proxy_path = config.proxy_path_for(media_id, path)
@@ -526,22 +622,23 @@ def generate_proxy(media_id: int, path: str, force: bool = False) -> Optional[st
     # sits beside the final so os.replace stays on one filesystem.
     tmp_path = proxy_path.with_name("{0}.tmp.{1}{2}".format(proxy_path.stem, os.getpid(), proxy_path.suffix))
     tmp_path.unlink(missing_ok=True)
-    cmd = [
-        config.FFMPEG_PATH, "-y", "-i", path,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "28",
-        "-profile:v", "high", "-level:v", "4.0",
-        "-pix_fmt", "yuv420p",
-        "-g", "30",
-        "-vf", "scale=-2:720",
-        "-c:a", "aac", "-b:a", "128k",
-        "-movflags", "+faststart",
-        str(tmp_path),
-    ]
-    try:
+
+    def _run(use_hw: bool):
         # encoding pinned: Windows zh-TW default cp950 can't decode ffmpeg's
         # utf-8 stderr → UnicodeDecodeError crashes proxy gen on headless ingest.
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=600)
+        return subprocess.run(
+            _build_proxy_cmd(path, str(tmp_path), height, use_hw),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+        )
+
+    try:
+        r = _run(hwaccel)
+        if r.returncode != 0 and hwaccel:
+            # a source VideoToolbox can't hardware-decode (unusual pix_fmt/codec) →
+            # retry in software rather than fail the whole proxy.
+            tmp_path.unlink(missing_ok=True)
+            print("[proxy] hwaccel decode failed (rc={0}) for {1}; retrying software".format(r.returncode, path))
+            r = _run(False)
         if r.returncode == 0 and tmp_path.exists() and tmp_path.stat().st_size > 0:
             os.replace(str(tmp_path), str(proxy_path))
             return str(proxy_path)
@@ -790,6 +887,24 @@ def _run_status_cmd(args):
 # halt fast instead of spinning all night writing the same error.
 _VISION_CONSECUTIVE_HALT = 20
 
+# Phase-1 counterpart to _VISION_CONSECUTIVE_HALT. Phase 1 (probe+whisper+frames)
+# had no halt, so an external/network drive unplugged mid-batch would spin through
+# every remaining file at up to ~240s each (probe() = 2×120s + 2s retry) — hours on
+# a large queue. This many WHOLE-FILE failures in a row = the drive/source is gone,
+# so halt fast. The counter resets on any ok/skip/move (proof the drive is readable),
+# so a few genuinely-corrupt clips never trip it. Env-tunable; 0 disables.
+_INGEST_CONSECUTIVE_HALT = int(os.getenv("ARKIV_INGEST_HALT_STREAK", "5") or 0)
+
+
+def _ingest_halt_decision(consecutive_failed, threshold=None):
+    """Decide whether Phase 1 should halt after `consecutive_failed` whole files
+    failed in a row. Returns (should_halt, reason); reason is "" when continuing.
+    Pure — no I/O — so it's unit-testable. threshold<=0 disables the guard."""
+    thr = _INGEST_CONSECUTIVE_HALT if threshold is None else threshold
+    if thr > 0 and consecutive_failed >= thr:
+        return True, "{0} consecutive file failures — source/drive likely gone".format(consecutive_failed)
+    return False, ""
+
 
 def _describe_frames_with_fallback(frame_paths):
     """Primary vision model, then minicpm-v fallback for any failed frame.
@@ -823,19 +938,39 @@ def _describe_frames_with_fallback(frame_paths):
 def _vision_halt_decision(file_failed, file_total, total_failed, consecutive_failed,
                           max_failures, skip_failed):
     """Decide whether to halt after a file with `file_failed`/`file_total` still-failing
-    frames. Returns (should_halt, reason); reason is "" when continuing.
+    frames. Returns (should_halt, reason, ollama_suspected); reason is "" when
+    continuing and ollama_suspected says whether the halt implicates Ollama.
 
     Order matters: the consecutive-failure guard is checked first and ignores the
     tolerance flags — an Ollama outage must stop an unattended run even under
-    --skip-failed.
+    --skip-failed. The two halt reasons are semantically different (issue #219):
+    a consecutive streak points at Ollama being down; exceeding --max-failures is
+    just isolated frame failures with Ollama healthy — the caller must not tell
+    the operator to "Fix Ollama" in the latter case.
     """
     if consecutive_failed >= _VISION_CONSECUTIVE_HALT:
-        return True, "{0} consecutive frame failures — Ollama likely down / model crash".format(consecutive_failed)
+        return True, "{0} consecutive frame failures — Ollama likely down / model crash".format(consecutive_failed), True
     if skip_failed:
-        return False, ""
+        return False, "", False
     if total_failed > max_failures:
-        return True, "{0} failed frame(s) exceeded --max-failures={1}".format(total_failed, max_failures)
-    return False, ""
+        return True, "{0} failed frame(s) exceeded --max-failures={1}".format(total_failed, max_failures), False
+    return False, "", False
+
+
+def _vision_halt_remedy(ollama_suspected):
+    """Cause-accurate remedy lines for a vision halt (issue #219). Only points at
+    Ollama when the halt actually implicates it (consecutive-failure streak); an
+    exceeded --max-failures is just isolated frames with Ollama healthy, so the
+    remedy there is --skip-failed, not 'Fix Ollama'."""
+    if ollama_suspected:
+        return [
+            "  Ollama looks down — check it's running (`ollama ps`, restart if needed),",
+            "  then resume: py -3.12 ingest.py --vision-only",
+        ]
+    return [
+        "  Ollama is up — the frame(s) above failed to parse. Resume skipping them:",
+        "    py -3.12 ingest.py --vision-only --skip-failed   (or tolerate more: --max-failures N)",
+    ]
 
 
 def _run_vision_only(args):
@@ -868,6 +1003,7 @@ def _run_vision_only(args):
 
     print(f"Found {len(rows)} frames across {len(media_frames)} files\n")
 
+    _preflight_vision_model()  # issue #218: fail loud if the model isn't installed
     _unload_ollama_model("qwen2.5:14b")
     _ensure_vision_ready()
 
@@ -940,15 +1076,15 @@ def _run_vision_only(args):
             consecutive_failed = consecutive_failed + n_failed if n_failed == len(frame_paths) else 0
             failed_files.append((fname, n_failed, len(frame_paths)))
             print(f" [{v_elapsed:.1f}s] [{n_failed}/{len(frame_paths)} FAILED]")
-            should_halt, reason = _vision_halt_decision(
+            should_halt, reason, ollama_suspected = _vision_halt_decision(
                 n_failed, len(frame_paths), total_failed, consecutive_failed, max_failures, skip_failed)
             if should_halt:
                 remaining = len(media_frames) - vi
                 print(f"\n\n{'!'*60}")
                 print(f"VISION HALTED: {reason}")
                 print(f"  Completed: {ok}  |  Remaining: {remaining}  |  Failed frames: {total_failed}")
-                print(f"  Fix Ollama, then resume: py -3.12 ingest.py --vision-only")
-                print(f"  (skip persistent failures: add --skip-failed)")
+                for _line in _vision_halt_remedy(ollama_suspected):
+                    print(_line)
                 print(f"{'!'*60}\n")
                 halted = True
                 break
@@ -1200,6 +1336,25 @@ _CANON_PROMPT = (
 )
 
 
+# Shape contract for the merge proposal. json_mode alone only guarantees valid
+# JSON — qwen2.5:14b answers this very prompt with {"慢跑":"路跑"}, which has no
+# "tags" key at all, so the merge was silently dropped. Constrain at the source.
+_CANON_SCHEMA = {
+    "type": "object",
+    "properties": {"tags": {"type": "array", "items": {"type": "string"}}},
+    "required": ["tags"],
+}
+
+
+def _str_list(value) -> list:
+    """Keep only the strings in a parsed LLM list. Schema adherence is
+    model-dependent, so a stray dict/int must degrade to "ignored", never reach
+    canonicalize() and raise AttributeError mid-run (same discipline as chat.py)."""
+    if not isinstance(value, list):
+        return []
+    return [v for v in value if isinstance(v, str)]
+
+
 def _run_canonicalize_tags(args):
     """Populate media.canonical_tags via one LLM semantic-merge per media. Reads
     the raw vision tags (rank_media_tags over frame_tags), asks the chat model to
@@ -1224,8 +1379,13 @@ def _run_canonicalize_tags(args):
             db.set_canonical_tags(r["id"], [])
             continue
         try:
-            resp = llm.chat(_CANON_PROMPT + _json.dumps(raw, ensure_ascii=False), json_mode=True)
-            proposed = _json.loads(resp["text"]).get("tags", [])
+            resp = llm.chat(
+                _CANON_PROMPT + _json.dumps(raw, ensure_ascii=False),
+                json_mode=True,
+                schema=_CANON_SCHEMA,
+            )
+            parsed = _json.loads(resp["text"])
+            proposed = _str_list(parsed.get("tags") if isinstance(parsed, dict) else None)
         except Exception as e:
             failed += 1
             print("  media {0}: LLM 失敗 ({1}) → 跳過".format(r["id"], e))
@@ -1247,6 +1407,25 @@ _ALIAS_JUDGE_PROMPT = (
     "**只能用清單裡出現的詞，絕對不可創造新詞，也不要把不同距離/不同事物硬合(例：路跑≠馬拉松)**。"
     "回傳 {\"groups\":[{\"pref\":\"...\",\"alts\":[\"...\"]}]}，只輸出 JSON。\n候選標籤："
 )
+
+
+_ALIAS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "pref": {"type": "string"},
+                    "alts": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["pref", "alts"],
+            },
+        }
+    },
+    "required": ["groups"],
+}
 
 
 def _cosine(a, b):
@@ -1308,14 +1487,25 @@ def _run_propose_aliases(args):
     for cl in clusters:
         cl_set = set(cl)
         try:
-            resp = llm.chat(_ALIAS_JUDGE_PROMPT + _json.dumps(cl, ensure_ascii=False), json_mode=True)
-            proposed = _json.loads(resp["text"]).get("groups", [])
+            resp = llm.chat(
+                _ALIAS_JUDGE_PROMPT + _json.dumps(cl, ensure_ascii=False),
+                json_mode=True,
+                schema=_ALIAS_SCHEMA,
+            )
+            parsed = _json.loads(resp["text"])
+            proposed = parsed.get("groups") if isinstance(parsed, dict) else None
+            proposed = proposed if isinstance(proposed, list) else []
         except Exception as e:
             print("  cluster {0}: LLM 失敗 ({1}) → 跳過".format(cl, e))
             continue
         for g in proposed:
+            # A bare string here used to raise AttributeError OUTSIDE the try
+            # above, killing the whole run and discarding every cluster judged so
+            # far (out_groups is only written after the loop).
+            if not isinstance(g, dict):
+                continue
             pref = tag_quality.canonicalize(g.get("pref") or "")
-            alts = [tag_quality.canonicalize(a) for a in (g.get("alts") or [])]
+            alts = [tag_quality.canonicalize(a) for a in _str_list(g.get("alts"))]
             # guard: pref + every alt must be a real tag from THIS cluster (no
             # invention, no cross-cluster bleed); need >=1 alt or there's no merge.
             alts = [a for a in alts if a and a in cl_set and a != pref]
@@ -1415,6 +1605,8 @@ def main():
     parser.add_argument("--job-id", type=int, default=0, help="Job id for --queue cancel/retry")
     parser.add_argument("--status", action="store_true", help="Phase 11.5e: print resource + queue status (--json for machine-readable)")
     parser.add_argument("--json", action="store_true", help="With --status: emit JSON instead of human-readable")
+    parser.add_argument("--retraditionalize", action="store_true", help="Phase 9.8b backfill: retro-convert existing SIMPLIFIED zh transcripts (transcript + segments + words + the per-language archive) to Taiwan Traditional (s2twp), so the pre-9.8b backlog stops missing a 記憶體 query on a 內存 clip. GATED: only genuine Simplified rows convert; already-Traditional / mixed rows are skipped (never fed to the phrase layer, so never corrupted). Idempotent, timing-safe. Follow with `embed.py --rebuild`. No --dir / re-transcribe needed.")
+    parser.add_argument("--dry-run", action="store_true", help="With --retraditionalize: report what would convert without writing.")
     args = parser.parse_args()
 
     # brick 4: apply the per-run whisper preset + language override before any
@@ -1425,6 +1617,14 @@ def main():
         tr._apply_whisper_guard_mode(tr._resolve_whisper_guard_mode(args.whisper_guard))
     global _LANGUAGE_OVERRIDE
     _LANGUAGE_OVERRIDE = args.language or None
+    # One-time notice: with no explicit --language, Whisper falls back to zh, so
+    # English/Japanese footage gets silently transcribed as garbled Chinese.
+    if _LANGUAGE_OVERRIDE is None and (getattr(args, "dir", None) or getattr(args, "files", None)):
+        print(
+            "ℹ  No --language given; non-Chinese audio will transcribe as 'zh' "
+            "(Whisper default) and come out garbled. Pass --language en/ja/ko if "
+            "your footage isn't Chinese.\n"
+        )
 
     # --dir validation: required only when actually ingesting
     maintenance_mode = (
@@ -1432,6 +1632,7 @@ def main():
         or args.regenerate_proxies or args.regenerate_thumbnails or args.vision_only
         or args.canonicalize_tags
         or args.propose_aliases or args.apply_aliases
+        or args.retraditionalize
         or bool(args.queue) or args.status
     )
     if not maintenance_mode and not args.dir and not args.files:
@@ -1449,7 +1650,7 @@ def main():
 
     # Phase 8.0e: pre-flight storage check before any pipeline work.
     # Skip for maintenance modes (they're the tools that fix broken state).
-    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status or args.canonicalize_tags or args.propose_aliases or args.apply_aliases):
+    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status or args.canonicalize_tags or args.propose_aliases or args.apply_aliases or args.retraditionalize):
         import health
         ok_pf, errors_pf = health.preflight_paths()
         if not ok_pf:
@@ -1501,6 +1702,13 @@ def main():
         _run_apply_aliases(args)
         return
 
+    # ── Phase 9.8b backfill: retro-convert Simplified zh transcripts ──────
+    if args.retraditionalize:
+        import retraditionalize
+        counts = retraditionalize.backfill(dry_run=args.dry_run)
+        print(retraditionalize.format_summary(counts, dry_run=args.dry_run))
+        return
+
     # Warm up models before batch processing
     print("Warming up models...", flush=True)
     tr.warm_up()
@@ -1540,15 +1748,19 @@ def main():
             # Single-file mode (used by watch.py for new-arrival ingest)
             files = [media_dir] if media_dir.suffix.lower() in SUPPORTED else []
         elif args.recursive:
-            files = sorted(
+            all_files = [
                 f for f in media_dir.rglob("*")
-                if f.is_file() and f.suffix.lower() in SUPPORTED
-            )
+                if f.is_file() and not f.name.startswith(".")
+            ]
+            files = sorted(f for f in all_files if f.suffix.lower() in SUPPORTED)
+            _report_unsupported(all_files, files)
         else:
-            files = sorted(
+            all_files = [
                 f for f in media_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in SUPPORTED
-            )
+                if f.is_file() and not f.name.startswith(".")
+            ]
+            files = sorted(f for f in all_files if f.suffix.lower() in SUPPORTED)
+            _report_unsupported(all_files, files)
 
     total = len(files)
 
@@ -1579,6 +1791,7 @@ def main():
     import time as _time
 
     ok, skipped, failed, moved = 0, 0, 0, 0
+    consecutive_ingest_fail = 0  # whole-file failures in a row → drive-gone halt
     refreshed_ids = set()  # already-indexed ids re-processed this run → force re-embed
     bench_log = []  # per-file benchmark records
     batch_start = _time.time()
@@ -1595,6 +1808,7 @@ def main():
         if already and not args.refresh:
             print(f"[{i}/{len(files)}] SKIP {f.name}")
             skipped += 1
+            consecutive_ingest_fail = 0  # a readable skip proves the drive is alive
             continue
 
         # Move-detection (round-5 #8): an UNKNOWN path whose content hash matches a
@@ -1612,6 +1826,7 @@ def main():
                     db.repoint_media_path(mrow["id"], str(f))
                     print(f"[{i}/{len(files)}] MOVED {f.name} → re-pointed id={mrow['id']}")
                     moved += 1
+                    consecutive_ingest_fail = 0  # a readable move proves the drive is alive
                     continue
 
         existing = None
@@ -1706,12 +1921,29 @@ def main():
                 })
                 print(f"  [{file_elapsed:.1f}s | {dur/max(file_elapsed,1):.1f}x RT]")
                 ok += 1
+                consecutive_ingest_fail = 0  # a healthy read resets the drive-gone streak
                 _emit_progress({"t": "file", "index": i, "total": len(files), "file": f.name, "status": "phase1_done"})
             else:
                 failed += 1
+                consecutive_ingest_fail += 1
         except Exception as e:
             print(f" [ERROR: {e}]")
             failed += 1
+            consecutive_ingest_fail += 1
+
+        # Phase-1 counterpart to the vision halt: an unbroken run of whole-file
+        # failures means the source/drive went away — stop fast instead of spinning
+        # ~240s/file (probe retry) through the rest of the queue. Resets above on
+        # any ok/skip/move, so sporadic corrupt clips never trip it.
+        should_halt, _reason = _ingest_halt_decision(consecutive_ingest_fail)
+        if should_halt:
+            print(
+                "\n[INGEST HALTED] {0}\n"
+                "  {1} ok / {2} failed, {3} file(s) not reached. Reconnect the source "
+                "and re-run — already-indexed files skip.".format(
+                    _reason, ok, failed, len(files) - i)
+            )
+            break
 
     # ── Phase 2: Vision (unload LLM first to free VRAM) ───────────────────
     # Initialized unconditionally so the exit-code logic can read them even when
@@ -1728,6 +1960,7 @@ def main():
     if phase1_results:
         print(f"\n{'─'*60}")
         print(f"Phase 2: Vision — {len(phase1_results)} files, unloading LLM to free VRAM...")
+        _preflight_vision_model()  # issue #218: fail loud if the model isn't installed
         _unload_ollama_model("qwen2.5:14b")
         _ensure_vision_ready()
         for vi, (fpath, (record, frames)) in enumerate(phase1_results.items(), 1):
@@ -1820,7 +2053,7 @@ def main():
                     consecutive_empty_frames = consecutive_empty_frames + n_failed if n_failed == len(video_frames) else 0
                     vision_failed_files.append((fname, n_failed, len(video_frames)))
                     print(f" [{v_elapsed:.1f}s] [{n_failed}/{len(video_frames)} FAILED]")
-                    should_halt, reason = _vision_halt_decision(
+                    should_halt, reason, ollama_suspected = _vision_halt_decision(
                         n_failed, len(video_frames), total_failed, consecutive_empty_frames, max_failures, skip_failed)
                     if should_halt:
                         vision_halted = True
@@ -1828,8 +2061,8 @@ def main():
                         print(f"\n\n{'!'*60}")
                         print(f"VISION HALTED: {reason}")
                         print(f"  Completed: {vision_ok}  |  Remaining: {remaining}  |  Failed frames: {total_failed}")
-                        print(f"  Fix Ollama, then resume: py -3.12 ingest.py --vision-only")
-                        print(f"  (skip persistent failures: add --skip-failed)")
+                        for _line in _vision_halt_remedy(ollama_suspected):
+                            print(_line)
                         print(f"{'!'*60}\n")
                         break
                 else:

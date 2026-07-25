@@ -82,6 +82,12 @@ retranscribe.reset_progress(
 # mid-build playback streamed truncated proxies.
 proxy_build = SingleFlight("proxy_build")
 
+# First-run: /api/sample/seed loads the bundled CC-BY sample clips (single-flight +
+# progress poll). Seed the poll shape so GET /api/sample/seed/status returns the
+# full dict even before the first run.
+sample_seed = SingleFlight("sample_seed")
+sample_seed.reset_progress(running=False, ok=False, returncode=None, message="", clips=0)
+
 
 def _rebuild_embeddings():
     """Background task: full embedding rebuild via subprocess. Runs embed.py in a

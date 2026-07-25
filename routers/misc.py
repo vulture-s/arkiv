@@ -186,3 +186,79 @@ def client_log(body: ClientLogRequest):
     msg = _log_safe(str(body.msg if body.msg is not None else ""), 2000)
     print(f"[WebView {level}] {msg}", flush=True)
     return {"ok": True}
+
+
+@router.get("/api/version")
+def api_version():
+    """Unauthenticated: identify the build. `curl <host>/api/version`."""
+    return {"version": config.VERSION}
+
+
+@router.get("/api/health")
+def api_health():
+    """Unauthenticated self-diagnostic — a user (or support) curls this ONE URL to
+    see if the runtime deps are present, without a terminal or a token. Returns
+    booleans + model names only (NO absolute paths) so it's safe to expose. Mirrors
+    the checks in python health.py. The desktop app / a helper can hit it directly."""
+    import shutil
+
+    out = {"version": config.VERSION, "ready": True, "checks": {}}
+
+    def _mark(name, ok, detail=""):
+        out["checks"][name] = {"ok": bool(ok), "detail": detail}
+        if not ok:
+            out["ready"] = False
+
+    # external binaries (ffmpeg/ffprobe required; exiftool optional)
+    _mark("ffmpeg", shutil.which(config.FFMPEG_PATH) is not None)
+    _mark("ffprobe", shutil.which(config.FFPROBE_PATH) is not None)
+    exif = getattr(config, "EXIFTOOL_PATH", "") or "exiftool"
+    out["checks"]["exiftool"] = {  # optional — doesn't flip ready
+        "ok": shutil.which(exif) is not None,
+        "detail": "optional",
+    }
+
+    # ollama reachable + the three configured models pulled
+    try:
+        import requests
+
+        r = requests.get(f"{config.OLLAMA_URL}/api/tags", timeout=3)
+        r.raise_for_status()
+        models = [m.get("name", "") for m in r.json().get("models", [])]
+        _mark("ollama", True, f"{len(models)} models")
+        for label, want in (
+            ("embed", config.OLLAMA_EMBED_MODEL),
+            ("vision", config.OLLAMA_VISION_MODEL),
+            ("chat", config.OLLAMA_CHAT_MODEL),
+        ):
+            base = want.split(":")[0]
+            present = any(base in m for m in models)
+            _mark(f"model:{want}", present, "" if present else f"ollama pull {want}")
+    except Exception:
+        _mark("ollama", False, "unreachable — is `ollama serve` running?")
+
+    return JSONResponse(out, status_code=200 if out["ready"] else 503)
+
+
+@router.get("/api/logs/tail")
+def logs_tail(n: int = 200, _tok: dict = Depends(require_scopes("projects_read"))):
+    """Last `n` lines of the backend log (the Tauri sidecar writes it) for the in-app
+    "Report a problem". AUTHED — the log can carry absolute paths / tracebacks, so it
+    is NOT open like /api/health; loopback trust lets the local WebView reach it
+    token-free. Each line is control-char sanitized. Missing file → 200 with
+    available:false (a bare-uvicorn dev run has no such log)."""
+    n = max(1, min(int(n or 200), 2000))
+    log_path = config.LOGS_DIR / "backend.log"
+    try:
+        if not log_path.exists():
+            return {"lines": [], "available": False, "detail": "no log file (bare uvicorn?)"}
+        # bounded tail read: only the last ~256 KB, so a huge log can't blow memory
+        size = log_path.stat().st_size
+        with open(log_path, "rb") as fh:
+            if size > 262144:
+                fh.seek(-262144, 2)
+            raw = fh.read()
+        lines = [_log_safe(ln, 2000) for ln in raw.decode("utf-8", "replace").splitlines()[-n:]]
+        return {"lines": lines, "available": True}
+    except Exception as e:  # noqa: BLE001
+        return {"lines": [], "available": False, "detail": "log read error: {0}".format(type(e).__name__)}

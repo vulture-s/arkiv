@@ -44,7 +44,7 @@ def _csv_safe(value: str) -> str:
 def _parse_frame_tags(frame_tags_value):
     """Decode frame_tags JSON list into structured fields used by CSV export.
 
-    Real-world DB（example: 恬馨庫 427 rows）每筆 frame_tags 是 vision pipeline
+    Real-world DB（example: 某商業案素材庫 427 rows）每筆 frame_tags 是 vision pipeline
     寫入的 JSON list，每個 frame 都是 dict：
       {description, tags, content_type, focus_score, exposure, stability,
        audio_quality, atmosphere, energy, edit_position, edit_reason}

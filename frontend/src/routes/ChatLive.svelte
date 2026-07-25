@@ -4,6 +4,7 @@
      inline. Requires chat_write scope (token-free on loopback). -->
 <script>
   import { onMount, onDestroy, tick } from 'svelte'
+  import { VERSION } from '../lib/version.js'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
@@ -195,7 +196,7 @@
 <div class="artboard" data-theme={theme}>
   <div class="topbar">
     <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">v0.9.2</Mono>
+    <Mono dim style="font-size:10px;">{VERSION}</Mono>
     <div class="grow"></div>
     <Mono dim style="font-size:11px;">chat · 5-intent · vector + LLM</Mono>
     <a class="ak-btn" href="#/main-live">← 返回素材庫</a>

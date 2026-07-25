@@ -7,6 +7,11 @@ from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).parent
 
+# Backend product version. Keep in sync with the release tag + frontend
+# version.js at release time. Served by GET /api/version and included in
+# GET /api/health so a user/support can identify the build.
+VERSION = "0.10.0"
+
 # Codex Round-2 audit (J3): without bounds, ARKIV_PROXIES_DIR=/etc would have
 # arkiv write generated proxy mp4 files into /etc on every HEVC ingest. Same
 # risk for THUMBNAILS_DIR / CHROMA_PATH / DB_PATH (any operator-tunable
@@ -71,6 +76,10 @@ PROJECT_ROOT = _validate_writable_path(
 )
 _ARKIV_DIR = PROJECT_ROOT / ".arkiv"
 _ASCMHL_DIR = PROJECT_ROOT / "ascmhl"
+# The Tauri sidecar writes the backend's stdout/stderr here (src-tauri/src/main.rs);
+# GET /api/logs/tail reads it for the in-app "Report a problem". Not created here —
+# under bare uvicorn PROJECT_ROOT falls back to BASE_DIR and the dir simply won't exist.
+LOGS_DIR = PROJECT_ROOT / "logs"
 
 DB_PATH = _validate_writable_path(
     Path(os.getenv("ARKIV_DB_PATH", str(_ARKIV_DIR / "project.db"))), "ARKIV_DB_PATH"
@@ -298,6 +307,18 @@ FFPROBE_PATH = _detect_ffmpeg_tool("ffprobe", "ARKIV_FFPROBE_PATH")
 import platform as _plat
 
 _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
+
+# Proxy generation (D3). PROXY_HEIGHT = the browser-playback proxy's height (the
+# resolution selector in Settings drives this once wired). PROXY_HWDECODE_DEFAULT:
+# use Apple Silicon VideoToolbox for hardware DECODE of the 4K source — that decode
+# is the proxy bottleneck, NOT the 720p encode (measured on M2 Max: 26% wall / 59%
+# CPU off a 140 Mbps 4K clip; the videotoolbox *encoder* was slower and far larger,
+# so encode stays libx264). Defaults on for arm64 macOS, off elsewhere; the encoder
+# retries in software if a source's codec/pix_fmt isn't hardware-decodable.
+PROXY_HEIGHT = int(os.getenv("ARKIV_PROXY_HEIGHT", "720"))
+_hwd = os.getenv("ARKIV_PROXY_HWDECODE", "auto").strip().lower()
+PROXY_HWDECODE_DEFAULT = _IS_MLX if _hwd in ("", "auto") else _hwd in ("1", "true", "yes", "on")
+
 _DEFAULT_WHISPER = "mlx-community/whisper-large-v3-turbo" if _IS_MLX else "large-v3-turbo"
 WHISPER_MODEL = os.getenv("ARKIV_WHISPER_MODEL", _DEFAULT_WHISPER)
 

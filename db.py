@@ -293,6 +293,15 @@ def init_db():
             # UI can toggle raw ↔ canonical; populated on demand by the re-tag
             # command, NULL until then.
             ("canonical_tags", "TEXT"),
+            # FX30 editing (D1): persisted per-clip IN/OUT trim points, in seconds.
+            # The inspector marks were otherwise UI-ephemeral (lost on clip-switch);
+            # persisting them lets the inspector restore a clip's range and lets the
+            # multi-clip timeline export assemble a cut list of the marked sub-clips
+            # (D2) instead of laying full clips end-to-end. Written ONLY by the
+            # dedicated /api/media/{id}/inout endpoint (kept out of _ALLOWED_COLS so a
+            # re-ingest/refresh can never clobber a user's marks), same as canonical_tags.
+            ("in_point", "REAL"),
+            ("out_point", "REAL"),
         ]:
             _add_column_if_missing(conn, "media", col, typ)  # audit L10
         for col, typ in [
@@ -736,6 +745,45 @@ def get_transcript(media_id, lang) -> Optional[Dict]:
     return dict(row) if row else None
 
 
+# ── Phase 9.8b backfill: retro-convert existing Simplified zh transcripts ─────
+# (see retraditionalize.py — write-path 9.8b only converts NEW transcribes)
+
+def iter_zh_media(_conn=None):
+    """All zh media rows carrying a non-empty ACTIVE transcript, for the 9.8b
+    backfill. Returns id/lang/transcript/segments_json/words_json. Pass _conn to
+    read inside the caller's transaction."""
+    sql = ("SELECT id, lang, transcript, segments_json, words_json FROM media "
+           "WHERE lang LIKE 'zh%' AND transcript IS NOT NULL AND transcript != ''")
+    if _conn is not None:
+        return [dict(r) for r in _conn.execute(sql).fetchall()]
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def update_media_transcript_fields(media_id, transcript, segments_json, words_json, _conn=None):
+    """Overwrite ONLY the ACTIVE transcript text columns on a media row (9.8b
+    backfill). Duration / frames / tags / timings are untouched — the caller passes
+    already-converted, timing-safe JSON. Pass _conn to join an open transaction."""
+    sql = "UPDATE media SET transcript=?, segments_json=?, words_json=? WHERE id=?"
+    params = (transcript, segments_json, words_json, media_id)
+    if _conn is not None:
+        _conn.execute(sql, params)
+    else:
+        with get_conn() as conn:
+            conn.execute(sql, params)
+
+
+def iter_zh_transcript_archive(_conn=None):
+    """All zh rows in the per-language transcript archive (9.7 G2 table), for the
+    9.8b backfill. Returns media_id/lang/transcript/segments_json/words_json."""
+    sql = ("SELECT media_id, lang, transcript, segments_json, words_json FROM transcripts "
+           "WHERE lang LIKE 'zh%'")
+    if _conn is not None:
+        return [dict(r) for r in _conn.execute(sql).fetchall()]
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
 def set_canonical_tags(media_id: int, tags: list) -> None:
     """Store the LLM-canonicalized tag list (JSON) for a media. Separate from the
     raw vision tags — never touches frame_tags / the tags table."""
@@ -972,6 +1020,34 @@ def delete_frames(media_id: int, _conn=None):
     else:
         with get_conn() as conn:
             _do(conn)
+
+
+def delete_media(media_id: int, _conn=None):
+    """Delete one media row; its frames / tags / transcripts drop via ON DELETE
+    CASCADE (get_conn sets PRAGMA foreign_keys=ON). Returns the media + frame
+    thumbnail_path values (so the caller can unlink the .jpg files), or None if no
+    such media. Chroma vectors are the caller's job (vectordb.delete_media) — this
+    layer has no vector-store dependency. Used by the sample-library 'remove' flow
+    (routers/sample.py); the UI has no general delete-media action today."""
+    def _do(c):
+        row = c.execute("SELECT id FROM media WHERE id = ?", (media_id,)).fetchone()
+        if row is None:
+            return None
+        thumbs = []
+        m = c.execute("SELECT thumbnail_path FROM media WHERE id = ?", (media_id,)).fetchone()
+        if m and m["thumbnail_path"]:
+            thumbs.append(m["thumbnail_path"])
+        for fr in c.execute(
+            "SELECT thumbnail_path FROM frames WHERE media_id = ? AND thumbnail_path IS NOT NULL",
+            (media_id,),
+        ).fetchall():
+            thumbs.append(fr["thumbnail_path"])
+        c.execute("DELETE FROM media WHERE id = ?", (media_id,))  # cascades children
+        return thumbs
+    if _conn is not None:
+        return _do(_conn)
+    with get_conn() as conn:
+        return _do(conn)
 
 
 # ── Enhanced Queries (Phase 4 UI) ─────────────────────────────────────────────

@@ -94,6 +94,44 @@ def test_rating_update_set_clear_and_missing_record(fastapi_client, sample_recor
     assert missing.status_code == 404
 
 
+def test_inout_update_persist_restore_semantics_and_validation(fastapi_client, sample_record):
+    db = _insert_media(sample_record)
+
+    # set a trim window
+    r = fastapi_client.patch("/api/media/1/inout", json={"in_point": 1.5, "out_point": 4.0})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "in_point": 1.5, "out_point": 4.0}
+    rec = db.get_record_by_id(1)
+    assert rec["in_point"] == 1.5 and rec["out_point"] == 4.0
+
+    # the detail endpoint surfaces the marks so the inspector can restore them
+    detail = fastapi_client.get("/api/media/1").json()
+    assert detail["in_point"] == 1.5 and detail["out_point"] == 4.0
+
+    # PATCH semantics: an omitted field is untouched (move IN, keep OUT)
+    r = fastapi_client.patch("/api/media/1/inout", json={"in_point": 2.0})
+    assert r.status_code == 200
+    rec = db.get_record_by_id(1)
+    assert rec["in_point"] == 2.0 and rec["out_point"] == 4.0
+
+    # explicit null clears a mark
+    r = fastapi_client.patch("/api/media/1/inout", json={"in_point": None, "out_point": None})
+    assert r.status_code == 200
+    rec = db.get_record_by_id(1)
+    assert rec["in_point"] is None and rec["out_point"] is None
+
+    # an inverted window (in >= out) is rejected, not silently persisted
+    bad = fastapi_client.patch("/api/media/1/inout", json={"in_point": 5.0, "out_point": 3.0})
+    assert bad.status_code == 422
+    assert db.get_record_by_id(1)["in_point"] is None  # unchanged
+
+    # non-finite / negative values are rejected by the model
+    assert fastapi_client.patch("/api/media/1/inout", json={"in_point": -1.0}).status_code == 422
+
+    # missing record → 404
+    assert fastapi_client.patch("/api/media/999/inout", json={"in_point": 1.0}).status_code == 404
+
+
 def test_tag_stats_and_tag_catalog_endpoints(fastapi_client, sample_record):
     _insert_media(sample_record)
 
@@ -887,6 +925,60 @@ def test_generate_proxy_success_replaces_atomically(tmp_path, monkeypatch):
     assert list(proxies.glob("*.tmp.*")) == []
 
 
+def test_build_proxy_cmd_hwaccel_and_height():
+    """D3: hardware DECODE is prepended before -i, encode stays libx264, and the
+    scale height is parameterised (the resolution selector drives it)."""
+    ingest = importlib.import_module("ingest")
+    cmd = ingest._build_proxy_cmd("/src.mp4", "/dst.mp4", 720, True)
+    assert "-hwaccel" in cmd and cmd[cmd.index("-hwaccel") + 1] == "videotoolbox"
+    # -hwaccel must come before the input, or ffmpeg ignores it
+    assert cmd.index("-hwaccel") < cmd.index("-i")
+    assert cmd[cmd.index("-i") + 1] == "/src.mp4"
+    assert cmd[cmd.index("-c:v") + 1] == "libx264"  # encode stays software libx264
+    assert "scale=-2:720" in cmd
+    assert cmd[-1] == "/dst.mp4"
+    # software path: no -hwaccel, height honoured
+    sw = ingest._build_proxy_cmd("/s.mp4", "/d.mp4", 1080, False)
+    assert "-hwaccel" not in sw
+    assert "scale=-2:1080" in sw
+
+
+def test_generate_proxy_falls_back_to_software_when_hwaccel_fails(tmp_path, monkeypatch):
+    """D3: a source VideoToolbox can't hardware-decode must not fail the proxy —
+    the encoder retries in software (no -hwaccel) and still produces the file."""
+    ingest = importlib.import_module("ingest")
+    config = importlib.import_module("config")
+    proxies = tmp_path / "proxies"; proxies.mkdir()
+    monkeypatch.setattr(config, "PROXIES_DIR", proxies)
+    src = tmp_path / "clip.mov"; src.write_bytes(b"src")
+
+    calls = []
+
+    class _R:
+        stderr = "boom"
+
+        def __init__(self, rc):
+            self.returncode = rc
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        used_hw = "-hwaccel" in cmd
+        if used_hw:
+            return _R(1)  # hardware decode "fails"
+        open(cmd[-1], "wb").write(b"sw-proxy")  # software succeeds, writes the tmp
+        return _R(0)
+
+    monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+
+    result = ingest.generate_proxy(1, str(src), hwaccel=True)
+    final = config.proxy_path_for(1, str(src))
+    assert result == str(final)
+    assert final.read_bytes() == b"sw-proxy"
+    assert len(calls) == 2  # first hwaccel (failed), then software
+    assert "-hwaccel" in calls[0] and "-hwaccel" not in calls[1]
+    assert list(proxies.glob("*.tmp.*")) == []  # tmp cleaned
+
+
 def test_stream_returns_409_when_hevc_source_has_no_proxy(
     fastapi_client, sample_record, tmp_path, monkeypatch
 ):
@@ -1131,6 +1223,53 @@ def test_timeline_fcpxml_clip_start_within_asset_range_for_nonzero_tc(fastapi_cl
     c_start = _sec(clip.getAttribute("start"))
     assert a_start == 3600.0  # asset anchored at camera TC
     assert a_start <= c_start <= a_start + a_dur  # clip start within asset range
+
+
+# ── D2: the timeline lays the MARKED sub-clip, not the whole file ─────────────
+
+def _mark(fastapi_client, mid, in_point, out_point):
+    r = fastapi_client.patch(f"/api/media/{mid}/inout", json={"in_point": in_point, "out_point": out_point})
+    assert r.status_code == 200
+
+
+def test_timeline_edl_honors_persisted_inout_marks(fastapi_client, sample_record):
+    _insert_two_clips_with_segments(sample_record)  # A 30s@30 TC 01:00:00:00; B 20s@30
+    _mark(fastapi_client, 1, 10.0, 25.0)  # clip A → 15s window [10,25]; B unmarked → full 20s
+    body = fastapi_client.get("/api/export/timeline/edl", params={"ids": "1,2"}).text
+    # A is cut from its IN point: source runs 01:00:10:00 → 01:00:25:00 (15s, not the whole 30s)
+    assert "01:00:10:00 01:00:25:00" in body
+    # so B's record-in is 01:00:15:00 — A now contributes 15s, not 30s (the D2 effect;
+    # baseline placed B at 01:00:30:00)
+    assert "01:00:15:00" in body
+
+
+def test_timeline_srt_trims_and_rebases_captions_to_marks(fastapi_client, sample_record):
+    _insert_two_clips_with_segments(sample_record)  # A caption [0-5]; B caption [0-4]
+    _mark(fastapi_client, 1, 2.0, 10.0)  # clip A window [2,10] (8s); B unmarked (20s)
+    body = fastapi_client.get("/api/export/timeline/srt", params={"ids": "1,2"}).text
+    # A's caption [0-5] is clipped to the window [2,10] → the [2-5] part, re-based to [0-3]
+    assert "00:00:00,000 --> 00:00:03,000" in body
+    assert "甲段台詞" in body
+    # B is pushed by A's 8s window (not A's full 30s): its [0-4] caption lands at [8-12]
+    assert "00:00:08,000 --> 00:00:12,000" in body
+    assert "乙段台詞" in body
+
+
+def test_timeline_fcpxml_clip_duration_and_start_reflect_marks(fastapi_client, sample_record):
+    import xml.dom.minidom as _minidom
+    _insert_two_clips_with_segments(sample_record)  # A 30s; B 20s; both TC 01:00:00:00
+    _mark(fastapi_client, 1, 5.0, 15.0)  # A → 10s window, cut 5s in
+    _mark(fastapi_client, 2, 0.0, 20.0)  # B → full 20s, from the head
+    body = fastapi_client.get("/api/export/timeline/fcpxml", params={"ids": "1,2"}).text
+    dom = _minidom.parseString(body)
+    clips = dom.getElementsByTagName("asset-clip")
+    # numerators share the timeline denominator, so compare them directly
+    dur = {c.getAttribute("ref"): int(c.getAttribute("duration").split("/")[0]) for c in clips}
+    start = {c.getAttribute("ref"): int(c.getAttribute("start").split("/")[0]) for c in clips}
+    # A's window (10s) is exactly half of B's (20s) — proves A was trimmed, not laid full (30s)
+    assert dur["r2"] * 2 == dur["r3"]
+    # A starts 5s into its source (camera TC + IN); B starts at its head → A start > B start
+    assert start["r2"] > start["r3"]
 
 
 def test_timeline_fcpxml_escapes_quotes_in_filenames(fastapi_client, sample_record):
@@ -1418,9 +1557,9 @@ def test_search_all_strips_absolute_and_project_paths(fastapi_client, monkeypatc
         "items": [{
             "media_id": "1", "filename": "clip.mp4",
             "relative_path": "A001/clip.mp4",
-            "absolute_path": "/Volumes/home/影片專案/恬馨/A001/clip.mp4",
-            "path": "/Volumes/home/影片專案/恬馨/A001/clip.mp4",
-            "project_path": "/Volumes/home/影片專案/恬馨",
+            "absolute_path": "/Volumes/home/影片專案/示範案/A001/clip.mp4",
+            "path": "/Volumes/home/影片專案/示範案/A001/clip.mp4",
+            "project_path": "/Volumes/home/影片專案/示範案",
         }],
         "projects_queried": 1, "projects_failed": 0,
     }
@@ -1431,7 +1570,7 @@ def test_search_all_strips_absolute_and_project_paths(fastapi_client, monkeypatc
     assert "absolute_path" not in item
     assert item["path"] == "A001/clip.mp4"
     assert "/Volumes" not in item["path"]
-    assert item["project_path"] == "恬馨"
+    assert item["project_path"] == "示範案"
     assert "/Volumes" not in item["project_path"]
 
 

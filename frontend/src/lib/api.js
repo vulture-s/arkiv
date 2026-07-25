@@ -72,6 +72,25 @@ const qs = (params = {}) => {
 export const getStats = (opts) => req('/api/stats', opts)
 export const getProjects = (opts) => req('/api/projects', opts)
 export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
+// ---- first-run: version / sample seed / log tail ----
+export const getVersion = (opts) => req('/api/version', opts)
+export const seedSample = (opts) => req('/api/sample/seed', { method: 'POST', ...opts })
+export const getSeedStatus = (opts) => req('/api/sample/seed/status', opts)
+// A1 pre-built (instant) sample library — distinct from seedSample (re-ingest).
+export const sampleStatus = (opts) => req('/api/sample/status', opts)
+export const loadSample = (opts) => req('/api/sample/load', { method: 'POST', ...opts })
+export const removeSample = (opts) => req('/api/sample/remove', { method: 'POST', ...opts })
+export const getLogsTail = (n = 200, opts) => req(`/api/logs/tail${qs({ n })}`, opts)
+
+// /api/health returns 503 when deps are missing — req() would throw ApiError and
+// collapse "not ready" into "server down". Bespoke fetch so 200 AND 503 both
+// surface `checks`; a fetch rejection distinguishes an unreachable backend.
+export async function getHealth({ signal } = {}) {
+  const res = await fetch(`${BASE}/api/health`, { cache: 'no-store', signal })
+  let body = null
+  try { body = await res.json() } catch { /* non-json */ }
+  return { ok: res.ok, status: res.status, ...(body || {}) }
+}
 // ---- project registry mutations (projects_write; token-free on loopback) ----
 // POST /api/projects {name, path, tags} → project dict (409 if name exists).
 export const addProject = (body, opts) => req('/api/projects', { method: 'POST', body, ...opts })
@@ -338,6 +357,12 @@ export const metadataCsvPath = (ids = null) =>
 // clears any existing note. Always pass the current note through to preserve it.
 export const setRating = (id, rating, note = null, opts) =>
   req(`/api/media/${id}/rating`, { method: 'PATCH', body: { rating, note }, ...opts })
+
+// PATCH /api/media/{id}/inout {in_point, out_point} → persist the IN/OUT trim
+// window (seconds; null clears a mark). Lets the inspector restore a clip's range
+// on re-open instead of losing it on clip-switch. Requires videos_write.
+export const setInOut = (id, in_point, out_point, opts) =>
+  req(`/api/media/${id}/inout`, { method: 'PATCH', body: { in_point, out_point }, ...opts })
 
 // ---- tag editing ----
 // POST /api/media/{id}/tags {name, source:'manual'} → {ok, tags:[{id,name,source}]}

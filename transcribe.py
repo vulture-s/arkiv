@@ -15,6 +15,7 @@ from silero_vad import load_silero_vad, get_speech_timestamps
 import torch
 
 import whisper_guard
+import zh_convert
 
 from config import (
     WHISPER_MODEL,
@@ -236,23 +237,26 @@ def transcribe(media_path: str, language=None) -> tuple:
             if vad_wav is None:
                 return "", "", [], []
             try:
-                return _transcribe_mlx(vad_wav, language)
+                result = _transcribe_mlx(vad_wav, language)
             finally:
                 if vad_wav != wav:
                     Path(vad_wav).unlink(missing_ok=True)
         elif _non_mac_backend() == "whisperx":
-            return _transcribe_whisperx(wav, language)
+            result = _transcribe_whisperx(wav, language)
         else:
             vad_wav = _vad_filter(wav)
             if vad_wav is None:
                 return "", "", [], []
             try:
-                return _transcribe_faster_whisper(vad_wav, language)
+                result = _transcribe_faster_whisper(vad_wav, language)
             finally:
                 if vad_wav != wav:
                     Path(vad_wav).unlink(missing_ok=True)
     finally:
         Path(wav).unlink(missing_ok=True)
+    # Phase 9.8b: whisper emits Simplified for zh — store Taiwan Traditional so the
+    # search index / UI / every export are Traditional (write-path; see zh_convert).
+    return zh_convert.convert_result(*result)
 
 def _custom_terms() -> list:
     """Merged hotword list: comma-separated ARKIV_CUSTOM_VOCABULARY env first,
@@ -494,6 +498,27 @@ def _postprocess(text: str, lang: str, segments: list, language: str, words: lis
     # Step 5: LLM polish
     if LLM_POLISH and len(filtered_text) > 10:
         filtered_text = _llm_polish(filtered_text, language)
+
+    # Step 6: words_json reconciliation. The per-segment filter above rebuilt
+    # timed_segments from the SURVIVING segments, but `words` still carries every
+    # word from the raw segment list — including words that belonged to segments
+    # dropped as hallucinations (silence / low-logprob / high compression). Keep
+    # only words whose midpoint falls inside a kept segment's time range, so
+    # words_json can't reintroduce content the text/segment filters already removed
+    # (frame-accurate cutting and subtitle rendering read words_json directly).
+    if words:
+        kept_ranges = [(ts["start"], ts["end"]) for ts in timed_segments]
+        eps = 0.05  # tolerance for start/end rounded to 3 dp above vs raw word times
+
+        def _in_kept_segment(w):
+            ws = w.get("start")
+            if ws is None:
+                return False
+            we = w.get("end")
+            mid = ws if we is None else (ws + we) / 2.0
+            return any(lo - eps <= mid <= hi + eps for lo, hi in kept_ranges)
+
+        words = [w for w in words if _in_kept_segment(w)]
 
     return filtered_text, lang, timed_segments, words or []
 

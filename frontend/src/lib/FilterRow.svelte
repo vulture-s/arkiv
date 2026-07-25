@@ -21,7 +21,8 @@
 </div>
 
 <style>
-  .filters { display: flex; gap: 4px; }
+  /* wrap so the last kind/rating chip (N·G) doesn't clip in a narrow center column */
+  .filters { display: flex; flex-wrap: wrap; gap: 4px; }
   .fbtn {
     font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
     padding: 4px 9px; background: transparent; color: var(--ink-2);

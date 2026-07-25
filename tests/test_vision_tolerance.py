@@ -22,9 +22,10 @@ def _decide(ing, total, consecutive, max_failures=0, skip_failed=False, file_fai
 
 
 def test_default_zero_tolerance_halts_on_first_failure(ing):
-    halt, reason = _decide(ing, total=1, consecutive=1, max_failures=0)
+    halt, reason, ollama_suspected = _decide(ing, total=1, consecutive=1, max_failures=0)
     assert halt is True
     assert "max-failures=0" in reason
+    assert ollama_suspected is False  # issue #219: not an Ollama problem
 
 
 def test_max_failures_tolerates_up_to_n_then_halts(ing):
@@ -33,24 +34,40 @@ def test_max_failures_tolerates_up_to_n_then_halts(ing):
 
 
 def test_skip_failed_never_halts_on_frame_failures(ing):
-    halt, _ = _decide(ing, total=999, consecutive=1, skip_failed=True)
+    halt, _, _ = _decide(ing, total=999, consecutive=1, skip_failed=True)
     assert halt is False
 
 
 def test_consecutive_guard_fires_at_threshold(ing):
     k = ing._VISION_CONSECUTIVE_HALT
     assert _decide(ing, total=k, consecutive=k - 1, max_failures=10_000)[0] is False
-    halt, reason = _decide(ing, total=k, consecutive=k, max_failures=10_000)
+    halt, reason, ollama_suspected = _decide(ing, total=k, consecutive=k, max_failures=10_000)
     assert halt is True
     assert "consecutive" in reason
+    assert ollama_suspected is True  # issue #219: consecutive streak implicates Ollama
 
 
 def test_consecutive_guard_overrides_skip_failed(ing):
     # An Ollama outage must stop even an explicit --skip-failed run.
     k = ing._VISION_CONSECUTIVE_HALT
-    halt, reason = _decide(ing, total=k, consecutive=k, skip_failed=True)
+    halt, reason, ollama_suspected = _decide(ing, total=k, consecutive=k, skip_failed=True)
     assert halt is True
     assert "consecutive" in reason
+    assert ollama_suspected is True
+
+
+# ── issue #219: cause-accurate halt remedy ──────────────────────────────────
+def test_halt_remedy_ollama_down_points_at_ollama(ing):
+    lines = "\n".join(ing._vision_halt_remedy(ollama_suspected=True))
+    assert "Ollama looks down" in lines
+    assert "--skip-failed" not in lines  # don't tell them to skip when Ollama is the problem
+
+
+def test_halt_remedy_tolerance_points_at_skip_failed_not_ollama(ing):
+    lines = "\n".join(ing._vision_halt_remedy(ollama_suspected=False))
+    assert "--skip-failed" in lines
+    assert "Ollama is up" in lines
+    assert "Fix Ollama" not in lines  # the whole point of #219
 
 
 # ── _describe_frames_with_fallback ──────────────────────────────────────────
@@ -95,6 +112,7 @@ def vision_db(tmp_db, monkeypatch):
     db = importlib.import_module("db")
     monkeypatch.setattr(ing, "_unload_ollama_model", lambda *a, **k: None)
     monkeypatch.setattr(ing, "_ensure_vision_ready", lambda *a, **k: None)
+    monkeypatch.setattr(ing, "_preflight_vision_model", lambda *a, **k: None)  # issue #218: stub the install gate
     _install_fake_vision(ing, monkeypatch)
 
     def make(thumb_names):

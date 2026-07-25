@@ -20,10 +20,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 from typing import Any, Dict, List, Optional
 
 import db
-import vectordb as vdb
+import scenes
 from mcp.server.fastmcp import FastMCP
 from pathres import _display_path
 
@@ -31,6 +32,35 @@ from pathres import _display_path
 LOGGER = logging.getLogger(__name__)
 
 mcp = FastMCP("arkiv")
+
+
+# ── readiness ───────────────────────────────────────────────────────────────
+_DB_READY = False
+
+
+def _require_ready() -> None:
+    """Fail a tool call with a clear, actionable message when the project root
+    has no initialised database — instead of leaking a raw `no such table: media`
+    to a downstream agent.
+
+    Deliberately does NOT create the schema: this server is read-only, and
+    `db.init_db()` prints progress to stdout (db.py), which would corrupt the
+    stdio JSON-RPC channel. Cached once ready — the table does not un-exist.
+    """
+    global _DB_READY
+    if _DB_READY:
+        return
+    with db.get_conn() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media'"
+        ).fetchone()
+    if not exists:
+        raise RuntimeError(
+            "arkiv project root has no 'media' table — it is not initialised. "
+            "Point ARKIV_PROJECT_ROOT at an existing arkiv library, or run an "
+            "ingest there first. (db: {0})".format(db.get_db_path())
+        )
+    _DB_READY = True
 
 
 # ── path safety ───────────────────────────────────────────────────────────────
@@ -105,54 +135,72 @@ def search_media_impl(
     enriched: List[Dict[str, Any]] = []
     seen: set = set()
 
-    # 1. Semantic (vector) search — preferred.
+    # 1. Semantic (vector) search — preferred. vectordb (and its heavy chromadb
+    # dependency) is imported lazily HERE, not at module scope: six of the seven
+    # tools never touch a vector index, so the server must boot and serve them on
+    # a box with no vector backend — and so tests/test_mcp_e2e.py can run on CI,
+    # which installs none. Bind vdb to the module *or* None BEFORE the try, so the
+    # `except vdb.EmbeddingDimensionMismatch` clause below can never reference an
+    # unbound name when the import itself is what failed.
     try:
-        for r in vdb.search(query, n_results=limit * 3):
-            mid = int(r["media_id"])
-            if mid in seen:
-                continue
-            rec = db.get_record_by_id(mid)
-            if not rec:
-                continue
-            seen.add(mid)
-            item = _light(rec)
-            item["score"] = round(float(r.get("score", 0)), 4)
-            if r.get("excerpt"):
-                item["excerpt"] = r["excerpt"]
-            item["tags"] = _tag_names(mid)
-            enriched.append(item)
-            if len(enriched) >= limit:
-                break
-    # audit M17: split the dim-mismatch branch out of the blanket except — log
-    # it and surface a degraded hint (mirrors server.py's search_degraded fix)
-    # instead of silently SQL-degrading. SQL fallback still runs below.
-    except vdb.EmbeddingDimensionMismatch as exc:
-        LOGGER.warning("mcp semantic search degraded: %s", exc)
-        if _warnings is not None:
-            _warnings.append(str(exc))
-        enriched, seen = [], set()
+        import vectordb as vdb
     except Exception:
-        # Vector index unavailable/empty — degrade to SQL.
-        enriched, seen = [], set()
+        vdb = None
 
-    # 2. SQL text fallback (filename / transcript) when semantic found nothing.
-    if not enriched:
-        like = f"%{query}%"
-        with db.get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM media WHERE filename LIKE ? OR transcript LIKE ? "
-                "ORDER BY id LIMIT ?",
-                (like, like, limit),
-            ).fetchall()
-            for row in rows:
-                rec = dict(row)
-                mid = rec["id"]
+    if vdb is not None:
+        try:
+            for r in vdb.search(query, n_results=limit * 3):
+                mid = int(r["media_id"])
                 if mid in seen:
+                    continue
+                rec = db.get_record_by_id(mid)
+                if not rec:
                     continue
                 seen.add(mid)
                 item = _light(rec)
+                item["score"] = round(float(r.get("score", 0)), 4)
+                if r.get("excerpt"):
+                    item["excerpt"] = r["excerpt"]
                 item["tags"] = _tag_names(mid)
                 enriched.append(item)
+                if len(enriched) >= limit:
+                    break
+        # audit M17: split the dim-mismatch branch out of the blanket except — log
+        # it and surface a degraded hint (mirrors server.py's search_degraded fix)
+        # instead of silently SQL-degrading. SQL fallback still runs below.
+        except vdb.EmbeddingDimensionMismatch as exc:
+            LOGGER.warning("mcp semantic search degraded: %s", exc)
+            if _warnings is not None:
+                _warnings.append(str(exc))
+            enriched, seen = [], set()
+        except Exception:
+            # Vector index unavailable/empty — degrade to SQL.
+            enriched, seen = [], set()
+
+    # 2. SQL text fallback (filename / transcript) when semantic found nothing.
+    #    Wrapped so a genuine DB fault here surfaces as a clear error, kept
+    #    distinct from the "vector index unavailable" degrade above — and not
+    #    leaking a raw sqlite driver string to the agent.
+    if not enriched:
+        like = f"%{query}%"
+        try:
+            with db.get_conn() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM media WHERE filename LIKE ? OR transcript LIKE ? "
+                    "ORDER BY id LIMIT ?",
+                    (like, like, limit),
+                ).fetchall()
+                for row in rows:
+                    rec = dict(row)
+                    mid = rec["id"]
+                    if mid in seen:
+                        continue
+                    seen.add(mid)
+                    item = _light(rec)
+                    item["tags"] = _tag_names(mid)
+                    enriched.append(item)
+        except sqlite3.OperationalError as exc:
+            raise RuntimeError("arkiv database error during search: {0}".format(exc))
 
     return enriched[:limit]
 
@@ -167,17 +215,82 @@ def get_media_impl(media_id: int) -> Optional[Dict[str, Any]]:
     return out
 
 
-def get_transcript_impl(media_id: int) -> Optional[Dict[str, Any]]:
-    """Transcript text for one media item, or None."""
+def get_scenes_impl(media_id: int) -> Optional[Dict[str, Any]]:
+    """Per-scene breakdown for one media item, or None if the id is unknown.
+
+    The rec lookup is not redundant with get_frames: db.get_frames on an unknown
+    id returns [], which is indistinguishable from a real clip that has no vision
+    analysis yet. Fetch the record first so "no such media" (None) and "no scenes"
+    (total: 0) stay different answers — and it carries duration_s anyway.
+    """
     rec = db.get_record_by_id(int(media_id))
     if not rec:
         return None
-    return {
+    frames = db.get_frames(int(media_id))
+    return scenes._scenes_for_mcp(int(media_id), rec, frames)
+
+
+# segments_json / words_json hold whatever the transcribe backend produced, and
+# the three backends do NOT agree: faster-whisper appends
+# {text,start,end,no_speech_prob,avg_logprob,compression_ratio}; mlx-whisper
+# (Darwin/arm64, i.e. every Mac ingest) passes its native dict through untouched,
+# which additionally carries `seek`, `temperature` and a full `tokens` list —
+# hundreds of token ids per segment; whisperx builds a third shape. So a verbatim
+# passthrough would hand agents a payload whose shape depends on which machine
+# ingested the clip, padded with decoder internals. Project onto the stable
+# subset instead — which is exactly what transcribe.py:223-224 documents as the
+# contract, and all the consumers (export.py, remotion-props) already assume.
+_SEGMENT_KEYS = ("start", "end", "text")
+_WORD_KEYS = ("word", "start", "end", "score")
+
+
+def _json_rows(raw: Optional[str]) -> List[Dict[str, Any]]:
+    """Parse a TEXT column holding a JSON list of dicts. Never raises: a corrupt
+    column degrades to [] rather than taking the tool down (mirrors the defensive
+    parse in export.py:134-141)."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [row for row in parsed if isinstance(row, dict)]
+
+
+def _project(rows: List[Dict[str, Any]], keys: tuple) -> List[Dict[str, Any]]:
+    return [{k: row.get(k) for k in keys} for row in rows]
+
+
+def get_transcript_impl(
+    media_id: int,
+    include_words: bool = False,
+    max_words: int = 5000,
+) -> Optional[Dict[str, Any]]:
+    """Transcript + timecodes for one media item, or None."""
+    rec = db.get_record_by_id(int(media_id))
+    if not rec:
+        return None
+    word_rows = _json_rows(rec.get("words_json"))
+    out = {
+        # unchanged keys — pre-existing consumers keep working verbatim
         "id": rec.get("id"),
         "filename": rec.get("filename"),
         "lang": rec.get("lang"),
         "transcript": rec.get("transcript"),
+        # new: the timecodes. `segments` is the point of this tool — an agent
+        # that only gets flat text cannot cut on a quote.
+        "duration_s": rec.get("duration_s"),
+        "segments": _project(_json_rows(rec.get("segments_json")), _SEGMENT_KEYS),
+        # advertise word-level availability without paying for it
+        "has_words": bool(word_rows),
     }
+    if include_words:
+        words = _project(word_rows, _WORD_KEYS)
+        out["words"] = words[:max_words]
+        out["words_truncated"] = len(words) > max_words
+    return out
 
 
 def list_recent_impl(limit: int = 20) -> List[Dict[str, Any]]:
@@ -224,6 +337,7 @@ def search_media(query: str, limit: int = 20) -> str:
     If semantic search is degraded (e.g. embedding index needs a rebuild), the
     response is instead {items, search_degraded: true, warning}.
     """
+    _require_ready()
     # audit M17: surface degraded-search hint instead of silently falling back.
     warnings: List[str] = []
     items = search_media_impl(query, limit, _warnings=warnings)
@@ -238,21 +352,85 @@ def get_media(media_id: int) -> str:
 
     Returns a JSON object, or null if the id is unknown.
     """
+    _require_ready()
     return _j(get_media_impl(media_id))
 
 
 @mcp.tool()
-def get_transcript(media_id: int) -> str:
-    """Full transcript text for one media item.
+def get_scenes(media_id: int) -> str:
+    """Timecoded scene breakdown for one media item — what happens, and when.
 
-    Returns JSON {id, filename, lang, transcript}, or null if unknown.
+    Use this to decide WHICH PART of a clip to use: search_media/get_media answer
+    "which clip", this answers "which seconds of it". Each scene is one
+    scene-detect boundary with vision analysis of its keyframe.
+
+    Returns a JSON object, or null if the id is unknown:
+      {media_id, media_duration_s, total, scenes: [...]}
+
+    Each scene:
+      scene_index    int    0-based, in playback order
+      start_s        float  scene start, seconds from clip start
+      end_s          float  = next scene's start_s; the last scene ends at
+                            media_duration_s
+      duration_s     float  end_s - start_s
+      description    str    what the keyframe shows (may be "" if not analysed)
+      content_type   str    e.g. Establishing / B-Roll / A-Roll / Talking-Head
+      focus_score    int    1-5, higher = sharper
+      atmosphere     str
+      energy         str
+      edit_position  str    where this shot would sit in a cut
+      edit_reason    str
+      stability      str
+      exposure       str
+      audio_quality  str
+      keyframe_path  str    PROJECT_ROOT-relative path to the keyframe JPEG.
+                            Present only when a keyframe exists.
+
+    Every vision field is present on every scene, but is null when that clip has
+    not been analysed — check for null rather than for the key. Values are in the
+    library's own language (typically Chinese).
     """
-    return _j(get_transcript_impl(media_id))
+    _require_ready()
+    return _j(get_scenes_impl(media_id))
+
+
+@mcp.tool()
+def get_transcript(media_id: int, include_words: bool = False) -> str:
+    """Speech transcript for one media item, with per-segment timecodes.
+
+    Use `segments` to locate a quote in time: the flat `transcript` string tells
+    you WHAT was said, `segments` tells you WHEN — which is what you need in order
+    to cut on it. Pair with get_scenes for the visual side.
+
+    Returns a JSON object, or null if the id is unknown:
+      id           int
+      filename     str
+      lang         str    detected language, e.g. "zh"
+      transcript   str    the whole transcript as flat text
+      duration_s   float  clip duration, bounding the timecodes below
+      segments     list   [{start, end, text}] — seconds from clip start.
+                          EMPTY for clips transcribed before segment timing was
+                          stored; fall back to `transcript` in that case.
+      has_words    bool   whether word-level timing exists for this clip
+
+    With include_words=true, adds:
+      words            list  [{word, start, end, score}] — score is 0-1 confidence
+      words_truncated  bool  true if the list was capped (at 5000 words)
+
+    Leave include_words FALSE unless you specifically need word-level timing (for
+    caption building, say): a feature-length clip holds tens of thousands of words
+    and that payload can swamp your context. Segment timing is enough to locate
+    and cut a quote. Check has_words first — asking for words on a clip that has
+    none just returns [].
+    """
+    _require_ready()
+    return _j(get_transcript_impl(media_id, include_words=include_words))
 
 
 @mcp.tool()
 def list_recent(limit: int = 20) -> str:
     """Most recently ingested media (lightweight). Returns a JSON list."""
+    _require_ready()
     return _j(list_recent_impl(limit))
 
 
@@ -262,12 +440,14 @@ def library_stats() -> str:
 
     Returns a JSON object.
     """
+    _require_ready()
     return _j(library_stats_impl())
 
 
 @mcp.tool()
 def list_tags(limit: int = 30) -> str:
     """Top tags in the library by frequency. Returns a JSON list of {name, count}."""
+    _require_ready()
     return _j(list_tags_impl(limit))
 
 

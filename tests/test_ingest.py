@@ -63,7 +63,8 @@ def test_exiftool_camera_falls_back_to_embedded_xml_device(monkeypatch):
     """Sony XAVC without an M01.XML sidecar leaves standard Make/Model blank but
     carries device identity in the embedded XML as DeviceManufacturer /
     DeviceModelName. Read them in the same exiftool call so camera_make/model
-    populate instead of staying NULL (445/480 恬馨 clips were empty for this)."""
+    populate instead of staying NULL (445/480 clips in one real XAVC shoot were
+    empty for this)."""
     import sys, os, json
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import ingest

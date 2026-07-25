@@ -16,6 +16,7 @@ reqopts.py — all imported directly, no server import, no cycle. `BASE_DIR`
 """
 import json
 import logging as _logging
+import math
 import os
 import re as _re
 from pathlib import Path
@@ -34,6 +35,7 @@ from config import BASE_DIR
 from mediarecords import _get_light_records_by_ids, _get_tags_bulk
 from pathres import _display_path, _resolve_frame, _resolve_media_path, _resolve_record
 from reqopts import _parse_ids_query
+from scenes import _scenes_payload
 from webguard import _assert_same_site
 
 router = APIRouter()
@@ -46,6 +48,22 @@ class RatingUpdate(BaseModel):
     # used to be persisted verbatim, corrupting rating stats and sort buckets.
     rating: Optional[Literal["good", "ng", "review"]] = None
     note: Optional[str] = None
+
+
+class InOutUpdate(BaseModel):
+    # Per-clip IN/OUT trim points in SECONDS (or None to clear). An arbitrary
+    # NaN/inf/negative value would corrupt the export math downstream, so reject it.
+    in_point: Optional[float] = None
+    out_point: Optional[float] = None
+
+    @field_validator("in_point", "out_point")
+    @classmethod
+    def _finite_nonneg(cls, v):
+        if v is None:
+            return v
+        if not math.isfinite(v) or v < 0:
+            raise ValueError("trim point must be a finite, non-negative number of seconds")
+        return v
 
 
 class TagCreate(BaseModel):
@@ -459,52 +477,53 @@ def get_media_scenes(
     media_id: int,
     _tok: dict = Depends(require_scopes("media_read")),
 ):
-    # Per-scene shape (breaking change 2026-06-29): each scene = one scene-detect
-    # boundary persisted in frames table, with computed end_s from the next
-    # frame's start (or media.duration_s for the last). Consumers (smart-edit,
-    # OpenMontage arkiv_clip_search, Vyra, Palmier) expect start/end/duration +
-    # vision metadata per scene, not per-frame flat list.
+    # Per-scene derivation lives in the scenes leaf — mcp_server needs the same
+    # shape and cannot import this module (it refuses `server`/fastapi), so a
+    # copy here would fork the contract. See scenes.py; the body is byte-frozen
+    # by tests/test_scenes_contract.py.
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
-    frames = db.get_frames(media_id)
-    media_duration_s = float(rec.get("duration_s") or 0.0)
-    scenes = []
-    for i, frame in enumerate(frames):
-        start_s = float(frame["timestamp_s"])
-        if i + 1 < len(frames):
-            end_s = float(frames[i + 1]["timestamp_s"])
-        else:
-            end_s = media_duration_s
-        if end_s < start_s:
-            end_s = start_s
-        scene = {
-            "scene_index": frame["frame_index"],
-            "start_s": start_s,
-            "end_s": end_s,
-            "duration_s": end_s - start_s,
-            "description": frame.get("description", ""),
-            "content_type": frame.get("content_type"),
-            "focus_score": frame.get("focus_score"),
-            "atmosphere": frame.get("atmosphere"),
-            "energy": frame.get("energy"),
-            "edit_position": frame.get("edit_position"),
-            "edit_reason": frame.get("edit_reason"),
-            "stability": frame.get("stability"),
-            "exposure": frame.get("exposure"),
-            "audio_quality": frame.get("audio_quality"),
-        }
-        if frame.get("thumbnail_path"):
-            scene["keyframe_url"] = "/thumbnails/{0}".format(
-                Path(_resolve_media_path(frame["thumbnail_path"])).name
-            )
-        scenes.append(scene)
-    return {
-        "media_id": media_id,
-        "media_duration_s": media_duration_s,
-        "scenes": scenes,
-        "total": len(scenes),
-    }
+    return _scenes_payload(media_id, rec, db.get_frames(media_id))
+
+
+def _segments_payload(segments_json):
+    """Project the stored `segments_json` TEXT column onto the stable
+    {start,end,text} subset. Never raises — a corrupt column degrades to [] rather
+    than 500ing (mirrors mcp_server._json_rows and export.py's defensive parse)."""
+    if not segments_json:
+        return []
+    try:
+        rows = json.loads(segments_json)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    return [
+        {"start": r.get("start"), "end": r.get("end"), "text": r.get("text")}
+        for r in rows
+        if isinstance(r, dict)
+    ]
+
+
+@router.get("/api/media/{media_id}/segments")
+def get_media_segments(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    """Sentence-level transcript timecodes for one clip: `[{start,end,text}]`.
+
+    The lightweight cutting surface for downstream edit agents (smart-edit). The
+    detail route ships `segments_json` only as a raw string and drops words_json
+    for transport size, so an agent that just needs to place an in/out on a quote
+    had to re-parse the whole record. This returns the projected segment array and
+    NOTHING else — no words (word-level lives in /remotion-props), no frames/tags.
+    Sentence granularity is enough to locate and cut a line; word-level would only
+    bloat the payload (the same reason MCP get_transcript defaults words off)."""
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到")
+    return _segments_payload(rec.get("segments_json"))
 
 
 @router.get("/api/media/{media_id}/chapters")
@@ -561,6 +580,46 @@ def update_rating(
     new_rating = body.rating if "rating" in provided else rec.get("rating")
     new_note = body.note if "note" in provided else rec.get("rating_note")
     return {"ok": True, "rating": new_rating, "note": new_note}
+
+
+@router.patch("/api/media/{media_id}/inout")
+def update_inout(
+    media_id: int,
+    body: InOutUpdate,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
+    """Persist the inspector IN/OUT trim points (seconds) for a clip.
+
+    The marks were UI-ephemeral — lost on clip-switch, and invisible to the
+    timeline export. Persisting them lets the inspector restore a clip's range on
+    re-open and lets the multi-clip export (D2) assemble a cut list from the marked
+    sub-clips. PATCH semantics (same as rating): an OMITTED field is left untouched;
+    an explicit null clears that mark.
+    """
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到")
+    provided = body.model_fields_set
+    new_in = body.in_point if "in_point" in provided else rec.get("in_point")
+    new_out = body.out_point if "out_point" in provided else rec.get("out_point")
+    # An inverted window (in ≥ out) exports an empty/negative range downstream —
+    # reject it rather than silently persisting a range that yields nothing.
+    if new_in is not None and new_out is not None and new_in >= new_out:
+        raise HTTPException(422, "in_point 必須小於 out_point")
+    sets, params = [], []
+    if "in_point" in provided:
+        sets.append("in_point = ?")
+        params.append(body.in_point)
+    if "out_point" in provided:
+        sets.append("out_point = ?")
+        params.append(body.out_point)
+    if sets:
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
+                (*params, media_id),
+            )
+    return {"ok": True, "in_point": new_in, "out_point": new_out}
 
 
 @router.get("/api/media/{media_id}/tags")

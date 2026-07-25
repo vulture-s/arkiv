@@ -80,10 +80,12 @@ _VARIANT_MAP = {
 # Simplified → Traditional character normalization. qwen2.5vl leaks Simplified
 # chars into its (prompted-Traditional) output, so 电子/電子, 维修/維修, 电线/電線
 # coexist as separate tags across a library — a major, cross-project source of
-# duplication. We have no opencc dependency, so this is a curated map of the
-# high-frequency Simplified characters that actually appear in vision tags (a
-# few hundred); extend as new ones surface. Per-CHARACTER (not word), so it
-# composes with everything (个→個 fixes 个/個, 零个件 → 零個件, etc.).
+# duplication. Tags stay on this curated per-character map (not opencc, though it
+# is now a dependency for transcripts — Phase 9.8b): tags are short free-vocab
+# fragments where a lightweight char map is enough and avoids opencc's phrase
+# segmentation reshaping a single-word tag. Per-CHARACTER (not word), so it
+# composes with everything (个→個 fixes 个/個, 零个件 → 零個件, etc.); extend as
+# new Simplified leaks surface.
 _SIMP_TO_TRAD = {
     "电": "電", "线": "線", "维": "維", "缆": "纜", "个": "個", "纸": "紙",
     "这": "這", "们": "們", "时": "時", "应": "應", "实": "實", "现": "現",

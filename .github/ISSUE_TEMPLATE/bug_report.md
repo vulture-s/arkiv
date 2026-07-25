@@ -12,7 +12,14 @@ labels: bug
 - **Whisper backend**: (mlx-whisper / faster-whisper CUDA / faster-whisper CPU)
 - **GPU**: (e.g., Apple M2 Max / RTX 4070 / None)
 
-## `python health.py` output
+## Diagnostics
+
+Paste **one** of these (whichever you can run):
+
+- **From source/CLI:** `python health.py` output, or
+- **Desktop app:** the health JSON — `curl http://127.0.0.1:<port>/api/health`
+  (the port is in the app's log, below), or just paste the tail of the log file:
+  `~/Library/Application Support/com.hevin.arkiv/arkiv/logs/backend.log`
 
 ```
 (paste output here)

@@ -491,6 +491,31 @@ def export_batch(
     )
 
 
+def _clip_window(rec):
+    """The [in, dur] window (seconds) a clip contributes to a timeline: its
+    persisted IN/OUT marks (D1) clamped to the real duration, or the whole clip
+    when unmarked. D2: the timeline lays the MARKED sub-clip, not the full file —
+    so "mark IN/OUT across N clips → one EDL/FCPXML" assembles a real cut list.
+
+    Defensive against a bad stored pair (the /inout endpoint rejects in>=out, but
+    a hand-edited DB could hold one): an empty/inverted window falls back to full.
+    Returns (win_in_s, win_dur_s)."""
+    try:
+        full = float(rec.get("duration_s") or 0.0)
+    except (TypeError, ValueError):
+        full = 0.0
+    def _clamp(v, lo, hi):
+        try:
+            return min(max(lo, float(v)), hi)
+        except (TypeError, ValueError):
+            return lo
+    win_in = _clamp(rec.get("in_point"), 0.0, full) if rec.get("in_point") is not None else 0.0
+    win_out = _clamp(rec.get("out_point"), 0.0, full) if rec.get("out_point") is not None else full
+    if win_out <= win_in:  # empty/inverted → treat as unmarked (full clip)
+        win_in, win_out = 0.0, full
+    return win_in, win_out - win_in
+
+
 @router.get("/api/export/timeline/{fmt}")
 def export_timeline(
     fmt: str,
@@ -507,6 +532,10 @@ def export_timeline(
     repeated id places the same clip twice. Mixed frame rates: the timeline uses
     the FIRST clip's rate for record/sequence timecode (EDL source TC stays in
     each clip's own rate); same-camera footage (the common case) is exact.
+
+    Each clip contributes only its persisted IN/OUT window (D2) — an unmarked clip
+    still contributes its whole duration, so old behaviour is unchanged until a
+    range is set.
     """
     fmt = (fmt or "").lower()
     if fmt not in ("edl", "srt", "fcpxml"):
@@ -549,10 +578,12 @@ def export_timeline(
         for i, rec in enumerate(recs, 1):
             filename = rec.get("filename", f"media_{rec.get('id')}")
             stem = filename.rsplit(".", 1)[0]
-            dur = rec.get("duration_s", 0) or 0
+            win_in, dur = _clip_window(rec)  # D2: honor the clip's IN/OUT marks
             clip_fps = rec.get("fps") or tl_fps
             clip_is_df = round(clip_fps, 2) in (29.97, 59.94)
-            src_off = _start_tc_seconds(rec, clip_fps)
+            # Source TC starts at the clip's camera TC PLUS its IN point, so the EDL
+            # cuts from the marked in-point rather than the head of the file.
+            src_off = _start_tc_seconds(rec, clip_fps) + win_in
             src_start = _edl_timecode(src_off, clip_fps, clip_is_df)
             src_end = _edl_timecode(src_off + dur, clip_fps, clip_is_df)
             rec_start = _edl_timecode(rec_pos, tl_fps, tl_is_df)
@@ -578,7 +609,8 @@ def export_timeline(
         idx = 1
         offset = 0.0  # cumulative timeline position in seconds
         for rec in recs:
-            dur = rec.get("duration_s", 0) or 0
+            win_in, dur = _clip_window(rec)  # D2: honor the clip's IN/OUT marks
+            win_out = win_in + dur
             segs = []
             if rec.get("segments_json"):
                 try:
@@ -587,11 +619,19 @@ def export_timeline(
                     segs = []
             if segs:
                 for seg in segs:
-                    s = offset + (seg.get("start", 0) or 0)
-                    e = offset + (seg.get("end", 0) or 0)
+                    seg_s = seg.get("start", 0) or 0
+                    seg_e = seg.get("end", 0) or 0
+                    # keep only the part of each caption inside the marked window,
+                    # re-based so the window's IN sits at this clip's timeline offset
+                    lo = max(seg_s, win_in)
+                    hi = min(seg_e, win_out)
+                    if hi <= lo:
+                        continue  # caption falls entirely outside the trim
                     text = _subtitle_text(seg.get("text") or "")
                     if not text:
                         continue
+                    s = offset + (lo - win_in)
+                    e = offset + (hi - win_in)
                     srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{text}\n\n"
                     idx += 1
             else:
@@ -630,7 +670,7 @@ def export_timeline(
         ref = f"r{i + 2}"  # r1 is the format
         filename = rec.get("filename", f"media_{rec.get('id')}")
         stem = filename.rsplit(".", 1)[0]
-        dur = rec.get("duration_s", 0) or 0
+        win_in, dur = _clip_window(rec)  # D2: honor the clip's IN/OUT marks
         clip_fps = rec.get("fps") or tl_fps
         # Every asset references format r1 (the timeline rate), so ALL durations
         # and offsets must be expressed in the timeline timebase — otherwise a
@@ -641,7 +681,9 @@ def export_timeline(
         # asset is never shorter than the span the asset-clip reads.
         dur_frames = round(dur * tl_fps)
         asset_dur_frames = dur_frames
-        src_off_frames = round(_start_tc_seconds(rec, clip_fps) * tl_fps)
+        # asset.start / asset-clip.start = camera TC + the marked IN, so the clip
+        # reads from the in-point; asset spans exactly the marked window.
+        src_off_frames = round((_start_tc_seconds(rec, clip_fps) + win_in) * tl_fps)
 
         raw_path = _resolve_media_path(rec.get("path", ""))
         file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))

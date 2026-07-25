@@ -1,6 +1,15 @@
 import importlib
+import os
 
 import pytest
+
+
+def test_import_disables_chromadb_telemetry():
+    """Importing vectordb must turn chromadb's PostHog telemetry off (a local
+    tool has no reason to phone home). Set before `import chromadb`, via env so it
+    holds regardless of how the process was started and covers the HTTP surface."""
+    importlib.import_module("vectordb")
+    assert os.environ.get("ANONYMIZED_TELEMETRY") == "False"
 
 
 def test_split_sentences_and_cjk_detection():

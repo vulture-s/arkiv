@@ -18,6 +18,7 @@
      trigger stays here as the empty state for standalone use. -->
 <script>
   import { onMount, onDestroy } from 'svelte'
+  import { VERSION } from '../lib/version.js'
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
@@ -238,7 +239,7 @@
 <div class="artboard" data-theme={theme}>
   <div class="topbar">
     <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">v0.9.2</Mono>
+    <Mono dim style="font-size:10px;">{VERSION}</Mono>
     <div class="grow"></div>
     <Mono dim style="font-size:11px;">ws://…/ws/ingest · <span class:on={conn === 'open'} class:off={conn !== 'open'}>{conn.toUpperCase()}</span></Mono>
     <button class="ak-btn" on:click={() => push('/ingest-setup')}>New ingest →</button>

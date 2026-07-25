@@ -10,6 +10,7 @@
      is fully wired to a real endpoint. -->
 <script>
   import { onMount } from 'svelte'
+  import { VERSION } from '../lib/version.js'
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
@@ -102,7 +103,7 @@
 <div class="artboard" data-theme={$resolvedTheme}>
   <div class="topbar">
     <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">v0.9.2</Mono>
+    <Mono dim style="font-size:10px;">{VERSION}</Mono>
     <div class="grow"></div>
     <Mono dim style="font-size:11px;">ingest · setup</Mono>
   </div>

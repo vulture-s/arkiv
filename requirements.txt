@@ -15,6 +15,11 @@ nanoid>=2.0.0
 # Media processing
 pillow>=9.0
 soundfile>=0.12
+# Phase 9.8b: Simplified→Traditional (Taiwan) transcript conversion. Whisper zh
+# output is Simplified; the TA is Taiwan. Gated to >=3.10: opencc ships no cp39
+# arm64 wheel (3.9 would source-build), and prod is 3.12 — code degrades to
+# identity if absent (zh_convert.py), so a missing wheel never breaks transcribe.
+opencc>=1.1; python_version >= "3.10"
 
 # Resource-aware pipeline (Phase 11.5) — soft dependency: arkiv runs without it
 # (probe degrades the memory fields to None), but installing it enables
