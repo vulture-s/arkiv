@@ -67,6 +67,45 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  test-windows:
+    name: test-windows
+    runs-on: windows-latest
+    # F2 (2026-07-25): the macOS `test` job above was the ONLY correctness gate,
+    # so a Windows-only failure never surfaced — e.g. the offload deny-policy that
+    # resolve() silently breaks on Windows (Path('/etc') -> C:\etc), which went
+    # 4-fail on this runner before the webguard fix. This adds a Windows correctness
+    # leg. It is SCOPED, not the full suite: a full install pins mlx-whisper (no
+    # Windows wheel) and test_install.py AST-walks server.py's imports, so a full
+    # run would red for a platform reason, not a real one. conftest.py fakes the
+    # heavy backends (incl. mlx_whisper) via sys.modules, so the guard suite runs
+    # with just the lean FastAPI deps. Full-suite Windows 0-fail is tracked as
+    # separate evidence in the 2026-07-24 arkiv-health-hardening handoff; the MCP
+    # stdio hang (F3) is deferred to that handoff's SDK version x OS matrix rather
+    # than imported into CI as a known-red.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install deps
+        # Same lean set as `test`, MINUS mlx-whisper (no Windows wheel; faked by
+        # conftest) and opencc (lazy import in zh_convert.py, degrades to identity).
+        # shell: bash so the `\` line-continuation + quoting match the macOS job
+        # (windows-latest defaults to PowerShell).
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install \
+            "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
+            "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
+            "psutil>=5.9" "whisper-guard>=0.3" numpy mcp
+      - name: Run Windows correctness tests (offload deny-policy contract)
+        shell: bash
+        run: pytest tests/test_hardening_round4.py -q
+
   coverage:
     name: coverage
     # Coverage floor as a regression RATCHET (not a quality claim — the conftest
@@ -116,9 +155,12 @@ jobs:
   audit:
     name: dependency-audit
     runs-on: ubuntu-latest
-    # Non-blocking: surfaces known-vuln deps without gating merges. Flip to
-    # blocking once the initial findings are triaged (expect transitive noise).
-    continue-on-error: true
+    # Real gate (2026-07-25): this job previously carried BOTH job-level
+    # `continue-on-error: true` AND per-step `|| true`, so a known-vuln dep could
+    # never fail CI — the "audit" was decorative. Now a high+ finding fails the
+    # job. If a specific transitive advisory is triaged as non-actionable, ignore
+    # it EXPLICITLY (pip-audit --ignore-vuln GHSA-xxxx, or an npm allowlist) with a
+    # one-line reason — never a blanket `|| true`.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -127,10 +169,21 @@ jobs:
       - name: pip-audit
         run: |
           python -m pip install --upgrade pip pip-audit
-          pip-audit -r requirements.txt -r requirements-dev.txt || true
+          # chromadb PYSEC-2026-311 / CVE-2026-45829 / GHSA-f4j7-r4q5-qw2c: a
+          # pre-auth code-injection in chromadb's SERVER mode with NO fixed version
+          # (OSV: affected 1.0.0+, fix none). Arkiv embeds chromadb in-process
+          # (PersistentClient) and never runs its HTTP server, so the vulnerable
+          # surface isn't reachable. Ignored EXPLICITLY (not `|| true`) by BOTH the
+          # PYSEC id and its GHSA alias, so a pip-audit id switch can't red the gate
+          # on the very advisory it means to skip — the gate still blocks on any
+          # other/new advisory. Revisit when a fix ships or chromadb is dropped.
+          # NOTE: this only gates MERGES if `dependency-audit` (and `test-windows`)
+          # are set as REQUIRED checks in branch protection — verify in repo settings.
+          pip-audit -r requirements.txt -r requirements-dev.txt \
+            --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - name: npm audit
         working-directory: frontend
-        run: npm audit --omit=dev --audit-level=high || true
+        run: npm audit --omit=dev --audit-level=high
