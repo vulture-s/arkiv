@@ -154,6 +154,35 @@ jobs:
           npm ci
           npm run build
 
+  tauri-check:
+    name: tauri-check
+    runs-on: macos-latest
+    # The Tauri (Rust) sidecar had NO CI gate — a Cargo.toml/Cargo.lock drift or a Rust
+    # regression could merge silently. `cargo check --locked` catches both. macOS runner:
+    # the app ships macOS-only (WKWebView is a system framework — no apt webkit deps),
+    # faithful to the deploy target. generate_context!() (src-tauri/src/main.rs) embeds
+    # frontend/dist at COMPILE time and frontend/dist is git-ignored, so the frontend must
+    # be built first (same steps as the `frontend` job). The tracked src-tauri/backend
+    # .gitkeep shell satisfies tauri-build's resource check without the heavy bundle.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend (generate_context! embeds frontend/dist)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo check --locked
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
   audit:
     name: dependency-audit
     runs-on: ubuntu-latest
