@@ -90,6 +90,30 @@ chore: update requirements.txt
 - Keep modules small and focused — each `.py` file has a single responsibility
 - Use `config.py` for all configurable values (never hardcode paths/URLs)
 
+## Testing & Coverage
+
+Run the suite with `pytest -q`. CI runs it on macOS (Python 3.9 + 3.12) plus a scoped
+Windows correctness leg — those are the blocking correctness gates.
+
+**Coverage is a non-blocking regression ratchet, not a quality bar.** The `coverage` CI
+job is `continue-on-error` on purpose:
+
+- The percentage (~63%) is *flattered* — `tests/conftest.py` fakes the heavy backends
+  (torch, chromadb, mlx_whisper, whisperx, …) via `sys.modules`, so those branches never
+  execute and the denominator shrinks. Treat it as a relative ratchet, not an absolute claim.
+- The floor (`--cov-fail-under=55`) sits conservatively below the measured ~63%.
+- The MCP stdio e2e (`tests/test_mcp_e2e.py`, marked `subprocess_stdio`) is **excluded from
+  the `--cov` leg** (`-m "not subprocess_stdio"`). It spawns a real subprocess; under
+  coverage the parent-side tracer slows the stdio pump so the async handshake/teardown flakes
+  against its `anyio.fail_after` bound. That is the same F3 MCP-SDK×OS stall tracked in the
+  health-hardening handoff — not a coverage bug — and the child is un-instrumented, so
+  excluding it costs ~0 coverage. The `test` job still runs it (no filter).
+
+**Flip-to-blocking condition:** make coverage a required check only once (a) the F3 MCP stdio
+stall has a root-cause fix (so the e2e can rejoin the `--cov` leg) and (b) coverage is
+re-measured on a matrix rather than the single `macos-latest` runner. Until then it stays a
+ratchet.
+
 ## Project Structure
 
 ```

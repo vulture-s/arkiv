@@ -33,6 +33,14 @@ import anyio  # ships with mcp/fastapi; only reached past the importorskip gate
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+# Every test here drives a real `python mcp_server.py` subprocess over async stdio.
+# Marked so the coverage CI leg can `-m "not subprocess_stdio"` deselect them: under
+# --cov the parent-side tracer slows the stdio pump into the anyio.fail_after bound and
+# teardown flakes (the F3 MCP SDK×OS stall, deferred to the health-hardening handoff).
+# The child is un-instrumented, so these contribute ~0 coverage. The `test` job still
+# runs them (no marker filter) for correctness.
+pytestmark = pytest.mark.subprocess_stdio
+
 _REPO = Path(__file__).resolve().parent.parent
 
 # F3 / AC2 (2026-07-25): the stdio handshake, tool calls and teardown have no

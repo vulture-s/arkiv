@@ -109,11 +109,13 @@ jobs:
   coverage:
     name: coverage
     # Coverage floor as a regression RATCHET (not a quality claim — the conftest
-    # backend fakes flatter the number). Kept as its OWN job and NON-BLOCKING for
-    # now: a pre-existing intermittent flake in a subprocess-CLI test surfaces
-    # under `--cov`, so we don't import that instability into the correctness legs
-    # above. Floor is set conservatively below the measured ~63%. Flip to blocking
-    # once the flaky test is fixed (see CONTRIBUTING / follow-up).
+    # backend fakes flatter the number). Kept as its OWN job and NON-BLOCKING; the
+    # decision + flip-to-blocking condition live in CONTRIBUTING.md § Testing &
+    # Coverage. The subprocess-stdio MCP e2e is deselected below (-m "not
+    # subprocess_stdio"): under --cov the parent-side tracer slows the stdio pump
+    # into the anyio.fail_after bound and it flakes — the F3 MCP SDK×OS stall
+    # deferred to the health-hardening handoff, not a coverage bug (and the child is
+    # un-instrumented, so excluding it costs ~0 coverage). Floor is below ~63%.
     runs-on: macos-latest  # same as `test`: mlx-whisper has no Linux wheel
     continue-on-error: true
     steps:
@@ -132,7 +134,7 @@ jobs:
             "psutil>=5.9" "whisper-guard>=0.3" numpy mlx-whisper \
             "opencc; python_version >= '3.10'" "mcp>=1.2"
       - name: Coverage
-        run: pytest -q --cov=. --cov-config=pyproject.toml --cov-report=term:skip-covered --cov-fail-under=55
+        run: pytest -q -m "not subprocess_stdio" --cov=. --cov-config=pyproject.toml --cov-report=term:skip-covered --cov-fail-under=55
 
   frontend:
     name: frontend-build
