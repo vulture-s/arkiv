@@ -227,18 +227,14 @@ jobs:
     # wheel, but requirements.txt gates it by platform marker (faster-whisper on Linux,
     # mlx-whisper only on Darwin), so a full Linux build is green-able. Runtime smoke is
     # scoped to arkiv's OWN /api/stats (the Dockerfile HEALTHCHECK target) — no ollama
-    # models / GPU, which a per-PR runner can't provide.
+    # models / GPU, which a per-PR runner can't provide. Uses the runner's BUILT-IN
+    # docker/buildkit (not docker/setup-buildx-action, whose buildkit builder image is
+    # pulled from Docker Hub and flaked with a registry timeout). No layer cache — a gate
+    # can afford the ~10 min; base-image pulls still hit Docker Hub.
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
       - name: Build image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: arkiv:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: docker build -t arkiv:ci .
       - name: Boot smoke (arkiv /api/stats via loopback — ollama not required)
         run: |
           docker run -d --name arkiv-ci arkiv:ci
