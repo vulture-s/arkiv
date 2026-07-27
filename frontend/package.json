@@ -12,7 +12,7 @@
     "@sveltejs/vite-plugin-svelte": "^3.1.2",
     "puppeteer-core": "^23.0.0",
     "svelte": "^4.2.20",
-    "vite": "^5.4.21"
+    "vite": "^8.1.5"
   },
   "dependencies": {
     "@fontsource/archivo-black": "^5.2.0",
