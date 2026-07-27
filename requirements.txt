@@ -49,7 +49,7 @@ whisper-guard>=0.3   # 4-layer anti-hallucination text filter (was vendored; now
 #   pip install faster-whisper
 #   No GPU needed, slower but works everywhere
 #
-faster-whisper>=1.0;platform_system!="Darwin"
+faster-whisper>=1.2.1;platform_system!="Darwin"
 mlx-whisper>=0.4;platform_system=="Darwin"
 
 # ── MCP server (Phase 14) — optional ─────────────────────
