@@ -3,7 +3,7 @@
 # Upper bounds on the libraries that gate the API/data contract so a future
 # major (e.g. chromadb 2.x changing the collection API, pydantic 3.x) can't
 # silently break a fresh install. Bump deliberately after testing.
-fastapi>=0.100.0
+fastapi>=0.140.6
 uvicorn>=0.20.0
 pydantic>=2.0,<3
 chromadb>=1.0,<2
