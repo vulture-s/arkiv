@@ -32,7 +32,7 @@ psutil>=5.9
 watchdog>=3.0
 
 # Speech pre-processing
-silero-vad>=6.0
+silero-vad>=6.2.1
 whisper-guard>=0.3   # 4-layer anti-hallucination text filter (was vendored; now PyPI)
 
 # ── Platform-specific Whisper (install ONE) ──────────────
