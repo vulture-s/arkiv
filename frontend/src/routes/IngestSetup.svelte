@@ -241,7 +241,6 @@
   .seg { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.08em; width: 46px; flex: 0 0 46px; padding: 5px 0; border: 1px solid var(--rule-hi); background: transparent; color: var(--quiet); cursor: pointer; }
   .seg.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); font-weight: 700; }
 
-  .deferred { opacity: 0.6; }
   .pendrow, .estimated { display: flex; align-items: baseline; justify-content: space-between; }
   .pend { font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--quiet-2); border: 1px dashed var(--rule-hi); padding: 1px 6px; }
 

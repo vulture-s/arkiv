@@ -139,8 +139,9 @@ jobs:
   frontend:
     name: frontend-build
     runs-on: ubuntu-latest
-    # Nothing in CI touched frontend/ before this — a broken Svelte build could
-    # merge silently. Build-only for now; lint/svelte-check are a follow-up.
+    # Build + svelte-check gate (Wave D). `npm run check` = svelte-check --fail-on-warnings,
+    # so a NEW svelte warning (unused export/CSS, a11y, empty ruleset) reds CI. Baseline = 0
+    # warnings (the 5 pre-existing were fixed in this wave). Runs in the already-required job.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -153,6 +154,9 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: svelte-check (gate at zero warnings)
+        working-directory: frontend
+        run: npm run check
 
   tauri-check:
     name: tauri-check

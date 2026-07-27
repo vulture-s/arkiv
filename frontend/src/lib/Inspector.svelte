@@ -640,8 +640,7 @@
   .metagrid { display: grid; grid-template-columns: 64px 1fr; row-gap: 4px; column-gap: 12px; font-size: 11.5px; }
   .blockhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
   /* transcript flows naturally now — the whole inspector scrolls (see .inspector),
-     so a long transcript extends the panel and is reached by scrolling it. */
-  .transcript { }
+     so a long transcript extends the panel and is reached by scrolling it; no rule needed. */
   .langtabs { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
   .langtab {
     appearance: none; background: transparent; border: 1px solid var(--rule);

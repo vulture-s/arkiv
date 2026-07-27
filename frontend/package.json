@@ -6,12 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "svelte-check --fail-on-warnings"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.1.2",
     "puppeteer-core": "^23.0.0",
     "svelte": "^4.2.20",
+    "svelte-check": "^4.7.4",
+    "typescript": "^6.0.3",
     "vite": "^5.4.21"
   },
   "dependencies": {
