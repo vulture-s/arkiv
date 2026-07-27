@@ -499,11 +499,17 @@ def _segments_payload(segments_json):
         return []
     if not isinstance(rows, list):
         return []
-    return [
-        {"start": r.get("start"), "end": r.get("end"), "text": r.get("text")}
-        for r in rows
-        if isinstance(r, dict)
-    ]
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        seg = {"start": r.get("start"), "end": r.get("end"), "text": r.get("text")}
+        # A4: surface speaker_id only when present, so non-diarized clips keep the
+        # exact {start,end,text} shape (backward-compatible with existing consumers).
+        if r.get("speaker_id"):
+            seg["speaker_id"] = r.get("speaker_id")
+        out.append(seg)
+    return out
 
 
 @router.get("/api/media/{media_id}/segments")

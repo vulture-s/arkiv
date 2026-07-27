@@ -26,6 +26,8 @@ from config import (
     WHISPER_GUARD_LAYERS,
     OLLAMA_CHAT_MODEL,
     FFMPEG_PATH,
+    DIARIZATION_ENABLED,
+    PYANNOTE_TOKEN,
 )
 from llm import chat
 NO_SPEECH_THRESHOLD = 0.6
@@ -316,7 +318,7 @@ def _transcribe_mlx(wav: str, language: str) -> tuple:
     text = result.get("text", "").strip()
     lang = result.get("language", language)
     raw_segments = result.get("segments", [])
-    return _postprocess(text, lang, raw_segments, language, words=[])
+    return _postprocess(text, lang, raw_segments, language, words=[], wav_path=wav)
 
 def _transcribe_faster_whisper(wav: str, language: str) -> tuple:
     """Transcribe using faster-whisper (non-Mac / CUDA).
@@ -368,7 +370,7 @@ def _transcribe_faster_whisper(wav: str, language: str) -> tuple:
 
     text = " ".join(s["text"] for s in parsed_segments).strip()
     lang = (info.language if info is not None else None) or language
-    return _postprocess(text, lang, parsed_segments, language, words=all_words)
+    return _postprocess(text, lang, parsed_segments, language, words=all_words, wav_path=wav)
 
 def _transcribe_whisperx(wav: str, language: str) -> tuple:
     """Transcribe using WhisperX (CUDA) with forced alignment."""
@@ -429,11 +431,48 @@ def _transcribe_whisperx(wav: str, language: str) -> tuple:
                 })
 
     text = " ".join(seg["text"] for seg in segments).strip()
-    return _postprocess(text, lang, segments, language, words=all_words)
+    return _postprocess(text, lang, segments, language, words=all_words, wav_path=wav)
 
-def _postprocess(text: str, lang: str, segments: list, language: str, words: list = None) -> tuple:
-    """Shared post-processing: anti-hallucination + LLM polish.
-    Returns (text, lang, clean_segments, words) where clean_segments has start/end/text."""
+def _attach_speaker_ids(timed_segments: list, wav_path: str) -> list:
+    """Attach a `speaker_id` to each segment via the speaker-align package (A4).
+
+    Diarizes `wav_path` — which MUST be the same (VAD-filtered) audio the segments
+    were timed against, or the labels won't line up — and tags each segment with
+    whichever speaker turn overlaps it most. Soft dependency + soft failure: if
+    speaker-align/pyannote isn't installed, no token is set, or diarization errors,
+    the segments are returned unchanged (transcription must never break because of
+    an optional label).
+    """
+    if not timed_segments or not wav_path:
+        return timed_segments
+    if not PYANNOTE_TOKEN:
+        print("[diarize] skipped: no ARKIV_PYANNOTE_TOKEN set", flush=True)
+        return timed_segments
+    try:
+        from speaker_align import get_diarizer, align_speakers_to_transcript
+    except ImportError:
+        print("[diarize] skipped: speaker-align not installed "
+              "(pip install 'speaker-align[pyannote]')", flush=True)
+        return timed_segments
+    try:
+        diarizer = get_diarizer(auth_token=PYANNOTE_TOKEN)
+        result = diarizer.diarize(wav_path)
+        aligned = align_speakers_to_transcript(result.segments, timed_segments)
+        for seg in aligned:
+            # arkiv's segment contract uses `speaker_id`; speaker-align emits `speaker`.
+            seg["speaker_id"] = seg.pop("speaker", "")
+        return aligned
+    except Exception as e:  # noqa: BLE001 — an optional label must never break transcribe
+        print("[diarize] skipped (%s): %s" % (type(e).__name__, e), flush=True)
+        return timed_segments
+
+
+def _postprocess(text: str, lang: str, segments: list, language: str,
+                 words: list = None, wav_path: str = None) -> tuple:
+    """Shared post-processing: anti-hallucination + LLM polish (+ optional A4
+    speaker diarization when config.DIARIZATION_ENABLED and a wav_path is given).
+    Returns (text, lang, clean_segments, words) where clean_segments has
+    start/end/text (+ speaker_id when diarization ran)."""
     if not segments:
         return text, lang, [], words or []
 
@@ -519,6 +558,12 @@ def _postprocess(text: str, lang: str, segments: list, language: str, words: lis
             return any(lo - eps <= mid <= hi + eps for lo, hi in kept_ranges)
 
         words = [w for w in words if _in_kept_segment(w)]
+
+    # A4: tag each segment with a speaker_id (optional, gated, soft-fail). Runs on
+    # the same VAD-filtered wav the segments were timed against (passed by each
+    # backend), so the labels line up with the timecodes.
+    if wav_path and DIARIZATION_ENABLED:
+        timed_segments = _attach_speaker_ids(timed_segments, wav_path)
 
     return filtered_text, lang, timed_segments, words or []
 
