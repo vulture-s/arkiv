@@ -1,0 +1,117 @@
+name: Release
+
+# Tag-triggered macOS (Apple Silicon) release. Builds the self-contained .app/.dmg and
+# attaches it to a GitHub Release. Signing + notarization are CONDITIONAL: they run only
+# when the Apple secrets are configured (see below), otherwise the build is UNSIGNED
+# (the app already ships with a documented right-click -> Open Gatekeeper step). Because
+# this is tag/dispatch-triggered, it never gates normal PRs.
+#
+# workflow_dispatch = an unsigned dry-run of the whole pipeline (no tag, no secrets needed).
+#
+# Owner secrets to enable a SIGNED + NOTARIZED release (Repo Settings -> Secrets -> Actions):
+#   APPLE_CERTIFICATE           base64 of the Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD  the .p12 export password
+#   APPLE_SIGNING_IDENTITY      e.g. "Developer ID Application: Your Name (TEAMID)"
+#   APPLE_ID                    your Apple ID (for notarytool)
+#   APPLE_PASSWORD              an app-specific password for that Apple ID
+#   APPLE_TEAM_ID               your 10-char Apple Developer Team ID
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # create the Release + upload assets
+
+jobs:
+  release:
+    runs-on: macos-latest   # Apple Silicon — assemble-backend.sh bundles an aarch64-apple-darwin Python
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="$(node -p "require('./src-tauri/tauri.conf.json').version")+dryrun"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Building arkiv $V"
+
+      - name: Stamp version from tag (so the bundle can't drift from the tag)
+        if: ${{ github.ref_type == 'tag' }}
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          python3 - "$V" <<'PY'
+          import json, re, sys, pathlib
+          v = sys.argv[1]
+          p = pathlib.Path("src-tauri/tauri.conf.json"); d = json.loads(p.read_text()); d["version"] = v
+          p.write_text(json.dumps(d, indent=2) + "\n")
+          c = pathlib.Path("src-tauri/Cargo.toml"); t = c.read_text()
+          c.write_text(re.sub(r'(?m)^version = ".*"$', f'version = "{v}"', t, count=1))
+          PY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend (SPA that assemble-backend + generate_context! embed)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build .venv (assemble-backend needs .venv/lib/python3.12/site-packages)
+        run: |
+          python -m venv .venv
+          ./.venv/bin/pip install --upgrade pip
+          ./.venv/bin/pip install -r requirements.txt
+
+      - name: Assemble self-contained backend bundle
+        run: bash src-tauri/assemble-backend.sh
+
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Import Apple signing cert (only when configured)
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Build app (Tauri signs + notarizes iff Apple env is set, else unsigned)
+        env:
+          CI: "true"   # skips the Finder AppleScript so the .dmg builds headless (assemble-backend.sh:72-76)
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: cargo tauri build
+
+      - name: Attach artifacts to the GitHub Release (tag only)
+        if: ${{ github.ref_type == 'tag' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+          fail_on_unmatched_files: false
+          body: |
+            arkiv ${{ steps.ver.outputs.version }} — macOS (Apple Silicon).
+            Unsigned builds: right-click -> Open to clear Gatekeeper once (see docs/quickstart-mac.md).
+
+      - name: Upload dry-run artifact (workflow_dispatch)
+        if: ${{ github.ref_type != 'tag' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: arkiv-dryrun-dmg
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
