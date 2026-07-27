@@ -182,6 +182,33 @@ def test_signal_null_island_gps_is_no_location():
     assert sc.media_signal(raw)["location"] is None
 
 
+# ── edit-role collections keyed on MANUAL tags (a-roll / b-roll) ─────────────
+# These populate from the `tags` table (hand-added), which list_collections now
+# feeds into the classifier. media_signal already merges media["tags"], so at the
+# engine level a clip carrying the manual tag is enough to join the collection.
+def test_manual_a_roll_tag_joins_a_roll_collection():
+    clip = {"duration_s": 60, "has_audio": 1, "tags": ["a-roll"], "frames": []}
+    assert "a_roll" in _keys(clip)
+
+
+def test_manual_b_roll_tag_joins_b_roll_collection():
+    clip = {"duration_s": 6, "has_audio": 0, "tags": ["b-roll"], "frames": []}
+    assert "b_roll" in _keys(clip)
+
+
+def test_untagged_clip_in_neither_edit_role_collection():
+    clip = {"duration_s": 6, "has_audio": 1, "tags": ["拉麵", "碗"], "frames": []}
+    keys = _keys(clip)
+    assert "a_roll" not in keys and "b_roll" not in keys
+
+
+def test_edit_role_collections_do_not_cross_leak():
+    a_only = {"duration_s": 60, "has_audio": 1, "tags": ["a-roll"], "frames": []}
+    b_only = {"duration_s": 6, "has_audio": 1, "tags": ["b-roll"], "frames": []}
+    assert "b_roll" not in _keys(a_only)
+    assert "a_roll" not in _keys(b_only)
+
+
 def test_location_booster_gates_on_label():
     col = sc.Collection(
         key="t", title="t", category="c", tags=["吧檯"],

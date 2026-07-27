@@ -90,6 +90,50 @@ chore: update requirements.txt
 - Keep modules small and focused — each `.py` file has a single responsibility
 - Use `config.py` for all configurable values (never hardcode paths/URLs)
 
+## Testing & Coverage
+
+Run the suite with `pytest -q`. CI runs it on macOS (Python 3.9 + 3.12) plus a scoped
+Windows correctness leg — those are the blocking correctness gates.
+
+**Coverage is a non-blocking regression ratchet, not a quality bar.** The `coverage` CI
+job is `continue-on-error` on purpose:
+
+- The percentage (~63%) is *flattered* — `tests/conftest.py` fakes the heavy backends
+  (torch, chromadb, mlx_whisper, whisperx, …) via `sys.modules`, so those branches never
+  execute and the denominator shrinks. Treat it as a relative ratchet, not an absolute claim.
+- The floor (`--cov-fail-under=55`) sits conservatively below the measured ~63%.
+- The MCP stdio e2e (`tests/test_mcp_e2e.py`, marked `subprocess_stdio`) is **excluded from
+  the `--cov` leg** (`-m "not subprocess_stdio"`). It spawns a real subprocess; under
+  coverage the parent-side tracer slows the stdio pump so the async handshake/teardown flakes
+  against its `anyio.fail_after` bound. That is the same F3 MCP-SDK×OS stall tracked in the
+  health-hardening handoff — not a coverage bug — and the child is un-instrumented, so
+  excluding it costs ~0 coverage. The `test` job still runs it (no filter).
+
+**Flip-to-blocking condition:** make coverage a required check only once (a) the F3 MCP stdio
+stall has a root-cause fix (so the e2e can rejoin the `--cov` leg) and (b) coverage is
+re-measured on a matrix rather than the single `macos-latest` runner. Until then it stays a
+ratchet.
+
+## Dependency updates
+
+Dependencies are updated **deliberately, one bump per PR**, so every change carries the
+upstream changelog and a one-click rollback:
+
+- **Dependabot** (`.github/dependabot.yml`) opens a weekly PR per bump for pip, npm, cargo,
+  GitHub Actions, and Docker base images — each PR links the upstream release notes.
+- **Before merging a bump**: let CI's required checks run (they exercise the real
+  install / build / audit), and skim the changelog for breaking changes. Add a
+  `CHANGELOG.md` entry for anything user-facing.
+- **Rollback** = revert the bump PR (that's why bumps stay one-per-PR, not batched).
+- **Base-image digests**: `Dockerfile` and `docker-compose.yml` pin images by `@sha256` for
+  reproducible rebuilds; dependabot's `docker` ecosystem refreshes those digests — merge the
+  dependabot PR rather than hand-editing (or run `docker buildx imagetools inspect <image>`
+  for a fresh digest if you must).
+- Python deps stay in `requirements.txt` (flat, no lockfile): the 3.9×3.12 matrix + platform
+  markers (`mlx-whisper`@Darwin / `faster-whisper`@Linux, `opencc`/`mcp` gated ≥3.10) mean a
+  single frozen lockfile can't honestly represent all environments. The `dependency-audit`
+  gate + deliberate bumps are the reproducibility contract instead.
+
 ## Project Structure
 
 ```

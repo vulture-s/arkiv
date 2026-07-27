@@ -109,11 +109,13 @@ jobs:
   coverage:
     name: coverage
     # Coverage floor as a regression RATCHET (not a quality claim — the conftest
-    # backend fakes flatter the number). Kept as its OWN job and NON-BLOCKING for
-    # now: a pre-existing intermittent flake in a subprocess-CLI test surfaces
-    # under `--cov`, so we don't import that instability into the correctness legs
-    # above. Floor is set conservatively below the measured ~63%. Flip to blocking
-    # once the flaky test is fixed (see CONTRIBUTING / follow-up).
+    # backend fakes flatter the number). Kept as its OWN job and NON-BLOCKING; the
+    # decision + flip-to-blocking condition live in CONTRIBUTING.md § Testing &
+    # Coverage. The subprocess-stdio MCP e2e is deselected below (-m "not
+    # subprocess_stdio"): under --cov the parent-side tracer slows the stdio pump
+    # into the anyio.fail_after bound and it flakes — the F3 MCP SDK×OS stall
+    # deferred to the health-hardening handoff, not a coverage bug (and the child is
+    # un-instrumented, so excluding it costs ~0 coverage). Floor is below ~63%.
     runs-on: macos-latest  # same as `test`: mlx-whisper has no Linux wheel
     continue-on-error: true
     steps:
@@ -132,7 +134,7 @@ jobs:
             "psutil>=5.9" "whisper-guard>=0.3" numpy mlx-whisper \
             "opencc; python_version >= '3.10'" "mcp>=1.2"
       - name: Coverage
-        run: pytest -q --cov=. --cov-config=pyproject.toml --cov-report=term:skip-covered --cov-fail-under=55
+        run: pytest -q -m "not subprocess_stdio" --cov=. --cov-config=pyproject.toml --cov-report=term:skip-covered --cov-fail-under=55
 
   frontend:
     name: frontend-build
@@ -151,6 +153,35 @@ jobs:
         run: |
           npm ci
           npm run build
+
+  tauri-check:
+    name: tauri-check
+    runs-on: macos-latest
+    # The Tauri (Rust) sidecar had NO CI gate — a Cargo.toml/Cargo.lock drift or a Rust
+    # regression could merge silently. `cargo check --locked` catches both. macOS runner:
+    # the app ships macOS-only (WKWebView is a system framework — no apt webkit deps),
+    # faithful to the deploy target. generate_context!() (src-tauri/src/main.rs) embeds
+    # frontend/dist at COMPILE time and frontend/dist is git-ignored, so the frontend must
+    # be built first (same steps as the `frontend` job). The tracked src-tauri/backend
+    # .gitkeep shell satisfies tauri-build's resource check without the heavy bundle.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend (generate_context! embeds frontend/dist)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo check --locked
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
 
   audit:
     name: dependency-audit
@@ -187,3 +218,35 @@ jobs:
       - name: npm audit
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high
+
+  docker-build:
+    name: docker-build
+    runs-on: ubuntu-latest
+    # Before this CI only did `docker compose config` (YAML parse) — a broken Dockerfile
+    # could merge silently. This builds the REAL image and boots it. mlx has no Linux
+    # wheel, but requirements.txt gates it by platform marker (faster-whisper on Linux,
+    # mlx-whisper only on Darwin), so a full Linux build is green-able. Runtime smoke is
+    # scoped to arkiv's OWN /api/stats (the Dockerfile HEALTHCHECK target) — no ollama
+    # models / GPU, which a per-PR runner can't provide. Uses the runner's BUILT-IN
+    # docker/buildkit (not docker/setup-buildx-action, whose buildkit builder image is
+    # pulled from Docker Hub and flaked with a registry timeout). No layer cache — a gate
+    # can afford the ~10 min; base-image pulls still hit Docker Hub.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t arkiv:ci .
+      - name: Boot smoke (arkiv /api/stats via loopback — ollama not required)
+        run: |
+          docker run -d --name arkiv-ci arkiv:ci
+          ok=0
+          for i in $(seq 1 30); do
+            # arkiv trusts loopback and 401s external callers, so curl INSIDE the
+            # container (same as the Dockerfile HEALTHCHECK) — not the mapped port.
+            if docker exec arkiv-ci curl -fsS http://localhost:8501/api/stats >/dev/null 2>&1; then
+              echo "arkiv /api/stats up (loopback) after ${i} attempt(s)"; ok=1; break
+            fi
+            sleep 3
+          done
+          if [ "$ok" != "1" ]; then echo "arkiv did not become healthy"; docker logs arkiv-ci; fi
+          docker rm -f arkiv-ci
+          [ "$ok" = "1" ]

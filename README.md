@@ -1,16 +1,16 @@
 # arkiv
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: PolyForm NC](https://img.shields.io/badge/License-PolyForm--NC--1.0.0-orange.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://python.org)
 [![Tauri](https://img.shields.io/badge/Tauri-Desktop_App-FFC131.svg)](https://tauri.app)
 
-**Open-source AI metadata layer for DIT workflows — Resolve-native, CJK-first.**
+**Source-available AI metadata layer for DIT workflows — Resolve-native, CJK-first.**
 
 > 🌐 **English** | [繁體中文](README.zh-TW.md)
 
 arkiv sits between your media drive and DaVinci Resolve: it ingests your footage, attaches AI-generated metadata (transcript, vision tags, atmosphere, energy, edit position), and surfaces clips via semantic search in any language — Chinese, Japanese, or English. The Resolve plugin lets you search, import with clip color, and drop frame markers without leaving the NLE.
 
-Designed for solo DITs and small crews who own their data: local-first, self-hosted, MIT license, no cloud dependency.
+Designed for solo DITs and small crews who own their data: local-first, self-hosted, source-available (PolyForm Noncommercial), no cloud dependency.
 
 ---
 
@@ -397,4 +397,6 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 ## License
 
-MIT
+PolyForm Noncommercial License 1.0.0, with a Commercial Output Exception — see [LICENSE](LICENSE).
+
+Videos, timelines and exports you produce with arkiv are yours and may be used commercially. Using arkiv itself is free for any noncommercial purpose; selling, hosting, or repackaging arkiv (or a fork) as a commercial product or service is not permitted.

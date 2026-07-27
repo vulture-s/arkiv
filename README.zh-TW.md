@@ -1,16 +1,16 @@
 # arkiv
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: PolyForm NC](https://img.shields.io/badge/License-PolyForm--NC--1.0.0-orange.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://python.org)
 [![Tauri](https://img.shields.io/badge/Tauri-Desktop_App-FFC131.svg)](https://tauri.app)
 
-**DIT 工作流的開源 AI 素材標註層 — Resolve 原生、CJK 優先。**
+**DIT 工作流的 source-available AI 素材標註層 — Resolve 原生、CJK 優先。**
 
 > 🌐 [English](README.md) | **繁體中文**
 
 arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附上 AI 標註（逐字稿、視覺標籤、氛圍、能量、剪輯位置），並用任何語言（中文、日文、英文）的語義搜尋找回 clip。Resolve plugin 讓你搜尋、帶 clip color 匯入、加 frame marker，不用離開 NLE。
 
-為 solo DIT 與小團隊設計，資料自己持有：本地優先、自架、MIT license、零雲端依賴。
+為 solo DIT 與小團隊設計，資料自己持有：本地優先、自架、source-available（PolyForm Noncommercial），零雲端依賴。
 
 ---
 
@@ -395,4 +395,6 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 
 ## 授權
 
-MIT
+PolyForm Noncommercial License 1.0.0，附 Commercial Output Exception — 見 [LICENSE](LICENSE)。
+
+你用 arkiv 剪出的影片、時間軸、匯出檔都是你的，可商用；arkiv 軟體本身任何非商業用途皆免費，但**不得**把 arkiv（或其 fork）當商業產品/服務販售、架站或重新包裝。

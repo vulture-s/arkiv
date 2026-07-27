@@ -2,7 +2,9 @@
 # Stage 0: Build the Svelte SPA (frontend/dist) that server.py serves at /.
 # .dockerignore excludes dist/ + node_modules, so this stage builds from clean
 # source. The built dist is copied into the app stage below.
-FROM node:20-slim AS ui
+# Digest-pinned for reproducible rebuilds (Wave C); the tag stays for readability,
+# the digest is authoritative. Refresh via dependabot (docker ecosystem).
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS ui
 WORKDIR /ui
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -10,7 +12,8 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 1: Dependencies
-FROM python:3.11-slim AS deps
+# Digest-pinned for reproducible rebuilds (Wave C); refresh via dependabot.
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93 AS deps
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \

@@ -1,0 +1,33 @@
+# Dependency updates (Wave C). One PR per bump so every change carries the upstream
+# changelog and a one-click rollback (revert the PR). The `docker` ecosystem also
+# refreshes the @sha256 base-image digests pinned in Dockerfile + docker-compose.yml,
+# so they don't rot. Policy: CONTRIBUTING.md § Dependency updates.
+version: 2
+updates:
+  - package-ecosystem: "pip"          # requirements.txt + requirements-dev.txt (repo root)
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "npm"          # frontend/package.json + package-lock.json
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "cargo"        # src-tauri/Cargo.toml + Cargo.lock
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"   # .github/workflows/*.yml action pins
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"       # Dockerfile FROM digests + docker-compose image digests
+    directory: "/"
+    schedule:
+      interval: "weekly"
