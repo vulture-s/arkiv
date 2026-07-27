@@ -13,7 +13,7 @@ RUN npm run build
 
 # Stage 1: Dependencies
 # Digest-pinned for reproducible rebuilds (Wave C); refresh via dependabot.
-FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93 AS deps
+FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS deps
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
