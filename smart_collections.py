@@ -260,4 +260,20 @@ DEFAULT_COLLECTIONS: List[Collection] = [
         category="quality",
         tags=["模糊", "模糊畫面", "低解析度", "低解析", "不明物體", "屏幕", "電視"],
     ),
+    # Edit-role collections keyed on MANUAL tags (a-roll / b-roll). They populate
+    # only when a clip carries the hand-added tag; a library that never tags this
+    # way shows 0 members and the collection is hidden, so they cost nothing.
+    # Requires list_collections to feed the `tags` table into the classifier.
+    Collection(
+        key="a_roll",
+        title="A-roll · 主軸",
+        category="edit",
+        tags=["a-roll"],
+    ),
+    Collection(
+        key="b_roll",
+        title="B-roll · 輔助",
+        category="edit",
+        tags=["b-roll"],
+    ),
 ]

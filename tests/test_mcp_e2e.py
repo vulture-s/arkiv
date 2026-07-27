@@ -29,10 +29,52 @@ import pytest
 
 pytest.importorskip("mcp")
 
+import anyio  # ships with mcp/fastapi; only reached past the importorskip gate
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+# Every test here drives a real `python mcp_server.py` subprocess over async stdio.
+# Marked so the coverage CI leg can `-m "not subprocess_stdio"` deselect them: under
+# --cov the parent-side tracer slows the stdio pump into the anyio.fail_after bound and
+# teardown flakes (the F3 MCP SDK×OS stall, deferred to the health-hardening handoff).
+# The child is un-instrumented, so these contribute ~0 coverage. The `test` job still
+# runs them (no marker filter) for correctness.
+pytestmark = pytest.mark.subprocess_stdio
+
 _REPO = Path(__file__).resolve().parent.parent
+
+# F3 / AC2 (2026-07-25): the stdio handshake, tool calls and teardown have no
+# native timeout, so a Windows-specific stall blocks the whole suite (>180s
+# observed on windows-latest + mcp 1.28). Bound each session with anyio.fail_after
+# so a hang fails FAST with a stage label instead of hanging. This makes the
+# FAILURE bounded — it does NOT diagnose the hang (root cause = MCP SDK version ×
+# OS matrix, tracked in the arkiv-health-hardening handoff). anyio is already a
+# transitive dep (no new requirement); mcp is intentionally NOT pinned here.
+_MCP_SESSION_TIMEOUT = 90.0  # generous for a healthy run (~seconds); trips well under 180s
+
+
+async def _run_bounded_mcp(params, body):
+    """Open an MCP stdio session, run ``await body(session)``, and return its
+    result — all under a single bounded scope. On timeout, fail with the stage
+    (connect / initialize / call / cleanup) the session was in, so a Windows hang
+    is legible instead of silent."""
+    stage = "connect"
+    result = None
+    try:
+        with anyio.fail_after(_MCP_SESSION_TIMEOUT):
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    stage = "initialize"
+                    await session.initialize()
+                    stage = "call"
+                    try:
+                        result = await body(session)
+                    finally:
+                        stage = "cleanup"  # even if body raised: teardown runs next,
+                        # still inside fail_after, so a cleanup hang is labelled correctly
+    except TimeoutError:
+        pytest.fail("MCP stdio E2E timed out (stage: {0})".format(stage))
+    return result
 
 # Seeds a project the same way an ingest would, in a subprocess so that this
 # test's own config/db import state is untouched — the server subprocess must
@@ -85,63 +127,62 @@ async def test_mcp_stdio_end_to_end(seeded_project):
         args=[str(_REPO / "mcp_server.py")],
         env=seeded_project,
     )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
+    async def _body(session):
+        # ── the server is reachable and advertises what it should ──────────
+        tools = {t.name for t in (await session.list_tools()).tools}
+        assert {
+            "search_media", "get_media", "get_transcript",
+            "list_recent", "library_stats", "list_tags", "get_scenes",
+        } <= tools
 
-            # ── the server is reachable and advertises what it should ──────────
-            tools = {t.name for t in (await session.list_tools()).tools}
-            assert {
-                "search_media", "get_media", "get_transcript",
-                "list_recent", "library_stats", "list_tags", "get_scenes",
-            } <= tools
+        # ── get_scenes: the timecoded breakdown, over the real protocol ────
+        scenes = await _call(session, "get_scenes", media_id=1)
+        assert scenes["media_id"] == 1
+        assert scenes["media_duration_s"] == 30.0
+        assert scenes["total"] == 2
+        first = scenes["scenes"][0]
+        assert first["start_s"] == 0.0
+        assert first["end_s"] == 12.0            # next frame's start
+        assert first["description"] == "手持走入店內"
+        assert first["keyframe_path"] == "thumbnails/e2e_f0.jpg"
+        assert scenes["scenes"][1]["end_s"] == 30.0   # last → media duration
+        # the MCP surface must never emit the HTTP URL form
+        assert "keyframe_url" not in first
 
-            # ── get_scenes: the timecoded breakdown, over the real protocol ────
-            scenes = await _call(session, "get_scenes", media_id=1)
-            assert scenes["media_id"] == 1
-            assert scenes["media_duration_s"] == 30.0
-            assert scenes["total"] == 2
-            first = scenes["scenes"][0]
-            assert first["start_s"] == 0.0
-            assert first["end_s"] == 12.0            # next frame's start
-            assert first["description"] == "手持走入店內"
-            assert first["keyframe_path"] == "thumbnails/e2e_f0.jpg"
-            assert scenes["scenes"][1]["end_s"] == 30.0   # last → media duration
-            # the MCP surface must never emit the HTTP URL form
-            assert "keyframe_url" not in first
+        # ── unknown id is null, not an error and not an empty list ─────────
+        assert await _call(session, "get_scenes", media_id=999999) is None
 
-            # ── unknown id is null, not an error and not an empty list ─────────
-            assert await _call(session, "get_scenes", media_id=999999) is None
+        # ── get_transcript: segments on by default, words off ─────────────
+        tr = await _call(session, "get_transcript", media_id=1)
+        assert tr["duration_s"] == 30.0
+        assert tr["segments"] == [{"start": 0.0, "end": 2.4, "text": "第一句"}]
+        assert tr["has_words"] is True
+        assert "words" not in tr
+        # decoder internals must not survive the round trip
+        assert "tokens" not in json.dumps(tr)
 
-            # ── get_transcript: segments on by default, words off ─────────────
-            tr = await _call(session, "get_transcript", media_id=1)
-            assert tr["duration_s"] == 30.0
-            assert tr["segments"] == [{"start": 0.0, "end": 2.4, "text": "第一句"}]
-            assert tr["has_words"] is True
-            assert "words" not in tr
-            # decoder internals must not survive the round trip
-            assert "tokens" not in json.dumps(tr)
+        # ── …and on request ───────────────────────────────────────────────
+        tr_w = await _call(session, "get_transcript", media_id=1, include_words=True)
+        assert tr_w["words"] == [
+            {"word": "第一", "start": 0.1, "end": 0.4, "score": 0.98}
+        ]
+        assert tr_w["words_truncated"] is False
 
-            # ── …and on request ───────────────────────────────────────────────
-            tr_w = await _call(session, "get_transcript", media_id=1, include_words=True)
-            assert tr_w["words"] == [
-                {"word": "第一", "start": 0.1, "end": 0.4, "score": 0.98}
-            ]
-            assert tr_w["words_truncated"] is False
+        # ── the pre-existing tools still answer ────────────────────────────
+        stats = await _call(session, "library_stats")
+        assert stats["total"] == 1
 
-            # ── the pre-existing tools still answer ────────────────────────────
-            stats = await _call(session, "library_stats")
-            assert stats["total"] == 1
+        # ── search_media works with NO vector backend (the CI reality) ─────
+        # On CI chromadb isn't installed, so the lazy `import vectordb` in
+        # search_media_impl fails and it degrades to a SQL filename/transcript
+        # LIKE. The seeded row is filename "e2e.mp4" — a text match finds it.
+        # (Normal shape is a bare list; a stale index would wrap it in
+        # {items, search_degraded} — accept either.)
+        sm = await _call(session, "search_media", query="e2e")
+        hits = sm["items"] if isinstance(sm, dict) else sm
+        assert any(h["id"] == 1 for h in hits), sm
 
-            # ── search_media works with NO vector backend (the CI reality) ─────
-            # On CI chromadb isn't installed, so the lazy `import vectordb` in
-            # search_media_impl fails and it degrades to a SQL filename/transcript
-            # LIKE. The seeded row is filename "e2e.mp4" — a text match finds it.
-            # (Normal shape is a bare list; a stale index would wrap it in
-            # {items, search_degraded} — accept either.)
-            sm = await _call(session, "search_media", query="e2e")
-            hits = sm["items"] if isinstance(sm, dict) else sm
-            assert any(h["id"] == 1 for h in hits), sm
+    await _run_bounded_mcp(params, _body)
 
 
 @pytest.mark.asyncio
@@ -172,13 +213,13 @@ db.upsert_frame(media_id=1, frame_index=0, timestamp_s=0.0,
     params = StdioServerParameters(
         command=sys.executable, args=[str(_REPO / "mcp_server.py")], env=env,
     )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
+    async def _body(session):
+        media = json.dumps(await _call(session, "get_media", media_id=1))
+        scenes = json.dumps(await _call(session, "get_scenes", media_id=1))
+        recent = json.dumps(await _call(session, "list_recent"))
+        return media, scenes, recent
 
-            media = json.dumps(await _call(session, "get_media", media_id=1))
-            scenes = json.dumps(await _call(session, "get_scenes", media_id=1))
-            recent = json.dumps(await _call(session, "list_recent"))
+    media, scenes, recent = await _run_bounded_mcp(params, _body)
 
     for surface, payload in (("get_media", media), ("get_scenes", scenes),
                              ("list_recent", recent)):
@@ -238,17 +279,17 @@ async def test_mcp_uninitialised_root_gives_clear_error(tmp_path):
     params = StdioServerParameters(
         command=sys.executable, args=[str(_REPO / "mcp_server.py")], env=env,
     )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            # the server is up and advertises its tools despite the empty root
-            tools = {t.name for t in (await session.list_tools()).tools}
-            assert "library_stats" in tools
-            # …but a call fails with a clear, actionable message
-            result = await session.call_tool("library_stats", {})
-            assert result.isError
-            msg = result.content[0].text
-            assert "not initialised" in msg, msg
-            assert "media" in msg, msg
-            # the raw driver string must NOT be what reaches the agent
-            assert "no such table" not in msg, msg
+    async def _body(session):
+        # the server is up and advertises its tools despite the empty root
+        tools = {t.name for t in (await session.list_tools()).tools}
+        assert "library_stats" in tools
+        # …but a call fails with a clear, actionable message
+        result = await session.call_tool("library_stats", {})
+        assert result.isError
+        msg = result.content[0].text
+        assert "not initialised" in msg, msg
+        assert "media" in msg, msg
+        # the raw driver string must NOT be what reaches the agent
+        assert "no such table" not in msg, msg
+
+    await _run_bounded_mcp(params, _body)

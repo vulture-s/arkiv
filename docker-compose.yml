@@ -20,15 +20,27 @@ services:
       - ARKIV_HOST=0.0.0.0
       - ARKIV_PORT=8501
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy   # F6: wait for ollama READY, not just container-start
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:latest
+    # Digest-pinned (Wave C): `:latest` on a frequently-pushed image was the worst drift
+    # source. Tag kept for readability, digest authoritative; refresh via dependabot.
+    image: ollama/ollama:latest@sha256:10c13eb515db310990527d36ca14a136da4bcc0fbf2bf3b15e9c1f111e9d3cd4
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    healthcheck:
+      # `ollama list` returns 0 only once the server is answering (readiness, not
+      # just container-start). Does NOT wait for models to be pulled — that stays a
+      # runtime/deploy step, not a compose gate.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     # NVIDIA GPU passthrough (uncomment for CUDA):
     # deploy:
     #   resources:

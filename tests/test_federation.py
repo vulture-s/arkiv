@@ -207,3 +207,46 @@ def test_api_media_q_route_stays_compatible(fastapi_client, sample_record):
     payload = response.json()
     assert payload["search"] is True
     assert payload["total"] >= 1
+
+
+def test_query_chroma_uses_explicit_embeddings_only(tmp_path, monkeypatch):
+    """SECURITY invariant guard (2026-07-26 audit): federation opens EXTERNAL, semi-trusted
+    project chroma dirs. chromadb builds+runs a collection's PERSISTED embedding_function only
+    when a caller passes query_texts= / documents-without-embeddings (ChromaToast / chroma#6717
+    client-SDK-RCE class). Federation must ALWAYS query with explicit query_embeddings= and
+    never query_texts= / add(documents=), so a poisoned external collection's EF config is never
+    instantiated. This fails if _query_chroma regresses to a text-embedding path."""
+    federation = importlib.import_module("federation")
+    root = _make_project(tmp_path, "ext")
+    project = importlib.import_module("projects").ProjectMeta(name="ext", path=root)
+
+    seen = {"query_kwargs": None}
+
+    class SpyCollection(object):
+        def query(self, **kwargs):
+            seen["query_kwargs"] = kwargs
+            return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+        def add(self, *args, **kwargs):  # tripwire: never write to an external project's collection
+            raise AssertionError("federation must not add() to an external project collection")
+
+    class SpyClient(object):
+        def __init__(self, path):
+            self.path = path
+
+        def get_collection(self, name, **kwargs):
+            return SpyCollection()
+
+    monkeypatch.setattr(federation, "embed_query", lambda query: [0.1, 0.2, 0.3])
+    monkeypatch.setattr(federation.config, "discover_projects", lambda: [project])
+    monkeypatch.setattr(federation, "chromadb", types.SimpleNamespace(PersistentClient=SpyClient))
+
+    federation.search_all_projects("query token", limit=5, per_project_limit=2, timeout=2.0)
+
+    kwargs = seen["query_kwargs"]
+    assert kwargs is not None, "federation never queried the external chroma collection"
+    assert "query_embeddings" in kwargs, "federation must query external chroma with explicit query_embeddings="
+    assert "query_texts" not in kwargs, (
+        "federation must NOT pass query_texts= to an external collection — that builds+runs "
+        "its (untrusted) persisted embedding_function config"
+    )

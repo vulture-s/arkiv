@@ -322,6 +322,15 @@ PROXY_HWDECODE_DEFAULT = _IS_MLX if _hwd in ("", "auto") else _hwd in ("1", "tru
 _DEFAULT_WHISPER = "mlx-community/whisper-large-v3-turbo" if _IS_MLX else "large-v3-turbo"
 WHISPER_MODEL = os.getenv("ARKIV_WHISPER_MODEL", _DEFAULT_WHISPER)
 
+# Speaker diarization (A4) — attach a speaker_id to each transcript segment via
+# the speaker-align package. OFF by default: it needs the optional speaker-align
+# (+ pyannote) install and a HuggingFace token, and it roughly doubles transcribe
+# time. When off, transcription is byte-for-byte unchanged. Soft dependency —
+# transcribe.py degrades to no speaker_id if speaker-align/pyannote/token is absent.
+_diar = os.getenv("ARKIV_DIARIZATION_ENABLED", "").strip().lower()
+DIARIZATION_ENABLED = _diar in ("1", "true", "yes", "on")
+PYANNOTE_TOKEN = os.getenv("ARKIV_PYANNOTE_TOKEN", "").strip()
+
 WHISPER_GUARD_DEFAULT_MODE = 4
 WHISPER_GUARD_LAYERS = {
     0: {

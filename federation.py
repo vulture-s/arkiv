@@ -175,6 +175,12 @@ def _score_from_distance(distance: Any) -> float:
 
 
 def _query_chroma(project: ProjectMeta, query_embeddings, limit: int) -> List[Dict[str, Any]]:
+    # SECURITY (2026-07-26 audit): this opens an EXTERNAL, semi-trusted project's chroma dir.
+    # A collection's persisted embedding_function config is untrusted here — chromadb builds
+    # (and runs) it lazily ONLY when a caller passes query_texts= / documents-without-embeddings
+    # (the ChromaToast / chroma#6717 client-SDK-RCE class). So federation MUST query external
+    # collections with explicit query_embeddings= only, and never query_texts= / add(documents=).
+    # tests/test_federation.py::test_query_chroma_uses_explicit_embeddings_only locks this.
     client = chromadb.PersistentClient(path=str(_project_root(project) / ".arkiv" / "chroma_db"))
     collection = client.get_collection(config.COLLECTION_NAME)
     try:
