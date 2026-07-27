@@ -157,6 +157,15 @@ jobs:
       - name: svelte-check (gate at zero warnings)
         working-directory: frontend
         run: npm run check
+      - name: bundle budget (eager chunks)
+        working-directory: frontend
+        run: |
+          # Catch NEW growth in the EAGER (initial-load) bundle. The lazy Pano360/three chunk
+          # and route views are code-split (dynamic import) and intentionally exempt (that
+          # 501 kB three chunk only loads when a user inspects 360 media).
+          check() { f=$(ls -1 dist/assets/$1 | head -1); sz=$(wc -c < "$f"); echo "$(basename "$f") = $sz B (budget $2 B)"; [ "$sz" -le "$2" ] || { echo "  ^ EXCEEDS budget — code-split or trim the eager bundle"; exit 1; }; }
+          check 'index-*.js' 524288    # eager JS ~404 KB now; budget 512 KiB
+          check 'index-*.css' 573440   # eager CSS ~481 KB now (font-heavy); budget 560 KiB
 
   tauri-check:
     name: tauri-check
