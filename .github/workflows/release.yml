@@ -26,6 +26,10 @@ permissions:
 jobs:
   release:
     runs-on: macos-latest   # Apple Silicon — assemble-backend.sh bundles an aarch64-apple-darwin Python
+    env:
+      # secrets can't be read in a step-level `if:` (not in that context's scope) — hoist the
+      # cert-presence check to job env, which CAN read secrets, then gate the import step on it.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -81,7 +85,7 @@ jobs:
         run: cargo install tauri-cli --version "^2.0" --locked
 
       - name: Import Apple signing cert (only when configured)
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: env.HAS_APPLE_CERT == 'true'
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
