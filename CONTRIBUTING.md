@@ -114,6 +114,26 @@ stall has a root-cause fix (so the e2e can rejoin the `--cov` leg) and (b) cover
 re-measured on a matrix rather than the single `macos-latest` runner. Until then it stays a
 ratchet.
 
+## Dependency updates
+
+Dependencies are updated **deliberately, one bump per PR**, so every change carries the
+upstream changelog and a one-click rollback:
+
+- **Dependabot** (`.github/dependabot.yml`) opens a weekly PR per bump for pip, npm, cargo,
+  GitHub Actions, and Docker base images — each PR links the upstream release notes.
+- **Before merging a bump**: let CI's required checks run (they exercise the real
+  install / build / audit), and skim the changelog for breaking changes. Add a
+  `CHANGELOG.md` entry for anything user-facing.
+- **Rollback** = revert the bump PR (that's why bumps stay one-per-PR, not batched).
+- **Base-image digests**: `Dockerfile` and `docker-compose.yml` pin images by `@sha256` for
+  reproducible rebuilds; dependabot's `docker` ecosystem refreshes those digests — merge the
+  dependabot PR rather than hand-editing (or run `docker buildx imagetools inspect <image>`
+  for a fresh digest if you must).
+- Python deps stay in `requirements.txt` (flat, no lockfile): the 3.9×3.12 matrix + platform
+  markers (`mlx-whisper`@Darwin / `faster-whisper`@Linux, `opencc`/`mcp` gated ≥3.10) mean a
+  single frozen lockfile can't honestly represent all environments. The `dependency-audit`
+  gate + deliberate bumps are the reproducibility contract instead.
+
 ## Project Structure
 
 ```
