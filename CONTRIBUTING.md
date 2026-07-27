@@ -134,6 +134,31 @@ upstream changelog and a one-click rollback:
   single frozen lockfile can't honestly represent all environments. The `dependency-audit`
   gate + deliberate bumps are the reproducibility contract instead.
 
+## Releases
+
+arkiv ships as a macOS (Apple Silicon) app. Releases are cut from `main` by tag:
+
+1. Move `## Unreleased` in `CHANGELOG.md` to `## vX.Y.Z - YYYY-MM-DD`; leave a fresh
+   `## Unreleased` on top.
+2. Bump the version to `X.Y.Z` in **both** `src-tauri/tauri.conf.json` and
+   `src-tauri/Cargo.toml` so it matches the tag (these historically drifted — stuck at 0.2.0
+   across the whole v0.2→v0.10 tag history, so every built DMG embedded 0.2.0).
+3. Commit (`docs(changelog): cut vX.Y.Z`), then push an **annotated** tag: `git tag -a vX.Y.Z -m …`.
+4. The tag-triggered `release.yml` workflow builds the `.app`/`.dmg` on a macOS-arm runner. It
+   **stamps the version from the tag**, so the bundle can't drift from the tag; signs +
+   notarizes if the Apple secrets are configured (else builds unsigned — the app already ships
+   with a documented right-click→Open Gatekeeper step); and uploads the artifact to the Release.
+
+**Release-artifact matrix:**
+
+| Target | Artifact | Signed | Status |
+|---|---|---|---|
+| macOS arm64 (Apple Silicon) | `.app` + `.dmg` | yes, if Apple secrets set | supported |
+| macOS x86_64 (Intel) | — | — | N/A — `assemble-backend.sh` bundles an aarch64-apple-darwin Python |
+| Windows | — | — | deferred — mac-arm-locked backend; `mlx-whisper` has no Windows wheel |
+
+Rollback = the prior tag's artifact; delete the GitHub Release (and tag) if a release is bad.
+
 ## Project Structure
 
 ```
