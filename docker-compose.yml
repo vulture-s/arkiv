@@ -25,7 +25,9 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:latest
+    # Digest-pinned (Wave C): `:latest` on a frequently-pushed image was the worst drift
+    # source. Tag kept for readability, digest authoritative; refresh via dependabot.
+    image: ollama/ollama:latest@sha256:10c13eb515db310990527d36ca14a136da4bcc0fbf2bf3b15e9c1f111e9d3cd4
     ports:
       - "11434:11434"
     volumes:
