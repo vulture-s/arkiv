@@ -91,13 +91,25 @@ jobs:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
-      - name: Build app (Tauri signs + notarizes iff Apple env is set, else unsigned)
+      # Two build paths — signed vs ad-hoc — because an EMPTY APPLE_SIGNING_IDENTITY is a trap:
+      # Tauri codesigns with "" -> `codesign --sign ""` -> "no identity found" -> bundle fails.
+      # And an arm64 binary MUST be at least ad-hoc signed to exec at all, so the no-secrets
+      # path uses "-" (ad-hoc) rather than leaving the identity unset/empty.
+      - name: Build signed + notarized app (Apple secrets present)
+        if: env.HAS_APPLE_CERT == 'true'
         env:
           CI: "true"   # skips the Finder AppleScript so the .dmg builds headless (assemble-backend.sh:72-76)
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: cargo tauri build
+
+      - name: Build unsigned app (no Apple secrets — ad-hoc sign so arm64 still launches)
+        if: env.HAS_APPLE_CERT != 'true'
+        env:
+          CI: "true"
+          APPLE_SIGNING_IDENTITY: "-"   # ad-hoc; unnotarized (documented right-click->Open on download)
         run: cargo tauri build
 
       - name: Attach artifacts to the GitHub Release (tag only)
