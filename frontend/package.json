@@ -11,7 +11,7 @@
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.1.2",
     "puppeteer-core": "^23.0.0",
-    "svelte": "^4.2.20",
+    "svelte": "^5.56.8",
     "vite": "^5.4.21"
   },
   "dependencies": {
