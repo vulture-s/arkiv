@@ -13,7 +13,7 @@ nanoid>=2.0.0
 # (pandas removed — it was an unused ~70 MB dependency, imported nowhere.)
 
 # Media processing
-pillow>=9.0
+pillow>=12.3.0
 soundfile>=0.12
 # Phase 9.8b: Simplified→Traditional (Taiwan) transcript conversion. Whisper zh
 # output is Simplified; the TA is Taiwan. Gated to >=3.10: opencc ships no cp39
