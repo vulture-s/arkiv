@@ -26,12 +26,39 @@ permissions:
 jobs:
   release:
     runs-on: macos-latest   # Apple Silicon — assemble-backend.sh bundles an aarch64-apple-darwin Python
-    env:
-      # secrets can't be read in a step-level `if:` (not in that context's scope) — hoist the
-      # cert-presence check to job env, which CAN read secrets, then gate the import step on it.
-      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate Apple signing config (all-or-nothing)
+        id: signcfg
+        # secrets aren't readable in a step-level `if:`, so read all six here and decide the
+        # signing mode ONCE. Fail fast on a PARTIAL config — otherwise a missing signing
+        # identity would codesign with "" (hard fail), or a missing APPLE_CERTIFICATE with the
+        # rest set would silently fall through to an ad-hoc/unsigned release when signing was
+        # intended. Outputs: signing = full | none (partial exits non-zero).
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -u
+          missing=""; present=0
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!v}" ]; then missing="$missing $v"; else present=$((present + 1)); fi
+          done
+          if [ "$present" -eq 0 ]; then
+            echo "signing=none" >> "$GITHUB_OUTPUT"
+            echo "No Apple secrets set -> building UNSIGNED (ad-hoc)."
+          elif [ -n "$missing" ]; then
+            echo "::error::Incomplete Apple signing config: $present/6 secrets set, missing:$missing. Set ALL six APPLE_* secrets to sign+notarize, or NONE to build unsigned."
+            exit 1
+          else
+            echo "signing=full" >> "$GITHUB_OUTPUT"
+            echo "All six Apple secrets present -> building SIGNED + NOTARIZED."
+          fi
 
       - name: Resolve version
         id: ver
@@ -85,7 +112,7 @@ jobs:
         run: cargo install tauri-cli --version "^2.0" --locked
 
       - name: Import Apple signing cert (only when configured)
-        if: env.HAS_APPLE_CERT == 'true'
+        if: steps.signcfg.outputs.signing == 'full'
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
@@ -96,7 +123,7 @@ jobs:
       # And an arm64 binary MUST be at least ad-hoc signed to exec at all, so the no-secrets
       # path uses "-" (ad-hoc) rather than leaving the identity unset/empty.
       - name: Build signed + notarized app (Apple secrets present)
-        if: env.HAS_APPLE_CERT == 'true'
+        if: steps.signcfg.outputs.signing == 'full'
         env:
           CI: "true"   # skips the Finder AppleScript so the .dmg builds headless (assemble-backend.sh:72-76)
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -106,7 +133,7 @@ jobs:
         run: cargo tauri build
 
       - name: Build unsigned app (no Apple secrets — ad-hoc sign so arm64 still launches)
-        if: env.HAS_APPLE_CERT != 'true'
+        if: steps.signcfg.outputs.signing == 'none'
         env:
           CI: "true"
           APPLE_SIGNING_IDENTITY: "-"   # ad-hoc; unnotarized (documented right-click->Open on download)
@@ -118,7 +145,6 @@ jobs:
         with:
           files: |
             src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app.tar.gz
           fail_on_unmatched_files: false
           body: |
             arkiv ${{ steps.ver.outputs.version }} — macOS (Apple Silicon).
