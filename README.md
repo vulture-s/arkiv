@@ -150,6 +150,25 @@ Read history with `GET /api/chat/history/{conversation_id}` and list conversatio
 
 ## Quick Start
 
+### Download the app (macOS, Apple Silicon)
+
+The quickest way to run arkiv without a Python setup. The `.dmg` bundles the Python backend
+and ML libraries (torch, mlx-whisper, chromadb, …), so you skip the venv/pip steps below. You
+**still need FFmpeg and Ollama** for frame extraction, embeddings, and vision:
+
+```bash
+brew install ffmpeg ollama
+ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b
+```
+
+Then download **`arkiv_<version>_aarch64.dmg`** from the [latest release](https://github.com/vulture-s/arkiv/releases/latest), open it, and drag **arkiv** to Applications. On first launch the build is unsigned, so macOS Gatekeeper blocks a double-click — **right-click → Open** once (or run `xattr -dr com.apple.quarantine /Applications/arkiv.app`); afterwards it opens normally.
+
+> Intel Macs / Windows have no prebuilt app yet — the bundle ships an `aarch64` Python + `mlx-whisper`. Run from source instead (below).
+
+---
+
+Everything below installs and runs arkiv **from source** — for development, or on Linux / Windows.
+
 ### Prerequisites
 
 | Dependency | macOS (brew) | Linux (apt) | Windows |
