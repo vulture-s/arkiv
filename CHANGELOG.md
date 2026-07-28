@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.11.0 - 2026-07-28
+
+First release built and published by the automated `release.yml` pipeline — arkiv now
+ships a downloadable macOS (Apple Silicon) `.dmg` instead of build-it-yourself. Bundles a
+month of Phase 9.x editor / timeline / MCP work (below) plus the repo health-hardening
+waves A–E (Windows correctness, CI truthfulness, dependency reproducibility, frontend
+quality gates, and version/release hygiene). The `.dmg` is unsigned — right-click → Open
+on first launch — until Apple signing secrets are configured.
+
 ### Security
 - **MCP `_safe_path` leaked `C:/…` absolute paths whole (#182).** `mcp_server` carried its own copy of the leak guard because the original lived in `server.py`, which it must not import (that pulls in the whole FastAPI app) — there was nowhere to share from. Four hours after that copy landed on 2026-06-08, Codex round-2 (`fc35b8f`) overruled round-1 and made `C:/` count as a Windows absolute alongside `C:\`; the fix touched `server.py` only, so the MCP copy kept passing `C:/Users/me/secret.mov` through unchanged for 38 days — on the one surface whose stated red line is "no absolute-path leak", and the only one facing untrusted downstream agents. R5-25 extracted the guard into the `pathres` leaf, so the copy is now deleted rather than patched: `_safe_path` delegates to `pathres._display_path`, one guard, nothing left to drift. Paths beginning `C:/` now basename like every other absolute; every other input is byte-identical.
 
