@@ -79,9 +79,28 @@ jobs:
     # run would red for a platform reason, not a real one. conftest.py fakes the
     # heavy backends (incl. mlx_whisper) via sys.modules, so the guard suite runs
     # with just the lean FastAPI deps. Full-suite Windows 0-fail is tracked as
-    # separate evidence in the 2026-07-24 arkiv-health-hardening handoff; the MCP
-    # stdio hang (F3) is deferred to that handoff's SDK version x OS matrix rather
-    # than imported into CI as a known-red.
+    # separate evidence in the 2026-07-24 arkiv-health-hardening handoff.
+    #
+    # F3 (2026-07-28, handoff Part B): the Windows MCP stdio hang is RESOLVED —
+    # root cause was `search_media`'s lazy `import vectordb` (→ chromadb → numpy)
+    # running after the stdio transport had already parked a worker thread in a
+    # blocking readline() on the stdin pipe; on that box the numpy import then
+    # wedges inside the bundled OpenBLAS DLL and never returns. Fixed by importing
+    # it in main() before mcp.run() (mcp_server._prewarm_vectordb).
+    #
+    # That hang is NOT reproducible on hosted runners — measured 2026-07-28 on
+    # windows-latest / ubuntu-latest / macos-latest: a thread blocked on a stdin
+    # pipe plus `import numpy` (2.5.1) completes in 0.6s on all three, while the
+    # same probe deadlocks on the Win11 dev box with both numpy 2.4.3 and 2.5.1.
+    # It is environment-specific, not version-driven. So installing chromadb here
+    # to exercise the real path would cost ~120s of install (82 packages, ~360MB)
+    # and guard NOTHING — deliberately not done.
+    #
+    # What this leg CAN hold is the ordering invariant that IS the fix: the
+    # prewarm-before-run tests in test_mcp_e2e.py run everywhere, and running the
+    # file here also gives the MCP stdio surface a Windows leg (subprocess spawn,
+    # JSON-RPC framing, teardown) for ~4.5s and zero extra dependencies — mcp and
+    # numpy are already installed above.
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python 3.12
@@ -102,9 +121,9 @@ jobs:
             "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
             "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
             "psutil>=5.9" "whisper-guard>=0.3" numpy mcp
-      - name: Run Windows correctness tests (offload deny-policy contract)
+      - name: Run Windows correctness tests (offload deny-policy + MCP stdio)
         shell: bash
-        run: pytest tests/test_hardening_round4.py -q
+        run: pytest tests/test_hardening_round4.py tests/test_mcp_e2e.py -q
 
   coverage:
     name: coverage
