@@ -619,6 +619,24 @@ def set_embed_state(media_id: int, embed_hash: str, embedded_at: str, _conn=None
             _do(conn)
 
 
+def set_hash_verified(media_id: int, verified_at: str, _conn=None) -> None:
+    """Stamp when a media row's file_hash was confirmed against the file's bytes (audit
+    2026-07-30: hash_verified_at was declared + allow-listed but had NO writer → NULL for
+    every row). The ingest write-path sets it inline via the record upsert (hash_verified_at
+    IS in _ALLOWED_COLS); this is the targeted writer for a one-off integrity backfill or a
+    future re-verify pass. Mirrors set_embed_state."""
+    def _do(c):
+        c.execute(
+            "UPDATE media SET hash_verified_at=? WHERE id=?",
+            (verified_at, media_id),
+        )
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
+
+
 _ALLOWED_COLS = {
     "path", "filename", "ext", "duration_s", "size_mb", "width", "height",
     "fps", "has_audio", "transcript", "lang", "frame_tags", "thumbnail_path",
