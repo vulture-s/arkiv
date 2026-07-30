@@ -158,12 +158,12 @@
           </div>
           <div class="optrow">
             <select class="ak-input sel" bind:value={language} title="force transcription language">
-              <option value="">Auto-detect</option>
+              <option value="">系統預設（中文 zh）</option>
               {#each (engines?.languages ?? []) as l}
                 <option value={l.code}>{l.label} · {l.code}</option>
               {/each}
             </select>
-            <div class="optlabel"><span>Language</span><Mono dim style="font-size:10px;">強制語言（留 Auto = 自動偵測 / 預設提示）</Mono></div>
+            <div class="optlabel"><span>Language</span><Mono dim style="font-size:10px;">強制語言（留白＝系統預設，目前為中文 zh；非中文素材請選對應語言，無自動偵測）</Mono></div>
           </div>
         </div>
 

@@ -256,6 +256,10 @@
   // the whole project so new hotwords take effect. Poll status while running.
   let retr = null // {total, done, failed, current, running, backup}
   let retrTimer = null
+  // Batch retranscribe language — sent EXPLICITLY. The pipeline forces zh when no
+  // language is given (transcribe.py coerces None→zh), so "auto-detect" isn't real;
+  // the picker makes the language a deliberate choice, default zh.
+  let retrLang = 'zh'
   async function pollRetr() {
     try {
       retr = await api.retranscribeAllStatus()
@@ -267,7 +271,7 @@
     if (retr && retr.running) return
     vocabMsg = ''
     try {
-      const r = await api.retranscribeAll(true)
+      const r = await api.retranscribeAll(true, retrLang || 'zh')
       if (!r.queued) { vocabMsg = r.message || '沒有可重轉錄的素材'; return }
       retr = { total: r.queued, done: 0, failed: 0, current: null, running: true, backup: null }
       pollRetr()
@@ -426,6 +430,11 @@
               <div class="fsdesc">重跑整庫 Whisper，讓新加的 hotword 生效——<b>慢、耗資源</b>，只在某詞被聽成完全不同的東西、批次校正救不回時才用。重轉前自動備份，可還原。</div>
             </div>
             <div class="vctl">
+              <select class="ak-input" bind:value={retrLang} disabled={retr && retr.running} title="批次重轉錄語言（強制指定，非自動偵測）" style="max-width:170px;">
+                {#each (engines?.languages ?? [{ code: 'zh', label: '中文' }, { code: 'en', label: 'English' }]) as l}
+                  <option value={l.code}>{l.label} · {l.code}</option>
+                {/each}
+              </select>
               <button class="ak-btn" on:click={runRetranscribeAll} disabled={retr && retr.running}>{retr && retr.running ? '重轉錄中…' : '批次重轉錄'}</button>
               {#if retr}
                 <Mono dim style="font-size:11px;">{retr.done}/{retr.total} 完成{retr.failed ? ` · ${retr.failed} 失敗` : ''}{retr.running ? '…' : ' · 完成'}</Mono>
@@ -454,7 +463,7 @@
                     <span class="chip">auto-detect</span>
                   </div>
                 </div>
-                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Current default</Mono><Mono style="font-size:12px;color:var(--ink);">preset {engines.default_mode} · 語言自動偵測</Mono></div>
+                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Current default</Mono><Mono style="font-size:12px;color:var(--ink);">preset {engines.default_mode} · 語言預設 {engines.default_language || '中文 zh'}</Mono></div>
               </div>
             {:else}
               <span class="pend">engines endpoint unreachable</span>
