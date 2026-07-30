@@ -57,7 +57,12 @@ mlx-whisper>=0.4;platform_system=="Darwin"
 # arkiv's search/metadata to MCP clients (Claude, OpenClaw). The HTTP API and
 # CLI work without it. Gated on Python 3.10+ — the MCP SDK requires it, and arkiv
 # still supports 3.9 (NAS), where an unconditional entry would break pip install.
-mcp>=1.2; python_version >= "3.10"
+# Capped <2: mcp 2.0.0 (2026-07-28) restructured the SDK and dropped the
+# `mcp.server.fastmcp` import path mcp_server.py uses, so a fresh `mcp>=1.2` install
+# now pulls 2.0.0 → `ModuleNotFoundError: mcp.server.fastmcp` → test_mcp_server
+# collection error → CI red on every PR. Stay on the 1.x line (has fastmcp) until
+# mcp_server.py is ported to the 2.x API.
+mcp>=1.2,<2; python_version >= "3.10"
 
 # ── Shared pgvector backend (向量庫整併) — install manually if needed ──────
 # Only needed when ARKIV_VECTOR_BACKEND=pg (route vectors to the shared NAS
