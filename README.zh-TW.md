@@ -14,7 +14,24 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 
 ---
 
-## 架構
+## 為什麼需要 arkiv
+
+- **素材太多，找不到那顆鏡頭** → 用自然語言搜（「五月所有黃昏空景」），中日英都行，搜的是畫面內容和逐字稿，不是檔名。
+- **AI 剪輯工具只看得懂「有人在講話」的素材** → arkiv 對每支 clip 做視覺分析 + 轉錄，大量 B-roll、無語音空景一樣可搜可管。
+- **素材庫要能餵給下游任何剪法** → 手動剪、自動剪、腳本剪都接得上：Resolve 原生 plugin、EDL / FCPXML 匯出、API / MCP 介面。
+
+> **授權一句話**：arkiv 軟體本身非商業用途免費（source-available），**用它產出的影片、時間軸、匯出檔 100% 可商用**。
+>
+> **實戰驗證**：已在 **1,506 支真實產品拍攝素材**（其中 1,161 支無對白 B-roll）、單張 RTX 4070 上完整索引跑通。
+
+## 截圖
+
+![ARKIV UI](screenshot.jpg)
+
+<details>
+<summary>系統架構與資料流（給 contributor / fork 作者）</summary>
+
+### 架構
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
@@ -45,11 +62,9 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
   └─────────┘  └──────────────┘
 ```
 
-→ **完整 pipeline（4 階段、儲存路徑、exit code、maintenance modes）**：[docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)
+→ **完整 pipeline（4 階段、儲存路徑、exit code、maintenance modes）**：[docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md) · 架構總覽 [ARCHITECTURE.md](ARCHITECTURE.md)
 
-## 截圖
-
-![ARKIV UI](screenshot.jpg)
+</details>
 
 ## 功能特色
 
@@ -149,6 +164,23 @@ curl -X POST http://localhost:8501/api/chat -H "Authorization: Bearer $ARKIV_TOK
 用 `GET /api/chat/history/{conversation_id}` 讀回歷史、`GET /api/chat/conversations` 列出對話（都需要 `chat_read`）。
 
 ## 快速開始
+
+### 下載應用程式（macOS, Apple Silicon）
+
+不想碰 Python 環境的最快路徑。`.dmg` 已打包 Python 後端與 ML 套件（torch、mlx-whisper、chromadb…），可略過下面的 venv/pip。但你**仍需 FFmpeg 與 Ollama**（負責抽幀、嵌入、視覺）：
+
+```bash
+brew install ffmpeg ollama
+ollama pull bge-m3 && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+```
+
+到 [最新 release](https://github.com/vulture-s/arkiv/releases/latest) 下載 **`arkiv_<version>_aarch64.dmg`**，打開後把 **arkiv** 拖進「應用程式」。首次啟動因未簽名會被 macOS Gatekeeper 擋 —— **右鍵 → 打開** 一次即可（或執行 `xattr -dr com.apple.quarantine /Applications/arkiv.app`），之後正常開啟。
+
+> Intel Mac / Windows 目前沒有預建 app（bundle 內是 aarch64 Python + mlx-whisper）。請改用下面的原始碼安裝。
+
+---
+
+以下皆為**從原始碼**安裝與執行 —— 開發用，或跑在 Linux / Windows。
 
 ### 前置需求
 
@@ -389,7 +421,6 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 
 | 平台 | 環境健檢 | 冒煙測試 | 日期 |
 |------|----------|----------|------|
-| macOS M2 Max | TBD | TBD | 2026-05-22 |
 | Windows 11 (RTX 4070) | 19/19 PASS, 0 FAIL, 0 SKIP | 9/9 PASS | 2026-05-22 |
 | Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS | 2026-05-22 |
 
@@ -398,3 +429,24 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 PolyForm Noncommercial License 1.0.0，附 Commercial Output Exception — 見 [LICENSE](LICENSE)。
 
 你用 arkiv 剪出的影片、時間軸、匯出檔都是你的，可商用；arkiv 軟體本身任何非商業用途皆免費，但**不得**把 arkiv（或其 fork）當商業產品/服務販售、架站或重新包裝。
+
+## 公益方案
+
+arkiv 軟體非商業用途免費，用它產出的成品永遠可商用（見上方授權段）。在這之上，我們想再往前一步。
+
+如果你的專案帶有商業成分（政府補助、院線／平台發行、機構營收），對 arkiv 軟體本身的使用嚴格說會落入「商業使用」、需要另談商業授權 —— 但**只要你做的是有公共價值的影像工作**，這份商業授權我們**免費提供**：
+
+- 公共議題紀錄片
+- 非營利／公益團體的影像
+- 地方記憶、口述歷史、檔案保存
+- 公共教育與公共媒體
+
+素材的知識層，不該只有大製作用得起。
+
+**申請方式**：開一個 [GitHub Issue](https://github.com/vulture-s/arkiv/issues) 標題加上 `[public-interest]`，或 IG 私訊 [@vulture.s](https://www.instagram.com/vulture.s/)，簡述你的專案。逐案人工審，不做自動資格表。資格例示、申請範例與逐案裁量說明見 [PUBLIC-INTEREST.md](PUBLIC-INTEREST.md)。
+
+## 聯絡與追蹤
+
+- 開發實錄與 demo：Threads / Instagram [@vulture.s](https://www.instagram.com/vulture.s/)
+- 問題回報與功能許願：[GitHub Issues](https://github.com/vulture-s/arkiv/issues)
+- 商業合作／導入諮詢：IG 私訊，或開 Issue 標題加 `[biz]`

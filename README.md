@@ -14,7 +14,24 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 
 ---
 
-## Architecture
+## Why arkiv
+
+- **Too much footage, can't find the shot** → search in plain language ("all dusk establishing shots from May"), in Chinese / Japanese / English — it searches what's *in* the frame and the transcript, not filenames.
+- **AI editing tools only understand footage with someone talking** → arkiv runs vision analysis + transcription on every clip, so B-roll and dialogue-free footage stay searchable and manageable.
+- **Your library has to feed any downstream edit** → manual, automated, or script-driven: native Resolve plugin, EDL / FCPXML export, API / MCP interface.
+
+> **License in one line:** arkiv itself is free for any noncommercial use (source-available); the videos, timelines and exports you make with it are **100% yours to use commercially**.
+>
+> **Proven at scale:** fully indexed a **1,506-clip real production library** (1,161 of them dialogue-free B-roll) on a single RTX 4070.
+
+## Screenshots
+
+![ARKIV UI](screenshot.jpg)
+
+<details>
+<summary>System architecture & data flow (for contributors / fork authors)</summary>
+
+### Architecture
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
@@ -45,11 +62,9 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
   └─────────┘  └──────────────┘
 ```
 
-→ **Full pipeline (4 stages, storage layout, exit codes, maintenance modes)**: [docs/pipeline.md](docs/pipeline.md)
+→ **Full pipeline (4 stages, storage layout, exit codes, maintenance modes)**: [docs/pipeline.md](docs/pipeline.md) · architecture overview [ARCHITECTURE.md](ARCHITECTURE.md)
 
-## Screenshots
-
-![ARKIV UI](screenshot.jpg)
+</details>
 
 ## Features
 
@@ -410,7 +425,6 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 | Platform | Health Check | Smoke Test | Date |
 |----------|-------------|------------|------|
-| macOS M2 Max | TBD | TBD | 2026-05-22 |
 | Windows 11 (RTX 4070) | 19/19 PASS, 0 FAIL, 0 SKIP | 9/9 PASS | 2026-05-22 |
 | Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS | 2026-05-22 |
 
@@ -419,3 +433,24 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 PolyForm Noncommercial License 1.0.0, with a Commercial Output Exception — see [LICENSE](LICENSE).
 
 Videos, timelines and exports you produce with arkiv are yours and may be used commercially. Using arkiv itself is free for any noncommercial purpose; selling, hosting, or repackaging arkiv (or a fork) as a commercial product or service is not permitted.
+
+## Public-Interest Program
+
+arkiv is free for noncommercial use, and what you make with it is always yours to use commercially (see the license above). On top of that, we want to go one step further.
+
+If your project has commercial elements (government grants, theatrical / platform distribution, institutional revenue), strictly speaking your use of arkiv *itself* becomes "commercial use" and would need a separate commercial license — but **if the work you're doing serves the public interest, we grant that license for free**:
+
+- Public-issue documentaries
+- Nonprofit / public-good visual work
+- Local memory, oral history, and archival preservation
+- Public education and public media
+
+The knowledge layer over footage shouldn't be something only big productions can afford.
+
+**How to apply:** open a [GitHub Issue](https://github.com/vulture-s/arkiv/issues) with `[public-interest]` in the title, or DM [@vulture.s](https://www.instagram.com/vulture.s/) on Instagram, with a short description of your project. Reviewed case by case — no automatic eligibility checklist. See [PUBLIC-INTEREST.md](PUBLIC-INTEREST.md) for examples, a sample request, and the case-by-case discretion statement.
+
+## Contact & Follow
+
+- Dev log and demos: Threads / Instagram [@vulture.s](https://www.instagram.com/vulture.s/)
+- Bug reports and feature requests: [GitHub Issues](https://github.com/vulture-s/arkiv/issues)
+- Commercial partnership / deployment help: DM on IG, or open an Issue with `[biz]` in the title
