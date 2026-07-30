@@ -777,6 +777,12 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     if fhash:
         record["file_hash"] = fhash
         record["hash_algo"] = "xxh3"
+        # Stamp when the content hash was confirmed against the file's bytes (audit
+        # 2026-07-30: this column was declared + allow-listed but had NO writer, so it
+        # stayed NULL for every row). The hash was just (re)computed/confirmed from the
+        # real file this ingest; on --refresh this re-reads and re-verifies. hash_verified_at
+        # is in _ALLOWED_COLS, so the record upsert persists it.
+        record["hash_verified_at"] = datetime.now(timezone.utc).isoformat()
 
     # Audio transcription (skip on refresh — reuse existing)
     if meta["has_audio"] and not existing:

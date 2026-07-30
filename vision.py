@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 import requests
 
 import config
+import zh_convert
 from llm import vision
 
 OLLAMA_URL = f"{config.OLLAMA_URL}/api/generate"
@@ -211,9 +212,25 @@ def describe_frames(frame_paths: List[str], model: Optional[str] = None) -> List
     return results
 
 
+def _is_degenerate_desc(d: str) -> bool:
+    """A 'description' that is really a broken-JSON fragment ('{', '}', '{}', '[',
+    ']') or empty — a parse failure, not a real description (audit: 23 frames stored
+    a bare '{' when qwen3-vl returned truncated JSON)."""
+    return (d or "").strip() in ("", "{", "}", "{}", "[", "]")
+
+
 def _normalize_result(parsed: Dict) -> Dict:
     result = _empty_result()
-    result["description"] = parsed.get("description", "")
+    # A non-object payload (double-encoded string / bare list) is a parse failure
+    # masquerading as success — flag it so the frame is marked failed, not stored.
+    if not isinstance(parsed, dict):
+        result["error"] = "vision output JSON was not an object"
+        return result
+    # qwen3-vl ignores the "繁體中文" prompt and often emits Simplified — route the
+    # description through zh_convert (s2twp), mirroring transcribe.py's write-path,
+    # so frame descriptions honor the Traditional-Chinese contract (audit: 175 frames
+    # / 159 clips had Simplified vision text because this path never converted).
+    result["description"] = zh_convert.to_taiwan(parsed.get("description", ""))
     # Sanitize at the source: drop empty / pure-punctuation tags (e.g. the bare
     # "}" the JSON-fallback parser leaks) so they never enter the DB. Read-side
     # filtering (tag_quality.is_noise) also screens them, this just keeps storage clean.
@@ -268,12 +285,20 @@ def _describe_one(img_path, max_retries=2, model=None):
     except json.JSONDecodeError:
         pass
 
-    # Fallback: free-text parse
+    # Fallback: model returned plain text, not JSON. But if it returned MALFORMED
+    # JSON (starts with { / [ yet failed to parse — e.g. a truncated "{"), the
+    # free-text parse would store the raw fragment as a description; flag it as a
+    # failure instead so the frame is marked failed (→ [skipped]/retry) and never
+    # pollutes the index.
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("```")]
     description = lines[0] if lines else ""
+    if raw.lstrip().startswith(("{", "[")) or _is_degenerate_desc(description):
+        result = _empty_result()
+        result["error"] = "vision output not parseable as JSON (truncated/garbled)"
+        return result
     tags = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
     result = _empty_result()
-    result["description"] = description
+    result["description"] = zh_convert.to_taiwan(description)
     result["tags"] = tags
     return result
 
@@ -287,16 +312,21 @@ def _describe_one_light(img_path, max_retries=2, model=None):
         return _empty_result()
     try:
         parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            return _empty_result()  # non-object payload → empty desc → flagged failed
         result = _empty_result()
-        result["description"] = parsed.get("description", "")
+        result["description"] = zh_convert.to_taiwan(parsed.get("description", ""))
         result["tags"] = parsed.get("tags", []) or []
         for field in _LIGHT_FIELDS:
             result[field] = parsed.get(field)
         return result
     except json.JSONDecodeError:
         lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("```")]
+        description = lines[0] if lines else ""
+        if raw.lstrip().startswith(("{", "[")) or _is_degenerate_desc(description):
+            return _empty_result()  # broken-JSON fragment → empty desc → flagged failed
         result = _empty_result()
-        result["description"] = lines[0] if lines else ""
+        result["description"] = zh_convert.to_taiwan(description)
         result["tags"] = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
         return result
 

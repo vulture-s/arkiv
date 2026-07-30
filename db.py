@@ -619,6 +619,24 @@ def set_embed_state(media_id: int, embed_hash: str, embedded_at: str, _conn=None
             _do(conn)
 
 
+def set_hash_verified(media_id: int, verified_at: str, _conn=None) -> None:
+    """Stamp when a media row's file_hash was confirmed against the file's bytes (audit
+    2026-07-30: hash_verified_at was declared + allow-listed but had NO writer → NULL for
+    every row). The ingest write-path sets it inline via the record upsert (hash_verified_at
+    IS in _ALLOWED_COLS); this is the targeted writer for a one-off integrity backfill or a
+    future re-verify pass. Mirrors set_embed_state."""
+    def _do(c):
+        c.execute(
+            "UPDATE media SET hash_verified_at=? WHERE id=?",
+            (verified_at, media_id),
+        )
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
+
+
 _ALLOWED_COLS = {
     "path", "filename", "ext", "duration_s", "size_mb", "width", "height",
     "fps", "has_audio", "transcript", "lang", "frame_tags", "thumbnail_path",
@@ -819,6 +837,61 @@ def iter_zh_transcript_archive(_conn=None):
         return [dict(r) for r in _conn.execute(sql).fetchall()]
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+# ── Vision-description backfill (retraditionalize frames.description +
+# media.frame_tags — the vision write-path historically never routed through
+# zh_convert, so qwen3-vl's Simplified output was stored raw). No lang column on
+# frames; the caller gates each description with classify_zh (language-agnostic:
+# non-zh text classifies "traditional" and is skipped). ─────
+
+def iter_frames_with_description(_conn=None):
+    """All frame rows carrying a non-empty description, for the vision retraditionalize
+    backfill. Returns id/media_id/description. Pass _conn to read inside the caller's
+    transaction."""
+    sql = ("SELECT id, media_id, description FROM frames "
+           "WHERE description IS NOT NULL AND description != ''")
+    if _conn is not None:
+        return [dict(r) for r in _conn.execute(sql).fetchall()]
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def update_frame_description(frame_id, description, _conn=None):
+    """Overwrite ONLY a frame's description (vision retraditionalize backfill). Tags /
+    quality fields are untouched. Pass _conn to join an open transaction."""
+    sql = "UPDATE frames SET description=? WHERE id=?"
+    params = (description, frame_id)
+    if _conn is not None:
+        _conn.execute(sql, params)
+    else:
+        with get_conn() as conn:
+            conn.execute(sql, params)
+
+
+def iter_frame_tags_media(_conn=None):
+    """All media rows carrying a non-empty frame_tags blob (the per-clip JSON rollup of
+    frame descriptions/tags that the embed doc reads), for the vision backfill. Returns
+    id/frame_tags."""
+    sql = ("SELECT id, frame_tags FROM media "
+           "WHERE frame_tags IS NOT NULL AND frame_tags != ''")
+    if _conn is not None:
+        return [dict(r) for r in _conn.execute(sql).fetchall()]
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def update_media_frame_tags(media_id, frame_tags_json, _conn=None):
+    """Overwrite ONLY a media row's frame_tags JSON blob (vision retraditionalize
+    backfill; the caller passes an already-converted, re-serialized blob). Pass _conn to
+    join an open transaction."""
+    sql = "UPDATE media SET frame_tags=? WHERE id=?"
+    params = (frame_tags_json, media_id)
+    if _conn is not None:
+        _conn.execute(sql, params)
+    else:
+        with get_conn() as conn:
+            conn.execute(sql, params)
 
 
 def set_canonical_tags(media_id: int, tags: list) -> None:
