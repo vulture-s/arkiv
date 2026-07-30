@@ -1,10 +1,15 @@
 """Phase 9.8b BACKFILL — retro-convert existing Simplified zh transcripts to Taiwan
 Traditional so the pre-9.8b NAS 5yr+ backlog stops missing a 記憶體 query on a
 內存-indexed clip. The 9.8b write-path (transcribe.py → zh_convert) only converts NEW
-transcribes; every row transcribed before it stayed Simplified.
+transcribes; every row transcribed before it stayed Simplified. It ALSO converts
+vision text — frames.description and the media.frame_tags rollup — which the vision
+write-path (vision.py) historically never routed through zh_convert at all, so
+qwen3-vl's Simplified descriptions were stored raw (audit 2026-07-30: 175 frames /
+159 clips).
 
-Run via `python ingest.py --retraditionalize [--dry-run]`, then `python embed.py
---rebuild` to re-index the semantic store on the now-Traditional text.
+Run via `python ingest.py --retraditionalize [--dry-run]`, then `python embed.py`
+to re-index the semantic store on the now-Traditional text (incremental content-diff
+re-embeds exactly the changed rows).
 
 SAFETY (the reason this is gated, learned 2026-07-18): running whole-row s2twp over
 the library CORRUPTS already-Traditional text. opencc's Simplified→Traditional phrase
@@ -58,6 +63,23 @@ def convert_row(transcript, lang, segments_json, words_json, converter):
     return new_t, new_sj, new_wj, changed
 
 
+def convert_description(desc):
+    """Convert one free-text vision/frame description. Gated on classify_zh with the
+    SAME safety as transcripts: genuine Simplified → s2twp idioms (to_taiwan), mixed →
+    char-safe (to_traditional_charwise, no phrase layer), already-Traditional/empty →
+    unchanged (never fed to the phrase layer, so valid Traditional can't be corrupted;
+    non-zh English descriptions classify "traditional" → skipped). Returns
+    (new_desc, changed)."""
+    cls = zh_convert.classify_zh(desc)
+    if cls == "simplified":
+        new = zh_convert.to_taiwan(desc)
+    elif cls == "mixed":
+        new = zh_convert.to_traditional_charwise(desc)
+    else:
+        return desc, False
+    return new, (new != desc)
+
+
 # classification → (converter, count-bucket). "traditional"/"empty" aren't here: they
 # are skipped, never converted.
 _CONVERTERS = {
@@ -75,6 +97,10 @@ def _new_counts():
         "media_skip_empty": 0,
         "archive_scanned": 0,
         "archive_converted": 0,
+        "frames_scanned": 0,              # vision: per-frame descriptions
+        "frames_converted": 0,
+        "frame_tags_media_scanned": 0,    # vision: media.frame_tags JSON rollup blobs
+        "frame_tags_media_converted": 0,
     }
 
 
@@ -124,6 +150,41 @@ def backfill(dry_run=False):
                         row["media_id"], row["lang"], new_t, new_sj, new_wj, _conn=conn
                     )
 
+        # Vision: frames.description (per-frame) — the vision write-path historically
+        # never routed through zh_convert, so qwen3-vl's Simplified output was stored raw.
+        for row in db.iter_frames_with_description(_conn=conn):
+            counts["frames_scanned"] += 1
+            new_desc, changed = convert_description(row["description"])
+            if changed:
+                counts["frames_converted"] += 1
+                if not dry_run:
+                    db.update_frame_description(row["id"], new_desc, _conn=conn)
+
+        # Vision: media.frame_tags rollup blob (the per-clip JSON the embed doc reads).
+        # Convert each frame's description inside the blob and re-serialize; a malformed
+        # blob is skipped (never aborts the backfill), mirroring convert_row's guard.
+        for row in db.iter_frame_tags_media(_conn=conn):
+            counts["frame_tags_media_scanned"] += 1
+            try:
+                tags_list = json.loads(row["frame_tags"])
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(tags_list, list):
+                continue
+            changed_any = False
+            for frame in tags_list:
+                if isinstance(frame, dict) and frame.get("description"):
+                    nd, ch = convert_description(frame["description"])
+                    if ch:
+                        frame["description"] = nd
+                        changed_any = True
+            if changed_any:
+                counts["frame_tags_media_converted"] += 1
+                if not dry_run:
+                    db.update_media_frame_tags(
+                        row["id"], json.dumps(tags_list, ensure_ascii=False), _conn=conn
+                    )
+
         if dry_run:
             # No write helpers were called, so nothing is pending; roll back anyway to
             # make "this transaction changes nothing" explicit and defensive.
@@ -143,5 +204,9 @@ def format_summary(counts, dry_run=False):
         f"         skipped {counts['media_skip_traditional']} already-Traditional, "
         f"{counts['media_skip_empty']} empty\n"
         f"  archive: {counts['archive_scanned']} zh scanned, {verb} {counts['archive_converted']}\n"
-        + ("" if dry_run else "  → run `python embed.py --rebuild` to re-index the semantic store.")
+        f"  vision: {counts['frames_scanned']} frame descriptions scanned, {verb} "
+        f"{counts['frames_converted']}; {counts['frame_tags_media_scanned']} frame_tags blobs "
+        f"scanned, {verb} {counts['frame_tags_media_converted']}\n"
+        + ("" if dry_run else "  → run `python embed.py` to re-index the semantic store "
+                              "(incremental content-diff picks up the changed rows).")
     )
