@@ -252,6 +252,15 @@ def init_db():
             # explicitly, so the column default only labels legacy NULL-hash rows.
             ("hash_algo", "TEXT DEFAULT 'xxh3'"),
             ("hash_verified_at", "TEXT"),
+            # Vector-index content-freshness (fix: "向量索引靜默過期"). embed_hash =
+            # sha256 of the exact text embedded at last index (vectordb.content_hash,
+            # over build_doc_text: filename+transcript+frame descriptions/tags), so
+            # embed.py re-embeds a row whose DESCRIPTION changed even though its
+            # media_id is already in Chroma. embedded_at = ISO ts of that embed.
+            # NULL on legacy rows = "unverified" (never rendered as up-to-date), same
+            # spirit as the hash_verified_at label above.
+            ("embed_hash", "TEXT"),
+            ("embedded_at", "TEXT"),
             ("thumbnail_path", "TEXT"),
             ("rating", "TEXT"),
             ("rating_note", "TEXT"),
@@ -586,6 +595,23 @@ def repoint_media_path(media_id: int, new_abs_path: str, _conn=None) -> None:
 
     def _do(c):
         c.execute("UPDATE media SET path=? WHERE id=?", (new_stored, media_id))
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
+
+
+def set_embed_state(media_id: int, embed_hash: str, embedded_at: str, _conn=None) -> None:
+    """Record what was embedded for this media so embed.py can detect a STALE index
+    by CONTENT, not just by presence (fix: 向量索引靜默過期). Written only by the
+    embed path after a successful upsert — deliberately kept OUT of _ALLOWED_COLS so
+    a re-ingest/refresh can't clobber it (same discipline as in_point/canonical_tags)."""
+    def _do(c):
+        c.execute(
+            "UPDATE media SET embed_hash=?, embedded_at=? WHERE id=?",
+            (embed_hash, embedded_at, media_id),
+        )
     if _conn is not None:
         _do(_conn)
     else:

@@ -141,15 +141,17 @@ def _desc_count(db, mid):
 def test_default_halts_on_persistent_failure(vision_db):
     ing, db, make = vision_db
     mid = make(["ok_0.jpg", "PFAIL_1.jpg", "ok_2.jpg"])
-    halted = ing._run_vision_only(_args())          # default zero-tolerance
+    halted, _ = ing._run_vision_only(_args())       # default zero-tolerance
     assert halted is True
 
 
 def test_skip_failed_completes_and_leaves_failures_empty(vision_db):
     ing, db, make = vision_db
     mid = make(["ok_0.jpg", "PFAIL_1.jpg", "ok_2.jpg", "PFAIL_3.jpg"])
-    halted = ing._run_vision_only(_args(skip_failed=True))
+    halted, written_ids = ing._run_vision_only(_args(skip_failed=True))
     assert halted is False                          # never halts on frame failures
+    # ① fix: the media that got real descriptions is handed back for re-embed.
+    assert mid in written_ids
     done, empty = _desc_count(db, mid)
     assert done == 2                                # the two ok frames described
     assert empty == 2                               # the two PFAIL frames left empty → resumable
@@ -172,5 +174,5 @@ def test_max_failures_tolerates_then_halts(vision_db):
     ing, db, make = vision_db
     # 3 persistent failures across one file; max_failures=2 → exceeded → halt.
     mid = make(["PFAIL_0.jpg", "PFAIL_1.jpg", "PFAIL_2.jpg"])
-    halted = ing._run_vision_only(_args(max_failures=2))
+    halted, _ = ing._run_vision_only(_args(max_failures=2))
     assert halted is True

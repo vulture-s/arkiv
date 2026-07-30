@@ -993,7 +993,7 @@ def _run_vision_only(args):
 
     if not rows:
         print("All frames already have vision descriptions. Nothing to do.")
-        return
+        return (False, set())
 
     # Group by media
     from collections import defaultdict
@@ -1012,6 +1012,7 @@ def _run_vision_only(args):
     ok, halted = 0, False
     total_failed, consecutive_failed = 0, 0
     failed_files = []  # (fname, failed_count, frame_count) for the end-of-run report
+    written_ids = set()  # media that got ≥1 non-empty description this run → re-embed (fix: 向量索引靜默過期)
     for vi, (mid, frames_list) in enumerate(media_frames.items(), 1):
         fname = frames_list[0]["filename"]
         frame_paths = [db.resolve_path(f["thumbnail_path"]) for f in frames_list]
@@ -1067,6 +1068,12 @@ def _run_vision_only(args):
                     (max(scores), mid),
                 )
 
+        # This media's embedded source text changed → mark for re-embed. ① of the
+        # 向量索引靜默過期 fix: vision-only is the writer, so it must hand the caller
+        # the ids to re-embed (embed's content-hash is the backstop for other paths).
+        if any((vr.get("description") or "").strip() for vr in frame_results):
+            written_ids.add(mid)
+
         v_elapsed = _time.time() - v_start
         n_failed = len(still_failed_idx)
         if n_failed:
@@ -1103,7 +1110,7 @@ def _run_vision_only(args):
     if not halted:
         suffix = f", {len(failed_files)} with skipped frames." if failed_files else "."
         print(f"\nVision-only done. {ok} file(s) fully patched{suffix}")
-    return halted
+    return (halted, written_ids)
 
 
 def _regenerate_proxies():
@@ -1684,7 +1691,19 @@ def main():
 
     # ── Vision-only mode: patch missing vision descriptions ──────────────
     if args.vision_only:
-        halted = _run_vision_only(args)
+        halted, written_ids = _run_vision_only(args)
+        # ① 向量索引靜默過期 fix: vision-only is the ONLY writer of descriptions, so it
+        # must re-embed what it wrote — previously it returned here (line ~2180's embed
+        # was unreachable), leaving the index frozen while descriptions kept changing.
+        # Re-embed even on halt: committed work must not stay unsearchable. force_ids is
+        # the explicit signal; embed's content-hash also catches it (belt + suspenders).
+        if written_ids and not getattr(args, "no_embed", False):
+            import embed
+            try:
+                embed.run_embed(force_ids=written_ids)
+            except Exception as e:
+                print(f"[embed] ⚠ vector index build failed: {e}")
+                print("[embed]   run manually: py -3.12 embed.py")
         if halted:
             sys.exit(1)  # halt mid-patch must not report success to cron/watch
         return
