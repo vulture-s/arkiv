@@ -101,6 +101,10 @@ def _new_counts():
         "frames_converted": 0,
         "frame_tags_media_scanned": 0,    # vision: media.frame_tags JSON rollup blobs
         "frame_tags_media_converted": 0,
+        # issue #279: without opencc every classify_zh degrades to identity, so EVERY
+        # row reads "traditional" and the run reports 0 — a self-blinding tool that
+        # answers "is anything Simplified?" with "no" precisely when it cannot tell.
+        "opencc_missing": False,
     }
 
 
@@ -111,6 +115,10 @@ def backfill(dry_run=False):
     the same counts, so `--dry-run` previews exactly what a real run would touch.
     Returns a counts dict."""
     counts = _new_counts()
+    # Check FIRST: a run without opencc converts nothing and, worse, reports "0 to
+    # convert" as though the library were clean (issue #279). Scan anyway so the
+    # scanned-counts stay honest, but flag the run as unable to detect.
+    counts["opencc_missing"] = not zh_convert.opencc_available()
     with db.get_conn() as conn:
         for row in db.iter_zh_media(_conn=conn):
             counts["media_scanned"] += 1
@@ -196,6 +204,19 @@ def format_summary(counts, dry_run=False):
     """Human-readable one-block summary for the CLI."""
     head = "Retraditionalize (Phase 9.8b backfill)" + (" — DRY RUN (no writes)" if dry_run else "")
     verb = "would convert" if dry_run else "converted"
+    if counts.get("opencc_missing"):
+        # issue #279: never let a 0 that means "couldn't look" read like a 0 that means
+        # "nothing to convert". Lead with the blocker instead of a clean-looking table.
+        return (
+            f"{head}\n"
+            "  ⚠ opencc is NOT installed — this run could not detect OR convert anything.\n"
+            "    Every row was read as already-Traditional because the detector itself\n"
+            "    degrades to identity without opencc, so the zero counts below mean\n"
+            "    \"could not check\", NOT \"library is clean\".\n"
+            "    Fix: pip install \"opencc>=1.1\"   then re-run this command.\n"
+            f"  (scanned: {counts['media_scanned']} zh media, {counts['archive_scanned']} archive, "
+            f"{counts['frames_scanned']} frame descriptions)"
+        )
     return (
         f"{head}\n"
         f"  media: {counts['media_scanned']} zh scanned, {verb} "
