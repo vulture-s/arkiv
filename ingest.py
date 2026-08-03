@@ -415,6 +415,14 @@ def exiftool_extract(path: str, fps: Optional[float] = None) -> dict:
         # call so sidecar-less clips still populate camera_make/model. Non-Sony
         # files simply don't have these tags → d.get() returns None → no effect.
         "-DeviceManufacturer", "-DeviceModelName", "-LensZoomModelName",
+        # audit 2026-07-30: FX30 XAVC-S .mp4 puts the lens in the NRT XML block as
+        # LensModelName (not the composite LensModel the standard tag maps to) → 548
+        # FX30 clips had NULL lens_model; and iPhone 16 Pro ProRes leaves standard
+        # Make blank, putting the maker in AppleProappsManufacturer → 88 clips had
+        # NULL camera_make. (FX30 iso/shutter/aperture/focal are genuinely absent from
+        # the file — the NRT AcquisitionRecord carries gamma/timecode but no exposure
+        # triad — so those stay NULL by source, not by this mapping.)
+        "-LensModelName", "-AppleProappsManufacturer",
         "-GPSLatitude", "-GPSLongitude",
         "-ColorSpace",
         "-ISO",
@@ -513,9 +521,10 @@ def exiftool_extract(path: str, fps: Optional[float] = None) -> dict:
         # issue #115: fall back to embedded-XML device identity when the
         # standard EXIF Make/Model are blank (Sony XAVC without an M01.XML
         # sidecar). Standard tags still win when present.
-        "camera_make": d.get("Make") or d.get("DeviceManufacturer"),
+        "camera_make": d.get("Make") or d.get("DeviceManufacturer") or d.get("AppleProappsManufacturer"),
         "camera_model": d.get("Model") or d.get("DeviceModelName"),
-        "lens_model": d.get("LensModel") or d.get("Blackmagic-designCameraLensType") or d.get("LensZoomModelName"),
+        "lens_model": (d.get("LensModel") or d.get("Blackmagic-designCameraLensType")
+                       or d.get("LensZoomModelName") or d.get("LensModelName")),
         "gps_lat": d.get("GPSLatitude"),
         "gps_lon": d.get("GPSLongitude"),
         "color_space": str(d.get("ColorSpace")) if d.get("ColorSpace") else None,
@@ -768,6 +777,12 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     if fhash:
         record["file_hash"] = fhash
         record["hash_algo"] = "xxh3"
+        # Stamp when the content hash was confirmed against the file's bytes (audit
+        # 2026-07-30: this column was declared + allow-listed but had NO writer, so it
+        # stayed NULL for every row). The hash was just (re)computed/confirmed from the
+        # real file this ingest; on --refresh this re-reads and re-verifies. hash_verified_at
+        # is in _ALLOWED_COLS, so the record upsert persists it.
+        record["hash_verified_at"] = datetime.now(timezone.utc).isoformat()
 
     # Audio transcription (skip on refresh — reuse existing)
     if meta["has_audio"] and not existing:
