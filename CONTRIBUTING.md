@@ -9,6 +9,7 @@ Thanks for your interest in contributing! arkiv is a local-first media asset man
 - Python 3.9+
 - FFmpeg 6.0+
 - [Ollama](https://ollama.com/) with `nomic-embed-text` model
+- Node 20+ (the UI is a Svelte SPA that `server.py` serves as a built bundle)
 - Git
 
 ### Getting Started
@@ -28,6 +29,9 @@ pip install faster-whisper torch  # NVIDIA GPU
 ollama pull nomic-embed-text
 ollama pull qwen3-vl:8b
 
+# Build the UI (server.py serves frontend/dist at /)
+cd frontend && npm ci && npm run build && cd ..
+
 # Verify environment
 python health.py
 ```
@@ -37,6 +41,18 @@ python health.py
 ```bash
 uvicorn server:app --host 0.0.0.0 --port 8501 --reload
 ```
+
+Open <http://127.0.0.1:8501> — `server.py` serves the built SPA from `frontend/dist`. Without
+a build, `/` only shows a "run npm run build" hint.
+
+Working on the UI? Run Vite's dev server alongside the backend for hot reload:
+
+```bash
+cd frontend && npm run dev   # http://127.0.0.1:5173
+```
+
+It proxies `/api`, `/thumbnails` and `/ws` to the backend on :8501, so keep both running.
+Rebuild with `npm run build` before checking the production path at :8501.
 
 ### Git hooks
 
@@ -86,9 +102,13 @@ chore: update requirements.txt
 ## Code Style
 
 - Python: follow existing patterns in the codebase
-- Frontend: vanilla JS + Tailwind CSS (no build step)
 - Keep modules small and focused — each `.py` file has a single responsibility
 - Use `config.py` for all configurable values (never hardcode paths/URLs)
+- Frontend: Svelte 4 + Vite 5 (`frontend/`). No CSS framework — styling goes through the
+  design tokens in `frontend/src/app.css` (CSS custom properties); don't introduce Tailwind
+  or another framework without discussing it first. Fonts are self-hosted via `@fontsource`.
+- Before pushing frontend changes, run `npm run check` (svelte-check with
+  `--fail-on-warnings`) — CI blocks on it, and the baseline is currently zero warnings
 
 ## Testing & Coverage
 
@@ -161,18 +181,26 @@ Rollback = the prior tag's artifact; delete the GitHub Release (and tag) if a re
 
 ## Project Structure
 
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the authoritative map — every backend module, the
+frontend routes, and how data flows between them. The list below is just orientation for a
+first change:
+
 ```
-server.py      — FastAPI REST API (the main entry point)
-index.html     — Tailwind frontend (single file)
-config.py      — Centralized configuration
-db.py          — SQLite data layer
-vectordb.py    — ChromaDB + Ollama embeddings
-ingest.py      — Media file processing pipeline
-transcribe.py  — Whisper transcription + anti-hallucination guard
-frames.py      — FFmpeg frame extraction
-vision.py      — Ollama vision analysis (JSON output)
-health.py      — Environment health check
+server.py         — FastAPI app: ~70 REST endpoints, and serves the built SPA
+config.py         — Centralized configuration
+db.py             — SQLite data layer
+vectordb.py       — ChromaDB + Ollama embeddings
+ingest.py         — Media pipeline: probe → thumbnail → transcribe → vision → embed
+transcribe.py     — Whisper transcription + anti-hallucination guard
+frames.py         — FFmpeg frame extraction (incl. 360/dual-fisheye)
+vision.py         — Ollama vision analysis (JSON output)
+health.py         — Environment health check
+frontend/src/     — Svelte SPA: routes/ (screens), lib/ (shared), app.css (design tokens)
+docs/             — API reference, pipeline notes, ADRs
 ```
+
+Backend modules sit flat at the repo root (~37 of them). The ones above are the files you're
+most likely to touch first, not the full set.
 
 ## License
 
