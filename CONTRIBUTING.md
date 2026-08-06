@@ -176,4 +176,29 @@ health.py      — Environment health check
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+arkiv is licensed under the **PolyForm Noncommercial License 1.0.0**, with a **Commercial
+Output Exception** — see [LICENSE](LICENSE). In short: arkiv itself is source-available and
+free for noncommercial use, while whatever you *make* with it (videos, timelines,
+EDL/FCPXML/OTIO exports) is yours to use commercially.
+
+### Contributor terms
+
+By submitting a contribution — a pull request, a patch, or code posted in an issue — you
+confirm that:
+
+1. **It's yours to submit.** You wrote it, or you otherwise have the right to contribute it,
+   and you are not knowingly including code owned by someone else under incompatible terms.
+   Using an AI assistant to write or package your change is fine; the same condition applies
+   to what it produced for you.
+2. **It ships under the project's license.** Your contribution is licensed to the project and
+   its users under the same terms as arkiv itself (PolyForm NC 1.0.0 + Commercial Output
+   Exception).
+3. **The maintainer may relicense it.** You grant Hevin Yeh — the copyright holder named in
+   [LICENSE](LICENSE) — a perpetual, worldwide, irrevocable, royalty-free right to license
+   your contribution under different terms, including proprietary ones. This is what lets
+   arkiv's licensing evolve (for example, if a component is later offered commercially)
+   without having to track down every past contributor for permission.
+
+You keep the copyright to what you wrote — point 3 is a license you grant, not a transfer of
+ownership. Merged contributions are credited in the repository's contributor list; if you'd
+like to be credited under a different name than your Git identity, just say so in the PR.
