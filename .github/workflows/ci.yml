@@ -163,7 +163,7 @@ jobs:
     # warnings (the 5 pre-existing were fixed in this wave). Runs in the already-required job.
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -198,7 +198,7 @@ jobs:
     # .gitkeep shell satisfies tauri-build's resource check without the heavy bundle.
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -244,7 +244,7 @@ jobs:
           # are set as REQUIRED checks in branch protection — verify in repo settings.
           pip-audit -r requirements.txt -r requirements-dev.txt \
             --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
       - name: npm audit
