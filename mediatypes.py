@@ -25,8 +25,22 @@ VIDEO_360_EXT = frozenset({".insv", ".360"})
 
 # Video containers the ingest pipeline probes / thumbnails / extracts frames from.
 # `.mkv` / `.avi` / `.webm` are ffmpeg-handled containers and count as video (B3).
+#
+# `.mxf` is a *container*, not a codec — the distinction that kept it out until
+# now. It used to sit in `ingest._PRO_UNSUPPORTED_EXT` next to `.braw` / `.r3d` /
+# `.ari`, but those are proprietary RAW codecs with genuinely no ffmpeg decoder,
+# whereas MXF wraps codecs ffmpeg decodes fine — so the grouping was over-broad
+# and Sony FX6 / FX9 / Venice cards indexed as zero files. Measured 2026-08-07 on
+# two samples, whole chain green on both (probe + thumbnail + frames + the 16k
+# mono audio decode whisper feeds on):
+#   - samples.ffmpeg.org/MXF/C0023S01.mxf — Sony 2006, MPEG-4 part 2 352x288,
+#     start_tc 01:43:48:21 read from format-level tags
+#   - XAVC-Intra style: H.264 High 4:2:2 all-I 1920x1080, start_tc 01:00:00:00
+# An MXF whose inner codec ffmpeg *can't* decode degrades the same way any
+# unreadable file does — `ingest.probe()` returns None and the clip is skipped
+# with `[ffprobe failed]` — so admitting the container carries no new risk.
 VIDEO_EXT = frozenset({
-    ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts",
+    ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".mxf",
 }) | VIDEO_360_EXT
 
 # Audio the pipeline transcribes.
