@@ -40,7 +40,7 @@ jobs:
       matrix:
         python-version: ["3.9", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -102,7 +102,7 @@ jobs:
     # JSON-RPC framing, teardown) for ~4.5s and zero extra dependencies — mcp and
     # numpy are already installed above.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -138,7 +138,7 @@ jobs:
     runs-on: macos-latest  # same as `test`: mlx-whisper has no Linux wheel
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -162,7 +162,7 @@ jobs:
     # so a NEW svelte warning (unused export/CSS, a11y, empty ruleset) reds CI. Baseline = 0
     # warnings (the 5 pre-existing were fixed in this wave). Runs in the already-required job.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -197,7 +197,7 @@ jobs:
     # be built first (same steps as the `frontend` job). The tracked src-tauri/backend
     # .gitkeep shell satisfies tauri-build's resource check without the heavy bundle.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -225,7 +225,7 @@ jobs:
     # it EXPLICITLY (pip-audit --ignore-vuln GHSA-xxxx, or an npm allowlist) with a
     # one-line reason — never a blanket `|| true`.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -264,7 +264,7 @@ jobs:
     # pulled from Docker Hub and flaked with a registry timeout). No layer cache — a gate
     # can afford the ~10 min; base-image pulls still hit Docker Hub.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build image
         run: docker build -t arkiv:ci .
       - name: Boot smoke (arkiv /api/stats via loopback — ollama not required)

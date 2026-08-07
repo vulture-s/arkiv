@@ -27,7 +27,7 @@ jobs:
   release:
     runs-on: macos-latest   # Apple Silicon — assemble-backend.sh bundles an aarch64-apple-darwin Python
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate Apple signing config (all-or-nothing)
         id: signcfg
