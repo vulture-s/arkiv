@@ -141,7 +141,7 @@ jobs:
 
       - name: Attach artifacts to the GitHub Release (tag only)
         if: ${{ github.ref_type == 'tag' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             src-tauri/target/release/bundle/dmg/*.dmg
