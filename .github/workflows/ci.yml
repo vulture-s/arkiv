@@ -40,10 +40,10 @@ jobs:
       matrix:
         python-version: ["3.9", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -62,7 +62,7 @@ jobs:
             "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
             "psutil>=5.9" "whisper-guard>=0.3" numpy mlx-whisper \
             "opencc; python_version >= '3.10'" \
-            "mcp>=1.2; python_version >= '3.10'"
+            "mcp>=1.2,<2; python_version >= '3.10'"
 
       - name: Run tests
         run: pytest -q
@@ -79,13 +79,32 @@ jobs:
     # run would red for a platform reason, not a real one. conftest.py fakes the
     # heavy backends (incl. mlx_whisper) via sys.modules, so the guard suite runs
     # with just the lean FastAPI deps. Full-suite Windows 0-fail is tracked as
-    # separate evidence in the 2026-07-24 arkiv-health-hardening handoff; the MCP
-    # stdio hang (F3) is deferred to that handoff's SDK version x OS matrix rather
-    # than imported into CI as a known-red.
+    # separate evidence in the 2026-07-24 arkiv-health-hardening handoff.
+    #
+    # F3 (2026-07-28, handoff Part B): the Windows MCP stdio hang is RESOLVED —
+    # root cause was `search_media`'s lazy `import vectordb` (→ chromadb → numpy)
+    # running after the stdio transport had already parked a worker thread in a
+    # blocking readline() on the stdin pipe; on that box the numpy import then
+    # wedges inside the bundled OpenBLAS DLL and never returns. Fixed by importing
+    # it in main() before mcp.run() (mcp_server._prewarm_vectordb).
+    #
+    # That hang is NOT reproducible on hosted runners — measured 2026-07-28 on
+    # windows-latest / ubuntu-latest / macos-latest: a thread blocked on a stdin
+    # pipe plus `import numpy` (2.5.1) completes in 0.6s on all three, while the
+    # same probe deadlocks on the Win11 dev box with both numpy 2.4.3 and 2.5.1.
+    # It is environment-specific, not version-driven. So installing chromadb here
+    # to exercise the real path would cost ~120s of install (82 packages, ~360MB)
+    # and guard NOTHING — deliberately not done.
+    #
+    # What this leg CAN hold is the ordering invariant that IS the fix: the
+    # prewarm-before-run tests in test_mcp_e2e.py run everywhere, and running the
+    # file here also gives the MCP stdio surface a Windows leg (subprocess spawn,
+    # JSON-RPC framing, teardown) for ~4.5s and zero extra dependencies — mcp and
+    # numpy are already installed above.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -101,10 +120,10 @@ jobs:
           pip install \
             "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
             "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
-            "psutil>=5.9" "whisper-guard>=0.3" numpy mcp
-      - name: Run Windows correctness tests (offload deny-policy contract)
+            "psutil>=5.9" "whisper-guard>=0.3" numpy "mcp<2"
+      - name: Run Windows correctness tests (offload deny-policy + MCP stdio)
         shell: bash
-        run: pytest tests/test_hardening_round4.py -q
+        run: pytest tests/test_hardening_round4.py tests/test_mcp_e2e.py -q
 
   coverage:
     name: coverage
@@ -119,8 +138,8 @@ jobs:
     runs-on: macos-latest  # same as `test`: mlx-whisper has no Linux wheel
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -132,7 +151,7 @@ jobs:
             "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
             "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
             "psutil>=5.9" "whisper-guard>=0.3" numpy mlx-whisper \
-            "opencc; python_version >= '3.10'" "mcp>=1.2"
+            "opencc; python_version >= '3.10'" "mcp>=1.2,<2"
       - name: Coverage
         run: pytest -q -m "not subprocess_stdio" --cov=. --cov-config=pyproject.toml --cov-report=term:skip-covered --cov-fail-under=55
 
@@ -143,8 +162,8 @@ jobs:
     # so a NEW svelte warning (unused export/CSS, a11y, empty ruleset) reds CI. Baseline = 0
     # warnings (the 5 pre-existing were fixed in this wave). Runs in the already-required job.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -178,8 +197,8 @@ jobs:
     # be built first (same steps as the `frontend` job). The tracked src-tauri/backend
     # .gitkeep shell satisfies tauri-build's resource check without the heavy bundle.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -206,8 +225,8 @@ jobs:
     # it EXPLICITLY (pip-audit --ignore-vuln GHSA-xxxx, or an npm allowlist) with a
     # one-line reason — never a blanket `|| true`.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: pip-audit
@@ -225,7 +244,7 @@ jobs:
           # are set as REQUIRED checks in branch protection — verify in repo settings.
           pip-audit -r requirements.txt -r requirements-dev.txt \
             --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
       - name: npm audit
@@ -245,7 +264,7 @@ jobs:
     # pulled from Docker Hub and flaked with a registry timeout). No layer cache — a gate
     # can afford the ~10 min; base-image pulls still hit Docker Hub.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build image
         run: docker build -t arkiv:ci .
       - name: Boot smoke (arkiv /api/stats via loopback — ollama not required)

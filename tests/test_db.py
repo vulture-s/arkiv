@@ -11,9 +11,12 @@ def _get_row_by_path(db, path):
 
 def test_media_type_filter_covers_all_supported_extensions(tmp_db, sample_record):
     db = importlib.import_module("db")
-    # Ingest accepts 7 video + 6 audio exts (see ingest.SUPPORTED).
-    video_exts = [".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts"]
-    audio_exts = [".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"]
+    mediatypes = importlib.import_module("mediatypes")
+    # Read the sets rather than re-listing them: this test claims to cover *all*
+    # supported extensions, and a hand-copied literal silently stops doing that
+    # the moment one is added (it missed `.insv`/`.360`, then `.mxf`).
+    video_exts = sorted(mediatypes.VIDEO_EXT)
+    audio_exts = sorted(mediatypes.AUDIO_EXT)
     for i, ext in enumerate(video_exts + audio_exts):
         db.upsert(sample_record(path="/tmp/f{0}{1}".format(i, ext), ext=ext))
 

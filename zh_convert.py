@@ -23,6 +23,38 @@ backfill of the stored transcript/segments/words columns + re-embed is a documen
 follow-up (roadmap Phase 9.8b), not silent.
 """
 import functools
+import sys
+
+# issue #279: degrade-to-identity kept a missing opencc SILENT — a whole 1506-clip
+# library was transcribed with the conversion secretly off (audit 2026-07-30: 81 zh
+# rows stored Simplified, health check green the whole time). The degrade stays (a
+# missing wheel must never break a transcribe) but it is no longer silent: the first
+# time we are asked to convert CJK text without a converter, say so once.
+_warned_no_converter = False
+
+
+def opencc_available() -> bool:
+    """True when a real opencc converter can be built. Public so health.py / the
+    backfill can report the conversion path as OFF instead of silently no-op-ing."""
+    return _converter("s2t") is not None
+
+
+def _has_cjk(text) -> bool:
+    return any("一" <= ch <= "鿿" for ch in (text or ""))
+
+
+def _warn_identity_once():
+    global _warned_no_converter
+    if _warned_no_converter:
+        return
+    _warned_no_converter = True
+    print(
+        "\n[WARN] opencc is not installed — Chinese text is being stored EXACTLY as the "
+        "model produced it (Simplified stays Simplified). Install it with "
+        "`pip install \"opencc>=1.1\"`, then run `python ingest.py --retraditionalize` "
+        "to convert what was already stored.",
+        file=sys.stderr, flush=True,
+    )
 
 
 @functools.lru_cache(maxsize=4)
@@ -39,6 +71,11 @@ def _convert(config, text):
         return text
     conv = _converter(config)
     if conv is None:
+        # Only meaningful for CJK: warning on Latin text would fire on every English
+        # clip. Probe configs (t2s/s2tw used by classify_zh) go through here too, so a
+        # single warning covers detection AND conversion going dark.
+        if _has_cjk(text):
+            _warn_identity_once()
         return text
     try:
         return conv.convert(text)

@@ -14,7 +14,24 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 
 ---
 
-## 架構
+## 為什麼需要 arkiv
+
+- **素材太多，找不到那顆鏡頭** → 用自然語言搜（「五月所有黃昏空景」），中日英都行，搜的是畫面內容和逐字稿，不是檔名。
+- **AI 剪輯工具只看得懂「有人在講話」的素材** → arkiv 對每支 clip 做視覺分析 + 轉錄，大量 B-roll、無語音空景一樣可搜可管。
+- **素材庫要能餵給下游任何剪法** → 手動剪、自動剪、腳本剪都接得上：Resolve 原生 plugin、EDL / FCPXML 匯出、API / MCP 介面。
+
+> **授權一句話**：arkiv 軟體本身非商業用途免費（source-available），**用它產出的影片、時間軸、匯出檔 100% 可商用**。
+>
+> **實戰驗證**：已在 **1,506 支真實產品拍攝素材**（其中 1,161 支無對白 B-roll）、單張 RTX 4070 上完整索引跑通。
+
+## 截圖
+
+![ARKIV UI](screenshot.jpg)
+
+<details>
+<summary>系統架構與資料流（給 contributor / fork 作者）</summary>
+
+### 架構
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
@@ -41,23 +58,45 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
   階段 2：視覺分析（卸載 LLM 後釋放 VRAM）
   ┌─────────┐  ┌──────────────┐
   │frames.py│→ │  vision.py   │
-  │（擷取幀）│  │(qwen3-vl:8b) │
+  │（擷取幀）│  │(qwen2.5vl:7b) │
   └─────────┘  └──────────────┘
 ```
 
-→ **完整 pipeline（4 階段、儲存路徑、exit code、maintenance modes）**：[docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)
+→ **完整 pipeline（4 階段、儲存路徑、exit code、maintenance modes）**：[docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md) · 架構總覽 [ARCHITECTURE.md](ARCHITECTURE.md)
 
-## 截圖
+</details>
 
-![ARKIV UI](screenshot.jpg)
+## 功能總覽
 
-## 功能特色
+**找素材**
+- 語義搜尋（中／英／日）——搜的是畫面內容 + 逐字稿，不是檔名
+- 素材庫 Chat：搜清單、對上一輪結果續篩、找相似鏡頭、統計問答（帶對話記憶）
+- 評級（GOOD / NG / 待審）+ 自動與手動標籤，附自動補全
+
+**AI 標註**
+- Whisper large-v3-turbo 轉錄 + **四層反幻覺防護**（VAD 靜音過濾 → no_speech 門檻 → 空白/重複過濾 → LLM 校正）
+- 幀視覺分析（含品牌／物件辨識）；360 素材（Insta360 / GoPro Max）自動重投影後索引
+- 中文逐字稿存檔即轉台灣繁體（含既有素材的批次轉換工具）
+- 相機 metadata 全吃：EXIF + Sony XAVC sidecar，FX 系列機型不會掉
+
+**DIT 現場**
+- 記憶卡轉存：多目的地平行 copy + 逐檔 hash 驗證 + 可斷點續傳，**絕不刪來源卡**
+- ASC MHL v2 雜湊清單（已與 ASC 官方 reference impl 互通驗證）
+- 攝影日報 CSV、插卡自動轉存監看、瀏覽器 DIT 控制台（`/dit`）
+
+**進剪輯**
+- DaVinci Resolve plugin：站內搜尋、帶 clip color 匯入、加 frame marker
+- 匯出 SRT / VTT / TXT / EDL（DF/NDF）/ FCPXML 1.8、metadata CSV 直餵 Resolve
+- 全部功能同時有 Web UI、CLI 與 API，共用同一個庫
+
+<details>
+<summary>完整功能清單（含進階選項）</summary>
 
 - **語義搜尋** — 用自然語言查詢（中文／英文／日文）
 - **素材庫 Chat RAG** — 5-intent 助手支援素材清單搜尋、延伸篩選、相似鏡頭、統計與一般問答，並保留對話記憶
 - **AI 轉錄** — Whisper large-v3-turbo + Silero VAD + LLM 潤稿（Apple Silicon MLX / NVIDIA CUDA）
 - **四層反幻覺防護** — VAD 靜音過濾 → no_speech 門檻 → 空白/重複過濾 → LLM 校正
-- **幀分析** — qwen3-vl:8b 視覺描述，含品牌/物件辨識
+- **幀分析** — qwen2.5vl:7b 視覺描述，含品牌/物件辨識
 - **兩階段管線** — 先轉錄、卸載 LLM、再視覺分析（避免 12GB 顯卡 VRAM 衝突）
 - **評級系統** — GOOD / NG / 待審，含備註 + Resolve 片段上色
 - **標籤系統** — 自動（AI）+ 手動標籤，附自動補全
@@ -66,8 +105,8 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 - **DaVinci Resolve 詮釋資料 CSV 匯出** — `/api/export/metadata-csv` 端點輸出片段詮釋資料（Camera／Lens／ISO／Shutter／Aperture／GPS／CreateDate），可直接餵 Resolve 的「檔案 → 從 CSV 匯入詮釋資料」。外掛匯入後自動提示
 - **ExifTool 整合** — 每支片段自動擷取 12 個欄位（Make／Model／LensModel／GPS／ColorSpace／ISO／Shutter／Aperture／FocalLength／CreateDate）。支援 sidecar：Sony XAVC `.XML`、iPhone Keys group、Blackmagic Cam app 廠商專屬鏡頭標籤。Windows 自動偵測 exiftool 二進位位置（winget／scoop／chocolatey／Program Files）
 - **EDL reel 名** — 採 ExifTool ReelName，缺失時 fallback 到檔名 stem（8 字元 CMX3600 規格相容、控制字元已過濾）
-- **HEVC／ProRes 瀏覽器代理** — 瀏覽器播放時依需求自動產生 H.264 代理（Phase 7.7g）
-- **Tauri 原生應用** — 桌面應用程式，支援原生檔案/資料夾對話框（Windows panic hook 將 Rust crash 寫到 stderr）
+- **HEVC／ProRes 瀏覽器代理** — 瀏覽器播放時依需求自動產生 H.264 代理
+- **Tauri 原生應用** — 桌面應用程式，支援原生檔案/資料夾對話框
 - **DaVinci Resolve 外掛** — 搜尋、匯入（含片段顏色）、新增幀標記
 - **ASC MHL v2 雜湊清單** — `mhl.py create` / `verify` CLI 產出真正的 `urn:ASC:MHL:v2.0` 格式，支援 `xxh3` / `md5` / `sha1` / `sha256` / `c4`，含 directory + structure root hash、鏈式 `ascmhl_chain.xml`。已跟 ASC 官方 reference impl 1.2 互通驗證 — 可直接接 Silverstack / MediaVerify / Hedge / YoYotta 工作流
 - **多目的地 offload** — `offload.py --src <SD> --dst <A> --dst <B>` chunked 平行 copy + 每檔 hash 驗證 + mismatch 3× retry + atomic rename + sidecar 感知（XAVC / ARRI / RED / iPhone Live Photo）。可恢復的 JSON state file — copy 一半 kill 掉，pending 檔案下次接著跑。每個 dst 結尾 emit MHL v2
@@ -75,80 +114,47 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 - **DIT 轉存 UI（`/dit`）** — 瀏覽器控制台做記憶卡→備份轉存：預覽目的端排版、執行時**即時逐檔進度串流**、多目的地 + `xxh3` 校驗 + ASC MHL v2。**絕不刪來源卡**
 - **轉存歸檔規則** — `offload.py --organize "{date}/{camera}/{reel}"` 把素材歸進 日期/攝影機/Reel 樹狀（token：`{date}/{camera}/{reel}/{stem}/{ext}`，檔名安全、防路徑逃逸）；留空則鏡射原結構
 - **記憶卡監看** — `offload.py --watch` 插卡自動轉存（偵測 DCIM / 媒體卷宗），含重插 / 掛載抖動防護，晃動的卡不會重複複製
-- **360 重投影** — 雙魚眼 `.insv` / `.360` 在 vision tagging 前重投影成**等距柱狀（equirectangular）**（FFmpeg `v360`），讓原始魚眼藏住的畫面文字與事件變得可搜尋（Phase 8.3b）
+- **360 重投影** — 雙魚眼 `.insv` / `.360` 在 vision tagging 前重投影成**等距柱狀（equirectangular）**（FFmpeg `v360`），讓原始魚眼藏住的畫面文字與事件變得可搜尋
 - **Vision 失敗容錯** — `ingest.py --max-failures N` / `--skip-failed` 容忍長時間無人值守時的零星幀 vision 失敗；失敗幀留空，之後可用 `--vision-only` 續跑（整個 Ollama 掛掉仍會快速停止）
 
-## API 驗證
+</details>
 
-所有 `/api/*` 端點都需要帶有正確 scope 的 Bearer token。這種以 scope 為基礎的 token 可以把整個機器群組拆開管理：只讀審片機可用 `videos_read` 或 `media_read`，匯入機可用 `ingest_write`，管理機可用 `admin`。
+## DaVinci Resolve 整合
 
-第一次啟動時先做 bootstrap：
+arkiv 不只是「另一個素材管理器」——它直接活在你的 NLE 裡：
 
-```bash
-export ARKIV_ADMIN_BOOTSTRAP_TOKEN=$(openssl rand -base64 32)
-python server.py
-```
+- **Resolve plugin**（`resolve_plugin/`）：在 Resolve 內搜尋 arkiv 素材庫、把結果**帶 clip color 匯入**時間軸、對片段加 frame marker，全程不離開 NLE。
+- **評級直通**：arkiv 的 GOOD / NG / 待審會變成 Resolve 的片段顏色。
+- **metadata CSV**：`/api/export/metadata-csv` 產出可直接餵 Resolve「檔案 → 從 CSV 匯入詮釋資料」的欄位（Camera／Lens／ISO／Shutter／Aperture／GPS／CreateDate），plugin 匯入後會自動提示。
+- **時間軸交換**：EDL（DF/NDF 時間碼）與 FCPXML 1.8 匯出，FCPX 與 DaVinci 皆相容。
 
-第一次啟動時，server 會用這個 env var 建立一組 `admin` token。先用它建立各機器專用 token，之後再移除該 env 並撤銷 bootstrap token。
+> macOS 上 Resolve 需要 python.org 官方 Python 3.10 Framework（見下方前置需求）。
 
-直接用 CLI 建立與管理 token：
+## API / MCP
 
-```bash
-python arkiv_token.py create --name "PC-dev" --scopes videos_read,videos_write --ip-allowlist 127.0.0.1/32,100.64.0.0/10 --expires-in 90
-python arkiv_token.py list
-python arkiv_token.py show <token-id>
-python arkiv_token.py revoke <token-id>
-```
+arkiv 的功能全部有 REST API（`/api/*`，scope-based Bearer token）與 read-only MCP server，
+Web UI 只是其中一個使用者 —— 你可以用腳本、自動化流程、或接 Claude／OpenClaw 來查素材庫。
 
-在請求中使用 token：
-
-```bash
-curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
-```
-
-可用 scopes：`videos_read`、`videos_write`、`media_read`、`collections_read`、`collections_write`、`projects_read`、`projects_write`、`ingest_write`、`chat_read`、`chat_write`、`admin`
-
-### Chat API — 素材庫 RAG 問答
-
-你可以用自然語言詢問素材庫。分類器會把每個 prompt 交給五個 handler 其中之一：
-
-| Intent | 範例 | 做什麼 |
-|--------|------|--------|
-| `compilation` | 「給我五月所有黃昏鏡頭」 | 語意搜尋 → 排序後的 scene 清單 |
-| `refinement` | 「只要室內的」 | 在對話中對*上一輪結果*再篩選 |
-| `similarity` | 「找跟 scene 42 類似的」 | 對參考鏡頭做向量最近鄰 |
-| `analytics` | 「這個月總共拍了幾小時？」 | 對素材庫做統計查詢 |
-| `general` | 「你能幫我做什麼？」 | 純 LLM 問答，不查庫 |
-
-對話歷史（最近 10 則）會帶入每次後續回應，所以 `refinement` 是對上一輪傳回的結果做篩選。
-
-**模型需求**：chat 用 `ARKIV_CHAT_MODEL`（預設 `qwen2.5:14b`）同時處理*意圖分類與回答* —— 一個 `ollama pull qwen2.5:14b` 就夠。只有當較小模型（例如 `qwen2.5:7b-instruct`）確實已裝在 Ollama 主機上時，才設 `ARKIV_INTENT_MODEL`。模型缺失時 `/api/chat` 會回清楚的「請 ollama pull …」訊息而非 500。
-
-**前置條件 —— 先 ingest + 建索引**：chat 查的是*已建索引*的素材庫，不是獨立聊天機器人。先 ingest 素材（Step 1）+ 跑 `python embed.py` 建索引（Step 2）再用 chat。`compilation` / `refinement` / `similarity` 需要向量索引；`analytics` 只要 ingest 過；`general` 是唯一空庫也能用的 intent。空庫 / 未建索引時 chat 不會報錯，只會回「找到 0 個」。
-
-```bash
-# 建立對話
-curl -X POST http://localhost:8501/api/chat \
-  -H "Authorization: Bearer $ARKIV_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "給我所有黃昏鏡頭"}'
-# → {"conversation_id":"…", "assistant_text":"…", "scene_ids":[…], "intent":"compilation", …}
-
-# 延續同一個對話 —— refinement 會對上一輪結果操作
-curl -X POST http://localhost:8501/api/chat \
-  -H "Authorization: Bearer $ARKIV_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "只要室內的", "conversation_id": "abc123"}'
-
-# 把對話限定在特定 project
-curl -X POST http://localhost:8501/api/chat -H "Authorization: Bearer $ARKIV_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "寬景鏡頭", "project_scope": ["client-acme"]}'
-```
-
-用 `GET /api/chat/history/{conversation_id}` 讀回歷史、`GET /api/chat/conversations` 列出對話（都需要 `chat_read`）。
+→ **[API 驗證、token scopes、素材庫 Chat（RAG）問答完整說明：docs/api.zh-TW.md](docs/api.zh-TW.md)**
 
 ## 快速開始
+
+### 下載應用程式（macOS, Apple Silicon）
+
+不想碰 Python 環境的最快路徑。`.dmg` 已打包 Python 後端與 ML 套件（torch、mlx-whisper、chromadb…），可略過下面的 venv/pip。但你**仍需 FFmpeg 與 Ollama**（負責抽幀、嵌入、視覺）：
+
+```bash
+brew install ffmpeg ollama
+ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b
+```
+
+到 [最新 release](https://github.com/vulture-s/arkiv/releases/latest) 下載 **`arkiv_<version>_aarch64.dmg`**，打開後把 **arkiv** 拖進「應用程式」。首次啟動因未簽名會被 macOS Gatekeeper 擋 —— **右鍵 → 打開** 一次即可（或執行 `xattr -dr com.apple.quarantine /Applications/arkiv.app`），之後正常開啟。
+
+> Intel Mac / Windows 目前沒有預建 app（bundle 內是 aarch64 Python + mlx-whisper）。請改用下面的原始碼安裝。
+
+---
+
+以下皆為**從原始碼**安裝與執行 —— 開發用，或跑在 Linux / Windows。
 
 ### 前置需求
 
@@ -169,7 +175,7 @@ cd arkiv
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install mlx-whisper          # Apple Silicon (Metal GPU)
-ollama pull bge-m3 && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b
 python health.py
 ```
 
@@ -183,7 +189,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA CUDA GPU
 # pip install faster-whisper      # CPU 後備
-ollama pull bge-m3 && ollama pull qwen3-vl:8b && ollama pull qwen2.5:14b
+ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b
 python health.py
 ```
 
@@ -198,7 +204,7 @@ python -m venv .venv
 pip install -r requirements.txt
 pip install faster-whisper torch  # NVIDIA CUDA GPU
 # pip install faster-whisper      # CPU 後備
-ollama pull bge-m3; ollama pull qwen3-vl:8b; ollama pull qwen2.5:14b
+ollama pull bge-m3; ollama pull qwen2.5vl:7b; ollama pull qwen2.5:14b
 $env:PYTHONUTF8=1; python health.py
 ```
 
@@ -213,15 +219,18 @@ docker compose up -d
 
 > 模型會在 Ollama container 首次啟動時自動下載（可能需要幾分鐘）。
 
-### 從 v0.3.0 升級到 v0.3.1
+<details>
+<summary>從舊版升級（v0.3.0 → v0.3.1 的儲存 layout 遷移）</summary>
 
-v0.3.1 改了預設儲存 layout（產出檔案落 `BASE_DIR/.arkiv/` — 見 Phase 8.0c）。一鍵 migration：
+v0.3.1 改了預設儲存 layout（產出檔案落 `BASE_DIR/.arkiv/`）。從那之前的版本升級才需要這步：
 
 ```bash
 cd ~/.arkiv && git pull && python ingest.py --migrate-storage
 ```
 
-完整 SOP（backup、rollback、per-project layout）：[docs/pipeline.zh-TW.md#v030--v031-升級](docs/pipeline.zh-TW.md#v030--v031-升級) · [CHANGELOG v0.3.1](CHANGELOG.md)
+完整 SOP（backup、rollback、per-project layout）：[docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md) · [CHANGELOG](CHANGELOG.md)
+
+</details>
 
 ### 方式 A：Web UI — 在瀏覽器中瀏覽、搜尋、評級、標記
 
@@ -287,6 +296,9 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 
 ## 設定
 
+<details>
+<summary>環境變數全表（`.env`）—— 預設值就能跑，要調再看</summary>
+
 複製 `.env.example` 為 `.env` 並自訂：
 
 | 變數 | 預設值 | 說明 |
@@ -296,7 +308,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | 縮圖輸出目錄 |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API 端點 |
 | `ARKIV_EMBED_MODEL` | `bge-m3` | 嵌入模型 —— **建索引後請勿更換**（見下方說明） |
-| `ARKIV_VISION_MODEL` | `qwen3-vl:8b` | 視覺模型（幀描述） |
+| `ARKIV_VISION_MODEL` | `qwen2.5vl:7b` | 視覺模型（幀描述）。**預設刻意用 2.5-VL 而非 qwen3-vl:8b**：Qwen3-VL 在 Ollama 下的視覺路徑約慢 10×（實測 ~60s/幀 vs ~8s/幀），2000 幀就是 30 小時 vs 3.5 小時、標註品質相當。要更高上限可設 `ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b` |
 | `ARKIV_CHAT_MODEL` | `qwen2.5:14b` | Chat 模型 —— 回答與（預設）意圖分類 |
 | `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | 選用的較快意圖分類模型；必須已安裝 |
 | `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (其他) | Whisper 模型 |
@@ -312,6 +324,8 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 >
 > **Chat 硬體門檻：** `qwen2.5:14b` 約需 9 GB，且與嵌入模型同時運行，請在 Ollama 主機預留約 12–16 GB 可用 RAM/VRAM。記憶體較緊的機器可設 `ARKIV_CHAT_MODEL=qwen2.5:7b`（約 4.7 GB）當較輕的預設。
 
+</details>
+
 ## 技術架構
 
 | 層級 | 技術 |
@@ -323,7 +337,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 | 轉錄 | mlx-whisper / faster-whisper (large-v3-turbo) |
 | VAD | Silero VAD（Whisper 前的靜音過濾） |
 | LLM 潤稿 + Chat | Ollama qwen2.5:14b（轉錄潤稿 + 5-intent chat RAG） |
-| 視覺 | Ollama qwen3-vl:8b（品牌/物件辨識） |
+| 視覺 | Ollama qwen2.5vl:7b（品牌/物件辨識） |
 | 媒體 | FFmpeg（探測、縮圖、幀擷取） |
 | 詮釋資料 | ExifTool（12 欄位、sidecar-aware、跨平台自動偵測） |
 | 匯出 | SRT、VTT、TXT、EDL（DF/NDF）、FCPXML 1.8 |
@@ -347,7 +361,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 可以 — 原生 Python 安裝是主要的工作流程。Docker 是選用的部署方式。
 
 **Q：支援哪些檔案格式？**
-影片：`.mp4`、`.mov`、`.mkv`、`.avi`、`.webm`、`.m4v`、`.mts`
+影片：`.mp4`、`.mov`、`.mkv`、`.avi`、`.webm`、`.m4v`、`.mts`、`.mxf`（Sony FX6／FX9／Venice 的 XAVC）
 360：`.insv`（Insta360）、`.360`（GoPro Max）— 雙魚眼會在 vision tagging 前重投影成等距柱狀（equirectangular）（單鏡頭 360 素材則以原狀索引）
 音訊：`.wav`、`.mp3`、`.m4a`、`.aac`、`.flac`、`.ogg`
 相機 metadata（機型/鏡頭/timecode）同時讀內嵌 EXIF **與** Sony XAVC NRT sidecar XML — FX30／FX 系列素材機型不會掉。
@@ -376,7 +390,7 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 | FFmpeg / ffprobe | 必要 | 必要 | 必要 | |
 | Ollama server | 必要 | 必要 | 必要 | |
 | bge-m3 | 必要 | 必要 | 必要 | |
-| qwen3-vl:8b | 選用 | 選用 | 選用 | 幀描述用 |
+| qwen2.5vl:7b | 選用 | 選用 | 選用 | 幀描述用 |
 | qwen2.5:14b | 選用 | 選用 | 選用 | 轉錄潤稿 + chat（`/api/chat` 必需） |
 | ExifTool | 選用 | 選用 | 選用 | 豐富詮釋資料 |
 | faster-whisper | 必要 | 選用 | 必要 | CUDA/CPU whisper |
@@ -385,16 +399,40 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 | Apple Silicon | — | 必要 | — | |
 | fastapi + uvicorn | 必要 | 必要 | 必要 | |
 
-### 最新結果 (v0.3.0)
+### 最新結果
 
 | 平台 | 環境健檢 | 冒煙測試 | 日期 |
 |------|----------|----------|------|
-| macOS M2 Max | TBD | TBD | 2026-05-22 |
 | Windows 11 (RTX 4070) | 19/19 PASS, 0 FAIL, 0 SKIP | 9/9 PASS | 2026-05-22 |
 | Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS | 2026-05-22 |
+
+## 開發者資訊
+
+[ARCHITECTURE.md](ARCHITECTURE.md)（架構總覽） · [docs/api.zh-TW.md](docs/api.zh-TW.md)（API + Chat） · [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)（完整 pipeline） · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
 
 ## 授權
 
 PolyForm Noncommercial License 1.0.0，附 Commercial Output Exception — 見 [LICENSE](LICENSE)。
 
 你用 arkiv 剪出的影片、時間軸、匯出檔都是你的，可商用；arkiv 軟體本身任何非商業用途皆免費，但**不得**把 arkiv（或其 fork）當商業產品/服務販售、架站或重新包裝。
+
+## 公益方案
+
+arkiv 軟體非商業用途免費，用它產出的成品永遠可商用（見上方授權段）。在這之上，我們想再往前一步。
+
+如果你的專案帶有商業成分（政府補助、院線／平台發行、機構營收），對 arkiv 軟體本身的使用嚴格說會落入「商業使用」、需要另談商業授權 —— 但**只要你做的是有公共價值的影像工作**，這份商業授權我們**免費提供**：
+
+- 公共議題紀錄片
+- 非營利／公益團體的影像
+- 地方記憶、口述歷史、檔案保存
+- 公共教育與公共媒體
+
+素材的知識層，不該只有大製作用得起。
+
+**申請方式**：開一個 [GitHub Issue](https://github.com/vulture-s/arkiv/issues) 標題加上 `[public-interest]`，或 IG 私訊 [@vulture.s](https://www.instagram.com/vulture.s/)，簡述你的專案。逐案人工審，不做自動資格表。資格例示、申請範例與逐案裁量說明見 [PUBLIC-INTEREST.md](PUBLIC-INTEREST.md)。
+
+## 聯絡與追蹤
+
+- 開發實錄與 demo：Threads / Instagram [@vulture.s](https://www.instagram.com/vulture.s/)
+- 問題回報與功能許願：[GitHub Issues](https://github.com/vulture-s/arkiv/issues)
+- 商業合作／導入諮詢：IG 私訊，或開 Issue 標題加 `[biz]`

@@ -19,6 +19,25 @@ def test_media_partitions_into_video_and_audio():
     assert mediatypes.VIDEO_EXT.isdisjoint(mediatypes.AUDIO_EXT)
 
 
+def test_mxf_is_indexable_video_not_a_pro_unsupported_format():
+    """DIT wrapper ④: Sony FX6/FX9/Venice cards are `.mxf` and used to index as
+    zero files, because `.mxf` sat in ingest's pro-unsupported set next to
+    `.braw`/`.r3d`/`.ari`. Those are RAW codecs with no ffmpeg decoder; MXF is a
+    container ffmpeg reads. Both halves are asserted so the fix can't half-revert
+    — re-adding `.mxf` to either side breaks this.
+    """
+    import ingest
+
+    assert ".mxf" in mediatypes.VIDEO_EXT
+    assert ".mxf" in mediatypes.MEDIA_EXT
+    assert ".mxf" not in ingest._PRO_UNSUPPORTED_EXT
+
+    # The genuinely undecodable RAW formats stay put — this is a narrowing of the
+    # set, not a removal of the skip notice that tells users why a card looked empty.
+    assert {".braw", ".r3d", ".ari"} <= ingest._PRO_UNSUPPORTED_EXT
+    assert mediatypes.MEDIA_EXT.isdisjoint(ingest._PRO_UNSUPPORTED_EXT)
+
+
 def test_every_module_references_the_shared_set():
     """Each module binds its extension name to the SAME shared object — no copies."""
     import ingest

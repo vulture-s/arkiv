@@ -67,11 +67,15 @@ async def _run_bounded_mcp(params, body):
                     stage = "initialize"
                     await session.initialize()
                     stage = "call"
-                    try:
-                        result = await body(session)
-                    finally:
-                        stage = "cleanup"  # even if body raised: teardown runs next,
-                        # still inside fail_after, so a cleanup hang is labelled correctly
+                    # `else`, NOT `finally`: a `finally` also runs when the
+                    # fail_after cancellation unwinds THROUGH this frame, so a
+                    # hang inside `body` was relabelled "cleanup" on its way out
+                    # — the F3 Windows deadlock reported stage "cleanup" for two
+                    # rounds when it was really stuck mid-call. Advance the label
+                    # only once body has actually returned; if body raises, the
+                    # stage stays where the failure happened.
+                    result = await body(session)
+                    stage = "cleanup"  # body done; teardown runs next, still bounded
     except TimeoutError:
         pytest.fail("MCP stdio E2E timed out (stage: {0})".format(stage))
     return result
@@ -266,6 +270,45 @@ def test_mcp_boots_and_degrades_without_chromadb(seeded_project):
         proc.stdout, proc.stderr
     )
     assert "NOCHROMA_OK" in proc.stdout, proc.stdout
+
+
+def test_vectordb_is_prewarmed_before_the_stdio_transport_starts(monkeypatch):
+    """The vector backend must be imported BEFORE `mcp.run()`, not on first use.
+
+    On Windows the stdio transport parks a worker thread in a blocking readline()
+    on the stdin pipe; importing numpy (via chromadb) while a thread sits in that
+    pipe read deadlocks the interpreter permanently — the server stops answering
+    and only the client's timeout ends the session. Order is the whole fix, so it
+    is what this test pins: a refactor that drops the prewarm, or moves it after
+    `mcp.run()`, brings the deadlock back on Windows while macOS CI stays green.
+    """
+    import mcp_server
+
+    calls = []
+    monkeypatch.setattr(mcp_server, "_prewarm_vectordb", lambda: calls.append("prewarm"))
+    monkeypatch.setattr(mcp_server.mcp, "run", lambda: calls.append("run"))
+
+    mcp_server.main()
+
+    assert calls == ["prewarm", "run"], calls
+
+
+def test_prewarm_is_silent_without_a_vector_backend(monkeypatch):
+    """…and it must not take the server down on a box with no chromadb: the six
+    tools that never touch an index still have to boot and serve."""
+    import builtins
+
+    import mcp_server
+
+    real_import = builtins.__import__
+
+    def _boom(name, *a, **kw):
+        if name == "vectordb":
+            raise ImportError("no vector backend")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _boom)
+    mcp_server._prewarm_vectordb()  # must not raise
 
 
 @pytest.mark.asyncio

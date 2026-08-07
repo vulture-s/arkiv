@@ -11,10 +11,16 @@ Usage:
 from __future__ import annotations
 import argparse
 import sys
-from typing import Dict, List
+from datetime import datetime, timezone
+from typing import Dict, List, Tuple
 
 import db
 import vectordb as vdb
+
+
+def _now_iso() -> str:
+    """UTC ISO timestamp for media.embedded_at (matches processed_at style)."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 # audit H12: after this many consecutive per-record failures, assume a systemic
@@ -63,6 +69,32 @@ def get_indexed_media_ids(col) -> set[str]:
     return {cid.split("_", 1)[0] for cid in ids}
 
 
+def get_content_signatures() -> Dict[str, Tuple[str, str]]:
+    """{str(media_id): (stored_embed_hash, current_content_hash)} for every media.
+
+    current_content_hash = vectordb.content_hash over the row's CURRENT source text
+    (build_doc_text). Comparing it to the stored media.embed_hash is how run_embed
+    detects a row whose description/transcript changed AFTER it was embedded — the
+    "向量索引靜默過期" bug — without depending on the caller passing force_ids.
+
+    Pulls ONLY the columns build_doc_text needs (filename, transcript, frame_tags) +
+    embed_hash — deliberately NOT the heavy words_json/segments_json (audit M25: don't
+    load the whole library's heavy columns just to diff freshness)."""
+    sigs: Dict[str, Tuple[str, str]] = {}
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, filename, transcript, frame_tags, embed_hash FROM media"
+        ).fetchall()
+    for r in rows:
+        rec = {
+            "filename": r["filename"],
+            "transcript": r["transcript"],
+            "frame_tags": r["frame_tags"],
+        }
+        sigs[str(r["id"])] = (r["embed_hash"], vdb.content_hash(rec))
+    return sigs
+
+
 def run_embed(rebuild: bool = False, force_ids=None, prune: bool = True) -> dict:
     """Embed pending records. Returns stats {"ok": n, "errors": n, "aborted": bool}
     so the CLI can map failures to exit codes (audit H12) without sys.exit()-ing
@@ -95,18 +127,54 @@ def run_embed(rebuild: bool = False, force_ids=None, prune: bool = True) -> dict
         if orphans:
             print(f"Pruned {len(orphans)} orphaned media id(s) from index.")
 
-    # Re-embed anything not yet indexed PLUS any caller-forced ids (e.g. records
-    # re-processed by `ingest --refresh`, which are already indexed but stale).
-    to_process_ids = [
-        mid for mid in all_ids
-        if str(mid) not in indexed_ids or str(mid) in force_ids
-    ]
+    # Freshness by CONTENT, not just presence (fix: 向量索引靜默過期). The old test
+    # "not indexed OR forced" skipped any already-indexed row whose description was
+    # written AFTER it was embedded (the only writer, `--vision-only`, never passed
+    # force_ids) → stale forever, silently. Now compare each row's current source-text
+    # hash to the one stamped at last embed (media.embed_hash via get_content_signatures).
+    signatures = {} if rebuild else get_content_signatures()
+    new_ids, stale_ids, unverified_ids, forced, unchanged = [], [], [], [], 0
+    to_process_ids: List = []
+    for mid in all_ids:
+        smid = str(mid)
+        if rebuild:
+            to_process_ids.append(mid)
+            continue
+        stored, current = signatures.get(smid, (None, None))
+        if smid not in indexed_ids:
+            new_ids.append(mid)                 # never embedded
+        elif smid in force_ids:
+            forced.append(mid)                  # caller forced (e.g. --refresh)
+        elif stored is None:
+            unverified_ids.append(mid)          # legacy row w/o embed_hash → can't verify → re-embed
+        elif stored != current:
+            stale_ids.append(mid)               # description/transcript changed after embed
+        else:
+            unchanged += 1                      # content-verified identical → skip
+            continue
+        to_process_ids.append(mid)
 
-    print(f"Total records: {len(all_ids)} | Already indexed: {len(indexed_ids)} | To process: {len(to_process_ids)}")
+    # ③ report so "0" that means "checked, nothing stale" is distinguishable from
+    # "0" that means "never looked". stale + unverified = staleness this run caught.
+    stale_detected = len(stale_ids) + len(unverified_ids)
+    print(
+        f"Total: {len(all_ids)} | indexed: {len(indexed_ids)} | new: {len(new_ids)} | "
+        f"stale: {len(stale_ids)} | unverified: {len(unverified_ids)} | forced: {len(forced)} | "
+        f"content-unchanged: {unchanged} → to embed: {len(to_process_ids)} "
+        f"(stale detected: {stale_detected})"
+    )
+    if unverified_ids:
+        print(f"⚠ {len(unverified_ids)} media without embed_hash (legacy/unverified) — "
+              f"freshness NOT confirmable, re-embedding to be safe (not treated as up-to-date).")
 
     if not to_process_ids:
-        print("Index is up to date.")
-        return {"ok": 0, "errors": 0, "aborted": False}
+        # Only claim up-to-date when we actually compared content this run.
+        if rebuild:
+            print("Nothing to embed.")
+        else:
+            print(f"Index is up to date (content-verified {unchanged}/{len(all_ids)}).")
+        return {"ok": 0, "errors": 0, "aborted": False,
+                "new": 0, "stale": 0, "unverified": 0, "forced": 0, "stale_detected": 0}
 
     # audit M25: full rows fetched only for the work set.
     to_process = get_records_by_ids(to_process_ids)
@@ -120,6 +188,14 @@ def run_embed(rebuild: bool = False, force_ids=None, prune: bool = True) -> dict
         print(f"[{i}/{len(to_process)}] {rec['filename']}", end="", flush=True)
         try:
             n = vdb.upsert_record(col, rec)
+            # Stamp what we just embedded so a later run can tell this row is fresh
+            # (content-verified) vs stale — the crux of the fix. Same text upsert
+            # indexed (build_doc_text). Best-effort: a failed stamp only costs a
+            # redundant re-embed next run, never a missed staleness.
+            try:
+                db.set_embed_state(rec["id"], vdb.content_hash(rec), _now_iso())
+            except Exception as se:
+                print(f" [warn: embed_hash stamp failed: {se}]", end="")
             total_chunks += n
             ok += 1
             consecutive = 0
@@ -146,7 +222,10 @@ def run_embed(rebuild: bool = False, force_ids=None, prune: bool = True) -> dict
     status = "Done." if not errors else f"Done with {errors} error(s) ({ok} ok)."
     print(f"\n{status} {total_chunks} total chunks in collection '{vdb.COLLECTION_NAME}'.")
     print(f"ChromaDB path: {vdb.CHROMA_PATH}")
-    return {"ok": ok, "errors": errors, "aborted": aborted}
+    return {"ok": ok, "errors": errors, "aborted": aborted,
+            "new": len(new_ids), "stale": len(stale_ids),
+            "unverified": len(unverified_ids), "forced": len(forced),
+            "stale_detected": stale_detected}
 
 
 def run_search(query: str):

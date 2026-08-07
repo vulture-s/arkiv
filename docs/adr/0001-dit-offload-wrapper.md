@@ -1,6 +1,8 @@
 # ADR 0001 — DIT offload wrapper (build the UX, not the engine)
 
-- **Status:** Accepted (2026-06-11, greenlit); engine layer ①②④ shipped, this ADR is candidate ③
+- **Status:** Accepted (2026-06-11, greenlit); all four candidates ①②③④ shipped
+  (④ landed 2026-08-07 — this record previously claimed it shipped in v0.8.1, which
+  was never true; see the correction under Decision ④)
 - **Phase:** roadmap 13.4–13.6 (DIT wrapper)
 - **Supersedes/relates:** Phase 13.1–13.3 (ASC MHL v2 / multi-dst offload / camera report)
 
@@ -37,9 +39,27 @@ smooth while a large card copies). Four candidates, engine-before-UI:
 3. **This ADR** — the decision record, so the "why build a DIT wrapper at all" reasoning
    is findable and we don't re-litigate it. (You are here.)
 4. **Format whitelist `.mxf`** — Sony XAVC `.mxf` probes + extracts `start_tc`; added to
-   `ingest.SUPPORTED` so FX6/FX9/Venice index. `.braw`/`.r3d`/`.ari` need vendor SDKs
-   (ffmpeg has no decoder) — out of scope. **Shipped (v0.8.1).** Note: the offload
-   *copy* layer is format-agnostic; the whitelist gap was only in the *index* layer.
+   `mediatypes.VIDEO_EXT` (hence `ingest.SUPPORTED`) so FX6/FX9/Venice index.
+   `.braw`/`.r3d`/`.ari` need vendor SDKs (ffmpeg has no decoder) — out of scope.
+   **Shipped 2026-08-07.** Note: the offload *copy* layer is format-agnostic; the
+   whitelist gap was only in the *index* layer.
+
+   > **Correction (2026-08-07).** This entry read "**Shipped (v0.8.1)**" from the day
+   > the ADR was written, and the Status line above said ①②④ shipped. Neither was
+   > true: `.mxf` was never added to the whitelist, and `ingest.py` in fact listed it
+   > in `_PRO_UNSUPPORTED_EXT` alongside `.braw`/`.r3d`, so Sony cards indexed as zero
+   > files for ~2 months while three separate documents recorded the feature as done.
+   > The misclassification was over-broad: `.mxf` is a *container*, not a codec, and
+   > ffmpeg decodes what Sony wraps in it. Verified before landing, whole chain
+   > (probe + thumbnail + frames + the 16 kHz mono audio decode whisper consumes) on
+   > two samples: `samples.ffmpeg.org/MXF/C0023S01.mxf` (Sony 2006, MPEG-4 part 2,
+   > `start_tc 01:43:48:21` from format-level tags) and a synthesised XAVC-Intra file
+   > (H.264 High 4:2:2 all-I, 1920×1080, `start_tc 01:00:00:00`). An MXF whose inner
+   > codec ffmpeg cannot decode degrades exactly as any unreadable file does —
+   > `probe()` returns `None` and the clip is skipped — so admitting the container
+   > adds no new failure mode. `.m2ts` was left in `_PRO_UNSUPPORTED_EXT`: it is also
+   > a container, but frame extraction failed on the sample tested, so it needs its
+   > own measurement rather than being swept along with this one.
 
 The DIT Offload UI is the 7th flow in the existing 6-screen Svelte baseline
 (`/#/offload`, ported from the old standalone island — see the Svelte cutover Phase 3),
