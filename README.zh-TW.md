@@ -361,7 +361,7 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 可以 — 原生 Python 安裝是主要的工作流程。Docker 是選用的部署方式。
 
 **Q：支援哪些檔案格式？**
-影片：`.mp4`、`.mov`、`.mkv`、`.avi`、`.webm`、`.m4v`、`.mts`
+影片：`.mp4`、`.mov`、`.mkv`、`.avi`、`.webm`、`.m4v`、`.mts`、`.mxf`（Sony FX6／FX9／Venice 的 XAVC）
 360：`.insv`（Insta360）、`.360`（GoPro Max）— 雙魚眼會在 vision tagging 前重投影成等距柱狀（equirectangular）（單鏡頭 360 素材則以原狀索引）
 音訊：`.wav`、`.mp3`、`.m4a`、`.aac`、`.flac`、`.ogg`
 相機 metadata（機型/鏡頭/timecode）同時讀內嵌 EXIF **與** Sony XAVC NRT sidecar XML — FX30／FX 系列素材機型不會掉。

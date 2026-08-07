@@ -365,7 +365,7 @@ Use the `+` button in the Media Pool sidebar, or run `python ingest.py --dir /pa
 Yes — the native Python install is the primary workflow. Docker is optional for deployment.
 
 **Q: What file formats are supported?**
-Video: `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.mts`
+Video: `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.mts`, `.mxf` (Sony FX6/FX9/Venice XAVC)
 360: `.insv` (Insta360), `.360` (GoPro Max) — dual-fisheye is reprojected to equirectangular before vision tagging (single-lens 360 footage is indexed as-is)
 Audio: `.wav`, `.mp3`, `.m4a`, `.aac`, `.flac`, `.ogg`
 Camera metadata (make/model/lens/timecode) is read from embedded EXIF **and** Sony XAVC NRT sidecar XML — so FX30/FX-series footage keeps its identity.
