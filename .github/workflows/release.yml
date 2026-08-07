@@ -27,7 +27,7 @@ jobs:
   release:
     runs-on: macos-latest   # Apple Silicon — assemble-backend.sh bundles an aarch64-apple-darwin Python
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate Apple signing config (all-or-nothing)
         id: signcfg
@@ -95,7 +95,7 @@ jobs:
           npm ci
           npm run build
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Build .venv (assemble-backend needs .venv/lib/python3.12/site-packages)
