@@ -51,7 +51,11 @@ _LANGUAGE_OVERRIDE = None
 # Pro/cinema codecs ffmpeg can't decode without vendor SDKs — a --dir scan drops
 # them silently, so a user who dumps a C300/RED/BRAW card sees "Found 0 media
 # files" and thinks arkiv is broken. Named here so the skip notice can call them out.
-_PRO_UNSUPPORTED_EXT = {".mxf", ".braw", ".r3d", ".m2ts", ".ari", ".dng", ".cine", ".crm", ".rmf"}
+#
+# `.mxf` was removed from this set (2026-08-07, DIT wrapper ④): it is a container,
+# not a codec, and ffmpeg decodes what Sony puts inside it. It now lives in
+# `mediatypes.VIDEO_EXT` — see the reasoning and the measurements there.
+_PRO_UNSUPPORTED_EXT = {".braw", ".r3d", ".m2ts", ".ari", ".dng", ".cine", ".crm", ".rmf"}
 
 
 def _report_unsupported(all_files, supported_files):
