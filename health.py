@@ -135,9 +135,17 @@ def project_health(project):
     if not db_path.exists():
         return HealthStatus.DB_MISSING
 
-    chroma_path = project_path / ".arkiv" / "chroma_db"
-    if not chroma_path.is_dir():
-        return HealthStatus.CHROMA_MISSING
+    # A per-project chroma directory is only evidence of an index under the
+    # chroma backend. In pg mode the vectors live in the shared pgvector store
+    # keyed by project_name, and no project has a chroma_db dir — requiring one
+    # failed every project at preflight, which federation then reported as a
+    # project error and degraded to keyword search.
+    import config
+
+    if getattr(config, "VECTOR_BACKEND", "chroma") != "pg":
+        chroma_path = project_path / ".arkiv" / "chroma_db"
+        if not chroma_path.is_dir():
+            return HealthStatus.CHROMA_MISSING
 
     if not _check_mount(project_path):
         return HealthStatus.NAS_UNMOUNTED

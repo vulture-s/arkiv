@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Fixed
+- **Federated search silently stopped being search under the pg backend.** With
+  `ARKIV_VECTOR_BACKEND=pg` the vectors live in the shared pgvector store keyed by
+  `project_name`, and no project has a `.arkiv/chroma_db` directory. Federation
+  opened that directory anyway. Two things then went wrong in sequence, neither of
+  which produced an error: `health.project_health` treated the missing directory as
+  `CHROMA_MISSING`, so **every** project failed preflight and was reported as a
+  project error; and where a project did get past that, `_query_chroma` found
+  nothing and the code fell through to `_sql_like_search` — so a semantic query
+  came back as a keyword `LIKE`, ranked by nothing, with a plausible-looking result
+  set and no marker saying the search had changed kind. The pg path now queries the
+  shared store scoped to the project (`PgCollection.query` already accepted a
+  `project_name` filter, and `vectordb._query_collection` already built it — the
+  wiring was the only thing missing), and the chroma preflight applies only under
+  the chroma backend. As a side effect the pg path opens no external project
+  directory at all, so the untrusted-collection concern documented on
+  `_query_chroma` does not arise there.
+
 ### Added
 - **Sony `.mxf` footage now indexes (DIT wrapper ④).** FX6 / FX9 / Venice cards are `.mxf`, and pointing a `--dir` scan at one produced zero indexed clips — the extension sat in `ingest._PRO_UNSUPPORTED_EXT` next to `.braw` / `.r3d` / `.ari`, and the skip notice told the user pro formats "aren't indexable (ffmpeg has no decoder without vendor SDKs)". That grouping was over-broad: those three are proprietary RAW **codecs** with genuinely no ffmpeg decoder, whereas MXF is a **container**, and ffmpeg decodes what Sony wraps inside it. `.mxf` moves to `mediatypes.VIDEO_EXT`, which propagates to `ingest.SUPPORTED`, db.py's SQL video filter, the watcher, and the query builder through the shared set rather than by hand. Verified before landing across the whole chain ingest depends on — `probe()`, thumbnail, frame extraction, and the 16 kHz mono audio decode whisper consumes — on two samples: `samples.ffmpeg.org/MXF/C0023S01.mxf` (Sony 2006, MPEG-4 part 2, 352×288, `start_tc 01:43:48:21` read from format-level tags) and a synthesised XAVC-Intra file (H.264 High 4:2:2 all-I, 1920×1080, `start_tc 01:00:00:00`); every stage green on both. An MXF whose inner codec ffmpeg *cannot* decode degrades exactly as any unreadable file does — `probe()` returns `None`, the clip is skipped with `[ffprobe failed]` — so admitting the container adds no new failure mode. `.m2ts` deliberately stays in the pro-unsupported set: it is also a container, but frame extraction failed on the sample tested, so it needs its own measurement instead of being swept along. Three documents had recorded this feature as shipped since June (ADR 0001's status line, its Decision ④ entry claiming "Shipped (v0.8.1)", and the roadmap); the ADR now carries a correction noting it was never true.
 
