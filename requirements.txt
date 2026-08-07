@@ -24,7 +24,7 @@ opencc>=1.1; python_version >= "3.10"
 # Resource-aware pipeline (Phase 11.5) — soft dependency: arkiv runs without it
 # (probe degrades the memory fields to None), but installing it enables
 # backpressure and the `arkiv status` memory readout.
-psutil>=5.9
+psutil>=7.2.2
 
 # Folder watcher (Phase 11.2) — soft dependency: watch.py falls back to a
 # polling scan when watchdog is absent (e.g. the NAS), so this just upgrades the
