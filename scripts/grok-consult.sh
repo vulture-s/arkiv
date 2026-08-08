@@ -59,6 +59,13 @@ case "$MODE" in
   *) echo "unknown mode: $MODE (consult|debate|review)" >&2; exit 2 ;;
 esac
 
+# Per-run stderr file. NOT a fixed /tmp path: two consultations running at once
+# (parallel agent sessions are normal here) would clobber each other's stderr and
+# could cross-report one run's failure onto the other, and a predictable name in a
+# world-writable directory is a symlink-overwrite target.
+ERRFILE="$(mktemp "${TMPDIR:-/tmp}/grok-consult.XXXXXX")"
+trap 'rm -f "$ERRFILE"' EXIT
+
 set +e
 OUT="$(
   "$GROK" \
@@ -70,30 +77,51 @@ $PROMPT" \
     --output-format json \
     --permission-mode plan \
     --disable-web-search \
-    ${MODEL:+--model "$MODEL"} 2>/tmp/grok-consult.err
+    ${MODEL:+--model "$MODEL"} 2>"$ERRFILE"
 )"
 RC=$?
 set -e
 
-if echo "$OUT$( cat /tmp/grok-consult.err 2>/dev/null )" | grep -qiE 'not signed in|not authenticated|grok login'; then
-  echo "Grok is not authenticated. Run:  grok login   (or: grok login --device-code)" >&2
-  exit 4
-fi
-
-if [ $RC -ne 0 ]; then
-  cat /tmp/grok-consult.err >&2
-  exit $RC
-fi
-
-# Prefer the .text field of the JSON envelope; fall back to raw output.
-if command -v python3 >/dev/null 2>&1; then
-  printf '%s' "$OUT" | python3 -c 'import sys,json
+# Classify on "did we get an answer envelope?", NOT on pattern-matching the text.
+#
+# The exit code can't be the signal: verified against grok 0.2.101, an
+# unauthenticated `grok` prints "You are not authenticated." to *stdout* and still
+# exits 0 with an empty stderr. But a blind grep for auth strings can't be the
+# signal either — it scans Grok's own answer, so asking it to review login code, or
+# to explain a "not authenticated" error, would be misread as a login failure and
+# the (already paid for) reply thrown away.
+#
+# A successful headless turn returns a JSON envelope (`{"text": ...}`); the
+# unauthenticated banner is plain prose. Leading `{` separates them without needing
+# a JSON parser, so the discriminator holds even where python3 is absent.
+TRIMMED="${OUT#"${OUT%%[![:space:]]*}"}"
+if [ $RC -eq 0 ] && [ "${TRIMMED:0:1}" = "{" ]; then
+  # Prefer the .text field of the envelope; fall back to raw output.
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$OUT" | python3 -c 'import sys,json
 raw=sys.stdin.read().strip()
 try:
     obj=json.loads(raw)
     print(obj.get("text", raw))
 except Exception:
     print(raw)'
-else
-  printf '%s\n' "$OUT"
+  else
+    printf '%s\n' "$OUT"
+  fi
+  exit 0
 fi
+
+# No answer envelope — now it is safe to read the output as a status message.
+if grep -qiE 'not signed in|not authenticated|grok login' "$ERRFILE" 2>/dev/null \
+   || printf '%s' "$OUT" | grep -qiE 'not signed in|not authenticated|grok login'; then
+  echo "Grok is not authenticated. Run:  grok login   (or: grok login --device-code)" >&2
+  exit 4
+fi
+
+if [ $RC -ne 0 ]; then
+  cat "$ERRFILE" >&2
+  exit $RC
+fi
+
+# Exited 0 without a recognisable envelope — pass it through rather than swallow it.
+printf '%s\n' "$OUT"

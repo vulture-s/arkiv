@@ -39,8 +39,10 @@ limits are xAI's to change.
 - **`scripts/grok-consult.sh`** — committed, reproducible wrapper. Read-only by
   design (`--permission-mode plan`, never `--allow-writes`). Resolves the `grok`
   binary even when a non-interactive shell hasn't sourced the login PATH. Modes:
-  `consult` (default), `debate`, `review`. Exit codes: `0` ok, `3` CLI missing,
-  `4` not authenticated.
+  `consult` (default), `debate`, `review`. Exit codes: `0` ok, `2` bad usage,
+  `3` CLI missing, `4` not authenticated. Its stderr scratch file comes from
+  `mktemp` rather than a fixed `/tmp` name, so two consultations running at once
+  can't cross-report each other's failures.
 
   ```bash
   scripts/grok-consult.sh --mode consult "Is a single-writer SQLite fine for the ingest queue?"
@@ -84,15 +86,45 @@ Model agreement is not verification; the main thread must still verify claims.
   consultations grounded in the provided context; drop that flag if you want Grok
   to browse.
 
-## Follow-ups (TODO)
+## How the wrapper decides what happened
 
-- [ ] **Add a pytest for `scripts/grok-consult.sh`** (mirror `tests/test_install.py`).
-      Cover the CI-safe paths that need no Grok auth:
-      - no prompt (empty stdin, no arg) → exit `2`
-      - unknown `--mode` → exit `2`
-      - grok binary missing (run with `HOME` pointed at an empty tmp dir + scrubbed
-        `PATH`) → exit `3`
-      - not-authenticated detection → exit `4` (stub a fake `grok` on `PATH` that
-        prints `not signed in` and exits 0, assert the wrapper maps it to `4`)
-      Skip the live round-trip in CI (needs `grok login`); gate it behind an
-      env flag like `ARKIV_GROK_LIVE=1` for local-only runs.
+Worth writing down, because the obvious two approaches are both wrong.
+
+**The exit code can't be the signal.** Verified against `grok 0.2.101`: an
+unauthenticated `grok` prints `You are not authenticated.` to **stdout**, leaves
+stderr empty, and exits **0**. Trusting the exit code would hand that banner back
+as if it were Grok's answer.
+
+**Pattern-matching the output can't be the signal either.** The first version of
+this wrapper grepped stdout+stderr for `not signed in|not authenticated|grok login`.
+But stdout is *Grok's own answer* — so asking it to review a login flow, or to
+explain a `not authenticated` error, tripped the check and the wrapper reported a
+login failure and discarded a reply that had already been paid for. The check also
+ran ahead of the exit-code branch, so even a fully successful call was affected.
+
+**What it does instead**: classify on whether an answer envelope came back.
+`--output-format json` makes a successful turn return `{"text": ...}`; the
+unauthenticated banner is plain prose. A leading `{` separates the two without
+needing a JSON parser, so the discriminator still holds on a box without `python3`
+(which is only used to unwrap `.text` for readability). Auth strings are consulted
+**only when there is no envelope** — at which point the output really is a status
+message rather than an answer.
+
+## Verification status
+
+- ✅ `grok 0.2.101` installed; all connector flags confirmed against real `--help`.
+- ✅ **Live round-trip verified 2026-08-09** — `grok -p "…" --output-format json
+  --permission-mode plan --disable-web-search` returned a real
+  `{"text": "OK", "stopReason": "EndTurn", …}` envelope, rc 0, empty stderr.
+  (The envelope also reports `total_cost_usd`; that call cost ~$0.031, so this is a
+  metered path, not a free one — worth knowing before wiring it into a loop.)
+- ✅ `tests/test_grok_consult.py` — 12 tests, no credentials and no network: every
+  branch runs against a stub `grok` on a scrubbed `PATH`/`HOME`. Includes a pin that
+  the read-only guarantee (`--permission-mode plan`, never `--allow-writes`) is
+  still in the file, and a regression test for the auth-misclassification above.
+  Both fixes were mutation-checked — the two new guards fail against the previous
+  version of the script, so they are not decoration.
+- ⚠️ **Plan mode is trusted, not proven.** "Never writes" rests entirely on the
+  external CLI honouring `--permission-mode plan`, one flag deep, and the wrapper
+  passes `--cwd "$PWD"` (the repo). Nothing here would catch xAI changing that
+  flag's meaning. Treat the guarantee as a vendor contract, not an enforced one.
