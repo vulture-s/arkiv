@@ -240,8 +240,13 @@ cd ~/.arkiv && bash arkiv.command   # or uvicorn server:app --host 0.0.0.0 --por
 
 ### Rollback (if needed)
 
+Move the new layout aside rather than deleting it — `project.db` holds the
+`access_tokens` rows, and the DB stores only hashes, so a deleted token cannot be
+recovered, only reissued.
+
 ```bash
-rm -rf ~/.arkiv/.arkiv && tar xzf ~/.arkiv/.legacy-backup-{timestamp}.tar.gz -C ~/.arkiv
+mv ~/.arkiv/.arkiv ~/.arkiv/.arkiv.rollback-$(date +%Y%m%d-%H%M%S) \
+  && tar xzf ~/.arkiv/.legacy-backup-{timestamp}.tar.gz -C ~/.arkiv
 ```
 
 ### Per-project layout (optional, new in v0.3.1)

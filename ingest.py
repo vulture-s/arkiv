@@ -1242,11 +1242,51 @@ def _regenerate_thumbnails():
     print(f"\nRegenerated: {ok}  Failed: {failed}  (size delta: {_fmt_size_delta(delta)})")
 
 
+def _sqlite_scalar(db_path, sql):
+    """Run a scalar query against a possibly-absent / possibly-corrupt sqlite file.
+
+    Returns None rather than raising: this runs on databases whose state is exactly
+    what we're trying to diagnose, so an unreadable file must degrade to "unknown"
+    instead of crashing the migration guard. `None` and `0` are deliberately
+    different answers — see _fmt_count.
+    """
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect("file:{0}?mode=ro".format(db_path), uri=True)
+    except sqlite3.Error:
+        return None
+    try:
+        return conn.execute(sql).fetchone()[0]
+    except (sqlite3.Error, TypeError, IndexError):
+        return None
+    finally:
+        conn.close()
+
+
+def _media_row_count(db_path):
+    """Rows in `media`, or None if the file isn't a readable arkiv DB."""
+    return _sqlite_scalar(db_path, "SELECT COUNT(*) FROM media")
+
+
+def _access_token_count(db_path):
+    """Rows in `access_tokens` — what `rm -rf .arkiv` would destroy."""
+    return _sqlite_scalar(db_path, "SELECT COUNT(*) FROM access_tokens")
+
+
+def _fmt_count(n):
+    """`0` means 'checked, empty'; `?` means 'could not read' — never conflate them,
+    the whole point of this guard is to stop acting on an unverified assumption."""
+    return "?" if n is None else str(n)
+
+
 def _migrate_storage():
     """Phase 8.0c migration: BASE_DIR/{media.db, thumbnails/, chroma_db/, proxies/}
     → BASE_DIR/.arkiv/{project.db, thumbnails/, chroma_db/, proxies/}.
 
-    Idempotent: refuses if new layout already exists.
+    Idempotent, and specifically distinguishes "already migrated" from "an empty
+    new-layout DB is blocking a migration that still needs to happen" — the latter
+    used to report [SKIP] and exit 0 while leaving the library stranded.
     Backup-first: writes BASE_DIR/.legacy-backup-{ts}.tar.gz before any move.
     Verify-after: sqlite COUNT + thumbnails file count cross-check.
     """
@@ -1263,12 +1303,57 @@ def _migrate_storage():
         (base / "proxies", arkiv_dir / "proxies", "proxies"),
     ]
 
-    # Idempotency check
+    # Idempotency check.
+    #
+    # "The new DB file exists" is NOT the same question as "the migration already
+    # ran". An empty `.arkiv/project.db` also appears the moment anything opens the
+    # new layout — a stray `server.py` start, an ingest without `--dir`, a health
+    # check — and that empty shell then blocks the real migration permanently while
+    # the actual library sits untouched in BASE_DIR/media.db. Not hypothetical: it
+    # stranded 62 media rows on one machine for weeks, and the failure was silent,
+    # because this branch printed [SKIP] and the caller exited 0.
+    #
+    # So decide on row counts, not on the inode, and never exit 0 when nothing was
+    # migrated but something was supposed to be.
     new_db = arkiv_dir / "project.db"
     if new_db.exists():
-        print(f"[SKIP] {new_db} 已存在 — migration 已跑過。")
-        print(f"       如要重跑：先 rm -rf {arkiv_dir} 再執行。")
-        return
+        new_rows = _media_row_count(new_db)
+        legacy_db = base / "media.db"
+        legacy_rows = _media_row_count(legacy_db) if legacy_db.exists() else 0
+        legacy_present = legacy_db.exists() and not legacy_db.is_symlink()
+
+        if not legacy_present or legacy_rows == 0:
+            print(f"[SKIP] {new_db} 已存在且無 legacy 資料待搬 — migration 已完成。")
+            print(f"       new layout: media={_fmt_count(new_rows)}")
+            return
+
+        # Legacy data exists AND the new layout is already there: never silently
+        # drop either side. Say which one holds what, and let a human choose.
+        print(f"[BLOCKED] {new_db} 已存在，但 {legacy_db} 還有資料沒搬。")
+        print(f"          legacy  {legacy_db.name}: media={_fmt_count(legacy_rows)}")
+        print(f"          new     {new_db.name}: media={_fmt_count(new_rows)}")
+        print()
+        if new_rows == 0:
+            print("          → 這是一個「空殼擋路」：新 layout 是被某次 server/ingest")
+            print("            啟動順手建出來的空 DB，不是跑過 migration 的結果。")
+        elif new_rows is None:
+            print(f"          → {new_db.name} 讀不出來（不是 arkiv DB／損毀／權限）。")
+            print("            讀不到不等於是空的，所以這裡不猜、也不動它。")
+        else:
+            print("          → 兩邊都有資料。migration 不會幫你合併，請先確認哪一份是要的。")
+        print()
+        # The old advice here was `rm -rf .arkiv`. That directory's project.db
+        # carries the `access_tokens` rows, so following it revokes every API token
+        # on this machine — unrecoverable when the plaintext lives nowhere else.
+        tokens = _access_token_count(new_db)
+        if tokens:
+            print(f"          ⚠  {new_db.name} 裡有 {tokens} 筆 access_tokens。")
+            print("             刪掉它 = 現有 API token 全部失效且無法復原")
+            print("             （token 明文不留在 DB，只存 hash）。")
+        print("          安全做法是「挪開」而不是刪除：")
+        print(f"            mv {arkiv_dir} {arkiv_dir}.blocked-$(date +%Y%m%d-%H%M%S)")
+        print("          再重跑本指令；挪開的目錄保留著，token 要救得回來。")
+        sys.exit(6)
 
     # What's actually movable? (skip symlinks — they're workarounds, leave them)
     to_move = [
@@ -1351,8 +1436,10 @@ def _migrate_storage():
 
     print(f"\n[DONE] Storage migrated → {arkiv_dir}")
     print(f"       Backup: {backup_path}")
-    print(f"       Rollback (if needed):")
-    print(f"         rm -rf {arkiv_dir} && tar xzf {backup_path} -C {base}")
+    print(f"       Rollback (if needed) — 挪開而非刪除，{arkiv_dir.name}/ 裡的")
+    print(f"       access_tokens 刪掉就補不回來（DB 只存 hash）：")
+    print(f"         mv {arkiv_dir} {arkiv_dir}.rollback-$(date +%Y%m%d-%H%M%S) \\")
+    print(f"           && tar xzf {backup_path} -C {base}")
 
 
 _CANON_PROMPT = (

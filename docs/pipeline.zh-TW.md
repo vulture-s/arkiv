@@ -237,8 +237,12 @@ cd ~/.arkiv && bash arkiv.command   # 或 uvicorn server:app --host 0.0.0.0 --po
 
 ### Rollback（如果需要）
 
+把新 layout **挪開**而不是刪掉 —— `project.db` 裡有 `access_tokens`，而 DB 只存
+hash 不存明文，刪掉的 token 救不回來，只能重發。
+
 ```bash
-rm -rf ~/.arkiv/.arkiv && tar xzf ~/.arkiv/.legacy-backup-{timestamp}.tar.gz -C ~/.arkiv
+mv ~/.arkiv/.arkiv ~/.arkiv/.arkiv.rollback-$(date +%Y%m%d-%H%M%S) \
+  && tar xzf ~/.arkiv/.legacy-backup-{timestamp}.tar.gz -C ~/.arkiv
 ```
 
 ### Per-project layout（v0.3.1 新增，optional）
