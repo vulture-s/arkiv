@@ -7,6 +7,7 @@ stubbed (the archive/activate logic is what's under test, not the model).
 """
 import importlib
 import json
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,14 @@ import pytest
 
 def _seed(transcript="原始中文逐字稿", lang="zh"):
     # retranscribe checks the media file exists → back it with a real temp file.
-    p = Path("/tmp/arkiv-g2-clip.mp4")
+    # The seeded row is the legacy-absolute shape (`resolve_path` passes absolutes
+    # through), so the literal must be absolute ON THE RUNNING OS. A hardcoded
+    # "/tmp/..." is only absolute on POSIX: on Windows `str(Path("/tmp/x"))` is
+    # `\tmp\x` — rooted but drive-less, so `is_absolute()` is False, the row takes
+    # the *relative* branch, and the join drive-anchors to `C:\tmp\x`, escaping
+    # PROJECT_ROOT (the guard then correctly raises). gettempdir() is absolute on
+    # both, so the row keeps its intended meaning cross-platform.
+    p = Path(tempfile.gettempdir()) / "arkiv-g2-clip.mp4"
     p.write_bytes(b"\x00")
     db = importlib.import_module("db")
     with db.get_conn() as conn:

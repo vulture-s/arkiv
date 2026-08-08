@@ -22,6 +22,7 @@ from config import FFMPEG_PATH, FFPROBE_PATH
 PASS = 0
 FAIL = 0
 SKIP = 0
+WARN_COUNT = 0
 
 
 class HealthStatus(str, Enum):
@@ -44,6 +45,49 @@ def check(name: str, ok: bool, detail: str = "", required: bool = True):
     else:
         SKIP += 1
         print(f"  \033[33m[SKIP]\033[0m {name} {detail} (optional)")
+
+
+def warn(name: str, detail: str = ""):
+    """Loud non-fatal finding. Distinct from SKIP: SKIP means "optional and absent,
+    nothing is wrong"; WARN means "absent AND it is silently degrading your data"
+    (issue #279). Counted separately so it can't be read as a clean optional skip."""
+    global WARN_COUNT
+    WARN_COUNT += 1
+    print(f"  \033[33m[WARN]\033[0m {name} {detail}")
+
+
+def _zh_media_count() -> int:
+    """How many zh rows this library actually has (-1 if the DB can't be read).
+    Decides whether a missing opencc is harmless or actively corrupting data."""
+    try:
+        import db
+        with db.get_conn() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM media WHERE lang LIKE 'zh%' "
+                "AND transcript IS NOT NULL AND transcript != ''"
+            ).fetchone()[0]
+    except Exception:  # noqa: BLE001 — no DB yet / older schema → can't judge
+        return -1
+
+
+def _check_opencc():
+    try:
+        import zh_convert
+        available = zh_convert.opencc_available()
+    except Exception:  # noqa: BLE001
+        available = False
+    if available:
+        check("opencc", True, "(zh transcripts stored as Taiwan Traditional)")
+        return
+    n = _zh_media_count()
+    if n > 0:
+        warn("opencc", f"NOT installed — {n} zh transcript(s) in this library are stored "
+                       "EXACTLY as the model produced them (Simplified stays Simplified), "
+                       "and `--retraditionalize --dry-run` cannot detect it either. "
+                       "Fix: pip install \"opencc>=1.1\" && python ingest.py --retraditionalize")
+    else:
+        check("opencc", False, "(not installed — needed only for Chinese transcripts)",
+              required=False)
 
 
 def detect_platform() -> str:
@@ -91,9 +135,17 @@ def project_health(project):
     if not db_path.exists():
         return HealthStatus.DB_MISSING
 
-    chroma_path = project_path / ".arkiv" / "chroma_db"
-    if not chroma_path.is_dir():
-        return HealthStatus.CHROMA_MISSING
+    # A per-project chroma directory is only evidence of an index under the
+    # chroma backend. In pg mode the vectors live in the shared pgvector store
+    # keyed by project_name, and no project has a chroma_db dir — requiring one
+    # failed every project at preflight, which federation then reported as a
+    # project error and degraded to keyword search.
+    import config
+
+    if getattr(config, "VECTOR_BACKEND", "chroma") != "pg":
+        chroma_path = project_path / ".arkiv" / "chroma_db"
+        if not chroma_path.is_dir():
+            return HealthStatus.CHROMA_MISSING
 
     if not _check_mount(project_path):
         return HealthStatus.NAS_UNMOUNTED
@@ -272,6 +324,15 @@ def main():
     else:
         check("exiftool", exiftool_ok, detail, required=False)
 
+    # ── opencc (zh→Traditional conversion) ──────────────────────────────
+    # issue #279: opencc was absent from this table entirely, so a library whose zh
+    # conversion was silently OFF still健檢-ed all green — the exact blind spot that
+    # let 81 Simplified transcripts through. Treated as optional ONLY when there is no
+    # zh content to convert; with zh media present a missing opencc is a real defect
+    # in the stored data, so it WARNs loudly instead of a quiet SKIP.
+    print("\n-- Chinese conversion (opencc) --")
+    _check_opencc()
+
     # ── Whisper ─────────────────────────────────────────────────────────
     print("\n-- Whisper --")
     has_mlx = False
@@ -412,11 +473,17 @@ def main():
 
     # ── Summary ─────────────────────────────────────────────────────────
     total = PASS + FAIL + SKIP
-    print(f"\n═══ Result: {PASS}/{total} PASS, {FAIL} FAIL, {SKIP} SKIP ═══")
+    warn_part = f", {WARN_COUNT} WARN" if WARN_COUNT else ""
+    print(f"\n═══ Result: {PASS}/{total} PASS, {FAIL} FAIL, {SKIP} SKIP{warn_part} ═══")
     if FAIL == 0:
         print("\033[32m    Ready to run! → uvicorn server:app --host 0.0.0.0 --port 8501\033[0m")
     else:
         print("\033[31m    Fix the failures above before running.\033[0m")
+    if WARN_COUNT:
+        # A WARN never fails the run (it isn't a broken environment), but it must not
+        # vanish under a green "0 FAIL" either — that green is what hid issue #279.
+        print("\033[33m    {0} warning(s) above: the environment runs, but something is "
+              "silently degrading your data.\033[0m".format(WARN_COUNT))
     print()
     return 0 if FAIL == 0 else 1
 

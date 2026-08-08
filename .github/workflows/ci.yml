@@ -40,10 +40,10 @@ jobs:
       matrix:
         python-version: ["3.9", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -62,7 +62,7 @@ jobs:
             "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
             "psutil>=5.9" "whisper-guard>=0.3" numpy mlx-whisper \
             "opencc; python_version >= '3.10'" \
-            "mcp>=1.2; python_version >= '3.10'"
+            "mcp>=1.2,<2; python_version >= '3.10'"
 
       - name: Run tests
         run: pytest -q
@@ -79,13 +79,32 @@ jobs:
     # run would red for a platform reason, not a real one. conftest.py fakes the
     # heavy backends (incl. mlx_whisper) via sys.modules, so the guard suite runs
     # with just the lean FastAPI deps. Full-suite Windows 0-fail is tracked as
-    # separate evidence in the 2026-07-24 arkiv-health-hardening handoff; the MCP
-    # stdio hang (F3) is deferred to that handoff's SDK version x OS matrix rather
-    # than imported into CI as a known-red.
+    # separate evidence in the 2026-07-24 arkiv-health-hardening handoff.
+    #
+    # F3 (2026-07-28, handoff Part B): the Windows MCP stdio hang is RESOLVED —
+    # root cause was `search_media`'s lazy `import vectordb` (→ chromadb → numpy)
+    # running after the stdio transport had already parked a worker thread in a
+    # blocking readline() on the stdin pipe; on that box the numpy import then
+    # wedges inside the bundled OpenBLAS DLL and never returns. Fixed by importing
+    # it in main() before mcp.run() (mcp_server._prewarm_vectordb).
+    #
+    # That hang is NOT reproducible on hosted runners — measured 2026-07-28 on
+    # windows-latest / ubuntu-latest / macos-latest: a thread blocked on a stdin
+    # pipe plus `import numpy` (2.5.1) completes in 0.6s on all three, while the
+    # same probe deadlocks on the Win11 dev box with both numpy 2.4.3 and 2.5.1.
+    # It is environment-specific, not version-driven. So installing chromadb here
+    # to exercise the real path would cost ~120s of install (82 packages, ~360MB)
+    # and guard NOTHING — deliberately not done.
+    #
+    # What this leg CAN hold is the ordering invariant that IS the fix: the
+    # prewarm-before-run tests in test_mcp_e2e.py run everywhere, and running the
+    # file here also gives the MCP stdio surface a Windows leg (subprocess spawn,
+    # JSON-RPC framing, teardown) for ~4.5s and zero extra dependencies — mcp and
+    # numpy are already installed above.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -101,24 +120,26 @@ jobs:
           pip install \
             "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
             "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
-            "psutil>=5.9" "whisper-guard>=0.3" numpy mcp
-      - name: Run Windows correctness tests (offload deny-policy contract)
+            "psutil>=5.9" "whisper-guard>=0.3" numpy "mcp<2"
+      - name: Run Windows correctness tests (offload deny-policy + MCP stdio)
         shell: bash
-        run: pytest tests/test_hardening_round4.py -q
+        run: pytest tests/test_hardening_round4.py tests/test_mcp_e2e.py -q
 
   coverage:
     name: coverage
     # Coverage floor as a regression RATCHET (not a quality claim — the conftest
-    # backend fakes flatter the number). Kept as its OWN job and NON-BLOCKING for
-    # now: a pre-existing intermittent flake in a subprocess-CLI test surfaces
-    # under `--cov`, so we don't import that instability into the correctness legs
-    # above. Floor is set conservatively below the measured ~63%. Flip to blocking
-    # once the flaky test is fixed (see CONTRIBUTING / follow-up).
+    # backend fakes flatter the number). Kept as its OWN job and NON-BLOCKING; the
+    # decision + flip-to-blocking condition live in CONTRIBUTING.md § Testing &
+    # Coverage. The subprocess-stdio MCP e2e is deselected below (-m "not
+    # subprocess_stdio"): under --cov the parent-side tracer slows the stdio pump
+    # into the anyio.fail_after bound and it flakes — the F3 MCP SDK×OS stall
+    # deferred to the health-hardening handoff, not a coverage bug (and the child is
+    # un-instrumented, so excluding it costs ~0 coverage). Floor is below ~63%.
     runs-on: macos-latest  # same as `test`: mlx-whisper has no Linux wheel
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -130,18 +151,19 @@ jobs:
             "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
             "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
             "psutil>=5.9" "whisper-guard>=0.3" numpy mlx-whisper \
-            "opencc; python_version >= '3.10'" "mcp>=1.2"
+            "opencc; python_version >= '3.10'" "mcp>=1.2,<2"
       - name: Coverage
-        run: pytest -q --cov=. --cov-config=pyproject.toml --cov-report=term:skip-covered --cov-fail-under=55
+        run: pytest -q -m "not subprocess_stdio" --cov=. --cov-config=pyproject.toml --cov-report=term:skip-covered --cov-fail-under=55
 
   frontend:
     name: frontend-build
     runs-on: ubuntu-latest
-    # Nothing in CI touched frontend/ before this — a broken Svelte build could
-    # merge silently. Build-only for now; lint/svelte-check are a follow-up.
+    # Build + svelte-check gate (Wave D). `npm run check` = svelte-check --fail-on-warnings,
+    # so a NEW svelte warning (unused export/CSS, a11y, empty ruleset) reds CI. Baseline = 0
+    # warnings (the 5 pre-existing were fixed in this wave). Runs in the already-required job.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -151,6 +173,47 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: svelte-check (gate at zero warnings)
+        working-directory: frontend
+        run: npm run check
+      - name: bundle budget (eager chunks)
+        working-directory: frontend
+        run: |
+          # Catch NEW growth in the EAGER (initial-load) bundle. The lazy Pano360/three chunk
+          # and route views are code-split (dynamic import) and intentionally exempt (that
+          # 501 kB three chunk only loads when a user inspects 360 media).
+          check() { f=$(ls -1 dist/assets/$1 | head -1); sz=$(wc -c < "$f"); echo "$(basename "$f") = $sz B (budget $2 B)"; [ "$sz" -le "$2" ] || { echo "  ^ EXCEEDS budget — code-split or trim the eager bundle"; exit 1; }; }
+          check 'index-*.js' 524288    # eager JS ~404 KB now; budget 512 KiB
+          check 'index-*.css' 573440   # eager CSS ~481 KB now (font-heavy); budget 560 KiB
+
+  tauri-check:
+    name: tauri-check
+    runs-on: macos-latest
+    # The Tauri (Rust) sidecar had NO CI gate — a Cargo.toml/Cargo.lock drift or a Rust
+    # regression could merge silently. `cargo check --locked` catches both. macOS runner:
+    # the app ships macOS-only (WKWebView is a system framework — no apt webkit deps),
+    # faithful to the deploy target. generate_context!() (src-tauri/src/main.rs) embeds
+    # frontend/dist at COMPILE time and frontend/dist is git-ignored, so the frontend must
+    # be built first (same steps as the `frontend` job). The tracked src-tauri/backend
+    # .gitkeep shell satisfies tauri-build's resource check without the heavy bundle.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend (generate_context! embeds frontend/dist)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo check --locked
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
 
   audit:
     name: dependency-audit
@@ -162,8 +225,8 @@ jobs:
     # it EXPLICITLY (pip-audit --ignore-vuln GHSA-xxxx, or an npm allowlist) with a
     # one-line reason — never a blanket `|| true`.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: pip-audit
@@ -181,9 +244,41 @@ jobs:
           # are set as REQUIRED checks in branch protection — verify in repo settings.
           pip-audit -r requirements.txt -r requirements-dev.txt \
             --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
       - name: npm audit
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high
+
+  docker-build:
+    name: docker-build
+    runs-on: ubuntu-latest
+    # Before this CI only did `docker compose config` (YAML parse) — a broken Dockerfile
+    # could merge silently. This builds the REAL image and boots it. mlx has no Linux
+    # wheel, but requirements.txt gates it by platform marker (faster-whisper on Linux,
+    # mlx-whisper only on Darwin), so a full Linux build is green-able. Runtime smoke is
+    # scoped to arkiv's OWN /api/stats (the Dockerfile HEALTHCHECK target) — no ollama
+    # models / GPU, which a per-PR runner can't provide. Uses the runner's BUILT-IN
+    # docker/buildkit (not docker/setup-buildx-action, whose buildkit builder image is
+    # pulled from Docker Hub and flaked with a registry timeout). No layer cache — a gate
+    # can afford the ~10 min; base-image pulls still hit Docker Hub.
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image
+        run: docker build -t arkiv:ci .
+      - name: Boot smoke (arkiv /api/stats via loopback — ollama not required)
+        run: |
+          docker run -d --name arkiv-ci arkiv:ci
+          ok=0
+          for i in $(seq 1 30); do
+            # arkiv trusts loopback and 401s external callers, so curl INSIDE the
+            # container (same as the Dockerfile HEALTHCHECK) — not the mapped port.
+            if docker exec arkiv-ci curl -fsS http://localhost:8501/api/stats >/dev/null 2>&1; then
+              echo "arkiv /api/stats up (loopback) after ${i} attempt(s)"; ok=1; break
+            fi
+            sleep 3
+          done
+          if [ "$ok" != "1" ]; then echo "arkiv did not become healthy"; docker logs arkiv-ci; fi
+          docker rm -f arkiv-ci
+          [ "$ok" = "1" ]

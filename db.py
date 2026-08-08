@@ -252,6 +252,15 @@ def init_db():
             # explicitly, so the column default only labels legacy NULL-hash rows.
             ("hash_algo", "TEXT DEFAULT 'xxh3'"),
             ("hash_verified_at", "TEXT"),
+            # Vector-index content-freshness (fix: "向量索引靜默過期"). embed_hash =
+            # sha256 of the exact text embedded at last index (vectordb.content_hash,
+            # over build_doc_text: filename+transcript+frame descriptions/tags), so
+            # embed.py re-embeds a row whose DESCRIPTION changed even though its
+            # media_id is already in Chroma. embedded_at = ISO ts of that embed.
+            # NULL on legacy rows = "unverified" (never rendered as up-to-date), same
+            # spirit as the hash_verified_at label above.
+            ("embed_hash", "TEXT"),
+            ("embedded_at", "TEXT"),
             ("thumbnail_path", "TEXT"),
             ("rating", "TEXT"),
             ("rating_note", "TEXT"),
@@ -302,6 +311,15 @@ def init_db():
             # re-ingest/refresh can never clobber a user's marks), same as canonical_tags.
             ("in_point", "REAL"),
             ("out_point", "REAL"),
+            # A-cam (multicam): which physical camera a clip is from (camera_id,
+            # e.g. "A"/"B") and its framing (angle, e.g. "wide"/"CU"). arkiv already
+            # carries camera *identity* (make/model/reel) but not which angle in a
+            # multicam shoot — that is editorial, written ONLY by the dedicated
+            # /api/media/{id}/camera endpoint and, like in/out, kept OUT of
+            # _ALLOWED_COLS so a re-ingest/refresh can never clobber it. This is the
+            # data premise for multicam edit decisions (S-cam).
+            ("camera_id", "TEXT"),
+            ("angle", "TEXT"),
         ]:
             _add_column_if_missing(conn, "media", col, typ)  # audit L10
         for col, typ in [
@@ -584,6 +602,41 @@ def repoint_media_path(media_id: int, new_abs_path: str, _conn=None) -> None:
             _do(conn)
 
 
+def set_embed_state(media_id: int, embed_hash: str, embedded_at: str, _conn=None) -> None:
+    """Record what was embedded for this media so embed.py can detect a STALE index
+    by CONTENT, not just by presence (fix: 向量索引靜默過期). Written only by the
+    embed path after a successful upsert — deliberately kept OUT of _ALLOWED_COLS so
+    a re-ingest/refresh can't clobber it (same discipline as in_point/canonical_tags)."""
+    def _do(c):
+        c.execute(
+            "UPDATE media SET embed_hash=?, embedded_at=? WHERE id=?",
+            (embed_hash, embedded_at, media_id),
+        )
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
+
+
+def set_hash_verified(media_id: int, verified_at: str, _conn=None) -> None:
+    """Stamp when a media row's file_hash was confirmed against the file's bytes (audit
+    2026-07-30: hash_verified_at was declared + allow-listed but had NO writer → NULL for
+    every row). The ingest write-path sets it inline via the record upsert (hash_verified_at
+    IS in _ALLOWED_COLS); this is the targeted writer for a one-off integrity backfill or a
+    future re-verify pass. Mirrors set_embed_state."""
+    def _do(c):
+        c.execute(
+            "UPDATE media SET hash_verified_at=? WHERE id=?",
+            (verified_at, media_id),
+        )
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
+
+
 _ALLOWED_COLS = {
     "path", "filename", "ext", "duration_s", "size_mb", "width", "height",
     "fps", "has_audio", "transcript", "lang", "frame_tags", "thumbnail_path",
@@ -655,7 +708,9 @@ LIGHT_COLS = (
     "editability_score, "
     # so the grid/inspector can show camera provenance without a per-clip detail
     # fetch (these live in the DB but were absent from the list shape).
-    "camera_make, camera_model, lens_model, reel_name, start_tc, codec"
+    "camera_make, camera_model, lens_model, reel_name, start_tc, codec, "
+    # A-cam: multicam angle annotation, so list/grid views can group by camera.
+    "camera_id, angle"
 )
 
 
@@ -782,6 +837,61 @@ def iter_zh_transcript_archive(_conn=None):
         return [dict(r) for r in _conn.execute(sql).fetchall()]
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+# ── Vision-description backfill (retraditionalize frames.description +
+# media.frame_tags — the vision write-path historically never routed through
+# zh_convert, so qwen3-vl's Simplified output was stored raw). No lang column on
+# frames; the caller gates each description with classify_zh (language-agnostic:
+# non-zh text classifies "traditional" and is skipped). ─────
+
+def iter_frames_with_description(_conn=None):
+    """All frame rows carrying a non-empty description, for the vision retraditionalize
+    backfill. Returns id/media_id/description. Pass _conn to read inside the caller's
+    transaction."""
+    sql = ("SELECT id, media_id, description FROM frames "
+           "WHERE description IS NOT NULL AND description != ''")
+    if _conn is not None:
+        return [dict(r) for r in _conn.execute(sql).fetchall()]
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def update_frame_description(frame_id, description, _conn=None):
+    """Overwrite ONLY a frame's description (vision retraditionalize backfill). Tags /
+    quality fields are untouched. Pass _conn to join an open transaction."""
+    sql = "UPDATE frames SET description=? WHERE id=?"
+    params = (description, frame_id)
+    if _conn is not None:
+        _conn.execute(sql, params)
+    else:
+        with get_conn() as conn:
+            conn.execute(sql, params)
+
+
+def iter_frame_tags_media(_conn=None):
+    """All media rows carrying a non-empty frame_tags blob (the per-clip JSON rollup of
+    frame descriptions/tags that the embed doc reads), for the vision backfill. Returns
+    id/frame_tags."""
+    sql = ("SELECT id, frame_tags FROM media "
+           "WHERE frame_tags IS NOT NULL AND frame_tags != ''")
+    if _conn is not None:
+        return [dict(r) for r in _conn.execute(sql).fetchall()]
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def update_media_frame_tags(media_id, frame_tags_json, _conn=None):
+    """Overwrite ONLY a media row's frame_tags JSON blob (vision retraditionalize
+    backfill; the caller passes an already-converted, re-serialized blob). Pass _conn to
+    join an open transaction."""
+    sql = "UPDATE media SET frame_tags=? WHERE id=?"
+    params = (frame_tags_json, media_id)
+    if _conn is not None:
+        _conn.execute(sql, params)
+    else:
+        with get_conn() as conn:
+            conn.execute(sql, params)
 
 
 def set_canonical_tags(media_id: int, tags: list) -> None:

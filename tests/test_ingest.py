@@ -119,6 +119,79 @@ def test_exiftool_camera_prefers_standard_over_embedded_xml(monkeypatch):
     assert result["lens_model"] == "E 17-70mm F2.8 B070"
 
 
+# audit 2026-07-30: FX30 XAVC-S .mp4 lens is in the NRT XML as LensModelName
+
+def test_exiftool_fx30_lens_from_lensmodelname(monkeypatch):
+    """FX30 XAVC-S .mp4 leaves the composite LensModel blank and carries the lens in the
+    embedded NRT XML as LensModelName → 548 FX30 clips had NULL lens_model until this
+    fallback (make/model already came from DeviceManufacturer/DeviceModelName)."""
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+    fake_stdout = json.dumps([{
+        "SourceFile": "FX30.5173.MP4",
+        "DeviceManufacturer": "Sony",
+        "DeviceModelName": "ILME-FX30",
+        "LensModelName": "E 17-70mm F2.8 B070",   # NRT lens; composite LensModel absent
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    result = ingest.exiftool_extract("FX30.5173.MP4")
+    assert result["camera_make"] == "Sony"
+    assert result["camera_model"] == "ILME-FX30"
+    assert result["lens_model"] == "E 17-70mm F2.8 B070"
+
+
+# audit 2026-07-30: iPhone 16 Pro ProRes make is in AppleProappsManufacturer
+
+def test_exiftool_iphone_make_from_appleproapps(monkeypatch):
+    """iPhone 16 Pro ProRes leaves standard Make blank and puts the maker in
+    AppleProappsManufacturer → 88 clips had NULL camera_make until this fallback (Model
+    already populated camera_model)."""
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+    fake_stdout = json.dumps([{
+        "SourceFile": "A001_05161434_C075.mov",
+        "Model": "Apple iPhone 16 Pro 48mm",
+        "AppleProappsManufacturer": "Apple Inc.",   # standard Make absent
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    result = ingest.exiftool_extract("A001_05161434_C075.mov")
+    assert result["camera_make"] == "Apple Inc."
+    assert result["camera_model"] == "Apple iPhone 16 Pro 48mm"
+
+
+def test_exiftool_standard_make_wins_over_appleproapps(monkeypatch):
+    """A standard EXIF Make (older iPhones) still wins over the AppleProapps fallback."""
+    import sys, os, json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import ingest
+    fake_stdout = json.dumps([{
+        "SourceFile": "IMG.mov", "Make": "Apple", "Model": "iPhone 11",
+        "AppleProappsManufacturer": "Apple Inc.",
+    }])
+
+    class _FakeProc:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    monkeypatch.setattr(ingest.subprocess, "run", lambda *a, **kw: _FakeProc())
+    assert ingest.exiftool_extract("IMG.mov")["camera_make"] == "Apple"
+
+
 # B10b2: Blackmagic Cam app (iOS) per-vendor lens tag
 
 def test_exiftool_lens_falls_back_to_bmd_camera_lens_type(monkeypatch):

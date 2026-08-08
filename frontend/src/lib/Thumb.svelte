@@ -4,7 +4,7 @@
 <script>
   export let seed = 0
   export let kind = 'video'
-  export let state = undefined // API parity (not visualized here)
+  export const state = undefined // API parity (external ref only; not visualized here)
   export let theme = 'dark'
 
   const palettesDark = [

@@ -158,12 +158,12 @@
           </div>
           <div class="optrow">
             <select class="ak-input sel" bind:value={language} title="force transcription language">
-              <option value="">Auto-detect</option>
+              <option value="">系統預設（中文 zh）</option>
               {#each (engines?.languages ?? []) as l}
                 <option value={l.code}>{l.label} · {l.code}</option>
               {/each}
             </select>
-            <div class="optlabel"><span>Language</span><Mono dim style="font-size:10px;">強制語言（留 Auto = 自動偵測 / 預設提示）</Mono></div>
+            <div class="optlabel"><span>Language</span><Mono dim style="font-size:10px;">強制語言（留白＝系統預設，目前為中文 zh；非中文素材請選對應語言，無自動偵測）</Mono></div>
           </div>
         </div>
 
@@ -241,7 +241,6 @@
   .seg { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.08em; width: 46px; flex: 0 0 46px; padding: 5px 0; border: 1px solid var(--rule-hi); background: transparent; color: var(--quiet); cursor: pointer; }
   .seg.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); font-weight: 700; }
 
-  .deferred { opacity: 0.6; }
   .pendrow, .estimated { display: flex; align-items: baseline; justify-content: space-between; }
   .pend { font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--quiet-2); border: 1px dashed var(--rule-hi); padding: 1px 6px; }
 

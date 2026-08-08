@@ -175,6 +175,12 @@ def _score_from_distance(distance: Any) -> float:
 
 
 def _query_chroma(project: ProjectMeta, query_embeddings, limit: int) -> List[Dict[str, Any]]:
+    # SECURITY (2026-07-26 audit): this opens an EXTERNAL, semi-trusted project's chroma dir.
+    # A collection's persisted embedding_function config is untrusted here — chromadb builds
+    # (and runs) it lazily ONLY when a caller passes query_texts= / documents-without-embeddings
+    # (the ChromaToast / chroma#6717 client-SDK-RCE class). So federation MUST query external
+    # collections with explicit query_embeddings= only, and never query_texts= / add(documents=).
+    # tests/test_federation.py::test_query_chroma_uses_explicit_embeddings_only locks this.
     client = chromadb.PersistentClient(path=str(_project_root(project) / ".arkiv" / "chroma_db"))
     collection = client.get_collection(config.COLLECTION_NAME)
     try:
@@ -186,12 +192,22 @@ def _query_chroma(project: ProjectMeta, query_embeddings, limit: int) -> List[Di
     except Exception as exc:
         import vectordb
         vectordb._reraise_dim_error(exc)  # dim mismatch -> EmbeddingDimensionMismatch
+    return _hits_from_raw(raw, limit)
+
+
+def _hits_from_raw(raw: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    """Flatten a Chroma-shaped query result into federation hits.
+
+    Shared by both vector backends: ``PgCollection.query`` deliberately returns
+    Chroma's nested ``[[...]]`` shape, so one parser serves both.
+    """
     documents = raw.get("documents", [[]])[0] if raw.get("documents") else []
     metadatas = raw.get("metadatas", [[]])[0] if raw.get("metadatas") else []
     distances = raw.get("distances", [[]])[0] if raw.get("distances") else []
     seen = set()
     hits = []
     for index, (document, meta, distance) in enumerate(zip(documents, metadatas, distances)):
+        meta = meta or {}
         media_id = meta.get("media_id")
         if media_id in seen:
             continue
@@ -210,6 +226,37 @@ def _query_chroma(project: ProjectMeta, query_embeddings, limit: int) -> List[Di
         if len(hits) >= limit:
             break
     return hits
+
+
+def _query_pg(project: ProjectMeta, query_embeddings, limit: int) -> List[Dict[str, Any]]:
+    """Federated vector search against the shared pgvector store.
+
+    In pg mode an external project has no ``.arkiv/chroma_db`` to open — its
+    vectors live in the shared store, tagged with ``project_name``. Querying
+    that store scoped to this project is the semantic search the chroma path
+    provides; without it federation fell through to ``_sql_like_search`` and
+    quietly downgraded every federated query to a keyword LIKE.
+
+    A side benefit: nothing here opens an external project's directory, so the
+    untrusted-collection concern documented on ``_query_chroma`` does not arise.
+    """
+    import vectordb
+
+    col = vectordb.get_collection()
+    raw = vectordb._query_collection(
+        col,
+        [query_embeddings],
+        max(limit * 3, limit),
+        project_scope=[project.name],
+    )
+    return _hits_from_raw(raw, limit)
+
+
+def _query_vectors(project: ProjectMeta, query_embeddings, limit: int) -> List[Dict[str, Any]]:
+    """Query whichever backend actually holds this project's vectors."""
+    if getattr(config, "VECTOR_BACKEND", "chroma") == "pg":
+        return _query_pg(project, query_embeddings, limit)
+    return _query_chroma(project, query_embeddings, limit)
 
 
 def _sql_like_search(conn: sqlite3.Connection, project: ProjectMeta, query: str, limit: int) -> List[Dict[str, Any]]:
@@ -290,7 +337,7 @@ def query_single_project(
             try:
                 if q_embed is None:
                     q_embed = embed_query(query)
-                chroma_hits = _query_chroma(project, q_embed, limit)
+                chroma_hits = _query_vectors(project, q_embed, limit)
                 if chroma_hits:
                     for hit in chroma_hits:
                         row = _fetch_media_row(conn, hit["media_id"])

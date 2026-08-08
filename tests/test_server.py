@@ -132,6 +132,55 @@ def test_inout_update_persist_restore_semantics_and_validation(fastapi_client, s
     assert fastapi_client.patch("/api/media/999/inout", json={"in_point": 1.0}).status_code == 404
 
 
+def test_camera_update_persist_restore_semantics_and_validation(fastapi_client, sample_record):
+    db = _insert_media(sample_record)
+
+    # set the multicam annotation (A-cam)
+    r = fastapi_client.patch("/api/media/1/camera", json={"camera_id": "A", "angle": "wide"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "camera_id": "A", "angle": "wide"}
+    rec = db.get_record_by_id(1)
+    assert rec["camera_id"] == "A" and rec["angle"] == "wide"
+
+    # the detail endpoint surfaces them (SELECT * → whole record) so S-cam can read them
+    detail = fastapi_client.get("/api/media/1").json()
+    assert detail["camera_id"] == "A" and detail["angle"] == "wide"
+
+    # PATCH semantics: an omitted field is untouched (change angle, keep camera_id)
+    r = fastapi_client.patch("/api/media/1/camera", json={"angle": "CU"})
+    assert r.status_code == 200
+    rec = db.get_record_by_id(1)
+    assert rec["camera_id"] == "A" and rec["angle"] == "CU"
+
+    # a blank label normalizes to None (clears), same as an explicit null
+    assert fastapi_client.patch("/api/media/1/camera", json={"camera_id": "  "}).status_code == 200
+    assert db.get_record_by_id(1)["camera_id"] is None
+    assert fastapi_client.patch("/api/media/1/camera", json={"angle": None}).status_code == 200
+    assert db.get_record_by_id(1)["angle"] is None
+
+    # an over-long label is rejected by the model
+    assert fastapi_client.patch(
+        "/api/media/1/camera", json={"camera_id": "x" * 65}).status_code == 422
+
+    # missing record → 404
+    assert fastapi_client.patch("/api/media/999/camera", json={"camera_id": "A"}).status_code == 404
+
+
+def test_camera_fields_survive_reingest(tmp_db, sample_record):
+    # camera_id/angle are editorial marks kept OUT of _ALLOWED_COLS, so a
+    # re-ingest/refresh (which writes through upsert / update_media_by_id) must not
+    # clobber them — the same guarantee in_point/out_point rely on.
+    db = _insert_media(sample_record)
+    with db.get_conn() as conn:
+        conn.execute("UPDATE media SET camera_id='A', angle='wide' WHERE id=1")
+    # a refresh carrying camera_id/angle (and a legitimately-updatable field) must
+    # NOT win on the camera marks, but SHOULD update the allowlisted field.
+    db.update_media_by_id(1, {"camera_id": "Z", "angle": "tele", "duration_s": 123.0})
+    rec = db.get_record_by_id(1)
+    assert rec["camera_id"] == "A" and rec["angle"] == "wide"   # human marks preserved
+    assert rec["duration_s"] == 123.0                            # allowlisted field updated
+
+
 def test_tag_stats_and_tag_catalog_endpoints(fastapi_client, sample_record):
     _insert_media(sample_record)
 

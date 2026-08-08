@@ -3,28 +3,28 @@
 # Upper bounds on the libraries that gate the API/data contract so a future
 # major (e.g. chromadb 2.x changing the collection API, pydantic 3.x) can't
 # silently break a fresh install. Bump deliberately after testing.
-fastapi>=0.100.0
-uvicorn>=0.20.0
+fastapi>=0.140.6
+uvicorn>=0.52.1
 pydantic>=2.0,<3
 chromadb>=1.0,<2
 requests>=2.28
-xxhash>=2.0.0
+xxhash>=3.8.1
 nanoid>=2.0.0
 # (pandas removed — it was an unused ~70 MB dependency, imported nowhere.)
 
 # Media processing
-pillow>=9.0
+pillow>=12.3.0
 soundfile>=0.12
 # Phase 9.8b: Simplified→Traditional (Taiwan) transcript conversion. Whisper zh
 # output is Simplified; the TA is Taiwan. Gated to >=3.10: opencc ships no cp39
 # arm64 wheel (3.9 would source-build), and prod is 3.12 — code degrades to
 # identity if absent (zh_convert.py), so a missing wheel never breaks transcribe.
-opencc>=1.1; python_version >= "3.10"
+opencc>=1.4.1; python_version >= "3.10"
 
 # Resource-aware pipeline (Phase 11.5) — soft dependency: arkiv runs without it
 # (probe degrades the memory fields to None), but installing it enables
 # backpressure and the `arkiv status` memory readout.
-psutil>=5.9
+psutil>=7.2.2
 
 # Folder watcher (Phase 11.2) — soft dependency: watch.py falls back to a
 # polling scan when watchdog is absent (e.g. the NAS), so this just upgrades the
@@ -32,7 +32,7 @@ psutil>=5.9
 watchdog>=3.0
 
 # Speech pre-processing
-silero-vad>=6.0
+silero-vad>=6.2.1
 whisper-guard>=0.3   # 4-layer anti-hallucination text filter (was vendored; now PyPI)
 
 # ── Platform-specific Whisper (install ONE) ──────────────
@@ -49,7 +49,7 @@ whisper-guard>=0.3   # 4-layer anti-hallucination text filter (was vendored; now
 #   pip install faster-whisper
 #   No GPU needed, slower but works everywhere
 #
-faster-whisper>=1.0;platform_system!="Darwin"
+faster-whisper>=1.2.1;platform_system!="Darwin"
 mlx-whisper>=0.4;platform_system=="Darwin"
 
 # ── MCP server (Phase 14) — optional ─────────────────────
@@ -57,7 +57,12 @@ mlx-whisper>=0.4;platform_system=="Darwin"
 # arkiv's search/metadata to MCP clients (Claude, OpenClaw). The HTTP API and
 # CLI work without it. Gated on Python 3.10+ — the MCP SDK requires it, and arkiv
 # still supports 3.9 (NAS), where an unconditional entry would break pip install.
-mcp>=1.2; python_version >= "3.10"
+# Capped <2: mcp 2.0.0 (2026-07-28) restructured the SDK and dropped the
+# `mcp.server.fastmcp` import path mcp_server.py uses, so a fresh `mcp>=1.2` install
+# now pulls 2.0.0 → `ModuleNotFoundError: mcp.server.fastmcp` → test_mcp_server
+# collection error → CI red on every PR. Stay on the 1.x line (has fastmcp) until
+# mcp_server.py is ported to the 2.x API.
+mcp>=1.2,<2; python_version >= "3.10"
 
 # ── Shared pgvector backend (向量庫整併) — install manually if needed ──────
 # Only needed when ARKIV_VECTOR_BACKEND=pg (route vectors to the shared NAS

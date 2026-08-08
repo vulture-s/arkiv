@@ -1,7 +1,7 @@
 <!-- 1px frame around 'arkiv.' wordmark (vulture.s 'tv.' style). -->
 <script>
   export let size = 18
-  export let theme = 'dark' // API parity; styling is theme-agnostic (CSS vars)
+  export const theme = 'dark' // API parity (external ref only); styling is theme-agnostic (CSS vars)
 </script>
 
 <div

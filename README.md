@@ -1,20 +1,37 @@
 # arkiv
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: PolyForm NC](https://img.shields.io/badge/License-PolyForm--NC--1.0.0-orange.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://python.org)
 [![Tauri](https://img.shields.io/badge/Tauri-Desktop_App-FFC131.svg)](https://tauri.app)
 
-**Open-source AI metadata layer for DIT workflows — Resolve-native, CJK-first.**
+**Source-available AI metadata layer for DIT workflows — Resolve-native, CJK-first.**
 
 > 🌐 **English** | [繁體中文](README.zh-TW.md)
 
 arkiv sits between your media drive and DaVinci Resolve: it ingests your footage, attaches AI-generated metadata (transcript, vision tags, atmosphere, energy, edit position), and surfaces clips via semantic search in any language — Chinese, Japanese, or English. The Resolve plugin lets you search, import with clip color, and drop frame markers without leaving the NLE.
 
-Designed for solo DITs and small crews who own their data: local-first, self-hosted, MIT license, no cloud dependency.
+Designed for solo DITs and small crews who own their data: local-first, self-hosted, source-available (PolyForm Noncommercial), no cloud dependency.
 
 ---
 
-## Architecture
+## Why arkiv
+
+- **Too much footage, can't find the shot** → search in plain language ("all dusk establishing shots from May"), in Chinese / Japanese / English — it searches what's *in* the frame and the transcript, not filenames.
+- **AI editing tools only understand footage with someone talking** → arkiv runs vision analysis + transcription on every clip, so B-roll and dialogue-free footage stay searchable and manageable.
+- **Your library has to feed any downstream edit** → manual, automated, or script-driven: native Resolve plugin, EDL / FCPXML export, API / MCP interface.
+
+> **License in one line:** arkiv itself is free for any noncommercial use (source-available); the videos, timelines and exports you make with it are **100% yours to use commercially**.
+>
+> **Proven at scale:** fully indexed a **1,506-clip real production library** (1,161 of them dialogue-free B-roll) on a single RTX 4070.
+
+## Screenshots
+
+![ARKIV UI](screenshot.jpg)
+
+<details>
+<summary>System architecture & data flow (for contributors / fork authors)</summary>
+
+### Architecture
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
@@ -45,13 +62,35 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
   └─────────┘  └──────────────┘
 ```
 
-→ **Full pipeline (4 stages, storage layout, exit codes, maintenance modes)**: [docs/pipeline.md](docs/pipeline.md)
+→ **Full pipeline (4 stages, storage layout, exit codes, maintenance modes)**: [docs/pipeline.md](docs/pipeline.md) · architecture overview [ARCHITECTURE.md](ARCHITECTURE.md)
 
-## Screenshots
-
-![ARKIV UI](screenshot.jpg)
+</details>
 
 ## Features
+
+**Find footage**
+- Semantic search (Chinese / English / Japanese) — searches what's *in* the frame and the transcript, not filenames
+- Library Chat: compilation search, refine the previous result, find similar shots, analytics — with conversation memory
+- Ratings (GOOD / NG / Review) plus auto and manual tags with autocomplete
+
+**AI metadata**
+- Whisper large-v3-turbo transcription + a **4-layer anti-hallucination guard** (VAD silence filter → no_speech threshold → blank/repeat filter → LLM correction)
+- Frame vision analysis with brand/object recognition; 360 footage (Insta360 / GoPro Max) reprojected before indexing
+- Chinese transcripts stored as Taiwan Traditional (plus a batch converter for an existing library)
+- Full camera metadata: EXIF + Sony XAVC sidecar, so FX-series footage keeps its identity
+
+**On-set DIT**
+- Card offload: parallel multi-destination copy + per-file hash verify + resumable, and it **never deletes the source card**
+- ASC MHL v2 hash manifests (interop-verified against the ASC reference implementation)
+- Camera report CSV, auto-offload on card insert, browser DIT console (`/dit`)
+
+**Into the edit**
+- DaVinci Resolve plugin: search, import with clip color, add frame markers
+- Export SRT / VTT / TXT / EDL (DF/NDF) / FCPXML 1.8, plus metadata CSV straight into Resolve
+- Web UI, CLI and API all work on the same library
+
+<details>
+<summary>Full feature list (including advanced options)</summary>
 
 - **Semantic search** — query in natural language (Chinese/English/Japanese)
 - **Chat RAG over your video library** — 5-intent assistant for compilation searches, refinement, similarity, analytics, and general questions with persisted conversation memory
@@ -66,8 +105,8 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **DaVinci Resolve metadata CSV** — `/api/export/metadata-csv` endpoint exports clip metadata (Camera/Lens/ISO/Shutter/Aperture/GPS/CreateDate) ready for Resolve's `File → Import Metadata from CSV`. Plugin auto-prompts after import
 - **ExifTool integration** — auto-extracts 12 fields per clip (Make/Model/LensModel/GPS/ColorSpace/ISO/Shutter/Aperture/FocalLength/CreateDate). Sidecar-aware for Sony XAVC `.XML`, iPhone Keys group, Blackmagic Cam app per-vendor lens tags. Auto-detects exiftool binary on Windows (winget/scoop/chocolatey/Program Files)
 - **EDL reel name** — uses ExifTool ReelName with safe fallback to filename stem (8-char CMX3600 compat, control-char sanitized)
-- **HEVC/ProRes browser proxy** — auto-builds H.264 proxy on demand for browser playback (Phase 7.7g)
-- **Tauri native app** — desktop app with native file/folder dialogs (Windows panic hook surfaces Rust crashes to stderr)
+- **HEVC/ProRes browser proxy** — auto-builds H.264 proxy on demand for browser playback
+- **Tauri native app** — desktop app with native file/folder dialogs
 - **DaVinci Resolve plugin** — search, import with clip color, add frame markers
 - **ASC MHL v2 hash manifests** — `mhl.py create` / `verify` CLI emits real `urn:ASC:MHL:v2.0` with `xxh3` / `md5` / `sha1` / `sha256` / `c4`, directory + structure root hashes, chained `ascmhl_chain.xml`. Interop-verified with ASC reference impl 1.2 — drop-in for Silverstack / MediaVerify / Hedge / YoYotta workflows
 - **Multi-destination offload** — `offload.py --src <SD> --dst <A> --dst <B>` does chunked parallel copy + per-file hash verify + 3× retry on mismatch + atomic rename + sidecar-aware (XAVC / ARRI / RED / iPhone Live Photo). Resumable JSON state file — kill mid-copy and pending files pick up exactly where they stopped. Emits per-dst MHL v2
@@ -75,80 +114,50 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **DIT Offload UI (`/dit`)** — browser control panel for card→backup offload: preview the destination layout, run with **live per-file progress streaming**, multi-destination + `xxh3` verify + ASC MHL v2. Never deletes the source card
 - **Offload organize policy** — `offload.py --organize "{date}/{camera}/{reel}"` files footage into a date/camera/reel tree (tokens: `{date}/{camera}/{reel}/{stem}/{ext}`, fs-safe, path-traversal guarded) — or leave it empty to mirror the source structure
 - **Card-watcher** — `offload.py --watch` auto-offloads on card insert (detects DCIM / media volumes), with re-insert / mount-flicker guard so a wobbling card never re-copies
-- **360 reprojection** — dual-fisheye `.insv` / `.360` clips are reprojected to **equirectangular** before vision tagging (FFmpeg `v360`), so on-frame text and events the raw fisheye hides become searchable (Phase 8.3b)
+- **360 reprojection** — dual-fisheye `.insv` / `.360` clips are reprojected to **equirectangular** before vision tagging (FFmpeg `v360`), so on-frame text and events the raw fisheye hides become searchable
 - **Vision failure tolerance** — `ingest.py --max-failures N` / `--skip-failed` tolerate flaky per-frame vision on long unattended runs; failed frames are left empty for a later `--vision-only` resume (a whole-Ollama outage still halts fast)
 
-## API Authentication
+</details>
 
-All `/api/*` endpoints require a Bearer token with the correct scope. Scope-based tokens let you split a fleet by machine role: read-only review stations can use `videos_read` or `media_read`, ingest machines can use `ingest_write`, and admin machines can manage tokens.
+## DaVinci Resolve integration
 
-First-time bootstrap:
+arkiv isn't just another asset manager sitting beside your NLE — it runs inside it:
 
-```bash
-export ARKIV_ADMIN_BOOTSTRAP_TOKEN=$(openssl rand -base64 32)
-python server.py
-```
+- **Resolve plugin** (`resolve_plugin/`): search your arkiv library from within Resolve, import results **with clip color** onto the timeline, and drop frame markers — without leaving the NLE.
+- **Ratings carry through**: GOOD / NG / Review become Resolve clip colors.
+- **Metadata CSV**: `/api/export/metadata-csv` emits exactly the columns Resolve's `File → Import Metadata from CSV` expects (Camera/Lens/ISO/Shutter/Aperture/GPS/CreateDate); the plugin prompts for it after import.
+- **Timeline interchange**: EDL (drop-frame / non-drop timecode) and FCPXML 1.8, compatible with both FCPX and DaVinci.
 
-On first startup, the server seeds a single `admin` token from that env var. Use it once to create per-machine tokens, then unset it and revoke the bootstrap token.
+> On macOS, Resolve needs the official python.org Python 3.10 Framework (see Prerequisites below).
 
-Create and manage tokens directly with the CLI:
+## API / MCP
 
-```bash
-python arkiv_token.py create --name "PC-dev" --scopes videos_read,videos_write --ip-allowlist 127.0.0.1/32,100.64.0.0/10 --expires-in 90
-python arkiv_token.py list
-python arkiv_token.py show <token-id>
-python arkiv_token.py revoke <token-id>
-```
+Everything arkiv does is available over a REST API (`/api/*`, scope-based Bearer tokens)
+and a read-only MCP server — the Web UI is just one client. Script it, wire it into an
+automation, or let Claude/OpenClaw query your library.
 
-Use the token in requests:
-
-```bash
-curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
-```
-
-Available scopes: `videos_read`, `videos_write`, `media_read`, `collections_read`, `collections_write`, `projects_read`, `projects_write`, `ingest_write`, `chat_read`, `chat_write`, `admin`
-
-### Chat API — RAG over your video library
-
-Ask natural-language questions about your archive. The classifier routes each prompt to one of five handlers:
-
-| Intent | Example | What it does |
-|--------|---------|--------------|
-| `compilation` | "Give me all sunset shots from May" | Semantic search → ranked scene list |
-| `refinement` | "Only the indoor ones" | Filters the *previous* result, in-conversation |
-| `similarity` | "Similar to scene 42" | Vector nearest-neighbours to a reference clip |
-| `analytics` | "How many hours did I shoot this month?" | Aggregate query over the library |
-| `general` | "What can you help me with?" | Plain LLM chat, no search |
-
-Conversation history (last 10 messages) is threaded into each follow-up, so `refinement` acts on what the previous turn returned.
-
-**Model requirement:** chat uses `ARKIV_CHAT_MODEL` (default `qwen2.5:14b`) for *both* intent classification and answers — a single `ollama pull qwen2.5:14b` covers it. Only set `ARKIV_INTENT_MODEL` to a smaller model (e.g. `qwen2.5:7b-instruct`) if that model is actually installed on the Ollama host. If the model is missing, `/api/chat` returns a clear "run ollama pull …" message instead of a 500.
-
-**Prerequisite — ingest + index first:** chat queries your *indexed* library, not a standalone chatbot. Ingest media (Step 1) and build the index with `python embed.py` (Step 2) before chatting. `compilation` / `refinement` / `similarity` need the vector index; `analytics` needs ingested media only; `general` is the only intent that works on an empty library. On an empty/unindexed library chat does not error — it just returns "0 results".
-
-```bash
-# Create a conversation
-curl -X POST http://localhost:8501/api/chat \
-  -H "Authorization: Bearer $ARKIV_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Give me all sunset shots"}'
-# → {"conversation_id":"…", "assistant_text":"…", "scene_ids":[…], "intent":"compilation", "tokens_used":…, "latency_ms":…}
-
-# Continue the same conversation — refinement acts on the prior result
-curl -X POST http://localhost:8501/api/chat \
-  -H "Authorization: Bearer $ARKIV_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Only indoor ones", "conversation_id": "abc123"}'
-
-# Scope a conversation to specific projects
-curl -X POST http://localhost:8501/api/chat -H "Authorization: Bearer $ARKIV_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "wide establishing shots", "project_scope": ["client-acme"]}'
-```
-
-Read history with `GET /api/chat/history/{conversation_id}` and list conversations with `GET /api/chat/conversations` (both need `chat_read`).
+→ **[API auth, token scopes, and the library Chat (RAG) endpoint: docs/api.md](docs/api.md)**
 
 ## Quick Start
+
+### Download the app (macOS, Apple Silicon)
+
+The quickest way to run arkiv without a Python setup. The `.dmg` bundles the Python backend
+and ML libraries (torch, mlx-whisper, chromadb, …), so you skip the venv/pip steps below. You
+**still need FFmpeg and Ollama** for frame extraction, embeddings, and vision:
+
+```bash
+brew install ffmpeg ollama
+ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b
+```
+
+Then download **`arkiv_<version>_aarch64.dmg`** from the [latest release](https://github.com/vulture-s/arkiv/releases/latest), open it, and drag **arkiv** to Applications. On first launch the build is unsigned, so macOS Gatekeeper blocks a double-click — **right-click → Open** once (or run `xattr -dr com.apple.quarantine /Applications/arkiv.app`); afterwards it opens normally.
+
+> Intel Macs / Windows have no prebuilt app yet — the bundle ships an `aarch64` Python + `mlx-whisper`. Run from source instead (below).
+
+---
+
+Everything below installs and runs arkiv **from source** — for development, or on Linux / Windows.
 
 ### Prerequisites
 
@@ -213,15 +222,18 @@ docker compose up -d
 
 > Models are pulled automatically inside the Ollama container on first run (may take a few minutes).
 
-### Upgrading from v0.3.0 → v0.3.1
+<details>
+<summary>Upgrading from an old version (v0.3.0 → v0.3.1 storage layout migration)</summary>
 
-v0.3.1 changes the default storage layout (artifacts now live in `BASE_DIR/.arkiv/` — see Phase 8.0c). One-shot migration:
+v0.3.1 changed the default storage layout (artifacts now live in `BASE_DIR/.arkiv/`). Only needed when upgrading from before that:
 
 ```bash
 cd ~/.arkiv && git pull && python ingest.py --migrate-storage
 ```
 
-Full SOP (backup, rollback, per-project layout): [docs/pipeline.md#upgrading-from-v030](docs/pipeline.md#upgrading-from-v030) · [CHANGELOG v0.3.1](CHANGELOG.md)
+Full SOP (backup, rollback, per-project layout): [docs/pipeline.md](docs/pipeline.md) · [CHANGELOG](CHANGELOG.md)
+
+</details>
 
 ### Option A: Web UI — browse, search, rate, and tag in the browser
 
@@ -288,6 +300,9 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=keyword&limit=5"
 
 ## Configuration
 
+<details>
+<summary>All environment variables (`.env`) — defaults just work; open this to tune</summary>
+
 Copy `.env.example` to `.env` and customize:
 
 | Variable | Default | Description |
@@ -297,7 +312,7 @@ Copy `.env.example` to `.env` and customize:
 | `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | Thumbnail output dir |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `ARKIV_EMBED_MODEL` | `bge-m3` | Embedding model — **do not change after indexing** (see note below) |
-| `ARKIV_VISION_MODEL` | `qwen2.5vl:7b` | Vision model for frame descriptions |
+| `ARKIV_VISION_MODEL` | `qwen2.5vl:7b` | Vision model for frame descriptions. **2.5-VL is the deliberate default over qwen3-vl:8b**: Qwen3-VL's vision path is ~10× slower under Ollama (measured ~60s/frame vs ~8s/frame) — 30h vs 3.5h across 2000 frames, at comparable tag quality. Set `ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b` for the higher ceiling |
 | `ARKIV_CHAT_MODEL` | `qwen2.5:14b` | Chat model — answers and (by default) intent classification |
 | `ARKIV_INTENT_MODEL` | *(= `ARKIV_CHAT_MODEL`)* | Optional faster model for intent classification only; must be installed |
 | `ARKIV_WHISPER_MODEL` | `mlx-community/whisper-large-v3-turbo` (macOS) / `large-v3-turbo` (other) | Whisper model |
@@ -313,6 +328,7 @@ Copy `.env.example` to `.env` and customize:
 >
 > **Hardware floor for chat:** `qwen2.5:14b` needs ~9 GB and runs alongside the embedding model. Plan for ~12–16 GB free RAM/VRAM on the Ollama host. On tighter machines, set `ARKIV_CHAT_MODEL=qwen2.5:7b` (~4.7 GB) for a lighter default.
 
+</details>
 
 ## Tech Stack
 
@@ -349,7 +365,7 @@ Use the `+` button in the Media Pool sidebar, or run `python ingest.py --dir /pa
 Yes — the native Python install is the primary workflow. Docker is optional for deployment.
 
 **Q: What file formats are supported?**
-Video: `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.mts`
+Video: `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.mts`, `.mxf` (Sony FX6/FX9/Venice XAVC)
 360: `.insv` (Insta360), `.360` (GoPro Max) — dual-fisheye is reprojected to equirectangular before vision tagging (single-lens 360 footage is indexed as-is)
 Audio: `.wav`, `.mp3`, `.m4a`, `.aac`, `.flac`, `.ogg`
 Camera metadata (make/model/lens/timecode) is read from embedded EXIF **and** Sony XAVC NRT sidecar XML — so FX30/FX-series footage keeps its identity.
@@ -387,14 +403,40 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 | Apple Silicon | — | Required | — | |
 | fastapi + uvicorn | Required | Required | Required | |
 
-### Latest Results (v0.3.0)
+### Latest Results
 
 | Platform | Health Check | Smoke Test | Date |
 |----------|-------------|------------|------|
-| macOS M2 Max | TBD | TBD | 2026-05-22 |
 | Windows 11 (RTX 4070) | 19/19 PASS, 0 FAIL, 0 SKIP | 9/9 PASS | 2026-05-22 |
 | Linux (Docker) | 14/17 PASS, 0 FAIL, 3 SKIP | 9/9 PASS | 2026-05-22 |
 
+## For developers
+
+[ARCHITECTURE.md](ARCHITECTURE.md) (architecture overview) · [docs/api.md](docs/api.md) (API + Chat) · [docs/pipeline.md](docs/pipeline.md) (full pipeline) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
+
 ## License
 
-MIT
+PolyForm Noncommercial License 1.0.0, with a Commercial Output Exception — see [LICENSE](LICENSE).
+
+Videos, timelines and exports you produce with arkiv are yours and may be used commercially. Using arkiv itself is free for any noncommercial purpose; selling, hosting, or repackaging arkiv (or a fork) as a commercial product or service is not permitted.
+
+## Public-Interest Program
+
+arkiv is free for noncommercial use, and what you make with it is always yours to use commercially (see the license above). On top of that, we want to go one step further.
+
+If your project has commercial elements (government grants, theatrical / platform distribution, institutional revenue), strictly speaking your use of arkiv *itself* becomes "commercial use" and would need a separate commercial license — but **if the work you're doing serves the public interest, we grant that license for free**:
+
+- Public-issue documentaries
+- Nonprofit / public-good visual work
+- Local memory, oral history, and archival preservation
+- Public education and public media
+
+The knowledge layer over footage shouldn't be something only big productions can afford.
+
+**How to apply:** open a [GitHub Issue](https://github.com/vulture-s/arkiv/issues) with `[public-interest]` in the title, or DM [@vulture.s](https://www.instagram.com/vulture.s/) on Instagram, with a short description of your project. Reviewed case by case — no automatic eligibility checklist. See [PUBLIC-INTEREST.md](PUBLIC-INTEREST.md) for examples, a sample request, and the case-by-case discretion statement.
+
+## Contact & Follow
+
+- Dev log and demos: Threads / Instagram [@vulture.s](https://www.instagram.com/vulture.s/)
+- Bug reports and feature requests: [GitHub Issues](https://github.com/vulture-s/arkiv/issues)
+- Commercial partnership / deployment help: DM on IG, or open an Issue with `[biz]` in the title

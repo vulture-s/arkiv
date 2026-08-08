@@ -263,6 +263,20 @@ def _project(rows: List[Dict[str, Any]], keys: tuple) -> List[Dict[str, Any]]:
     return [{k: row.get(k) for k in keys} for row in rows]
 
 
+def _project_segments(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Project segments onto {start,end,text}, plus speaker_id ONLY when present
+    (A4). Keeping speaker_id conditional means non-diarized clips return the exact
+    pre-A4 shape, so existing get_transcript consumers are unaffected."""
+    out = []
+    for row in rows:
+        seg = {k: row.get(k) for k in _SEGMENT_KEYS}
+        sid = row.get("speaker_id")
+        if sid:
+            seg["speaker_id"] = sid
+        out.append(seg)
+    return out
+
+
 def get_transcript_impl(
     media_id: int,
     include_words: bool = False,
@@ -282,7 +296,7 @@ def get_transcript_impl(
         # new: the timecodes. `segments` is the point of this tool — an agent
         # that only gets flat text cannot cut on a quote.
         "duration_s": rec.get("duration_s"),
-        "segments": _project(_json_rows(rec.get("segments_json")), _SEGMENT_KEYS),
+        "segments": _project_segments(_json_rows(rec.get("segments_json"))),
         # advertise word-level availability without paying for it
         "has_words": bool(word_rows),
     }
@@ -451,7 +465,39 @@ def list_tags(limit: int = 30) -> str:
     return _j(list_tags_impl(limit))
 
 
+def _prewarm_vectordb() -> None:
+    """Load vectordb (→ chromadb → numpy) BEFORE the stdio transport starts.
+
+    F3 / AC2 (2026-07-28, Windows root cause). `search_media_impl` imports
+    vectordb lazily, which is right for callers in general — but inside the stdio
+    server that import happens while the transport is already running, and on
+    Windows that deadlocks the process permanently:
+
+      mcp.server.stdio parks a worker thread in a blocking `readline()` on the
+      stdin PIPE (anyio's AsyncFile iteration). Importing numpy while a thread
+      sits in that pipe read never returns — numpy's import stops at
+      `numpy._core._multiarray_umath` (the OpenBLAS-linked extension) and the
+      whole interpreter wedges. Reproduced without mcp at all: two idle threads
+      + `import numpy` = 0.09s; one thread blocked on a stdin pipe read +
+      `import numpy` = deadlock. Not version-driven — identical on mcp 1.2.1,
+      1.27.0 and 1.28.1 (SDK × Windows matrix, 2026-07-28).
+
+    Doing the import here — on the main thread, before `mcp.run()` spawns that
+    reader — loads the DLLs while nothing is parked on the pipe, so the first
+    `search_media` call is also fast instead of paying import cost mid-session.
+
+    Deliberately silent on failure: a box with no vector backend must still boot
+    and serve the six tools that never touch an index (the lazy import in
+    `search_media_impl` stays as the real fallback and degrades to SQL there).
+    """
+    try:
+        import vectordb  # noqa: F401
+    except Exception:
+        pass
+
+
 def main() -> None:
+    _prewarm_vectordb()
     mcp.run()
 
 

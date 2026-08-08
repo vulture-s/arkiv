@@ -51,7 +51,11 @@ _LANGUAGE_OVERRIDE = None
 # Pro/cinema codecs ffmpeg can't decode without vendor SDKs — a --dir scan drops
 # them silently, so a user who dumps a C300/RED/BRAW card sees "Found 0 media
 # files" and thinks arkiv is broken. Named here so the skip notice can call them out.
-_PRO_UNSUPPORTED_EXT = {".mxf", ".braw", ".r3d", ".m2ts", ".ari", ".dng", ".cine", ".crm", ".rmf"}
+#
+# `.mxf` was removed from this set (2026-08-07, DIT wrapper ④): it is a container,
+# not a codec, and ffmpeg decodes what Sony puts inside it. It now lives in
+# `mediatypes.VIDEO_EXT` — see the reasoning and the measurements there.
+_PRO_UNSUPPORTED_EXT = {".braw", ".r3d", ".m2ts", ".ari", ".dng", ".cine", ".crm", ".rmf"}
 
 
 def _report_unsupported(all_files, supported_files):
@@ -415,6 +419,14 @@ def exiftool_extract(path: str, fps: Optional[float] = None) -> dict:
         # call so sidecar-less clips still populate camera_make/model. Non-Sony
         # files simply don't have these tags → d.get() returns None → no effect.
         "-DeviceManufacturer", "-DeviceModelName", "-LensZoomModelName",
+        # audit 2026-07-30: FX30 XAVC-S .mp4 puts the lens in the NRT XML block as
+        # LensModelName (not the composite LensModel the standard tag maps to) → 548
+        # FX30 clips had NULL lens_model; and iPhone 16 Pro ProRes leaves standard
+        # Make blank, putting the maker in AppleProappsManufacturer → 88 clips had
+        # NULL camera_make. (FX30 iso/shutter/aperture/focal are genuinely absent from
+        # the file — the NRT AcquisitionRecord carries gamma/timecode but no exposure
+        # triad — so those stay NULL by source, not by this mapping.)
+        "-LensModelName", "-AppleProappsManufacturer",
         "-GPSLatitude", "-GPSLongitude",
         "-ColorSpace",
         "-ISO",
@@ -513,9 +525,10 @@ def exiftool_extract(path: str, fps: Optional[float] = None) -> dict:
         # issue #115: fall back to embedded-XML device identity when the
         # standard EXIF Make/Model are blank (Sony XAVC without an M01.XML
         # sidecar). Standard tags still win when present.
-        "camera_make": d.get("Make") or d.get("DeviceManufacturer"),
+        "camera_make": d.get("Make") or d.get("DeviceManufacturer") or d.get("AppleProappsManufacturer"),
         "camera_model": d.get("Model") or d.get("DeviceModelName"),
-        "lens_model": d.get("LensModel") or d.get("Blackmagic-designCameraLensType") or d.get("LensZoomModelName"),
+        "lens_model": (d.get("LensModel") or d.get("Blackmagic-designCameraLensType")
+                       or d.get("LensZoomModelName") or d.get("LensModelName")),
         "gps_lat": d.get("GPSLatitude"),
         "gps_lon": d.get("GPSLongitude"),
         "color_space": str(d.get("ColorSpace")) if d.get("ColorSpace") else None,
@@ -768,6 +781,12 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     if fhash:
         record["file_hash"] = fhash
         record["hash_algo"] = "xxh3"
+        # Stamp when the content hash was confirmed against the file's bytes (audit
+        # 2026-07-30: this column was declared + allow-listed but had NO writer, so it
+        # stayed NULL for every row). The hash was just (re)computed/confirmed from the
+        # real file this ingest; on --refresh this re-reads and re-verifies. hash_verified_at
+        # is in _ALLOWED_COLS, so the record upsert persists it.
+        record["hash_verified_at"] = datetime.now(timezone.utc).isoformat()
 
     # Audio transcription (skip on refresh — reuse existing)
     if meta["has_audio"] and not existing:
@@ -993,7 +1012,7 @@ def _run_vision_only(args):
 
     if not rows:
         print("All frames already have vision descriptions. Nothing to do.")
-        return
+        return (False, set())
 
     # Group by media
     from collections import defaultdict
@@ -1012,6 +1031,7 @@ def _run_vision_only(args):
     ok, halted = 0, False
     total_failed, consecutive_failed = 0, 0
     failed_files = []  # (fname, failed_count, frame_count) for the end-of-run report
+    written_ids = set()  # media that got ≥1 non-empty description this run → re-embed (fix: 向量索引靜默過期)
     for vi, (mid, frames_list) in enumerate(media_frames.items(), 1):
         fname = frames_list[0]["filename"]
         frame_paths = [db.resolve_path(f["thumbnail_path"]) for f in frames_list]
@@ -1067,6 +1087,12 @@ def _run_vision_only(args):
                     (max(scores), mid),
                 )
 
+        # This media's embedded source text changed → mark for re-embed. ① of the
+        # 向量索引靜默過期 fix: vision-only is the writer, so it must hand the caller
+        # the ids to re-embed (embed's content-hash is the backstop for other paths).
+        if any((vr.get("description") or "").strip() for vr in frame_results):
+            written_ids.add(mid)
+
         v_elapsed = _time.time() - v_start
         n_failed = len(still_failed_idx)
         if n_failed:
@@ -1103,7 +1129,7 @@ def _run_vision_only(args):
     if not halted:
         suffix = f", {len(failed_files)} with skipped frames." if failed_files else "."
         print(f"\nVision-only done. {ok} file(s) fully patched{suffix}")
-    return halted
+    return (halted, written_ids)
 
 
 def _regenerate_proxies():
@@ -1684,7 +1710,19 @@ def main():
 
     # ── Vision-only mode: patch missing vision descriptions ──────────────
     if args.vision_only:
-        halted = _run_vision_only(args)
+        halted, written_ids = _run_vision_only(args)
+        # ① 向量索引靜默過期 fix: vision-only is the ONLY writer of descriptions, so it
+        # must re-embed what it wrote — previously it returned here (line ~2180's embed
+        # was unreachable), leaving the index frozen while descriptions kept changing.
+        # Re-embed even on halt: committed work must not stay unsearchable. force_ids is
+        # the explicit signal; embed's content-hash also catches it (belt + suspenders).
+        if written_ids and not getattr(args, "no_embed", False):
+            import embed
+            try:
+                embed.run_embed(force_ids=written_ids)
+            except Exception as e:
+                print(f"[embed] ⚠ vector index build failed: {e}")
+                print("[embed]   run manually: py -3.12 embed.py")
         if halted:
             sys.exit(1)  # halt mid-patch must not report success to cron/watch
         return

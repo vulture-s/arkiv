@@ -6,20 +6,23 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "svelte-check --fail-on-warnings"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.1.2",
-    "puppeteer-core": "^23.0.0",
+    "puppeteer-core": "^25.4.0",
     "svelte": "^4.2.20",
+    "svelte-check": "^4.7.4",
+    "typescript": "^6.0.3",
     "vite": "^5.4.21"
   },
   "dependencies": {
-    "@fontsource/archivo-black": "^5.2.0",
-    "@fontsource/inter": "^5.2.0",
-    "@fontsource/jetbrains-mono": "^5.2.0",
+    "@fontsource/archivo-black": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/noto-sans-tc": "^5.2.0",
     "svelte-spa-router": "^4.0.2",
-    "three": "^0.184.0"
+    "three": "^0.185.1"
   }
 }

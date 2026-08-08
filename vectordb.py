@@ -2,6 +2,7 @@ from __future__ import annotations
 """
 Vector DB module — ChromaDB + Ollama bge-m3 (multilingual, default)
 """
+import hashlib
 import json
 import logging
 import os
@@ -293,6 +294,16 @@ def build_doc_text(record: dict) -> str:
             if chunks:
                 parts.append(" ".join(chunks))
     return " ".join(parts)
+
+
+def content_hash(record: dict) -> str:
+    """sha256 of the exact source text embed would index for this record — i.e.
+    build_doc_text(record), which folds in filename + transcript + every frame
+    description/tags. Stored on media.embed_hash after a successful embed so
+    embed.py can tell a row whose DESCRIPTION changed (stale) from one that's
+    genuinely unchanged (skip), instead of only checking whether the media_id
+    exists in Chroma (fix: 向量索引靜默過期)."""
+    return hashlib.sha256(build_doc_text(record).encode("utf-8")).hexdigest()
 
 
 def delete_media(col, media_id) -> None:

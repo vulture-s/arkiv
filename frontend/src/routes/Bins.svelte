@@ -238,6 +238,8 @@
       {:else}
         <div class="dhead">
           {#if renaming}
+            <!-- the rename field intentionally focuses when it opens (inline-edit UX) -->
+            <!-- svelte-ignore a11y-autofocus -->
             <input class="ak-input renameinput" bind:value={renameVal} autofocus
                    on:keydown={(e) => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') renaming = false }} />
             <button class="ak-btn" on:click={saveRename}>存</button>

@@ -8,7 +8,7 @@
 
 ## Overview
 
-arkiv 是 local-first 開源 media asset manager — ingest 拍攝素材，做 transcoding probe / Whisper 轉錄 / Vision tagging / metadata extraction，存 SQLite + ChromaDB，並提供**語意搜尋 + 自然語言 chat（RAG）+ NLE/DIT 導出**。四條入口：Svelte SPA（Tauri WebView / 瀏覽器）、REST API、CLI、read-only MCP server。MIT license，0 雲端，0 phone-home。
+arkiv 是 local-first、source-available 的 media asset manager — ingest 拍攝素材，做 transcoding probe / Whisper 轉錄 / Vision tagging / metadata extraction，存 SQLite + ChromaDB，並提供**語意搜尋 + 自然語言 chat（RAG）+ NLE/DIT 導出**。四條入口：Svelte SPA（Tauri WebView / 瀏覽器）、REST API、CLI、read-only MCP server。PolyForm Noncommercial 1.0.0 + Commercial Output Exception（見 [LICENSE](LICENSE)），0 雲端，0 phone-home。
 
 設計取捨：
 - **Local-first** — 全部運算本機（FFmpeg / Whisper / Ollama），檔案不離開使用者磁碟
