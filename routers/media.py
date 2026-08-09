@@ -197,6 +197,25 @@ def media_pool(
     return {"items": items, "total": len(items)}
 
 
+@router.get("/api/media/facets/shoot-date")
+def shoot_date_facets(
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    """Year buckets for browsing footage by when it was SHOT.
+
+    Grouped on `creation_date` (EXIF CreateDate / XAVC sidecar), not `processed_at`.
+    The two are not interchangeable: measured on a real 62-clip library, 55 of the 56
+    dated clips were shot in a different year than they were ingested, and every row
+    shares one `processed_at` year — so a facet built on the ingest date collapses to
+    a single bucket and answers a question nobody asked.
+
+    `unknown` is reported explicitly rather than omitted: 6 of those 62 clips carry no
+    readable shoot date, and a facet whose counts don't reconcile with the library
+    total is the kind of silent gap that reads as "nothing there".
+    """
+    return db.get_shoot_date_facets()
+
+
 @router.get("/api/media")
 def list_media(
     offset: int = 0,
@@ -205,6 +224,7 @@ def list_media(
     lang: Optional[str] = None,
     rating: Optional[str] = None,
     media_type: Optional[str] = None,
+    shot_year: Optional[str] = None,
     q: Optional[str] = None,
     ids: Optional[str] = None,
     _tok: dict = Depends(require_scopes("videos_read")),
@@ -258,6 +278,17 @@ def list_media(
                 return False
             if media_type == "audio" and ext not in _AUDIO_EXTS:
                 return False
+            # Same class as H8/H14: a filter honoured only on the SQL path silently
+            # stops applying the moment the user types a query. Compare through
+            # db.shot_year so the two stored date shapes are read identically here
+            # and in SQL.
+            if shot_year:
+                y = db.shot_year(rec.get("creation_date"))
+                if shot_year == db.UNKNOWN_SHOT_YEAR:
+                    if y is not None:
+                        return False
+                elif y != str(shot_year):
+                    return False
             return True
 
         # Try semantic search first (requires vectordb with embeddings)
@@ -321,6 +352,17 @@ def list_media(
             elif media_type == "audio":
                 filter_sql += " AND ext IN ({0})".format(",".join("?" * len(_AUDIO_EXTS)))
                 filter_params.extend(sorted(_AUDIO_EXTS))
+            # Third place this filter has to exist. The degraded-search path is the
+            # one users hit when Ollama is down, and a filter that quietly stops
+            # applying exactly then is worse than one that never worked.
+            if shot_year == db.UNKNOWN_SHOT_YEAR:
+                filter_sql += (
+                    " AND (creation_date IS NULL OR TRIM(creation_date) = ''"
+                    " OR substr(creation_date,1,4) NOT GLOB '[0-9][0-9][0-9][0-9]')"
+                )
+            elif shot_year:
+                filter_sql += " AND substr(creation_date,1,4) = ?"
+                filter_params.append(str(shot_year))
             with db.get_conn() as conn:
                 rows = conn.execute(
                     f"SELECT {db.LIGHT_COLS} FROM media "
@@ -371,6 +413,8 @@ def list_media(
         filters["rating"] = rating
     if media_type:
         filters["media_type"] = media_type
+    if shot_year:
+        filters["shot_year"] = shot_year
 
     records, total = db.get_media_filtered(
         offset=offset, limit=limit, sort=sort, **filters,

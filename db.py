@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -710,7 +711,12 @@ LIGHT_COLS = (
     # fetch (these live in the DB but were absent from the list shape).
     "camera_make, camera_model, lens_model, reel_name, start_tc, codec, "
     # A-cam: multicam angle annotation, so list/grid views can group by camera.
-    "camera_id, angle"
+    "camera_id, angle, "
+    # Shoot date, for browsing footage by when it was filmed. Needed in the LIGHT
+    # shape specifically so the semantic-search branch can filter on it too: that
+    # branch filters enriched records rather than in SQL, and a column missing here
+    # is a filter that silently does nothing on ?q= — the shape of audit H8/H14.
+    "creation_date"
 )
 
 
@@ -1162,12 +1168,70 @@ def delete_media(media_id: int, _conn=None):
 
 # ── Enhanced Queries (Phase 4 UI) ─────────────────────────────────────────────
 
+# `media.creation_date` is the SHOOT date and it is stored raw, in whatever shape
+# the ingest path produced — `ingest.exiftool_extract` does `str(cdate)` with no
+# normalisation, and there are two writers:
+#
+#   exiftool (EXIF CreateDate)        -> "2025:10:03 13:56:20"     colon-separated
+#   XAVC NRT sidecar (parse_xavc_...) -> "2025-10-03T13:56:20+08:00"  ISO 8601
+#
+# Both happen to start with YYYY, which is why grouping by year via substr works on
+# either. Ordering does NOT: ':' (0x3A) sorts above '-' (0x2D), so a library holding
+# both shapes sorts wrong under a plain string comparison. Anything beyond "what
+# year" therefore goes through normalise_shot_date rather than touching the raw text.
+_SHOT_DATE_FORMATS = (
+    "%Y:%m:%d %H:%M:%S",   # exiftool default
+    "%Y-%m-%dT%H:%M:%S",   # ISO, timezone stripped by the caller
+    "%Y-%m-%d %H:%M:%S",
+    "%Y:%m:%d",
+    "%Y-%m-%d",
+)
+
+
+def normalise_shot_date(raw) -> Optional[str]:
+    """Raw `creation_date` -> ISO date `YYYY-MM-DD`, or None if it isn't a date.
+
+    Returning None (rather than a guess, or the raw string) is deliberate: a clip
+    whose shoot date can't be read must land in an explicit "unknown" bucket, not be
+    silently dropped from the facet or filed under a plausible-looking year.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    # Drop a trailing timezone offset / Z — the shoot DAY is what a date facet is
+    # about, and re-basing to UTC would move footage shot near midnight into the
+    # neighbouring day, which is exactly the grouping a DIT would call wrong.
+    text = re.sub(r"(?:Z|[+-]\d{2}:?\d{2})$", "", text).strip()
+    # Sub-second precision appears on some sidecars.
+    text = re.sub(r"\.\d+$", "", text)
+    for fmt in _SHOT_DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def shot_year(raw) -> Optional[str]:
+    """The 4-digit shoot year, or None when it can't be established."""
+    iso = normalise_shot_date(raw)
+    return iso[:4] if iso else None
+
+
+# The sidebar bucket for clips with no readable shoot date. Named rather than a bare
+# string so the filter and the facet can't drift apart on a typo.
+UNKNOWN_SHOT_YEAR = "unknown"
+
+
 def _build_filter_clause(
     min_duration: float = 0,
     max_duration: float = 99999,
     lang: Optional[str] = None,
     rating: Optional[str] = None,
     media_type: Optional[str] = None,
+    shot_year: Optional[str] = None,
 ) -> Tuple[str, List]:
     """Build WHERE clause and params for common filters."""
     clauses = ["duration_s >= ?", "duration_s <= ?"]
@@ -1186,7 +1250,44 @@ def _build_filter_clause(
         clauses.append("ext IN " + mediatypes.sql_in_literal(mediatypes.VIDEO_EXT))
     elif media_type == "audio":
         clauses.append("ext IN " + mediatypes.sql_in_literal(mediatypes.AUDIO_EXT))
+    if shot_year == UNKNOWN_SHOT_YEAR:
+        # "Show me the ones with no usable shoot date" has to be reachable, or those
+        # clips are invisible from the sidebar the moment any year is selected.
+        clauses.append(
+            "(creation_date IS NULL OR TRIM(creation_date) = '' "
+            "OR substr(creation_date,1,4) NOT GLOB '[0-9][0-9][0-9][0-9]')"
+        )
+    elif shot_year:
+        # Safe on both stored shapes: each is YYYY-prefixed (see the note above).
+        clauses.append("substr(creation_date,1,4) = ?")
+        params.append(str(shot_year))
     return " AND ".join(clauses), params
+
+
+def get_shoot_date_facets() -> dict:
+    """Year buckets for the sidebar's time entry point, newest first.
+
+    Counted in Python rather than `GROUP BY substr(...)` because a bucket must mean
+    "this clip really was shot in 2025", and the raw column also contains values that
+    only *look* like dates. Reads one column; trivial next to the ingest it describes.
+    """
+    with get_conn() as conn:
+        rows = conn.execute("SELECT creation_date FROM media").fetchall()
+    counts: Dict[str, int] = {}
+    unknown = 0
+    for row in rows:
+        year = shot_year(row["creation_date"])
+        if year is None:
+            unknown += 1
+        else:
+            counts[year] = counts.get(year, 0) + 1
+    return {
+        "years": [
+            {"year": y, "count": counts[y]} for y in sorted(counts, reverse=True)
+        ],
+        "unknown": unknown,
+        "total": len(rows),
+    }
 
 
 # fable-audit round-5 #12: every sort has a unique `, id` tiebreaker. Without it,

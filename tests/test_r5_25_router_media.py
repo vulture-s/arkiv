@@ -1,10 +1,11 @@
 """R5-25 (round-5 #51): media routes peeled to routers/media.py.
 
 The 14th router peeled — the clip-centric surface. Pins the split: the leaf module
-owns exactly the 19 media routes (list + per-clip sub-resources), server.py no
-longer defines them, the two specific routes (/api/media/pool + /api/media/
-position/{media_id}) precede the dynamic /api/media/{media_id} so it can't shadow
-them, and the shared bulk-fetch helpers are re-exported by identity from
+owns exactly the 20 media routes (list + per-clip sub-resources), server.py no
+longer defines them, the literal-segment routes (/api/media/pool,
+/api/media/position/{media_id}, /api/media/facets/shoot-date) precede the dynamic
+/api/media/{media_id} so it can't shadow them, and the shared bulk-fetch helpers
+are re-exported by identity from
 mediarecords (so structured_query / search_all — which stay in server — keep the
 SAME instance). Routes mounted + auth-guarded (401-not-404).
 """
@@ -18,6 +19,9 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _EXPECTED_ROUTES = {
     ("/api/media/position/{media_id}", "GET"),
     ("/api/media/pool", "GET"),
+    # Sidebar time entry point. Another literal segment that must be declared
+    # before the dynamic /api/media/{media_id}, same trap as `pool`.
+    ("/api/media/facets/shoot-date", "GET"),
     ("/api/media", "GET"),
     ("/api/media/{media_id}", "GET"),
     ("/api/media/{media_id}/waveform", "GET"),
@@ -44,7 +48,7 @@ def test_media_router_is_a_leaf_module():
     assert not re.search(r"^\s*from\s+server\b", src, re.M)
 
 
-def test_router_owns_exactly_the_19_media_routes():
+def test_router_owns_exactly_the_20_media_routes():
     import routers.media as rm
     pairs = {
         (r.path, m)
@@ -63,9 +67,11 @@ def test_specific_routes_precede_dynamic_media_id():
     paths = [r.path for r in rm.router.routes if getattr(r, "path", None)]
     i_pool = paths.index("/api/media/pool")
     i_position = paths.index("/api/media/position/{media_id}")
+    i_facets = paths.index("/api/media/facets/shoot-date")
     i_dynamic = paths.index("/api/media/{media_id}")
     assert i_pool < i_dynamic
     assert i_position < i_dynamic
+    assert i_facets < i_dynamic
 
 
 def test_shared_helpers_are_reexported_by_identity():
