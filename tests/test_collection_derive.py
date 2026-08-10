@@ -222,3 +222,66 @@ def test_a_stale_collection_recovers_on_a_later_run():
     existing = [{"key": "topic_a", "title": "甲", "tags": ["a", "b", "c", "d"], "stale": True}]
     out = cd.merge_proposal(existing, [{"key": "topic_a", "title": "甲", "tags": ["a", "b", "c", "d"]}])
     assert "stale" not in out[0]
+
+
+# ───────────────── regressions from the 2026-08-10 Codex audit ─────────────────
+
+def _with_alias_map(tmp_path, monkeypatch, groups):
+    import json
+    import config
+    import tag_aliases
+    amap = tmp_path / "tag_aliases.json"
+    amap.write_text(json.dumps({"version": 1, "groups": groups}, ensure_ascii=False),
+                    encoding="utf-8")
+    monkeypatch.setattr(config, "TAG_ALIASES_PATH", amap)
+    tag_aliases._CACHE["mtime"] = None
+    return tag_aliases
+
+
+def test_two_spellings_of_one_concept_are_one_hit_not_two(tmp_path, monkeypatch):
+    """BLOCKER. A collection listing both spellings of one concept gave a clip
+    carrying only that concept TWO hits against a denominator of four — 0.583, a
+    member on a single concept, which is exactly what the 4..14 band exists to
+    prevent. Both sides of the ratio now count folded concepts, so a duplicate
+    spelling changes nothing."""
+    aliases = _with_alias_map(tmp_path, monkeypatch,
+                              [{"pref": "黑膠唱片", "alts": ["黑膠唱盤"]}])
+    clip = {"duration_s": 3, "has_audio": 1, "tags": ["黑膠唱片"]}
+    with_dup = sc.Collection(key="topic_x", title="t", category="topic",
+                             tags=("黑膠唱片", "黑膠唱盤", "唱針", "唱片架"))
+    without = sc.Collection(key="topic_y", title="t", category="topic",
+                            tags=("黑膠唱片", "唱針", "唱片架"))
+    assert sc.score_collection(clip, with_dup) == sc.score_collection(clip, without)
+    aliases._CACHE["mtime"] = None
+
+
+def test_booster_tag_conditions_fold_like_everything_else():
+    """CONCERN. sig["tags"] is folded, so an unfolded booster condition silently
+    never fires (any_tags/all_tags) or always fires (no_tags)."""
+    sig = sc.media_signal({"duration_s": 3, "has_audio": 1, "tags": ["吧檯"]})
+    assert sig["tags"] == {"吧台"}
+    assert sc._booster_applies(sc.Booster(boost=0.1, any_tags=["吧檯"]), sig)
+    assert sc._booster_applies(sc.Booster(boost=0.1, all_tags=["吧檯"]), sig)
+    assert not sc._booster_applies(sc.Booster(boost=0.1, no_tags=["吧檯"]), sig)
+
+
+def test_merge_proposal_keeps_the_first_duplicate_like_the_loader():
+    """BLOCKER. A dict comprehension kept the LAST duplicate while the loader keeps
+    the first, so re-running derivation silently swapped which definition was
+    effective — a rename, from the function whose whole job is preventing them."""
+    existing = [
+        {"key": "topic_dup", "title": "原名", "tags": ["a", "b", "c", "d"]},
+        {"key": "topic_dup", "title": "新名", "tags": ["e", "f", "g", "h"]},
+    ]
+    assert [e["title"] for e in cd.merge_proposal(existing, [])] == ["原名"]
+
+
+def test_validate_candidate_counts_concepts_not_tag_strings(tmp_path, monkeypatch):
+    """The k-band gate must measure what the scorer measures."""
+    aliases = _with_alias_map(tmp_path, monkeypatch,
+                              [{"pref": "甲", "alts": ["甲2", "甲3"]}])
+    col = sc.Collection(key="topic_z", title="t", category="topic",
+                        tags=("甲", "甲2", "甲3", "乙", "丙"))  # 5 strings, 3 concepts
+    stats, why = cd.validate_candidate(col, _three_topic_library())
+    assert stats is None and "k=3" in why
+    aliases._CACHE["mtime"] = None

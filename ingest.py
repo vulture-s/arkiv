@@ -1641,6 +1641,34 @@ def _run_propose_aliases(args):
     print("Review/edit that file, then: python ingest.py --apply-aliases")
 
 
+def _atomic_write_json(path, payload):
+    """Write JSON via a temp file + os.replace, so the target is never truncated.
+
+    `Path.write_text` opens with O_TRUNC: a disk-full, a kill, or an encoding
+    error partway through leaves a half-written file where a valid configuration
+    used to be. os.replace is atomic within a filesystem, so a reader sees either
+    the old file or the new one.
+    """
+    import json as _json
+    import os as _os
+    import tempfile as _tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = _tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as fh:
+            _json.dump(payload, fh, ensure_ascii=False, indent=2)
+            fh.flush()
+            _os.fsync(fh.fileno())
+        _os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            _os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 _THEME_JUDGE_PROMPT = (
     "以下是一組經常一起出現在同一支影片裡的標籤。請判斷它們是否構成一個「可以拿來瀏覽素材的主題」，"
     "如果是，取一個簡短的中文名稱（不超過 12 字），並從清單裡挑出真正屬於這個主題的標籤。"
@@ -1739,14 +1767,48 @@ def _run_propose_collections(args):
     """
     import json as _json
 
+    def _write_proposal(candidates):
+        """Merge candidates over whatever is live and write the proposal file."""
+        existing, existing_disable = [], []
+        src = config.COLLECTIONS_PATH
+        if src.exists():
+            try:
+                prev = _json.loads(src.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                prev = None
+            if isinstance(prev, dict):
+                raw_prev = prev.get("collections")
+                if isinstance(raw_prev, list):
+                    existing = [e for e in raw_prev if isinstance(e, dict)]
+                raw_disable = prev.get("disable")
+                if isinstance(raw_disable, list):
+                    existing_disable = [k for k in raw_disable if isinstance(k, str)]
+        merged = collection_defs.merge_proposal(existing, candidates)
+        payload = {"version": collection_defs.FORMAT_VERSION, "collections": merged}
+        if existing_disable:
+            payload["disable"] = existing_disable
+        _atomic_write_json(config.COLLECTIONS_PROPOSED_PATH, payload)
+        return merged
+
     min_freq = getattr(args, "collection_min_tag_count", 3) or 3
     min_members = getattr(args, "collection_min_members", 4) or 4
     max_share = getattr(args, "collection_max_share", 0.35) or 0.35
     dry_run = bool(getattr(args, "collection_dry_run", False))
 
+    # An early return used to leave a previous proposal file sitting on disk, so a
+    # later --apply-collections could activate definitions derived from a library
+    # state that no longer exists. Every exit path from here on writes the
+    # proposal, even when it is empty — "this derivation found nothing" is a
+    # result, and it must overwrite the one that found something.
+    def _bail(message):
+        print(message)
+        _write_proposal([])
+        print("Wrote an empty proposal → {0} (any earlier proposal is now superseded)."
+              .format(config.COLLECTIONS_PROPOSED_PATH))
+
     records = collection_defs.classification_records()
     if not records:
-        print("Library is empty — nothing to derive.")
+        _bail("Library is empty — nothing to derive.")
         return
 
     vocab, docs, rejected = collection_defs.derivable_vocabulary(records, min_freq)
@@ -1754,7 +1816,7 @@ def _run_propose_collections(args):
     if rejected:
         print("  pruned: " + "  ".join("{0}={1}".format(k, v) for k, v in sorted(rejected.items())))
     if len(vocab) < collection_defs.MIN_DERIVED_TAGS:
-        print("Too few derivable tags — nothing to propose.")
+        _bail("Too few derivable tags — nothing to propose.")
         return
 
     clusters = collection_defs.cooccurrence_clusters(vocab, docs)
@@ -1785,22 +1847,9 @@ def _run_propose_collections(args):
         print("    {0:<20} KEPT  members={1} share={2:.0%}  {3}".format(
             title[:20], stats["members_at_build"], stats["share"], "、".join(tags)))
 
-    # Re-running must never silently rename or drop a collection already in use.
-    existing = []
-    src = config.COLLECTIONS_PATH
-    if src.exists():
-        try:
-            prev = _json.loads(src.read_text(encoding="utf-8"))
-            if isinstance(prev, dict):
-                existing = [e for e in (prev.get("collections") or []) if isinstance(e, dict)]
-        except (ValueError, OSError):
-            existing = []
-    merged = collection_defs.merge_proposal(existing, candidates)
-
-    payload = {"version": collection_defs.FORMAT_VERSION, "collections": merged}
-    config.COLLECTIONS_PROPOSED_PATH.parent.mkdir(parents=True, exist_ok=True)
-    config.COLLECTIONS_PROPOSED_PATH.write_text(
-        _json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Re-running must never silently rename or drop a collection already in use,
+    # and must carry `disable` through — see _write_proposal.
+    merged = _write_proposal(candidates)
 
     fresh = len([c for c in merged if c.get("key") in {x["key"] for x in candidates}])
     stale = len([c for c in merged if c.get("stale")])
@@ -1839,21 +1888,39 @@ def _run_apply_collections(args):
         print("Proposal malformed (top level is {0}, expected an object) — not applying."
               .format(type(data).__name__))
         sys.exit(1)
+    if data.get("version") != collection_defs.FORMAT_VERSION:
+        # The loader treats an unknown version as absent; apply must not quietly
+        # downgrade a future-format proposal by rewriting it as v1.
+        print("Proposal is version {0!r}, expected {1} — not applying."
+              .format(data.get("version"), collection_defs.FORMAT_VERSION))
+        sys.exit(1)
 
     raw_entries = data.get("collections")
-    raw_entries = raw_entries if isinstance(raw_entries, list) else []
-    clean, dropped = [], 0
-    for entry in raw_entries:
+    if not isinstance(raw_entries, list):
+        print("Proposal malformed (`collections` is {0}, expected a list) — not applying."
+              .format(type(raw_entries).__name__))
+        sys.exit(1)
+
+    clean, invalid = [], []
+    for idx, entry in enumerate(raw_entries):
         # Reuse the loader's validator: it already treats this file as untrusted,
         # so apply and load can never disagree about what a valid entry is.
         if collection_defs._entry_to_collection(entry) is None:
-            dropped += 1
+            key = entry.get("key") if isinstance(entry, dict) else None
+            invalid.append("#{0}{1}".format(idx, " ({0})".format(key) if key else ""))
             continue
         clean.append({k: v for k, v in entry.items() if k != "stale"})
 
+    if invalid:
+        # All-or-nothing. Dropping the bad entries and exiting 0 would report
+        # success for a partial application of a file the human reviewed as a
+        # whole — the reviewer approved a set, not a subset.
+        print("Proposal has {0} invalid entr{1} ({2}) — not applying.".format(
+            len(invalid), "y" if len(invalid) == 1 else "ies", ", ".join(invalid)))
+        print("Fix or remove them and re-run; nothing was written.")
+        sys.exit(1)
     if not clean:
-        print("Proposal contains no valid collections ({0} entries dropped) — not applying."
-              .format(dropped))
+        print("Proposal contains no collections — not applying.")
         sys.exit(1)
 
     disable = [k for k in (data.get("disable") or [])
@@ -1861,14 +1928,10 @@ def _run_apply_collections(args):
     payload = {"version": collection_defs.FORMAT_VERSION, "collections": clean}
     if disable:
         payload["disable"] = disable
-    config.COLLECTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    config.COLLECTIONS_PATH.write_text(
-        _json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_json(config.COLLECTIONS_PATH, payload)
     collection_defs._CACHE["mtime"] = None  # take effect without a restart
 
-    print("Applied {0} collection(s){1} → {2}".format(
-        len(clean), " ({0} dropped as invalid)".format(dropped) if dropped else "",
-        config.COLLECTIONS_PATH))
+    print("Applied {0} collection(s) → {1}".format(len(clean), config.COLLECTIONS_PATH))
     print("Sidebar picks them up on next /api/collections (file auto-reloads on change).")
 
 

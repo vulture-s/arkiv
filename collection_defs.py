@@ -490,9 +490,14 @@ def validate_candidate(
     carries no information. The floor is the other half — a 2-clip collection
     costs a permanent sidebar row and saves nobody any scrolling.
     """
-    if not (MIN_DERIVED_TAGS <= len(col.tags) <= MAX_DERIVED_TAGS):
+    # Count what the scorer counts: distinct CONCEPTS after alias folding, not tag
+    # strings. Derived candidates come from an already-folded vocabulary so the two
+    # agree there, but reading len(col.tags) would let a hand-edited or
+    # re-validated collection be gated on a number the engine does not use.
+    k = len({smart_collections.fold_tag(t) for t in col.tags})
+    if not (MIN_DERIVED_TAGS <= k <= MAX_DERIVED_TAGS):
         return None, "k={0} outside [{1},{2}]".format(
-            len(col.tags), MIN_DERIVED_TAGS, MAX_DERIVED_TAGS)
+            k, MIN_DERIVED_TAGS, MAX_DERIVED_TAGS)
 
     members = set(candidate_members(col, records))
     library = len([r for r in records if r.get("id") is not None])
@@ -544,7 +549,15 @@ def merge_proposal(
     Hysteresis is the point — an ingest that temporarily pushes a collection
     below the floor should not delete a definition that the next ingest restores.
     """
-    by_key = {e.get("key"): dict(e) for e in existing if isinstance(e, dict) and e.get("key")}
+    # FIRST wins on a duplicate key, matching the loader (`_read_file` keeps the
+    # first and skips the rest). A dict comprehension here kept the LAST, so
+    # merely re-running derivation over a file with a duplicated key silently
+    # swapped which definition was effective — a rename, which this function
+    # exists to prevent.
+    by_key: Dict[Any, Dict[str, Any]] = {}
+    for e in existing:
+        if isinstance(e, dict) and e.get("key") and e["key"] not in by_key:
+            by_key[e["key"]] = dict(e)
     fresh_keys = {c["key"] for c in candidates}
 
     for key, entry in by_key.items():

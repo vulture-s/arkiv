@@ -167,16 +167,23 @@ def media_signal(media: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _booster_applies(b: Booster, sig: Dict[str, Any]) -> bool:
+    # Booster tag fields fold through the same normaliser as Collection.tags and
+    # Collection.exclude_tags. Missed on the first pass: sig["tags"] is folded, so
+    # a booster written `any_tags=["吧檯"]` silently never fired once the clip's
+    # 吧檯 became 吧台 — the third side of a comparison that was supposed to have
+    # two. No shipped collection uses boosters and the file format deliberately
+    # cannot express them, so nothing in production was affected; left unfixed it
+    # would have been a trap for whoever added the first one.
     tags = sig["tags"]
     if b.min_duration is not None and sig["duration_s"] < b.min_duration:
         return False
     if b.has_audio is not None and sig["has_audio"] != b.has_audio:
         return False
-    if b.all_tags and not all(t in tags for t in b.all_tags):
+    if b.all_tags and not all(fold_tag(t) in tags for t in b.all_tags):
         return False
-    if b.any_tags and not any(t in tags for t in b.any_tags):
+    if b.any_tags and not any(fold_tag(t) in tags for t in b.any_tags):
         return False
-    if b.no_tags and any(t in tags for t in b.no_tags):
+    if b.no_tags and any(fold_tag(t) in tags for t in b.no_tags):
         return False
     if b.content_types and not (set(b.content_types) & sig["content_types"]):
         return False
@@ -217,14 +224,23 @@ def score_collection(
 
     # Base signal: fraction of the collection's vocabulary the item hits, but
     # rewarded by absolute overlap too (so a 1-of-8 hit isn't as strong as 4-of-8).
-    if not col.tags:
+    #
+    # Count CONCEPTS, not spellings. Folding is what makes this necessary: a
+    # collection listing ["黑膠唱片", "黑膠唱盤", "唱針", "唱片架"] with 黑膠唱盤
+    # aliased to 黑膠唱片 has three concepts written as four tags, and counting
+    # per-tag gave a clip carrying only 黑膠唱片 two hits out of a denominator of
+    # four — 0.583, a member on ONE concept. That silently broke the guarantee the
+    # whole 4..14 band exists to provide, using the very folding introduced to make
+    # membership work. Dedupe both sides of the ratio so k is the concept count.
+    folded_col_tags = {fold_tag(t) for t in col.tags}
+    if not folded_col_tags:
         base = 0.0
     else:
-        hits = sum(1 for t in col.tags if fold_tag(t) in sig["tags"])
+        hits = len(folded_col_tags & sig["tags"])
         if hits == 0:
             base = 0.0
         else:
-            coverage = hits / len(col.tags)  # 0..1
+            coverage = hits / len(folded_col_tags)  # 0..1
             # saturating reward for raw hits: 1 hit→0.5, 2→0.67, 3→0.75, 4→0.8...
             depth = hits / (hits + 1)
             base = col.tag_weight * (0.5 * coverage + 0.5 * depth)

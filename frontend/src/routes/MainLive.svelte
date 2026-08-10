@@ -313,7 +313,15 @@
   // filter already handles. Clicking the active pool toggles back to all.
   function onPoolClick(label) {
     activeCamera = null
-    if (label === 'All media') { activeRating = null; activeFilter = 'all'; return }
+    if (label === 'All media') {
+      activeRating = null
+      activeFilter = 'all'
+      // "All media" has to actually leave a collection. Clearing only the rating
+      // filters left the grid showing the collection subset with its sidebar row
+      // still highlighted, while the user had just asked for the whole library.
+      if (activeCollection || query) { query = ''; load() }
+      return
+    }
     const map = { 'Needs review': 'rev', 'Rated good': 'good', 'N·G': 'ng', 'Unrated': 'none' }
     const target = map[label]
     if (target === undefined) return
