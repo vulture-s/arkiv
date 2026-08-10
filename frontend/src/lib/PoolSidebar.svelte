@@ -10,6 +10,7 @@
   export let onTag = null // (name) => void; live tag-click → filter
   export let liveCollections = null // [{key,title,count,items}]; null → section hidden
   export let onCollection = null // (collection) => void; click → filter to members
+  export let activeCollection = null // currently-filtered collection key (row highlight)
   export let liveBins = null // [{id,name,item_count}] cross-library 精選集; null → section hidden
   export let onBin = null // (bin) => void; click → open the bin
   export let liveStorage = null // {pct, used_gb, total_gb} from /api/stats.disk; null → mock placeholder
@@ -34,6 +35,15 @@
   const TAG_CAP = 24
   let showAllTags = false
   $: visibleTags = showAllTags ? tags : tags.slice(0, TAG_CAP)
+  // Same treatment for collections. Uncapped, a project that derives a dozen
+  // topical collections pushes Storage off the bottom of the sidebar; the tag
+  // cloud already solved this, so reuse the shape rather than invent one.
+  // Collections arrive count-desc from the API, so the head is the useful slice.
+  const COLLECTION_CAP = 12
+  let showAllCollections = false
+  $: visibleCollections = showAllCollections
+    ? (liveCollections || [])
+    : (liveCollections || []).slice(0, COLLECTION_CAP)
   // Storage footer: real disk usage when wired (live), else the design placeholder.
   const gb = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
   $: storage = liveStorage
@@ -93,14 +103,21 @@
     <section>
       <Eyebrow style="margin-bottom:10px;">Smart Collections · auto</Eyebrow>
       <div class="col">
-        {#each liveCollections as c (c.key)}
+        {#each visibleCollections as c (c.key)}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-          <div class="poolrow collrow" on:click={() => onCollection && onCollection(c)}>
+          <div class="poolrow collrow" class:activecoll={activeCollection === c.key}
+            on:click={() => onCollection && onCollection(c)}>
             <span class="ellip">{c.title}</span>
             <Mono dim style="font-size:10px;flex:0 0 auto;">{c.count}</Mono>
           </div>
         {/each}
       </div>
+      {#if liveCollections.length > COLLECTION_CAP}
+        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+        <span class="moretag" on:click={() => (showAllCollections = !showAllCollections)}>
+          {showAllCollections ? '收合' : `+${liveCollections.length - COLLECTION_CAP} 更多`}
+        </span>
+      {/if}
     </section>
   {/if}
 
@@ -177,7 +194,9 @@
   .clickpool { border-left: 2px solid transparent; }
   .clickpool:hover { color: var(--ink); }
   .poolrow.activepool { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }
+  .collrow { border-left: 2px solid transparent; }
   .collrow:hover { color: var(--ink); }
+  .collrow.activecoll { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }
   .camrow { border-left: 2px solid transparent; }
   .camrow:hover { color: var(--ink); }
   .camrow.activecam { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }

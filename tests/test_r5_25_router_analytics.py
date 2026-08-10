@@ -144,6 +144,33 @@ def test_collections_surfaces_a_project_defined_collection(
     collection_defs._CACHE["mtime"] = None
 
 
+def test_collection_items_carry_the_real_rating(fastapi_client):
+    """The grid builds collection cards straight from these items with no
+    /api/media re-fetch, so a rating missing here is a rating the user sees as
+    absent. The frontend used to fill the gap with a hardcoded 'none', which made
+    every rated clip look unrated the moment a collection was opened."""
+    import importlib
+    db = importlib.import_module("db")
+    _seed_clip(db, "rated.mp4")
+    _seed_clip(db, "unrated.mp4")
+    # a-roll membership is tag-driven, so clip 1 stays in a collection after being
+    # rated — 待審查 is the unrated predicate and would drop it.
+    db.add_tag(1, "a-roll", "manual")
+    db.add_tag(2, "a-roll", "manual")
+    db.set_rating(1, "good")
+
+    r = fastapi_client.get("/api/collections")
+    assert r.status_code == 200, r.text
+    items = {}
+    for col in r.json()["collections"]:
+        for it in col["items"]:
+            items.setdefault(it["id"], it)
+
+    assert "rating" in items[1], "collection items must expose rating"
+    assert items[1]["rating"] == "good"
+    assert items[2]["rating"] is None
+
+
 def test_malformed_collections_file_does_not_break_the_endpoint(
     fastapi_client, tmp_path, monkeypatch
 ):

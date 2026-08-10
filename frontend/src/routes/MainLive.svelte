@@ -243,6 +243,10 @@
   }
 
   async function load() {
+    // load() means "show the whole library again", so no collection is active.
+    // Clearing here rather than in each caller keeps the highlight honest on
+    // every path back out (search cleared, pool picked, initial mount).
+    activeCollection = null
     state = 'loading'
     readyState = 'checking'
     readyState = await checkReady()
@@ -324,6 +328,16 @@
     : activeRating === 'none' ? 'Unrated'
     : 'All media'
   function onCollectionClick(col) {
+    // Clicking the active collection toggles back to the full library, matching
+    // onCameraClick / onPoolClick. Without this there is no way out of a
+    // collection except picking a different filter — and with the sidebar row now
+    // highlighted, a user reasonably expects clicking it again to undo it.
+    if (activeCollection === col.key) {
+      activeCollection = null
+      query = ''
+      load()
+      return
+    }
     query = ''
     activeCamera = null
     activeCollection = col.key
@@ -331,7 +345,11 @@
       id: it.id,
       name: it.filename || `#${it.id}`,
       kind: 'video',
-      rating: 'none',
+      // Through the same converter the normal grid uses. This used to be a
+      // hardcoded 'none', which made every rated clip look unrated the moment you
+      // opened a collection — data appearing to vanish, on what this release turns
+      // into a primary browse path.
+      rating: ratingToUi(it.rating),
       dur: fmtDurS(it.duration_s),
       size: '—',
       thumb: it.thumb || null, // already a root-relative /thumbnails/<name> path
@@ -366,6 +384,9 @@
   async function runSearch() {
     if (!query.trim()) return load()
     activeCamera = null
+    // Leaving the collection view: clear the highlight too, or the sidebar keeps
+    // claiming a collection is active while the grid shows search results.
+    activeCollection = null
     state = 'loading'
     try {
       // Same-DB search via /api/media?q= → {items, total, search:true}.
@@ -703,7 +724,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} onTag={onTagClick} onCollection={onCollectionClick} onCamera={onCameraClick} {activeCamera} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
 
     <main class="center">
       <div class="toolrow">

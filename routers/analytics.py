@@ -118,6 +118,12 @@ def list_collections(
                 "filename": rec.get("filename"),
                 "thumb": _thumb_url(rec.get("thumbnail_path")),
                 "duration_s": rec.get("duration_s"),
+                # The grid builds its cards straight from these items (no
+                # /api/media re-fetch), so a rating omitted here is a rating the
+                # user sees as absent. It was already in the narrow SELECT for the
+                # 待審查 predicate — it just never reached the client, and the
+                # frontend filled the gap with a hardcoded 'none'.
+                "rating": rec.get("rating"),
                 "score": hit["score"],
             })
 
