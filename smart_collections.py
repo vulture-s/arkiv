@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import geo
+import tag_aliases
+import tag_quality
 
 MIN_CONFIDENCE = 0.40
 
@@ -67,6 +69,34 @@ class Collection:
     predicate: Optional[Callable[[Dict[str, Any]], bool]] = None
 
 
+def fold_tag(name: Any) -> str:
+    """Normalize one tag the same way on both sides of a membership test.
+
+    Character-canonicalise (裏→裡, 羣→群, Simplified→Traditional) then fold to the
+    reviewed preferred label from `.arkiv/tag_aliases.json`.
+
+    Why membership needs this at all: scoring is an exact string comparison
+    (`t in sig["tags"]`), and this module used to import neither tag_quality nor
+    tag_aliases. So a clip tagged 黑膠唱盤 scored 0.0 against a collection listing
+    黑膠唱片 — the same object, no overlap. Running `ingest --apply-aliases` folded
+    the tag *cloud* in /api/tags and did nothing whatsoever to collection
+    membership, which is the surface where it actually changes what a user sees.
+
+    Both the clip's tags and the collection's tags go through here, so a fold is a
+    no-op when no alias map exists (`to_pref` returns the input unchanged) and the
+    shipped behaviour is preserved on a project that never ran the alias pass.
+
+    NOTE the deliberate asymmetry with `tag_aliases.expand()`: folding happens on
+    the CLIP side, never by expanding a collection's tag list to include every
+    alt spelling. Expansion would inflate len(col.tags) — on this library's vinyl
+    ring, from ~4 to ~22 — and `0.5*(2/22) + 0.5*(2/3) = 0.379` falls below
+    MIN_CONFIDENCE, so a clip matching two spellings would stop being a member.
+    Folding keeps the tag list short AND makes "2 hits" mean two genuinely
+    different concepts rather than two spellings of one.
+    """
+    return tag_aliases.to_pref(tag_quality.canonicalize(str(name)))
+
+
 def media_signal(media: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize a raw media row (dict) into the flat signal the scorer uses.
 
@@ -91,9 +121,9 @@ def media_signal(media: Dict[str, Any]) -> Dict[str, Any]:
         for t in raw_tags:
             if isinstance(t, dict):  # [{'name': 'x'}, ...] from /api/media
                 if t.get("name"):
-                    tags.add(str(t["name"]))
+                    tags.add(fold_tag(t["name"]))
             elif t:
-                tags.add(str(t))
+                tags.add(fold_tag(t))
 
     # per-frame metadata: prefer explicit 'frames', fall back to 'frame_tags' JSON
     frames = media.get("frames")
@@ -111,7 +141,7 @@ def media_signal(media: Dict[str, Any]) -> Dict[str, Any]:
             continue
         for t in fr.get("tags") or []:
             if t:
-                tags.add(str(t))
+                tags.add(fold_tag(t))
         if fr.get("content_type"):
             content_types.add(str(fr["content_type"]))
         if fr.get("atmosphere"):
@@ -157,19 +187,32 @@ def _booster_applies(b: Booster, sig: Dict[str, Any]) -> bool:
     return True
 
 
-def score_collection(media: Dict[str, Any], col: Collection) -> float:
-    """Score a media item against one collection. 0.0 = no signal / hard-rejected."""
+def score_collection(
+    media: Dict[str, Any],
+    col: Collection,
+    sig: Optional[Dict[str, Any]] = None,
+) -> float:
+    """Score a media item against one collection. 0.0 = no signal / hard-rejected.
+
+    `sig` lets a caller scoring many collections against one clip compute the
+    signal once — `media_signal` re-parses the `frame_tags` JSON blob every call,
+    so classify() used to pay that per collection. Left optional so the existing
+    two-argument callers (and every test) keep working unchanged.
+    """
     # Structural collections: membership is the predicate, not tag overlap.
     if col.predicate is not None:
         return 1.0 if col.predicate(media) else 0.0
-    sig = media_signal(media)
+    if sig is None:
+        sig = media_signal(media)
 
-    # Hard filters (membership gates).
+    # Hard filters (membership gates). Collection-side tags fold through the same
+    # normaliser as the clip's — folding only one side would trade the old
+    # mismatch for a new one.
     if col.min_duration is not None and sig["duration_s"] < col.min_duration:
         return 0.0
     if col.require_audio is not None and sig["has_audio"] != col.require_audio:
         return 0.0
-    if col.exclude_tags and (set(col.exclude_tags) & sig["tags"]):
+    if col.exclude_tags and ({fold_tag(t) for t in col.exclude_tags} & sig["tags"]):
         return 0.0
 
     # Base signal: fraction of the collection's vocabulary the item hits, but
@@ -177,7 +220,7 @@ def score_collection(media: Dict[str, Any], col: Collection) -> float:
     if not col.tags:
         base = 0.0
     else:
-        hits = sum(1 for t in col.tags if t in sig["tags"])
+        hits = sum(1 for t in col.tags if fold_tag(t) in sig["tags"])
         if hits == 0:
             base = 0.0
         else:
@@ -202,8 +245,11 @@ def classify(media: Dict[str, Any], collections: Sequence[Collection]) -> List[D
     Each result: {key, title, category, score}. Non-exclusive (can be many).
     """
     out = []
+    # One signal for the whole sweep: media_signal re-parses frame_tags JSON, and
+    # this runs over the full library on every /api/collections call.
+    sig = media_signal(media)
     for col in collections:
-        s = score_collection(media, col)
+        s = score_collection(media, col, sig)
         if s >= MIN_CONFIDENCE:
             out.append({"key": col.key, "title": col.title, "category": col.category, "score": round(s, 4)})
     out.sort(key=lambda r: r["score"], reverse=True)

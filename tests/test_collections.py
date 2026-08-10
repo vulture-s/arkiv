@@ -7,7 +7,11 @@ qwen3-vl tag fixtures (C37xx) still exercise the tag engine + media_signal.
 """
 from __future__ import annotations
 
+import json
+
+import config
 import smart_collections as sc
+import tag_aliases
 
 
 # ── real fixtures (tags verified vs live DB) ─────────────────────────────────
@@ -127,9 +131,90 @@ def test_signal_parses_frame_tags_json_string():
 
 
 def test_signal_parses_api_tag_dicts():
+    """The /api/media shape ([{'name': ...}]) parses, and tags land canonicalised.
+
+    `吧檯` arrives as `吧台`: media_signal now folds every tag through
+    tag_quality.canonicalize + tag_aliases.to_pref, because scoring is an exact
+    string comparison and the variant spellings would otherwise never match.
+    The collection's own tags fold identically, so this is not a new mismatch —
+    see test_variant_spelling_matches_a_collection below.
+    """
     raw = {"duration_s": 3, "has_audio": 1, "tags": [{"name": "吧檯"}, {"name": "室內"}]}
     sig = sc.media_signal(raw)
-    assert sig["tags"] == {"吧檯", "室內"}
+    assert sig["tags"] == {"吧台", "室內"}
+
+
+def test_variant_spelling_matches_a_collection():
+    """The point of folding: 檯/台 are the same word, so a clip tagged one way
+    must join a collection written the other way. Before folding this scored 0.0
+    — exact string comparison against an un-normalised tag set."""
+    clip = {"duration_s": 3, "has_audio": 1, "tags": ["吧檯"]}
+    col = sc.Collection(key="t", title="t", category="c", tags=["吧台"])
+    assert sc.score_collection(clip, col) >= sc.MIN_CONFIDENCE
+
+    # ...and symmetrically, with the spellings swapped.
+    clip2 = {"duration_s": 3, "has_audio": 1, "tags": ["吧台"]}
+    col2 = sc.Collection(key="t", title="t", category="c", tags=["吧檯"])
+    assert sc.score_collection(clip2, col2) >= sc.MIN_CONFIDENCE
+
+
+def test_folding_is_a_noop_without_an_alias_map():
+    """A project that never ran `ingest --apply-aliases` must behave exactly as
+    before. tag_aliases.to_pref returns its input unchanged when no map is
+    active, so only character canonicalisation applies."""
+    assert not tag_aliases.is_active()
+    assert sc.fold_tag("黑膠唱盤") == "黑膠唱盤"
+    clip = {"duration_s": 3, "has_audio": 1, "tags": ["黑膠唱盤"]}
+    col = sc.Collection(key="t", title="t", category="c", tags=["黑膠唱片"])
+    assert sc.score_collection(clip, col) == 0.0  # unrelated strings stay unrelated
+
+
+def test_alias_map_makes_a_synonym_a_member(tmp_path, monkeypatch):
+    """The regression this whole change exists for: with a reviewed alias map,
+    a clip tagged 黑膠唱盤 joins a collection listing 黑膠唱片. Before this change
+    `smart_collections` imported neither tag_aliases nor tag_quality, so
+    `ingest --apply-aliases` folded the tag cloud and left membership untouched.
+    """
+    amap = tmp_path / "tag_aliases.json"
+    amap.write_text(json.dumps({
+        "version": 1,
+        "groups": [{"pref": "黑膠唱片", "alts": ["黑膠唱盤", "黑膠唱機", "唱盤"]}],
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(config, "TAG_ALIASES_PATH", amap)
+    tag_aliases._CACHE["mtime"] = None  # bust the mtime cache
+
+    col = sc.Collection(key="t", title="t", category="c", tags=["黑膠唱片"])
+    for spelling in ("黑膠唱盤", "黑膠唱機", "唱盤", "黑膠唱片"):
+        clip = {"duration_s": 3, "has_audio": 1, "tags": [spelling]}
+        assert sc.score_collection(clip, col) >= sc.MIN_CONFIDENCE, spelling
+
+    tag_aliases._CACHE["mtime"] = None  # don't leak the map into later tests
+
+
+def test_two_spellings_of_one_concept_are_not_two_hits(tmp_path, monkeypatch):
+    """Folding on the CLIP side (not by expanding the collection's tag list) is
+    what makes "2 hits" mean two different concepts. A clip carrying three
+    spellings of the same object must not clear a 2-hit gate on its own."""
+    amap = tmp_path / "tag_aliases.json"
+    amap.write_text(json.dumps({
+        "version": 1,
+        "groups": [{"pref": "黑膠唱片", "alts": ["黑膠唱盤", "黑膠唱機"]}],
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(config, "TAG_ALIASES_PATH", amap)
+    tag_aliases._CACHE["mtime"] = None
+
+    # 4 tags → needs 2 hits. All three clip tags fold to ONE concept.
+    col = sc.Collection(key="t", title="t", category="c",
+                        tags=["黑膠唱片", "唱針", "轉盤", "唱片架"])
+    clip = {"duration_s": 3, "has_audio": 1,
+            "tags": ["黑膠唱片", "黑膠唱盤", "黑膠唱機"]}
+    assert sc.score_collection(clip, col) < sc.MIN_CONFIDENCE
+
+    # add a genuinely different concept → now it is a member
+    clip2 = dict(clip, tags=clip["tags"] + ["唱針"])
+    assert sc.score_collection(clip2, col) >= sc.MIN_CONFIDENCE
+
+    tag_aliases._CACHE["mtime"] = None
 
 
 def test_min_duration_hard_filter():
