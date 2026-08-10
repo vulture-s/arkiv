@@ -7,7 +7,7 @@ fastapi>=0.140.6
 uvicorn>=0.52.1
 pydantic>=2.0,<3
 chromadb>=1.0,<2
-requests>=2.28
+requests>=2.34.2
 xxhash>=3.8.1
 nanoid>=2.0.0
 # (pandas removed — it was an unused ~70 MB dependency, imported nowhere.)
