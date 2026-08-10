@@ -11,6 +11,40 @@ plain JSON in the project data dir, readable, diffable, hand-editable, and
 reversible by deleting it. `ingest --propose-collections` writes a proposal
 alongside it; nothing here requires that generator to have run.
 
+File shape (`.arkiv/collections.json`)::
+
+    {
+      "version": 1,
+      "disable": ["b_roll"],
+      "collections": [
+        {
+          "key": "topic_9f2a1c3d",      // ^(topic|custom)_[A-Za-z0-9_]{1,40}$
+          "title": "黑膠與唱盤",          // shown in the sidebar, <= 32 chars
+          "category": "topic",          // free label; "topic" if omitted
+          "tags": ["黑膠唱片", "唱針", "轉盤", "唱片架"],
+          "exclude_tags": [],           // optional: any present -> not a member
+          "min_duration": null,         // optional seconds
+          "require_audio": null,        // optional bool
+          "origin": "derived",          // bookkeeping only; ignored on load
+          "derived": {                  // bookkeeping only; written by --propose
+            "members_at_build": 17, "library_at_build": 54, "share": 0.31
+          }
+        }
+      ]
+    }
+
+Writing one by hand is a supported workflow — that is how a project gets back the
+topical collections PR #92 had to delete. Two things worth knowing:
+
+- **How many tags you list decides how many must match.** Membership needs
+  ``0.5*(hits/k) + 0.5*(hits/(hits+1)) >= 0.40``, so 1-3 tags admit a clip on a
+  SINGLE match, 4-14 require two, and 15+ require three. Four tags is the usual
+  right answer; one or two makes a collection that grabs anything tangentially
+  related, which is exactly how #92 went wrong.
+- **`disable` only accepts built-in keys**, and built-ins cannot be redefined —
+  they carry predicates that JSON cannot express, so overriding one by key would
+  leave a collection that can never match anything.
+
 MODULE NAME: this must never be called `collections.py`. The repo puts its root
 on a flat sys.path, so that name would shadow the stdlib `collections` module and
 break imports repo-wide.
