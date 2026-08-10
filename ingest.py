@@ -19,10 +19,12 @@ from typing import Optional, Tuple
 from typing import Dict, List
 
 import codec
+import collection_defs
 import config
 import db
 import frames as frm
 import mediatypes
+import smart_collections
 import tag_quality
 import transcribe as tr
 import vision as vis
@@ -1639,6 +1641,237 @@ def _run_propose_aliases(args):
     print("Review/edit that file, then: python ingest.py --apply-aliases")
 
 
+_THEME_JUDGE_PROMPT = (
+    "以下是一組經常一起出現在同一支影片裡的標籤。請判斷它們是否構成一個「可以拿來瀏覽素材的主題」，"
+    "如果是，取一個簡短的中文名稱（不超過 12 字），並從清單裡挑出真正屬於這個主題的標籤。"
+    "**只能用清單裡出現的詞，絕對不可創造新詞。**"
+    "如果這組只是泛用的場景或動作描述（例如 室內／人物／操作／特寫 這類任何影片都會有的詞），"
+    "或者這組其實混了好幾個不相干的主題，就回空陣列——寧可不給，也不要給一個會誤收素材的主題。"
+    "回傳 {\"themes\":[{\"title\":\"...\",\"tags\":[\"...\"]}]}，只輸出 JSON。\n候選標籤："
+)
+
+
+_THEME_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "themes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["title", "tags"],
+            },
+        }
+    },
+    "required": ["themes"],
+}
+
+
+def _judge_theme_clusters(clusters, docs, dry_run):
+    """Turn co-occurrence clusters into (title, tags) candidates.
+
+    dry_run skips the LLM entirely and names each cluster after its most frequent
+    member, which makes the whole pipeline runnable — and testable — without
+    Ollama. The alias pipeline has no such mode and consequently has no tests.
+
+    An oversized cluster is REJECTED in dry-run rather than truncated. The guard
+    truncates to MAX_DERIVED_TAGS, which is right when an LLM proposed 16 tags and
+    the top 14 are wanted — but in dry-run the "proposal" is the raw cluster, so
+    truncation would quietly convert "this cluster is a blob" into "this cluster
+    is 14 tags and therefore in band". Measured: the reference library's 18-tag
+    mega-cluster survived the arity gate exactly that way and was only stopped by
+    the coverage ceiling.
+    """
+    out = []
+    for cl in clusters:
+        if dry_run:
+            if len(cl) > collection_defs.MAX_DERIVED_TAGS:
+                print("    skip (cluster of {0} tags — too broad to name without a judge)".format(len(cl)))
+                continue
+            tags = collection_defs.guard_derived_tags(cl, cl, docs)
+            if tags:
+                out.append((max(cl, key=lambda t: (len(docs.get(t, ())), t)), tags))
+            continue
+
+        import json as _json
+        import llm
+        try:
+            resp = llm.chat(
+                _THEME_JUDGE_PROMPT + _json.dumps(cl, ensure_ascii=False),
+                json_mode=True,
+                schema=_THEME_SCHEMA,
+            )
+            parsed = _json.loads(resp["text"])
+            themes = parsed.get("themes") if isinstance(parsed, dict) else None
+            themes = themes if isinstance(themes, list) else []
+        except Exception as e:
+            print("    cluster {0}: LLM 失敗 ({1}) → 跳過".format(cl, e))
+            continue
+        # Outside the try on purpose: a bare string in the list raises
+        # AttributeError, and in the alias pipeline that once killed a whole run
+        # and discarded every cluster judged so far (ingest.py:1615-1617).
+        for th in themes:
+            if not isinstance(th, dict):
+                continue
+            title = th.get("title")
+            title = title.strip() if isinstance(title, str) else ""
+            tags = collection_defs.guard_derived_tags(cl, _str_list(th.get("tags")), docs)
+            if title and tags:
+                out.append((title, tags))
+    return out
+
+
+def _run_propose_collections(args):
+    """Derive topical collection candidates from the project's OWN vocabulary and
+    write a reviewable proposal to .arkiv/collections.proposed.json.
+
+    NOT applied until you review + --apply-collections. Non-destructive: nothing
+    in the library is touched, and the shipped collections keep working whether or
+    not a proposal is ever applied.
+
+    An empty proposal is a legitimate answer. A single-topic library has no themes
+    to find — on the reference vinyl library every frequent tag co-occurs with
+    every other, and the honest output is "nothing derivable" rather than a
+    handful of collections that each hold most of the library.
+    """
+    import json as _json
+
+    min_freq = getattr(args, "collection_min_tag_count", 3) or 3
+    min_members = getattr(args, "collection_min_members", 4) or 4
+    max_share = getattr(args, "collection_max_share", 0.35) or 0.35
+    dry_run = bool(getattr(args, "collection_dry_run", False))
+
+    records = collection_defs.classification_records()
+    if not records:
+        print("Library is empty — nothing to derive.")
+        return
+
+    vocab, docs, rejected = collection_defs.derivable_vocabulary(records, min_freq)
+    print("Propose collections: {0} clips, {1} derivable tags".format(len(records), len(vocab)))
+    if rejected:
+        print("  pruned: " + "  ".join("{0}={1}".format(k, v) for k, v in sorted(rejected.items())))
+    if len(vocab) < collection_defs.MIN_DERIVED_TAGS:
+        print("Too few derivable tags — nothing to propose.")
+        return
+
+    clusters = collection_defs.cooccurrence_clusters(vocab, docs)
+    print("  {0} co-occurrence clusters (size>=2) → {1}".format(
+        len(clusters), "naming by frequency (dry-run)" if dry_run else "LLM judging"))
+
+    candidates = []
+    member_sets = []
+    for title, tags in _judge_theme_clusters(clusters, docs, dry_run):
+        col = smart_collections.Collection(
+            key=collection_defs.derived_key(tags), title=title,
+            category="topic", tags=tuple(tags),
+        )
+        stats, why = collection_defs.validate_candidate(
+            col, records, member_sets, min_members=min_members, max_share=max_share)
+        if stats is None:
+            print("    {0:<20} reject({1})".format(title[:20], why))
+            continue
+        if collection_defs.titles_collide(title, [c["title"] for c in candidates]):
+            print("    {0:<20} reject(title collides with an accepted one)".format(title[:20]))
+            continue
+        member_sets.append(set(stats["members"]))
+        candidates.append({
+            "key": col.key, "title": title, "category": "topic",
+            "tags": list(tags), "origin": "derived",
+            "derived": {k: v for k, v in stats.items() if k != "members"},
+        })
+        print("    {0:<20} KEPT  members={1} share={2:.0%}  {3}".format(
+            title[:20], stats["members_at_build"], stats["share"], "、".join(tags)))
+
+    # Re-running must never silently rename or drop a collection already in use.
+    existing = []
+    src = config.COLLECTIONS_PATH
+    if src.exists():
+        try:
+            prev = _json.loads(src.read_text(encoding="utf-8"))
+            if isinstance(prev, dict):
+                existing = [e for e in (prev.get("collections") or []) if isinstance(e, dict)]
+        except (ValueError, OSError):
+            existing = []
+    merged = collection_defs.merge_proposal(existing, candidates)
+
+    payload = {"version": collection_defs.FORMAT_VERSION, "collections": merged}
+    config.COLLECTIONS_PROPOSED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.COLLECTIONS_PROPOSED_PATH.write_text(
+        _json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    fresh = len([c for c in merged if c.get("key") in {x["key"] for x in candidates}])
+    stale = len([c for c in merged if c.get("stale")])
+    print("\nProposed {0} collection(s){1} → {2}".format(
+        fresh, " ({0} previously-accepted now stale)".format(stale) if stale else "",
+        config.COLLECTIONS_PROPOSED_PATH))
+    if not candidates:
+        print("Nothing cleared the gates. For a single-topic library that is the "
+              "correct answer, not a failure.")
+    print("Review/edit that file, then: python ingest.py --apply-collections")
+
+
+def _run_apply_collections(args):
+    """Activate the reviewed proposal: validate every entry, then copy
+    collections.proposed.json → collections.json. Reversible — delete it.
+
+    Unlike --apply-aliases, every failure path here exits NON-ZERO. That command
+    prints and returns, so a missing or malformed proposal still exits 0 and a
+    script reads it as applied — the same silent-success shape that let
+    --migrate-storage report success while doing nothing.
+    """
+    import json as _json
+
+    src = config.COLLECTIONS_PROPOSED_PATH
+    if not src.exists():
+        print("No proposal at {0}. Run --propose-collections first.".format(src))
+        sys.exit(1)
+    try:
+        data = _json.loads(src.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as e:
+        print("Proposal unreadable ({0}) — not applying.".format(e))
+        sys.exit(1)
+    if not isinstance(data, dict):
+        # --apply-aliases would raise AttributeError here and exit non-zero by
+        # accident; say what is wrong instead.
+        print("Proposal malformed (top level is {0}, expected an object) — not applying."
+              .format(type(data).__name__))
+        sys.exit(1)
+
+    raw_entries = data.get("collections")
+    raw_entries = raw_entries if isinstance(raw_entries, list) else []
+    clean, dropped = [], 0
+    for entry in raw_entries:
+        # Reuse the loader's validator: it already treats this file as untrusted,
+        # so apply and load can never disagree about what a valid entry is.
+        if collection_defs._entry_to_collection(entry) is None:
+            dropped += 1
+            continue
+        clean.append({k: v for k, v in entry.items() if k != "stale"})
+
+    if not clean:
+        print("Proposal contains no valid collections ({0} entries dropped) — not applying."
+              .format(dropped))
+        sys.exit(1)
+
+    disable = [k for k in (data.get("disable") or [])
+               if isinstance(k, str) and k in collection_defs.BUILTIN_KEYS]
+    payload = {"version": collection_defs.FORMAT_VERSION, "collections": clean}
+    if disable:
+        payload["disable"] = disable
+    config.COLLECTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.COLLECTIONS_PATH.write_text(
+        _json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    collection_defs._CACHE["mtime"] = None  # take effect without a restart
+
+    print("Applied {0} collection(s){1} → {2}".format(
+        len(clean), " ({0} dropped as invalid)".format(dropped) if dropped else "",
+        config.COLLECTIONS_PATH))
+    print("Sidebar picks them up on next /api/collections (file auto-reloads on change).")
+
+
 def _run_apply_aliases(args):
     """Activate the reviewed proposal: validate shape, then copy
     tag_aliases.proposed.json → tag_aliases.json (the live map /api/tags reads).
@@ -1687,6 +1920,12 @@ def main():
     parser.add_argument("--propose-aliases", action="store_true", help="Library-level tag dedup: embed the global tag cloud (bge-m3) → cluster near-synonyms → LLM judges each group (运动会/比赛→赛事) → writes a REVIEWABLE proposal to .arkiv/tag_aliases.proposed.json. Not applied until --apply-aliases. Non-destructive.")
     parser.add_argument("--apply-aliases", action="store_true", help="Activate the reviewed proposal: copy tag_aliases.proposed.json → tag_aliases.json (the live map /api/tags folds the cloud by). Reversible — delete tag_aliases.json to restore.")
     parser.add_argument("--alias-threshold", type=float, default=0.80, metavar="F", help="With --propose-aliases: cosine threshold for clustering candidate synonyms (default 0.80 — bge-m3 is anisotropic so related terms all score high; below ~0.75 every tag collapses into one blob. Raise toward 0.85 for tighter groups).")
+    parser.add_argument("--propose-collections", action="store_true", help="Derive topical Smart Collections from THIS project's own vocabulary: prune the tag cloud → cluster by co-occurrence → LLM names each theme → measure real membership with the production scorer → writes a REVIEWABLE proposal to .arkiv/collections.proposed.json. Not applied until --apply-collections. An empty proposal is a valid answer for a single-topic library.")
+    parser.add_argument("--apply-collections", action="store_true", help="Activate the reviewed proposal: collections.proposed.json → collections.json (per-project collection definitions the sidebar reads). Reversible — delete collections.json to restore the shipped defaults. Exits non-zero if the proposal is missing or invalid.")
+    parser.add_argument("--collection-min-tag-count", type=int, default=3, metavar="N", help="With --propose-collections: a tag must appear on at least N clips to anchor a theme (default 3 — on a real library ~69%% of tags occur exactly once and identify a clip rather than a theme).")
+    parser.add_argument("--collection-min-members", type=int, default=4, metavar="N", help="With --propose-collections: a derived collection needs at least N member clips (default 4 — fewer costs a permanent sidebar row and saves no scrolling).")
+    parser.add_argument("--collection-max-share", type=float, default=0.35, metavar="F", help="With --propose-collections: reject a collection covering more than this fraction of the library (default 0.35 — a collection holding most of the library is a synonym for the library).")
+    parser.add_argument("--collection-dry-run", action="store_true", help="With --propose-collections: skip the LLM and name each theme after its most frequent tag. Runs the whole pipeline without Ollama — useful to see what would cluster before spending model time.")
     parser.add_argument("--max-failures", type=int, default=0, metavar="N", help="issue #48: tolerate N cumulative failed frames before halting vision (0=halt on first, the default). Failed frames are left empty for a later --vision-only retry.")
     parser.add_argument("--skip-failed", action="store_true", help="issue #48: never halt on individual frame vision failures — skip them (left empty for retry), report at end. Recommended for large unattended/overnight runs. A whole-Ollama outage still halts fast.")
     parser.add_argument(
@@ -1745,6 +1984,7 @@ def main():
         or args.regenerate_proxies or args.regenerate_thumbnails or args.vision_only
         or args.canonicalize_tags
         or args.propose_aliases or args.apply_aliases
+        or args.propose_collections or args.apply_collections
         or args.retraditionalize
         or bool(args.queue) or args.status
     )
@@ -1763,7 +2003,7 @@ def main():
 
     # Phase 8.0e: pre-flight storage check before any pipeline work.
     # Skip for maintenance modes (they're the tools that fix broken state).
-    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status or args.canonicalize_tags or args.propose_aliases or args.apply_aliases or args.retraditionalize):
+    if not (args.migrate_relative or args.regenerate_proxies or args.regenerate_thumbnails or args.queue or args.status or args.canonicalize_tags or args.propose_aliases or args.apply_aliases or args.propose_collections or args.apply_collections or args.retraditionalize):
         import health
         ok_pf, errors_pf = health.preflight_paths()
         if not ok_pf:
@@ -1825,6 +2065,14 @@ def main():
         return
     if args.apply_aliases:
         _run_apply_aliases(args)
+        return
+
+    # ── Per-project topical collections: propose / apply (feature B + C) ──
+    if args.propose_collections:
+        _run_propose_collections(args)
+        return
+    if args.apply_collections:
+        _run_apply_collections(args)
         return
 
     # ── Phase 9.8b backfill: retro-convert Simplified zh transcripts ──────
