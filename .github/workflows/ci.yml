@@ -176,6 +176,13 @@ jobs:
       - name: svelte-check (gate at zero warnings)
         working-directory: frontend
         run: npm run check
+      - name: frontend unit tests (node:test, no runner dependency)
+        working-directory: frontend
+        # The Codex audit of #292 recorded that the Svelte side had NO automated
+        # coverage — four of its blockers were only reproducible by hand. node:test is
+        # built into the Node already installed above, so this closes part of that gap
+        # without adding a devDependency or a new required check.
+        run: npm run test
       - name: bundle budget (eager chunks)
         working-directory: frontend
         run: |

@@ -17,11 +17,18 @@
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
   import { pushToast } from '../lib/toast.js'
+  import { createViewGen } from '../lib/viewGen.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
   let err = ''
   let items = []
+  // Four paths replace the grid (load / runSearch / loadIds / picking a collection) and
+  // three of them await the network first, so the response that lands last used to win
+  // regardless of what the user asked for last — picking a collection while a search was
+  // in flight left the sidebar highlighting the collection and the grid showing the
+  // search. Each of them now carries a generation token across its awaits.
+  const viewGen = createViewGen()
   // R5-20 (#37): the grid used to cap at 500 with no indicator — clips 501+ were
   // unreachable from browse. `total` is the server-side pool count; `moreParams`
   // holds the request to re-issue with an incrementing offset (null = fully
@@ -247,30 +254,41 @@
     // Clearing here rather than in each caller keeps the highlight honest on
     // every path back out (search cleared, pool picked, initial mount).
     activeCollection = null
+    const gen = viewGen.begin()
     state = 'loading'
     readyState = 'checking'
-    readyState = await checkReady()
+    const ready = await checkReady()
+    // Guard every await, not only the last one: a readyState write from a superseded
+    // load is as capable of contradicting the view on screen as an items write.
+    if (!viewGen.isCurrent(gen)) return
+    readyState = ready
     if (readyState === 'unreachable') { state = 'ok'; return } // panel renders via readyState
     try {
       const [s, m, t, c, si] = await Promise.all([
         api.getStats(), api.getMedia({ limit: PAGE }), api.getTags(), api.getCollections(),
         api.sampleStatus().catch(() => null), // non-fatal: chip just stays hidden
       ])
-      stats = s
-      sampleInfo = si
-      items = (m.items || []).map(toCard)
-      total = m.total ?? items.length
-      moreParams = { limit: PAGE }
-      liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
-      liveCollections = (c?.collections || []).map((col) => ({
-        key: col.key, title: col.title, count: col.count,
-        items: col.items || [], // full member items (id/filename/thumb/duration_s/score)
-      }))
-      if (items.length && selectedId == null) selectedId = items[0].id
-      state = 'ok'
+      viewGen.apply(gen, () => {
+        stats = s
+        sampleInfo = si
+        items = (m.items || []).map(toCard)
+        total = m.total ?? items.length
+        moreParams = { limit: PAGE }
+        liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
+        liveCollections = (c?.collections || []).map((col) => ({
+          key: col.key, title: col.title, count: col.count,
+          items: col.items || [], // full member items (id/filename/thumb/duration_s/score)
+        }))
+        if (items.length && selectedId == null) selectedId = items[0].id
+        state = 'ok'
+      })
     } catch (e) {
-      state = 'error'
-      err = e.message + (e.body ? ' · ' + JSON.stringify(e.body) : '')
+      // The error banner is a claim about the view on screen, so a request nobody is
+      // waiting for must not raise one.
+      viewGen.apply(gen, () => {
+        state = 'error'
+        err = e.message + (e.body ? ' · ' + JSON.stringify(e.body) : '')
+      })
     }
   }
 
@@ -280,16 +298,24 @@
   // double-inserting a row. Silent failure was the B11 anti-pattern — surface it.
   async function loadMore() {
     if (!moreParams || loadingMore || items.length >= total) return
+    // Paging EXTENDS the current view rather than replacing it, so it reads the
+    // generation instead of claiming a new one — but it still has to check on the way
+    // back, or a page of the old view gets stapled onto whatever replaced it.
+    const gen = viewGen.current
     loadingMore = true
     try {
       const r = await api.getMedia({ ...moreParams, offset: items.length })
-      const seen = new Set(items.map((x) => x.id))
-      const more = (r.items || []).map(toCard).filter((x) => !seen.has(x.id))
-      items = [...items, ...more]
-      total = r.total ?? total
+      viewGen.apply(gen, () => {
+        const seen = new Set(items.map((x) => x.id))
+        const more = (r.items || []).map(toCard).filter((x) => !seen.has(x.id))
+        items = [...items, ...more]
+        total = r.total ?? total
+      })
     } catch (e) {
-      pushToast(`載入更多失敗: ${e.message}`, 'error')
+      if (viewGen.isCurrent(gen)) pushToast(`載入更多失敗: ${e.message}`, 'error')
     } finally {
+      // Outside the guard on purpose: the spinner belongs to this component, not to
+      // the view, and leaving it stuck true would disable the button for good.
       loadingMore = false
     }
   }
@@ -348,6 +374,10 @@
     }
     query = ''
     activeCamera = null
+    // This writer is synchronous — the members are already in hand from
+    // /api/collections — so without claiming a generation it would be the one path a
+    // slow in-flight search could still overwrite a moment later.
+    viewGen.begin()
     activeCollection = col.key
     items = (col.items || []).map((it) => ({
       id: it.id,
@@ -367,6 +397,11 @@
     total = items.length
     moreParams = null
     selectedId = items.length ? items[0].id : null
+    // This path has its data in hand, so it owns `state` too. Previously it inherited
+    // whatever the in-flight request had left behind, which was invisible only because
+    // that request would later set 'ok' itself — now that a superseded response is
+    // correctly suppressed, not claiming 'ok' here leaves the grid stuck on "loading…".
+    state = 'ok'
   }
 
   // D — live sidebar derived data.
@@ -395,20 +430,27 @@
     // Leaving the collection view: clear the highlight too, or the sidebar keeps
     // claiming a collection is active while the grid shows search results.
     activeCollection = null
+    const gen = viewGen.begin()
     state = 'loading'
     try {
       // Same-DB search via /api/media?q= → {items, total, search:true}.
       // NOT /api/search/all — that's cross-project federation over the
       // ~/.arkiv-projects.json registry, which is empty here → 0 results.
       const r = await api.getMedia({ q: query, limit: PAGE })
-      items = (r.items || []).map(toCard)
-      total = r.total ?? items.length
-      moreParams = { q: query, limit: PAGE }
-      selectedId = items.length ? items[0].id : null
-      state = 'ok'
+      // Also fixes two searches in a row resolving out of order: the slower first
+      // query used to repaint the grid while the box already read the second one.
+      viewGen.apply(gen, () => {
+        items = (r.items || []).map(toCard)
+        total = r.total ?? items.length
+        moreParams = { q: query, limit: PAGE }
+        selectedId = items.length ? items[0].id : null
+        state = 'ok'
+      })
     } catch (e) {
-      state = 'error'
-      err = e.message
+      viewGen.apply(gen, () => {
+        state = 'error'
+        err = e.message
+      })
     }
   }
 
@@ -430,6 +472,7 @@
   // Chat deep-link: #/main-live?ids=2,5,9 shows exactly that relevant subset
   // (not the full library) via the backend's ?ids= filter.
   async function loadIds(ids) {
+    const gen = viewGen.begin()
     state = 'loading'
     try {
       // Load the sidebar data (stats/tags/collections) too — otherwise the
@@ -438,29 +481,38 @@
       const [s, m, t, c] = await Promise.all([
         api.getStats(), api.getMedia({ ids, limit: PAGE }), api.getTags(), api.getCollections(),
       ])
-      stats = s
-      items = (m.items || []).map(toCard)
-      // A deep-link ?ids= subset is exactly the returned rows — no further pages.
-      total = items.length
-      moreParams = null
-      liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
-      liveCollections = (c?.collections || []).map((col) => ({
-        key: col.key, title: col.title, count: col.count, items: col.items || [],
-      }))
-      selectedId = items.length ? items[0].id : null
-      state = 'ok'
+      viewGen.apply(gen, () => {
+        stats = s
+        items = (m.items || []).map(toCard)
+        // A deep-link ?ids= subset is exactly the returned rows — no further pages.
+        total = items.length
+        moreParams = null
+        liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
+        liveCollections = (c?.collections || []).map((col) => ({
+          key: col.key, title: col.title, count: col.count, items: col.items || [],
+        }))
+        selectedId = items.length ? items[0].id : null
+        state = 'ok'
+      })
     } catch (e) {
-      state = 'error'
-      err = e.message
+      viewGen.apply(gen, () => {
+        state = 'error'
+        err = e.message
+      })
     }
   }
   async function selectFromParam() {
     const sel = readSelParam()
     if (sel == null) return
     if (items.find((m) => m.id === sel)) { selectedId = sel; return }
+    // Prepending into whatever view is current: if the user moved on while the detail
+    // fetch was in flight, this would splice an unrelated clip into the new grid.
+    const gen = viewGen.current
     try {
       const d = await api.getMediaDetail(sel)
-      if (d && d.id != null) { items = [toCard(d), ...items]; selectedId = sel }
+      if (d && d.id != null) {
+        viewGen.apply(gen, () => { items = [toCard(d), ...items]; selectedId = sel })
+      }
     } catch (e) { /* unknown id → keep default selection */ }
   }
   // Engine languages for the retranscribe picker — non-fatal (mock fallback in UI).
