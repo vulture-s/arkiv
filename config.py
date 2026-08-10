@@ -97,6 +97,13 @@ PROXIES_DIR = _validate_writable_path(
 # Plain JSON in the project data dir — reviewable, version-controllable, per-project.
 TAG_ALIASES_PATH = _ARKIV_DIR / "tag_aliases.json"
 TAG_ALIASES_PROPOSED_PATH = _ARKIV_DIR / "tag_aliases.proposed.json"
+# Per-project smart-collection definitions (collection_defs.py) + proposal staging.
+# Same shape of contract as the alias pair above: plain JSON the operator can read,
+# diff and hand-edit. This is where a project gets the topical collections PR #92
+# had to delete from the shipped defaults — scoped to the project that wants them,
+# so one shoot's vocabulary can never classify another's.
+COLLECTIONS_PATH = _ARKIV_DIR / "collections.json"
+COLLECTIONS_PROPOSED_PATH = _ARKIV_DIR / "collections.proposed.json"
 
 # Auth bootstrap (auth-tokens-1b handover).
 ARKIV_ADMIN_BOOTSTRAP_TOKEN = os.getenv("ARKIV_ADMIN_BOOTSTRAP_TOKEN", "").strip()

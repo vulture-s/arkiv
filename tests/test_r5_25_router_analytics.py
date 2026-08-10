@@ -103,3 +103,64 @@ def test_collections_ignore_auto_source_editorial_tag(fastapi_client):
     assert "a_roll" not in cols or all(
         it["id"] != 1 for it in cols["a_roll"]["items"]
     ), "an auto-source 'a-roll' tag must not create editorial membership"
+
+
+# ── per-project collections file (.arkiv/collections.json) ──────────────────
+# Appended, not folded into the route-ownership pin above: this feature adds
+# definitions, not routes, and that pin staying untouched is the evidence.
+
+def test_collections_surfaces_a_project_defined_collection(
+    fastapi_client, tmp_path, monkeypatch
+):
+    """A hand-written (or applied) collections.json contributes real memberships.
+
+    ISOLATION: fastapi_client does not sandbox PROJECT_ROOT, so without rebinding
+    config.COLLECTIONS_PATH this would read the developer's real project file.
+    """
+    import importlib
+    import json as _json
+    db = importlib.import_module("db")
+    collection_defs = importlib.import_module("collection_defs")
+    config = importlib.import_module("config")
+
+    path = tmp_path / "collections.json"
+    path.write_text(_json.dumps({"version": 1, "collections": [{
+        "key": "topic_vinyl", "title": "黑膠", "category": "topic",
+        "tags": ["黑膠唱片", "唱針", "轉盤", "唱片架"],
+    }]}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(config, "COLLECTIONS_PATH", path)
+    collection_defs._CACHE["mtime"] = None
+
+    _seed_clip(db, "vinyl.mp4")
+    # 4 tags in the definition → two hits required for membership
+    db.add_tag(1, "黑膠唱片", "manual")
+    db.add_tag(1, "唱針", "manual")
+
+    r = fastapi_client.get("/api/collections")
+    assert r.status_code == 200, r.text
+    cols = {c["key"]: c for c in r.json()["collections"]}
+    assert "topic_vinyl" in cols, "project-defined collection missing from /api/collections"
+    assert any(it["id"] == 1 for it in cols["topic_vinyl"]["items"])
+    collection_defs._CACHE["mtime"] = None
+
+
+def test_malformed_collections_file_does_not_break_the_endpoint(
+    fastapi_client, tmp_path, monkeypatch
+):
+    """A bad config file must degrade to the shipped defaults, never 500."""
+    import importlib
+    db = importlib.import_module("db")
+    collection_defs = importlib.import_module("collection_defs")
+    config = importlib.import_module("config")
+
+    path = tmp_path / "collections.json"
+    path.write_text("{ this is not valid json", encoding="utf-8")
+    monkeypatch.setattr(config, "COLLECTIONS_PATH", path)
+    collection_defs._CACHE["mtime"] = None
+
+    _seed_clip(db, "c.mp4")
+    r = fastapi_client.get("/api/collections")
+    assert r.status_code == 200, r.text
+    # the built-ins still classify (every seeded clip is unrated → 待審查)
+    assert any(c["key"] == "needs_review" for c in r.json()["collections"])
+    collection_defs._CACHE["mtime"] = None

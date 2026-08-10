@@ -10,6 +10,7 @@ tag_quality/tag_aliases/smart_collections/projects — no server import, no cycl
 """
 from fastapi import APIRouter, Depends
 
+import collection_defs
 import config
 import db
 import projects as project_registry
@@ -94,40 +95,23 @@ def get_all_tags(
 def list_collections(
     _tok: dict = Depends(require_scopes("collections_read")),
 ):
-    """Smart Collections — classify every media item against the Tier-1
-    definitions (smart_collections.DEFAULT_COLLECTIONS) and group the results.
+    """Smart Collections — classify every media item against the effective
+    definition set and group the results.
+
+    Definitions = the shipped Tier-1 defaults, minus any the project disabled,
+    plus the project's own from `.arkiv/collections.json` (collection_defs).
+    A missing or malformed file degrades to the defaults; it cannot 500 this
+    endpoint.
 
     Rule-driven (not ML clustering): see smart_collections.py. Returns one entry
     per collection that has >=1 member, each with its member media (id/filename/
     thumb/duration/score), sorted by score desc. Membership is non-exclusive.
     """
-    defs = smart_collections.DEFAULT_COLLECTIONS
+    defs = collection_defs.load_collections()
     buckets = {c.key: {"key": c.key, "title": c.title, "category": c.category, "items": []} for c in defs}
 
-    # audit L13: classify reads only these columns (frame_tags + media-level
-    # aggregates + gps + duration/audio) — get_all_records() was SELECT *,
-    # hauling words_json/segments_json/transcript for the entire library.
-    with db.get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, filename, thumbnail_path, duration_s, has_audio, "
-            "frame_tags, content_type, atmosphere, energy, gps_lat, gps_lon, "
-            "rating, processed_at "
-            "FROM media ORDER BY id"
-        ).fetchall()
-        # Manual tags live in the `tags` table, not frame_tags. Pull them (one
-        # bulk query) so tag-keyed collections match USER tags, not only vision
-        # output. Filter to source='manual': the tags table ALSO holds
-        # source='auto' vision copies (ingest.py), and an auto tag that happened
-        # to be named 'a-roll' must not silently join an editorial collection
-        # without the user's hand (Codex audit). media_signal merges
-        # media["tags"] into the scored signal.
-        tag_map = {}
-        for tid, tname in conn.execute(
-            "SELECT media_id, name FROM tags WHERE source = 'manual'"
-        ):
-            tag_map.setdefault(tid, []).append(tname)
-    for rec in (dict(r) for r in rows):
-        rec["tags"] = tag_map.get(rec["id"], [])
+    records = collection_defs.classification_records()
+    for rec in records:
         for hit in smart_collections.classify(rec, defs):
             buckets[hit["key"]]["items"].append({
                 "id": rec["id"],
