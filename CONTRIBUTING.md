@@ -156,7 +156,8 @@ upstream changelog and a one-click rollback:
 
 ## Releases
 
-arkiv ships as a macOS (Apple Silicon) app. Releases are cut from `main` by tag:
+arkiv ships as a macOS (Apple Silicon) app and a Windows (x64) installer. Releases are cut
+from `main` by tag:
 
 1. Move `## Unreleased` in `CHANGELOG.md` to `## vX.Y.Z - YYYY-MM-DD`; leave a fresh
    `## Unreleased` on top.
