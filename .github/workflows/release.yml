@@ -146,9 +146,17 @@ jobs:
           files: |
             src-tauri/target/release/bundle/dmg/*.dmg
           fail_on_unmatched_files: false
+          # This is the ONLY job that sets `body` — action-gh-release replaces it
+          # wholesale, so a second job passing its own would erase this one. The
+          # Windows leg attaches files without a body.
           body: |
-            arkiv ${{ steps.ver.outputs.version }} — macOS (Apple Silicon).
-            Unsigned builds: right-click -> Open to clear Gatekeeper once (see docs/quickstart-mac.md).
+            arkiv ${{ steps.ver.outputs.version }} — macOS (Apple Silicon) + Windows (x64).
+
+            Both builds are unsigned:
+            - **macOS**: right-click -> Open once to clear Gatekeeper (see `docs/quickstart-mac.md`).
+            - **Windows**: SmartScreen shows "Windows protected your PC" -> **More info** -> **Run anyway** (see `docs/quickstart-windows.md`).
+
+            The Windows artifacts are attached by a second job and land a few minutes after the macOS ones.
 
       - name: Upload dry-run artifact (workflow_dispatch)
         if: ${{ github.ref_type != 'tag' }}
@@ -156,4 +164,114 @@ jobs:
         with:
           name: arkiv-dryrun-dmg
           path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
+
+  # ── Windows (x86_64) ─────────────────────────────────────────────────────
+  # Mirrors the macOS job above. UNSIGNED for now: there is no Authenticode
+  # certificate, so SmartScreen shows a "more info -> run anyway" prompt on
+  # first launch, the same shape as the unsigned macOS right-click -> Open step.
+  # A conditional signing leg can be added later on the HAS_APPLE_CERT pattern.
+  release-windows:
+    runs-on: windows-latest
+    # Serialized behind the macOS job on purpose. On a tag BOTH legs call
+    # action-gh-release against the same Release, and two concurrent
+    # create-or-update calls race. This costs wall-clock and buys determinism.
+    # The cleaner shape — both legs upload artifacts, a third job publishes once
+    # — would mean reworking the already-verified macOS path, so it is a
+    # follow-up rather than a prerequisite.
+    needs: release
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="$(node -p "require('./src-tauri/tauri.conf.json').version")+dryrun"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Building arkiv $V"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Stamp version from tag (so the bundle can't drift from the tag)
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          python - "$V" <<'PY'
+          import json, re, sys, pathlib
+          v = sys.argv[1]
+          p = pathlib.Path("src-tauri/tauri.conf.json"); d = json.loads(p.read_text()); d["version"] = v
+          p.write_text(json.dumps(d, indent=2) + "\n")
+          c = pathlib.Path("src-tauri/Cargo.toml"); t = c.read_text()
+          c.write_text(re.sub(r'(?m)^version = ".*"$', f'version = "{v}"', t, count=1))
+          PY
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend (SPA that assemble-backend-win + generate_context! embed)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      # CPU-only torch, installed from the pytorch CPU index BEFORE
+      # requirements.txt so silero-vad's torch dependency resolves to the wheel
+      # already present. Left to PyPI on a CUDA-capable resolver this is the
+      # +cuXXX build — 4.2 GB against ~520 MB, all of it landing in the
+      # installer. torch only backs silero VAD; transcription runs on
+      # ctranslate2. See the header of assemble-backend-win.ps1.
+      - name: Build the packaging venv (.venv-pack)
+        shell: pwsh
+        # `python`, not `py -3.12`: setup-python puts its interpreter on PATH but
+        # does not necessarily register it with the py launcher, so `py -3.12`
+        # can resolve to a different (or absent) install on a hosted runner.
+        run: |
+          python -m venv .venv-pack
+          .\.venv-pack\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv-pack\Scripts\pip.exe install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+          .\.venv-pack\Scripts\pip.exe install -r requirements.txt
+
+      - name: Assemble self-contained backend bundle
+        shell: pwsh
+        run: .\src-tauri\assemble-backend-win.ps1
+
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Build app + installers
+        working-directory: src-tauri
+        run: cargo tauri build
+
+      - name: Attach artifacts to the GitHub Release (tag only)
+        if: ${{ github.ref_type == 'tag' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          fail_on_unmatched_files: false
+          # No `body:` here on purpose. action-gh-release REPLACES the release
+          # body when given one, and this job runs after the macOS leg has
+          # already written it — passing a Windows-only body would erase the
+          # macOS notes. The combined text lives in the macOS job instead.
+
+      - name: Upload dry-run artifact (workflow_dispatch)
+        if: ${{ github.ref_type != 'tag' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: arkiv-dryrun-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: warn
