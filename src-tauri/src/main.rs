@@ -60,10 +60,22 @@ fn resolve_backend(app: &tauri::App) -> Result<(String, String, String), String>
         .resource_dir()
         .map_err(|e| format!("resource_dir: {e}"))?;
     let backend = res.join("backend");
-    let python = backend.join("python").join("bin").join("python3");
+    // python-build-standalone lays the interpreter out differently per platform:
+    // `python/bin/python3` on Unix, `python\python.exe` on Windows (there is no
+    // bin/ there at all). Same tarball family, different shape.
+    let python = if cfg!(windows) {
+        backend.join("python").join("python.exe")
+    } else {
+        backend.join("python").join("bin").join("python3")
+    };
     let site = backend.join("site-packages");
     let src = backend.join("src");
-    let pythonpath = format!("{}:{}", site.display(), src.display());
+    // join_paths, not format!("{}:{}") — the PYTHONPATH separator is ';' on
+    // Windows and ':' elsewhere, and std already knows which.
+    let pythonpath = std::env::join_paths([&site, &src])
+        .map_err(|e| format!("join_paths(PYTHONPATH): {e}"))?
+        .to_string_lossy()
+        .into_owned();
     Ok((
         python.to_string_lossy().into_owned(),
         pythonpath,
@@ -151,6 +163,16 @@ fn main() {
             .env("ARKIV_PROJECT_ROOT", &proj_root)
             .env("ARKIV_PORT", port.to_string())
             .env("ARKIV_TRUST_LOOPBACK", "1");
+            // `windows_subsystem = "windows"` (top of this file) only silences OUR
+            // console. Spawning python.exe from a GUI process still allocates a new
+            // one, so without this flag every launch parks a black console window
+            // next to the app for the life of the backend.
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
             if let Some(out) = stdout_cfg {
                 cmd.stdout(out);
             }

@@ -50,6 +50,11 @@ build/
 .DS_Store
 .venv/
 venv/
+# Windows packaging venv — a CPU-only-torch tree built solely to feed
+# assemble-backend-win.ps1. Kept separate from .venv because a dev box with an
+# NVIDIA card resolves torch to the +cuXXX build (4.2 GB vs ~250 MB), which
+# would land whole in the installer.
+.venv-pack/
 *.db-journal
 pages/
 src-tauri/target/
