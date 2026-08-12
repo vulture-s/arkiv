@@ -1,4 +1,4 @@
-# Assemble the self-contained backend bundle for the arkiv desktop app — Windows.
+# Assemble the self-contained backend bundle for the arkiv desktop app -- Windows.
 #
 # Windows counterpart of assemble-backend.sh. Same shape, same output contract:
 # produces src-tauri\backend\{python,site-packages,src}, which tauri.conf.json
@@ -17,8 +17,8 @@
 #   1. The venv layout is `Lib\site-packages`, not `lib/python3.12/site-packages`.
 #   2. The source venv defaults to .venv-pack, NOT .venv. On a dev box with an
 #      NVIDIA card `pip install -r requirements.txt` resolves silero-vad's torch
-#      to the +cuXXX build — 4.2 GB against ~250 MB for the CPU wheel, measured
-#      on the Win11/RTX 4070 box on 2026-08-12 — and all of it would land in the
+#      to the +cuXXX build -- 4.2 GB against ~250 MB for the CPU wheel, measured
+#      on the Win11/RTX 4070 box on 2026-08-12 -- and all of it would land in the
 #      installer. torch here only backs silero VAD (transcribe.py:14-15);
 #      transcription itself runs on ctranslate2, so the CPU build costs nothing
 #      a user would feel. Build .venv-pack with:
@@ -26,11 +26,19 @@
 #        .venv-pack\Scripts\pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
 #        .venv-pack\Scripts\pip install -r requirements.txt
 #      Override with $env:ARKIV_PACKAGING_VENV to point somewhere else.
-#   3. Copies go through robocopy rather than rsync — it is native on every
+#   3. Copies go through robocopy rather than rsync -- it is native on every
 #      Windows box and on the windows-latest runner, so the script has no
 #      Git-Bash/MSYS dependency.
 #
 # The staging dir is git-ignored (it is ~1 GB); this script rebuilds it.
+#
+# KEEP THIS FILE PURE ASCII. Windows PowerShell 5.1 reads a BOM-less file as the
+# machine's ANSI codepage, not UTF-8, so a non-ASCII byte sequence is re-split
+# under e.g. Big5 (cp950) or cp1252. When the re-split swallows a quote the whole
+# script dies at PARSE time with errors pointing at unrelated lines -- and it
+# does so only on machines with that codepage, which is the worst possible way to
+# find out. An ellipsis next to a quote cost a debugging round here on
+# 2026-08-12. Use `--` and `->` rather than the typographic characters.
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -41,7 +49,7 @@ $BACKEND = Join-Path $HERE 'backend'
 
 $PY_VERSION = '3.12.13'
 $PBS_TAG    = '20260623'
-# NOTE the %2B — the asset name contains a literal '+' which must stay encoded in the URL.
+# NOTE the %2B -- the asset name contains a literal '+' which must stay encoded in the URL.
 $PBS_URL    = "https://github.com/astral-sh/python-build-standalone/releases/download/$PBS_TAG/cpython-$PY_VERSION%2B$PBS_TAG-x86_64-pc-windows-msvc-install_only.tar.gz"
 
 $PACK_VENV = if ($env:ARKIV_PACKAGING_VENV) { $env:ARKIV_PACKAGING_VENV } else { Join-Path $REPO '.venv-pack' }
@@ -49,7 +57,7 @@ $VENV_SP   = Join-Path $PACK_VENV 'Lib\site-packages'
 
 # robocopy signals detail through its exit code: 0-7 are success (1 = files were
 # copied, 2 = extra files in dest, 4 = mismatched files), 8+ are real failures.
-# Treating it like a normal command would fail the script on a successful copy —
+# Treating it like a normal command would fail the script on a successful copy --
 # and, worse, leave $LASTEXITCODE non-zero for whatever reads it next (CI does).
 function Invoke-Robocopy {
     param([string]$Source, [string]$Dest, [string[]]$ExtraArgs)
@@ -64,7 +72,7 @@ function Invoke-Robocopy {
 
 # Resolve curl/tar from System32 by ABSOLUTE path rather than trusting PATH.
 # Git for Windows ships MSYS twins of both in `Git\usr\bin`, and when this script
-# is launched from a Git Bash shell those come first — at which point GNU tar
+# is launched from a Git Bash shell those come first -- at which point GNU tar
 # reads the `C:\...` destination as a remote `host:path` and dies with
 # "Cannot connect to C: resolve failed" (observed 2026-08-12 on the Win11 box).
 # Windows' own tar is bsdtar, which handles both drive paths and .tar.gz natively.
@@ -72,7 +80,7 @@ function Get-SystemTool {
     param([string]$Name)
     $p = Join-Path $env:SystemRoot "System32\$Name"
     if (-not (Test-Path $p)) {
-        throw "$p not found — this script needs the Windows-native $Name (Windows 10 1803+), not an MSYS/Git twin."
+        throw "$p not found -- this script needs the Windows-native $Name (Windows 10 1803+), not an MSYS/Git twin."
     }
     return $p
 }
@@ -90,7 +98,7 @@ if (-not (Test-Path $VENV_SP)) {
     Write-Error @"
 $VENV_SP not found.
 
-Build the packaging venv first (CPU-only torch — see the header of this script for why):
+Build the packaging venv first (CPU-only torch -- see the header of this script for why):
   py -3.12 -m venv .venv-pack
   .venv-pack\Scripts\pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
   .venv-pack\Scripts\pip install -r requirements.txt
@@ -112,7 +120,7 @@ $TMP = Join-Path ([System.IO.Path]::GetTempPath()) ("arkiv-pbs-" + [System.Guid]
 New-Item -ItemType Directory -Force -Path $TMP | Out-Null
 try {
     $tarball = Join-Path $TMP 'pbs.tar.gz'
-    # curl.exe / tar.exe (System32, see Get-SystemTool) — not the PowerShell
+    # curl.exe / tar.exe (System32, see Get-SystemTool) -- not the PowerShell
     # aliases, which resolve to Invoke-WebRequest / nothing.
     & (Get-SystemTool 'curl.exe') -fsSL $PBS_URL -o $tarball
     if ($LASTEXITCODE -ne 0) { throw "curl failed (exit $LASTEXITCODE) fetching $PBS_URL" }
@@ -149,9 +157,9 @@ Write-Host "[assemble] arkiv source (runtime .py + routers + built SPA; no tests
 # box's local data and have no business in a shipped bundle. Less obviously,
 # `temp\` is what made this copy fail on 2026-08-12: the offload tests leave
 # `temp\arkiv-offload-*` dirs behind with ACLs the current user can no longer
-# enumerate, and 20 of them turned into robocopy's "directories failed" count →
+# enumerate, and 20 of them turned into robocopy's "directories failed" count ->
 # exit 9. A CI runner checks out clean and never sees them, so this only ever
-# bites a real workstation — the one machine that also does the release build.
+# bites a real workstation -- the one machine that also does the release build.
 Invoke-Robocopy -Source $REPO -Dest (Join-Path $BACKEND 'src') -ExtraArgs @(
     '/XD',
     (Join-Path $REPO '.git'),
@@ -174,7 +182,7 @@ Invoke-Robocopy -Source $REPO -Dest (Join-Path $BACKEND 'src') -ExtraArgs @(
 )
 
 if (-not (Test-Path (Join-Path $BACKEND 'src\frontend\dist\index.html'))) {
-    Write-Warning "frontend\dist\index.html missing — run 'cd frontend; npm run build' first,"
+    Write-Warning "frontend\dist\index.html missing -- run 'cd frontend; npm run build' first,"
     Write-Warning "      or the packaged app will serve the fallback page."
 }
 
