@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.12.0 - 2026-08-12
+
+**arkiv runs on Windows without a Python setup.** v0.11.0 shipped the first installer but only
+for macOS Apple Silicon; the README told everyone else to build from source. This release adds
+the second platform end to end — a Windows backend assembler, a `windows-latest` release leg,
+and the desktop shell fixes that a Windows bundle turns out to need — so a tag now publishes an
+`.exe` and an `.msi` alongside the `.dmg`. Both platforms remain unsigned. Also lands a month of
+Smart Collections, shoot-year faceting and storage-migration work.
+
 ### Added
 - **arkiv ships a Windows installer (#308, #309, #310).** v0.11.0 was macOS-arm-only: `assemble-backend.sh` bundled an `aarch64-apple-darwin` Python and `release.yml` had one leg. Windows now has the same path — `assemble-backend-win.ps1` builds `backend/{python,site-packages,src}` from a python-build-standalone `x86_64-pc-windows-msvc` interpreter, and a `release-windows` job produces an unsigned `arkiv_<version>_x64-setup.exe` (226 MB) plus an `.msi` (341 MB) for admin/GPO deployment. Unsigned means SmartScreen shows "Windows protected your PC" once, the same shape as the macOS right-click → Open step; `docs/quickstart-windows.md` walks through it. The 2026-07-28 plan scoped this as "fork the shell script"; three things it did not anticipate mattered more than the fork.
 
