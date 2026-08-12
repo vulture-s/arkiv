@@ -21,9 +21,9 @@ arkiv ingest 是 4 階段 pipeline，把原始素材變成可搜尋、可匯入 
 |------|--------|------------|
 | 0. Preflight | 儲存路徑健康檢查（v0.3.1 新增） | — |
 | 1. Phase 1 | Probe + 轉錄 + thumbnail + frames | FFmpeg + ExifTool + Whisper |
-| 2. Phase 2 | Vision 描述（可 skip） | qwen3-vl:8b + minicpm-v fallback |
+| 2. Phase 2 | Vision 描述（可 skip） | qwen2.5vl:7b + minicpm-v fallback |
 | 3. Phase 3 | 瀏覽器 proxy 生成 | FFmpeg（HEVC/ProRes → H.264） |
-| 4. Embedding | 語意搜尋索引 | Ollama nomic-embed-text → ChromaDB |
+| 4. Embedding | 語意搜尋索引 | Ollama bge-m3 → ChromaDB |
 
 ---
 
@@ -94,9 +94,9 @@ per file：
 polish 不能共存。
 
 1. **Unload** `qwen2.5:14b`（釋放 VRAM）
-2. **Warm up** `qwen3-vl:8b`
+2. **Warm up** `qwen2.5vl:7b`
 3. per file：
-   - 主模型 = `qwen3-vl:8b`
+   - 主模型 = `qwen2.5vl:7b`
    - 失敗 frame 的 fallback = `minicpm-v:latest`
    - Scoring：`focus_score / exposure / stability / audio_quality / atmosphere / energy / edit_position / edit_reason / editability_score`
 4. **連續 3 fail 就 halt**（v0.3.1 新增）— 不要在每個 file 都寫同一個 error，break + 印 resume 指令
@@ -129,7 +129,7 @@ python embed.py --rebuild   # 砍掉重建
 python embed.py --search "drone footage aerial"   # CLI 快速測試
 ```
 
-讀 `media.transcript` → chunk → Ollama `nomic-embed-text` →
+讀 `media.transcript` → chunk → Ollama `bge-m3` →
 `CHROMA_PATH/` collection `media_assets`（768-dim）。
 
 ---

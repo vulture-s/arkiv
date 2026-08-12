@@ -4,7 +4,7 @@
 ## 專案 Context
 arkiv 是影片素材管理工具（Tauri + Python backend），功能包含：
 - Whisper 語音轉錄 + 4 層防幻覺 Guard
-- Vision 分析（qwen3-vl）
+- Vision 分析（qwen2.5-vl）
 - ChromaDB 語義搜尋
 - DaVinci Resolve / FCPX 插件整合
 - SRT/VTT/EDL/FCPXML export

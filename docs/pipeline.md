@@ -22,9 +22,9 @@ invocation; embedding runs out-of-band via `embed.py`.
 |-------|--------------|--------------|
 | 0. Preflight | Storage path health check (since v0.3.1) | — |
 | 1. Phase 1 | Probe + transcribe + thumbnail + frames | FFmpeg + ExifTool + Whisper |
-| 2. Phase 2 | Vision descriptions (skippable) | qwen3-vl:8b + minicpm-v fallback |
+| 2. Phase 2 | Vision descriptions (skippable) | qwen2.5vl:7b + minicpm-v fallback |
 | 3. Phase 3 | Browser proxy generation | FFmpeg (HEVC/ProRes → H.264) |
-| 4. Embedding | Semantic search index | Ollama nomic-embed-text → ChromaDB |
+| 4. Embedding | Semantic search index | Ollama bge-m3 → ChromaDB |
 
 ---
 
@@ -96,9 +96,9 @@ Skippable with `--skip-vision`. Runs after Phase 1 because vision and LLM
 polish (Phase 1) can't coexist on 12 GB GPUs.
 
 1. **Unload** `qwen2.5:14b` (free VRAM)
-2. **Warm up** `qwen3-vl:8b`
+2. **Warm up** `qwen2.5vl:7b`
 3. Per file:
-   - Primary describe = `qwen3-vl:8b`
+   - Primary describe = `qwen2.5vl:7b`
    - Fallback for failed frames = `minicpm-v:latest`
    - Scoring: `focus_score / exposure / stability / audio_quality / atmosphere / energy / edit_position / edit_reason / editability_score`
 4. **Halt-on-3-consecutive-fail** (since v0.3.1): break loop and print resume hint instead of burning through every file writing the same error.
@@ -132,7 +132,7 @@ python embed.py --rebuild   # drop and rebuild
 python embed.py --search "drone footage aerial"   # quick CLI test
 ```
 
-Reads `media.transcript` → chunks → Ollama `nomic-embed-text` →
+Reads `media.transcript` → chunks → Ollama `bge-m3` →
 `CHROMA_PATH/` collection `media_assets` (768-dim).
 
 ---

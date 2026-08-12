@@ -24,7 +24,7 @@ Cross-project query is on the roadmap (W2). Current release uses per-project `me
 
 **Q: Do I need a GPU?**
 
-No. arkiv runs CPU-only with `faster-whisper` (no torch). A GPU speeds up transcription 3-5x. Vision descriptions (`qwen3-vl:8b`) can be skipped with `--skip-vision` if GPU is unavailable.
+No. arkiv runs CPU-only with `faster-whisper` (no torch). A GPU speeds up transcription 3-5x. Vision descriptions (`qwen2.5vl:7b`) can be skipped with `--skip-vision` if GPU is unavailable.
 
 ## DaVinci Resolve plugin
 

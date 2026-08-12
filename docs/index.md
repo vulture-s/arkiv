@@ -29,8 +29,8 @@ pip install mlx-whisper          # Apple Silicon
 **Step 3 — Pull Ollama models**
 
 ```bash
-ollama pull nomic-embed-text     # required
-ollama pull qwen3-vl:8b          # optional: vision tags
+ollama pull bge-m3               # required
+ollama pull qwen2.5vl:7b         # optional: vision tags
 ollama pull qwen2.5:14b          # optional: transcript polish
 ```
 

@@ -8,7 +8,7 @@ Thanks for your interest in contributing! arkiv is a local-first media asset man
 
 - Python 3.9+
 - FFmpeg 6.0+
-- [Ollama](https://ollama.com/) with `nomic-embed-text` model
+- [Ollama](https://ollama.com/) with the three default models (see below)
 - Node 20+ (the UI is a Svelte SPA that `server.py` serves as a built bundle)
 - Git
 
@@ -25,9 +25,10 @@ pip install -r requirements.txt
 pip install mlx-whisper          # macOS Apple Silicon
 pip install faster-whisper torch  # NVIDIA GPU
 
-# Ollama models
-ollama pull nomic-embed-text
-ollama pull qwen3-vl:8b
+# Ollama models — these are the config.py defaults health.py checks for
+ollama pull bge-m3          # embeddings
+ollama pull qwen2.5vl:7b    # vision
+ollama pull qwen2.5:14b     # chat / transcript polish
 
 # Build the UI (server.py serves frontend/dist at /)
 cd frontend && npm ci && npm run build && cd ..
