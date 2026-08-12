@@ -168,6 +168,9 @@ arkiv ships as a macOS (Apple Silicon) app. Releases are cut from `main` by tag:
    **stamps the version from the tag**, so the bundle can't drift from the tag; signs +
    notarizes if the Apple secrets are configured (else builds unsigned — the app already ships
    with a documented right-click→Open Gatekeeper step); and uploads the artifact to the Release.
+5. A second job, `release-windows`, then builds the Windows `.exe`/`.msi` on `windows-latest`
+   and attaches them to the same Release. It runs **after** the macOS job, so expect the
+   Windows artifacts a few minutes behind the `.dmg`. Both legs stamp the version identically.
 
 **Release-artifact matrix:**
 
@@ -175,7 +178,17 @@ arkiv ships as a macOS (Apple Silicon) app. Releases are cut from `main` by tag:
 |---|---|---|---|
 | macOS arm64 (Apple Silicon) | `.app` + `.dmg` | yes, if Apple secrets set | supported |
 | macOS x86_64 (Intel) | — | — | N/A — `assemble-backend.sh` bundles an aarch64-apple-darwin Python |
-| Windows | — | — | deferred — mac-arm-locked backend; `mlx-whisper` has no Windows wheel |
+| Windows x64 | `.exe` (NSIS) + `.msi` | no — unsigned | supported — `assemble-backend-win.ps1` + the `release-windows` job |
+
+The Windows leg needs a packaging venv with **CPU-only torch**; the workflow builds one
+(`.venv-pack`) rather than reusing `.venv`, because on a machine with an NVIDIA card
+`pip install -r requirements.txt` resolves silero-vad's torch to the `+cuXXX` build — 4.2 GB
+against ~520 MB, all of it inside the installer. It runs `needs: release`, serialized behind
+the macOS leg so the two don't race on the same GitHub Release, and only the macOS leg passes
+a release `body` (action-gh-release replaces it wholesale). Windows builds are **unsigned**:
+SmartScreen shows "Windows protected your PC" once, the same shape as the unsigned macOS
+right-click → Open step. Authenticode signing can follow the existing all-or-nothing Apple
+preflight pattern when a certificate exists.
 
 Rollback = the prior tag's artifact; delete the GitHub Release (and tag) if a release is bad.
 

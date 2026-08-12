@@ -140,20 +140,33 @@ automation, or let Claude/OpenClaw query your library.
 
 ## Quick Start
 
-### Download the app (macOS, Apple Silicon)
+### Download the app (macOS Apple Silicon · Windows x64)
 
-The quickest way to run arkiv without a Python setup. The `.dmg` bundles the Python backend
-and ML libraries (torch, mlx-whisper, chromadb, …), so you skip the venv/pip steps below. You
-**still need FFmpeg and Ollama** for frame extraction, embeddings, and vision:
+The quickest way to run arkiv without a Python setup. The installer bundles the Python backend
+and ML libraries (torch, whisper, chromadb, …), so you skip the venv/pip steps below. You
+**still need FFmpeg and Ollama** for frame extraction, embeddings, and vision.
+
+**macOS (Apple Silicon)**
 
 ```bash
 brew install ffmpeg ollama
 ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b
 ```
 
-Then download **`arkiv_<version>_aarch64.dmg`** from the [latest release](https://github.com/vulture-s/arkiv/releases/latest), open it, and drag **arkiv** to Applications. On first launch the build is unsigned, so macOS Gatekeeper blocks a double-click — **right-click → Open** once (or run `xattr -dr com.apple.quarantine /Applications/arkiv.app`); afterwards it opens normally.
+Download **`arkiv_<version>_aarch64.dmg`** from the [latest release](https://github.com/vulture-s/arkiv/releases/latest), open it, and drag **arkiv** to Applications. On first launch the build is unsigned, so macOS Gatekeeper blocks a double-click — **right-click → Open** once (or run `xattr -dr com.apple.quarantine /Applications/arkiv.app`); afterwards it opens normally. Full walkthrough: [`docs/quickstart-mac.md`](docs/quickstart-mac.md).
 
-> Intel Macs / Windows have no prebuilt app yet — the bundle ships an `aarch64` Python + `mlx-whisper`. Run from source instead (below).
+**Windows (x64)**
+
+```powershell
+winget install Gyan.FFmpeg Ollama.Ollama
+ollama pull bge-m3; ollama pull qwen2.5vl:7b; ollama pull qwen2.5:14b
+```
+
+Download **`arkiv_<version>_x64-setup.exe`** from the [latest release](https://github.com/vulture-s/arkiv/releases/latest) and run it — it installs per-user, no admin prompt. The build is unsigned, so SmartScreen shows *"Windows protected your PC"* once: click **More info** → **Run anyway**. An `.msi` is also published for admin/GPO deployment. Full walkthrough: [`docs/quickstart-windows.md`](docs/quickstart-windows.md).
+
+On a fresh, empty library both builds load a **pre-indexed** sample of four CC-BY Blender clips, so the grid is browsable and searchable the moment it opens — no pipeline run, no models needed for that first look.
+
+> Intel Macs and Linux have no prebuilt app — run from source instead (below). The macOS bundle ships an `aarch64` Python + `mlx-whisper`; the Windows bundle ships a CPU-only `faster-whisper` stack.
 
 ---
 
