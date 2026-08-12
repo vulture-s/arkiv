@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+- **Docker ran a different embedding model from every other install (#312).** `docker-compose.yml` set `ARKIV_EMBED_MODEL=nomic-embed-text` and `ARKIV_VISION_MODEL=qwen3-vl:8b`. Those do not *document* the defaults — they **override** them, so a Docker user got an English-centric embedder in a project whose headline feature is CJK semantic search, plus the vision model `config.py` documents at length as ~10x slower (~60s/frame against ~8s/frame; ~30h against ~3.5h over 2000 frames, at comparable tag quality). Both now track `config.py` (`bge-m3` / `qwen2.5vl:7b`), with a comment saying they must keep tracking it, because the divergence was invisible: nothing compared the compose file to the defaults it silently shadowed.
+
+  **Migration for existing Docker libraries.** The vision change needs nothing — frame descriptions are regenerated per frame and nothing is keyed on the model. The embedding change does: `bge-m3` is 1024-dimensional against `nomic-embed-text`'s 768, so an index built under the old value cannot accept new vectors. Rebuild it once after pulling:
+
+  ```bash
+  docker exec arkiv-arkiv-1 python embed.py --rebuild
+  ```
+
+  This drops and rebuilds the ChromaDB index from the SQLite rows. Media, transcripts, frame descriptions and tags are untouched — only the vectors are recomputed. To stay on the old model instead, set `ARKIV_EMBED_MODEL=nomic-embed-text` in your own compose override.
+- **Six files still named the pre-#202 model pair (#312).** #202 corrected the README, `.env.example` and `docs/install.md` when the defaults moved to `bge-m3` / `qwen2.5vl:7b`, and recorded why it mattered: a README-follower pulled a 10x slower vision model that `health.py` then reported MISSING. That sweep missed `CONTRIBUTING.md`, `docs/index.md`, `docs/pipeline.md` and its `.zh-TW` twin, `docs/faq.md` and `AGENTS.md`, so the same trap stayed live for anyone starting from any of them. CONTRIBUTING's pull block also listed only two of the three models `health.py` checks. Historical records (`CHANGELOG.md`, the handover and acceptance docs) are left as written — they describe what the defaults were at the time.
+
 ## v0.12.0 - 2026-08-12
 
 **arkiv runs on Windows without a Python setup.** v0.11.0 shipped the first installer but only

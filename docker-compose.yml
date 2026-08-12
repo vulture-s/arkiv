@@ -14,7 +14,10 @@ services:
       - ARKIV_CHROMA_PATH=/app/chroma_db
       - ARKIV_THUMBNAILS_DIR=/app/thumbnails
       - ARKIV_OLLAMA_URL=http://ollama:11434
-      - ARKIV_EMBED_MODEL=nomic-embed-text
+      # Both of these must track the config.py defaults. Pinned here only so the
+      # compose file is self-describing — if you change one, change config.py too,
+      # or Docker silently diverges from every other install (it did, for months).
+      - ARKIV_EMBED_MODEL=bge-m3
       - ARKIV_VISION_MODEL=qwen2.5vl:7b
       - ARKIV_WHISPER_MODEL=large-v3-turbo
       - ARKIV_HOST=0.0.0.0
