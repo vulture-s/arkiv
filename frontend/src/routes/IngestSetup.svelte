@@ -233,7 +233,10 @@
   .field { display: flex; flex-direction: column; gap: 10px; }
   .srcrow { display: flex; gap: 10px; align-items: flex-end; }
   .num { width: 80px; flex: 0 0 80px; }
-  .sel { flex: 0 0 196px; width: 196px; font-size: 11.5px; font-family: var(--ak-mono); background: transparent; color: var(--ink); border: 1px solid var(--rule-hi); border-radius: 0; padding: 6px 8px; cursor: pointer; }
+  /* No `background` here on purpose: a class beats the bare `select` rule in
+     app.css, so re-declaring `transparent` would put the grey-white default
+     popup back. Colour comes from that global rule. */
+  .sel { flex: 0 0 196px; width: 196px; font-size: 11.5px; font-family: var(--ak-mono); color: var(--ink); border: 1px solid var(--rule-hi); border-radius: 0; padding: 6px 8px; cursor: pointer; }
   .sel:focus { outline: none; border-color: var(--ink); }
 
   .optrow { display: flex; align-items: center; gap: 14px; }

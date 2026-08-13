@@ -215,6 +215,28 @@ input.ak-input {
 input.ak-input:focus { border-bottom-color: var(--ink); }
 input.ak-input::placeholder { color: var(--quiet); }
 
+/* Dropdowns.
+   The rule above is element-qualified (`input.ak-input`), so a
+   <select class="ak-input"> matches none of it — and no route styled `select`
+   either, which left every dropdown in the app falling back to the browser's
+   default light list. On the dark theme that reads as a grey-white panel over
+   near-black chrome.
+   Both declarations are needed. The OPEN popup is a separate paint surface from
+   the closed control, and Chromium/WebView2 paints it from the select's own
+   computed background-color: leave that transparent or unset and the popup goes
+   back to the default light list no matter how the control itself looks. The
+   `option` rule covers the rows inside it, which do not inherit on every
+   platform. Values are tokens, so light mode stays coherent rather than being
+   forced dark. */
+select {
+  background-color: var(--surface-2);
+  color: var(--ink);
+}
+select option {
+  background-color: var(--surface-2);
+  color: var(--ink);
+}
+
 /* Skeleton sweep — vertical hairline that crosses each placeholder */
 @keyframes ak-sweep {
   0%   { transform: translateX(0); opacity: 0; }
