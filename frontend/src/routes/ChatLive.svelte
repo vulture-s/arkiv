@@ -4,6 +4,7 @@
      inline. Requires chat_write scope (token-free on loopback). -->
 <script>
   import { onMount, onDestroy, tick } from 'svelte'
+  import { push } from 'svelte-spa-router'
   import { VERSION } from '../lib/version.js'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
@@ -180,9 +181,25 @@
     }
   }
 
-  // Global Esc → interrupt the current chat task (works anywhere in the view).
+  // Global Esc. Same rule the ingest and offload dialogs use: if something is
+  // running, interrupt it; otherwise leave the screen. Previously Esc did the
+  // first half only, so on an idle chat the key silently did nothing while the
+  // same key closed every other screen.
+  //
+  // "Leave" here means this view's own exit — the "← 返回素材庫" link, i.e.
+  // /main-live — not home, the way the dialogs' Esc matches their own
+  // ESC · CANCEL button rather than a hardcoded destination.
+  //
+  // No confirm on the busy branch, unlike offload's: a chat turn is seconds and
+  // is already abortable by a visible button, so asking would cost more than the
+  // interruption does. Offload guards because a stray key there can drop a
+  // 30-minute card copy.
   function onGlobalKey(e) {
-    if (e.key === 'Escape' && busy) { e.preventDefault(); abort() }
+    if (e.key !== 'Escape') return
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    e.preventDefault()
+    if (busy) { abort(); return }
+    push('/main-live')
   }
 
   onMount(() => {
@@ -199,7 +216,11 @@
     <Mono dim style="font-size:10px;">{VERSION}</Mono>
     <div class="grow"></div>
     <Mono dim style="font-size:11px;">chat · 5-intent · vector + LLM</Mono>
-    <a class="ak-btn" href="#/main-live">← 返回素材庫</a>
+    <!-- Same affordance the ingest and offload dialogs use, so Esc looks the same
+         everywhere it works. The label is dynamic because Esc genuinely does two
+         different things here: a static "返回素材庫" would be a lie mid-answer,
+         when the key aborts instead of navigating. -->
+    <button class="esc" on:click={() => (busy ? abort() : push('/main-live'))}>ESC · {busy ? '中斷回覆' : '返回素材庫'}</button>
   </div>
 
   <div class="body">
@@ -290,15 +311,12 @@
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
   .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
-  /* Match the global button.ak-btn look for the back-link <a> (global rule is
-     element-qualified to <button>, so an <a class="ak-btn"> is otherwise unstyled). */
-  .topbar a.ak-btn {
-    font-family: var(--ak-mono); font-size: var(--fs-tiny); text-transform: uppercase;
-    letter-spacing: var(--tr-uppercase); color: var(--ink); background: transparent;
-    border: 1px solid var(--rule-hi); padding: 6px 10px; line-height: 1;
-    text-decoration: none; cursor: pointer; white-space: nowrap;
-  }
-  .topbar a.ak-btn:hover { background: var(--surface-2); border-color: var(--ink); }
+  /* Verbatim from the ingest/offload dialogs, minus their `margin-left: auto` —
+     this topbar already pushes with .grow. Keeping the two in sync matters more
+     than saving the duplication: Esc is one gesture and should not look like
+     two different controls depending on which screen you are on. */
+  .esc { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--quiet); background: none; border: none; cursor: pointer; white-space: nowrap; }
+  .esc:hover { color: var(--ink); }
   .body { display: grid; grid-template-columns: 240px 1fr; min-height: 0; }
   .convs { border-right: 1px solid var(--rule); display: flex; flex-direction: column; min-height: 0; }
   .convhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--rule); }

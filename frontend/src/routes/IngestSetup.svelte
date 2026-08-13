@@ -42,6 +42,21 @@
 
   $: gb = manifest ? (manifest.total_size_mb / 1024).toFixed(1) : null
 
+  // The header button has read "ESC · CANCEL" since this screen shipped, but the
+  // key was never wired. Same fix as Offload's, minus its running-copy guard:
+  // nothing here runs long enough to be worth interrupting with a confirm — Scan
+  // is a single request, and the actual ingest happens on /ingest-live.
+  //
+  // No skip-when-focused-in-an-input guard on purpose: that belongs to printable
+  // shortcuts (Inspector's onKey), not to Escape, which should close the dialog
+  // from inside the path field too.
+  function onKey(e) {
+    if (e.key !== 'Escape') return
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    e.preventDefault()
+    push('/')
+  }
+
   // Native folder chooser, same contract as Offload's: desktop shell only, and a
   // cancel leaves the field alone rather than clearing a path someone typed.
   const canBrowse = canPickFolder()
@@ -55,7 +70,14 @@
   }
 
   async function scan() {
-    if (!path.trim()) { err = '請先填來源資料夾路徑'; return }
+    // Same rule as Offload's: a missing required path shouts, because pressing
+    // the action with a blank field is the likeliest way to hit it and a line of
+    // inline text is easy to miss. `err` stays for operation failures below, so
+    // validation and runtime errors do not compete for the same slot.
+    if (!path.trim()) {
+      pushToast('請先填來源資料夾路徑（Source · folder）', 'error')
+      return
+    }
     err = ''; notice = ''; scanning = true; manifest = null
     try {
       const d = await api.scanMedia(path.trim())
@@ -65,7 +87,18 @@
   }
 
   async function start() {
-    if (!path.trim()) { err = '需要來源資料夾'; return }
+    // Same shape as Offload's doRun: collect every unmet prerequisite and name
+    // them in one message. "Scan first" and "that folder had nothing in it" are
+    // different problems with the same symptom (total === 0), so they get
+    // different sentences — manifest is null only before a scan has run.
+    const missing = []
+    if (!path.trim()) missing.push('來源資料夾路徑（Source · folder）')
+    if (manifest === null) missing.push('先按 Scan 掃描來源資料夾')
+    else if (total === 0) missing.push('可匯入的媒體檔（這個資料夾掃到 0 個）')
+    if (missing.length) {
+      pushToast(`無法開始匯入 — 缺少：${missing.join('、')}`, 'error')
+      return
+    }
     err = ''; starting = true
     try {
       const body = { ...opts }
@@ -113,6 +146,8 @@
     ['no_embed', 'Skip index rebuild', '匯入後不自動重建向量索引'],
   ]
 </script>
+
+<svelte:window on:keydown={onKey} />
 
 <div class="artboard" data-theme={$resolvedTheme}>
   <div class="topbar">
@@ -227,7 +262,10 @@
       {#if err}<Mono style="font-size:11px;color:var(--cyan);">{err}</Mono>{:else if notice}<Mono dim style="font-size:11px;">{notice}</Mono>{/if}
       <div class="grow"></div>
       <button class="ak-btn" on:click={() => push('/')}>Cancel</button>
-      <button class="ak-btn ak-btn--primary" on:click={start} disabled={starting || total === 0}>{starting ? 'starting…' : 'Start ingest →'}</button>
+      <!-- Disabled only while a start is actually in flight; every other refusal
+           is a toast naming what is missing, same as Offload's Run. -->
+      <button class="ak-btn ak-btn--primary" on:click={start} disabled={starting}
+              title={total > 0 ? `開始匯入 ${total} 個檔案` : '開始匯入'}>{starting ? 'starting…' : 'Start ingest →'}</button>
     </div>
   </div>
 </div>

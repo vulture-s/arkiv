@@ -54,7 +54,13 @@
   // Run is armed after a Preview; also re-armed after a Stop so the user can
   // Resume directly — the backend keeps a per-source state file and picks up from
   // the last verified file (R5-17 #19), no re-Preview needed.
-  $: canRun = (phase === 'preview' || (phase === 'done' && stopped)) && liveDsts.length > 0
+  // The human gate (Preview must precede Run, plan §DIT rule 1) is unchanged as
+  // a RULE — what changed is how it refuses. It used to be folded into the
+  // button's `disabled` along with the destination check, so a user with a blank
+  // form got one greyed-out button and no way to tell which of the two things it
+  // wanted. Now the button is pressable whenever a run isn't already going, and
+  // every refusal names its reason.
+  $: previewed = phase === 'preview' || (phase === 'done' && stopped)
   $: pct = pTotal ? Math.min(100, Math.round((pDone / pTotal) * 100)) : 0
   $: anyFailed = summary ? Object.values(summary).some((s) => s.failed_files > 0) || doneCode !== 0 : false
   const base = (p) => String(p).split(/[\\/]/).pop()
@@ -88,8 +94,28 @@
     if (p) dsts[i] = p
   }
 
+  // Required-path guards. These toast rather than only setting `err`, because a
+  // line of inline text is easy to miss and the failure it reports is the one a
+  // user is most likely to hit: pressing the action with a field still blank.
+  // `err` stays the channel for operation failures (a copy that broke), so the
+  // two do not compete: validation shouts, runtime errors stay on the page.
+  //
+  // A toast, not a native alert(): a modal blocks the whole webview, and in a
+  // Tauri window a blocked webview stops responding to everything else.
+  // Collects EVERY unmet prerequisite, not just the first. Reporting them one at
+  // a time turns the form into a guessing game: you fill the source, press
+  // again, and only then find out a destination was blank too.
+  function blockers({ needDst, needPreview }) {
+    const missing = []
+    if (!src.trim()) missing.push('來源路徑（Source）')
+    if (needDst && liveDsts.length === 0) missing.push('至少一個目的地路徑（Destinations）')
+    if (needPreview && !previewed) missing.push('先按 Preview 讀取來源檔案清單')
+    return missing
+  }
+
   async function doPreview() {
-    if (!src.trim()) { err = '請先填來源路徑'; return }
+    const missing = blockers({ needDst: false, needPreview: false })
+    if (missing.length) { pushToast(`無法預覽 — 缺少：${missing.join('、')}`, 'error'); return }
     err = ''; phase = 'previewing'; preview = null
     try {
       preview = await api.offloadPreview({
@@ -103,7 +129,9 @@
   }
 
   async function doRun() {
-    if (!canRun) return
+    if (phase === 'running') return
+    const missing = blockers({ needDst: true, needPreview: true })
+    if (missing.length) { pushToast(`無法開始複製 — 缺少：${missing.join('、')}`, 'error'); return }
     err = ''; phase = 'running'; stopped = false
     curDst = ''; pTotal = 0; pDone = 0; pFailed = 0; recent = []; summary = null; doneCode = null
     abortCtl = new AbortController()
@@ -165,12 +193,43 @@
   // Navigating away mid-copy must also stop the server-side copy, not orphan it.
   onDestroy(() => { if (abortCtl) abortCtl.abort() })
 
+  // The header button has read "ESC · CANCEL" since this screen shipped, but the
+  // key itself was never wired — the label advertised a shortcut that did not
+  // exist. It now does the same thing the button does.
+  //
+  // Note this deliberately does NOT skip when focus is in an input, the way
+  // Inspector's onKey does. That guard is there because its shortcuts are
+  // printable letters; Escape is not, and closing a dialog from inside its own
+  // text field is exactly what the key is for.
+  //
+  // The one divergence from the button: while a copy is running, Escape asks
+  // first, reusing Stop's confirm. Clicking the button has to be aimed at;
+  // a key does not, and this dialog is the one place in the app where a stray
+  // keystroke can interrupt a 30-minute card copy. Answering no leaves the
+  // transfer running rather than closing the screen.
+  // One function behind both the key and the button that is named after it.
+  // They were briefly allowed to diverge — the key confirmed before stopping a
+  // running copy while the button still navigated away silently — which is worse
+  // than either behaviour alone: a control labelled ESC has to do what ESC does.
+  function escAction() {
+    if (phase === 'running') { stopRun(); return }
+    push('/')
+  }
+  function onKey(e) {
+    if (e.key !== 'Escape') return
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    e.preventDefault()
+    escAction()
+  }
+
   // 2-phase handoff — ingest the first destination we just offloaded.
   function ingestNext() {
     const target = (summary && Object.keys(summary)[0]) || liveDsts[0]
     if (target) push(`/ingest-setup?src=${encodeURIComponent(target)}`)
   }
 </script>
+
+<svelte:window on:keydown={onKey} />
 
 <div class="artboard" data-theme={$resolvedTheme}>
   <div class="topbar">
@@ -184,7 +243,7 @@
     <div class="dhead">
       <Eyebrow>DIT · card → backup</Eyebrow>
       <div class="ak-display title">Offload{preview ? ` · ${preview.count} files` : ''}</div>
-      <button class="esc" on:click={() => push('/')}>ESC · CANCEL</button>
+      <button class="esc" on:click={escAction}>ESC · {phase === 'running' ? '停止複製' : 'CANCEL'}</button>
     </div>
 
     <div class="body">
@@ -298,7 +357,10 @@
       {:else}
         <button class="ak-btn" on:click={() => push('/')}>{phase === 'done' ? 'Done' : 'Cancel'}</button>
       {/if}
-      <button class="ak-btn ak-btn--primary" on:click={doRun} disabled={!canRun}>{phase === 'running' ? 'copying…' : (stopped && phase === 'done' ? 'Resume →' : 'Run offload →')}</button>
+      <!-- Disabled only while a copy is actually in flight. Every other refusal
+           is a toast naming what is missing, so the button is never mutely dead. -->
+      <button class="ak-btn ak-btn--primary" on:click={doRun} disabled={phase === 'running'}
+              title="開始複製到所有目的地">{phase === 'running' ? 'copying…' : (stopped && phase === 'done' ? 'Resume →' : 'Run offload →')}</button>
     </div>
   </div>
 </div>
