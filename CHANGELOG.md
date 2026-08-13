@@ -2,17 +2,29 @@
 
 ## Unreleased
 
+## v0.12.1 - 2026-08-13
+
+**Native dialogs worked for the first time.** Not "worked again" — the ACL had never let a single Tauri command through, on either platform, and nothing had noticed because no frontend code had ever called one.
+
 ### Fixed
+- **Every native call was denied by the ACL, on both platforms (#313).** A folder browse button was added to Offload, rendered, and then did nothing: `Command plugin:dialog|open not allowed by ACL`. The permission was not missing — `capabilities/default.json` already listed `dialog:default` — but the capability applied to a context arkiv never runs in. arkiv does not load bundled `app://` content: `main.rs` points the webview at the Python backend on `http://127.0.0.1:<negotiated port>`, which Tauri's ACL classifies as a **remote** origin, and a capability with no `remote` block covers local app URLs only (tauri-utils `acl::capability`: `remote` "defaults to not being set, as our default use case is that the content is served from our local application"). `remote.urls` now brings the running webview inside the capability; the port is chosen at runtime, so the pattern accepts any.
+
+  What made this read as a dead button rather than a permissions problem: `withGlobalTauri` injects the plugin API objects, and **injection is not ACL-gated**. Feature detection answered yes, the button appeared, and only the invoke was refused. The webview URL has no platform branch, so macOS was equally affected — this shipped broken in v0.12.0 and in every build before it.
+
+  Checked rather than assumed, in order: the capability reaches the build (`remote.urls` present in the generated `capabilities.json`); the pattern actually matches (a scratch binary replicating `RemoteUrlPattern::from_str` against `urlpattern` 0.3 returns true for `http://127.0.0.1:59142/` and for the hash-routed URL); `resolve_command` does extend contexts from `remote`; and the pattern strings are embedded in the rebuilt binary. One round appeared to fail after the fix — that was a stale installed binary, not a bad fix.
+- **Dropdowns fell back to the browser's light list on the dark theme (#313).** `app.css` styled `input.ak-input` — element-qualified — so `<select class="ak-input">` matched none of it, and no route styled `select` either. Every dropdown in the app was painted by the browser default: a grey-white list over near-black chrome. Both a `select` and a `select option` rule are needed, because the open popup is a separate paint surface from the closed control and Chromium/WebView2 paints it from the select's own computed `background-color` — leaving that transparent sends the popup back to the light list however the control looks. Values are tokens, so light mode stays coherent. On macOS the popup is an AppKit menu and follows the system appearance instead; the rule is a no-op there rather than a regression.
+- **`gen/schemas/capabilities.json` was left stale.** It is generated and tracked, so it regenerated dirty for anyone who built after the capability change.
+
 - **Docker ran a different embedding model from every other install (#312).** `docker-compose.yml` set `ARKIV_EMBED_MODEL=nomic-embed-text` and `ARKIV_VISION_MODEL=qwen3-vl:8b`. Those do not *document* the defaults — they **override** them, so a Docker user got an English-centric embedder in a project whose headline feature is CJK semantic search, plus the vision model `config.py` documents at length as ~10x slower (~60s/frame against ~8s/frame; ~30h against ~3.5h over 2000 frames, at comparable tag quality). Both now track `config.py` (`bge-m3` / `qwen2.5vl:7b`), with a comment saying they must keep tracking it, because the divergence was invisible: nothing compared the compose file to the defaults it silently shadowed.
-
   **Migration for existing Docker libraries.** The vision change needs nothing — frame descriptions are regenerated per frame and nothing is keyed on the model. The embedding change does: `bge-m3` is 1024-dimensional against `nomic-embed-text`'s 768, so an index built under the old value cannot accept new vectors. Rebuild it once after pulling:
-
   ```bash
   docker exec arkiv-arkiv-1 python embed.py --rebuild
   ```
-
   This drops and rebuilds the ChromaDB index from the SQLite rows. Media, transcripts, frame descriptions and tags are untouched — only the vectors are recomputed. To stay on the old model instead, set `ARKIV_EMBED_MODEL=nomic-embed-text` in your own compose override.
 - **Six files still named the pre-#202 model pair (#312).** #202 corrected the README, `.env.example` and `docs/install.md` when the defaults moved to `bge-m3` / `qwen2.5vl:7b`, and recorded why it mattered: a README-follower pulled a 10x slower vision model that `health.py` then reported MISSING. That sweep missed `CONTRIBUTING.md`, `docs/index.md`, `docs/pipeline.md` and its `.zh-TW` twin, `docs/faq.md` and `AGENTS.md`, so the same trap stayed live for anyone starting from any of them. CONTRIBUTING's pull block also listed only two of the three models `health.py` checks. Historical records (`CHANGELOG.md`, the handover and acceptance docs) are left as written — they describe what the defaults were at the time.
+
+### Added
+- **Browse buttons on the folder fields that hold a real path (#313).** Ingest setup's Source, plus Offload's Source and every Destination, open the OS chooser (Explorer / Finder) instead of being type-only. These are the easiest fields in the app to typo without noticing — offload then reads a directory that is not the one you meant. Wired through `window.__TAURI__.dialog` rather than an `@tauri-apps` npm import: `withGlobalTauri` is already on and the permission already granted, so this costs no dependency and puts nothing desktop-only in the web bundle. The same SPA is served in a plain browser by `server.py`, where the global does not exist, so the buttons are gated on that and simply do not render there — the fields still accept a typed path. Cancel deliberately leaves the field untouched rather than clearing it, and failures now toast instead of dying as an unhandled rejection.
 
 ## v0.12.0 - 2026-08-12
 
