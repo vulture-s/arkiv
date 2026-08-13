@@ -23,6 +23,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
+  import { pickFolder, canPickFolder } from '../lib/pickFolder.js'
 
   let src = ''
   let organize = ''
@@ -59,6 +60,19 @@
 
   function addDst() { dsts = [...dsts, ''] }
   function removeDst(i) { dsts = dsts.filter((_, j) => j !== i); if (!dsts.length) dsts = [''] }
+
+  // Browse buttons only exist in the desktop shell (see lib/pickFolder.js).
+  // Cancel returns null and must leave the field untouched — a card path someone
+  // typed is not worth losing to a stray Escape.
+  const canBrowse = canPickFolder()
+  async function browseSrc() {
+    const p = await pickFolder(src)
+    if (p) src = p
+  }
+  async function browseDst(i) {
+    const p = await pickFolder(dsts[i])
+    if (p) dsts[i] = p
+  }
 
   async function doPreview() {
     if (!src.trim()) { err = '請先填來源路徑'; return }
@@ -166,6 +180,9 @@
           <Eyebrow>Source · card / folder</Eyebrow>
           <div class="srcrow">
             <input class="ak-input" placeholder="/Volumes/CARD/DCIM  或  ~/footage" bind:value={src} spellcheck="false" on:keydown={(e) => e.key === 'Enter' && doPreview()} />
+            {#if canBrowse}
+              <button class="seg" on:click={browseSrc} disabled={phase === 'running'} title="選擇資料夾">⋯</button>
+            {/if}
             <button class="ak-btn" on:click={doPreview} disabled={phase === 'previewing' || phase === 'running'}>{phase === 'previewing' ? 'reading…' : 'Preview'}</button>
           </div>
         </div>
@@ -181,6 +198,9 @@
           {#each dsts as d, i}
             <div class="dstrow">
               <input class="ak-input" placeholder={`/Volumes/Backup${i + 1}`} bind:value={dsts[i]} spellcheck="false" disabled={phase === 'running'} />
+              {#if canBrowse}
+                <button class="seg" on:click={() => browseDst(i)} disabled={phase === 'running'} title="選擇資料夾">⋯</button>
+              {/if}
               {#if i === dsts.length - 1}
                 <button class="seg" on:click={addDst} disabled={phase === 'running'} title="add destination">+</button>
               {:else}
