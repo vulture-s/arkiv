@@ -17,6 +17,8 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
+  import { pickFolder, canPickFolder } from '../lib/pickFolder.js'
+  import { pushToast } from '../lib/toast.js'
 
   let path = ''
   let limit = 0
@@ -39,6 +41,18 @@
   let scanning = false, starting = false, err = '', notice = ''
 
   $: gb = manifest ? (manifest.total_size_mb / 1024).toFixed(1) : null
+
+  // Native folder chooser, same contract as Offload's: desktop shell only, and a
+  // cancel leaves the field alone rather than clearing a path someone typed.
+  const canBrowse = canPickFolder()
+  async function browsePath() {
+    try {
+      const p = await pickFolder(path)
+      if (p) path = p
+    } catch (e) {
+      pushToast(`資料夾選擇器打不開：${e?.name || ''} ${e?.message || e}`, 'error')
+    }
+  }
 
   async function scan() {
     if (!path.trim()) { err = '請先填來源資料夾路徑'; return }
@@ -122,6 +136,9 @@
           <Eyebrow>Source · folder</Eyebrow>
           <div class="srcrow">
             <input class="ak-input" placeholder="/Volumes/CARD/DCIM  或  ~/footage" bind:value={path} spellcheck="false" on:keydown={(e)=>e.key==='Enter'&&scan()} />
+            {#if canBrowse}
+              <button class="seg" on:click={browsePath} disabled={scanning} title="選擇資料夾">⋯</button>
+            {/if}
             <button class="ak-btn" on:click={scan} disabled={scanning}>{scanning ? 'scanning…' : 'Scan'}</button>
           </div>
         </div>

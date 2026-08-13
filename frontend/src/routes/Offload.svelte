@@ -24,6 +24,7 @@
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
   import { pickFolder, canPickFolder } from '../lib/pickFolder.js'
+  import { pushToast } from '../lib/toast.js'
 
   let src = ''
   let organize = ''
@@ -64,13 +65,26 @@
   // Browse buttons only exist in the desktop shell (see lib/pickFolder.js).
   // Cancel returns null and must leave the field untouched — a card path someone
   // typed is not worth losing to a stray Escape.
+  //
+  // Errors are toasted rather than left to an unhandled rejection. The first cut
+  // had no catch, so when the chooser did not come up the button looked simply
+  // dead: no dialog, no message, nothing in the UI to act on. A picker that
+  // fails must say so — silence is the one outcome that cannot be debugged.
   const canBrowse = canPickFolder()
+  async function browse(current) {
+    try {
+      return await pickFolder(current)
+    } catch (e) {
+      pushToast(`資料夾選擇器打不開：${e?.name || ''} ${e?.message || e}`, 'error')
+      return null
+    }
+  }
   async function browseSrc() {
-    const p = await pickFolder(src)
+    const p = await browse(src)
     if (p) src = p
   }
   async function browseDst(i) {
-    const p = await pickFolder(dsts[i])
+    const p = await browse(dsts[i])
     if (p) dsts[i] = p
   }
 
