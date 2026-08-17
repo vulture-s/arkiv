@@ -18,6 +18,7 @@
   import { resolvedTheme } from '../lib/prefs.js'
   import { pushToast } from '../lib/toast.js'
   import { createViewGen } from '../lib/viewGen.js'
+  import { shotYearRows, mediaParams } from '../lib/shotYear.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
@@ -54,6 +55,17 @@
   let view = 'grid'
   let query = ''
   let activeCamera = null
+  // Shoot-year browse. Unlike the camera pool below, this is a SERVER-side filter
+  // (?shot_year=): the sidebar counts come from the whole library, so filtering only
+  // the loaded page would leave the row claiming "2025 · 54" beside a grid holding
+  // however many of those happened to fall inside the first PAGE rows.
+  let activeShotYear = null
+  let activeShotDate = null // an ISO day inside activeShotYear; narrows it further
+  let liveShotYears = null
+  // Spread into every mediaParams() call, so the shoot filters cannot end up present
+  // on one request path and missing on another — which is the whole failure this
+  // feature's backend went out of its way to prevent.
+  const shotArgs = () => ({ shotYear: activeShotYear, shotDate: activeShotDate })
   // Normalize a raw camera_model into a browsable machine category so the pool
   // groups clips by device (A7 V / FX30 / iPhone) instead of fragmenting on
   // per-focal-length model strings ("...iPhone 16 Pro 48mm" etc.).
@@ -249,6 +261,19 @@
     }
   }
 
+  // Shared by load() and loadIds() so the facet can't fail loudly on one path and
+  // silently on the other. Hiding a browse entry point without a word is the B11
+  // silent-failure shape — and the grid read the same DB successfully a moment
+  // earlier, so a failure here is specific enough to be worth saying out loud.
+  function applyShotYearFacets(f) {
+    if (f && f._error) {
+      liveShotYears = null
+      pushToast(`拍攝年份讀取失敗: ${f._error}`, 'error')
+      return
+    }
+    liveShotYears = shotYearRows(f)
+  }
+
   async function load() {
     // load() means "show the whole library again", so no collection is active.
     // Clearing here rather than in each caller keeps the highlight honest on
@@ -264,16 +289,20 @@
     readyState = ready
     if (readyState === 'unreachable') { state = 'ok'; return } // panel renders via readyState
     try {
-      const [s, m, t, c, si] = await Promise.all([
-        api.getStats(), api.getMedia({ limit: PAGE }), api.getTags(), api.getCollections(),
+      const [s, m, t, c, si, f] = await Promise.all([
+        api.getStats(),
+        api.getMedia(mediaParams({ limit: PAGE, ...shotArgs() })),
+        api.getTags(), api.getCollections(),
         api.sampleStatus().catch(() => null), // non-fatal: chip just stays hidden
+        api.getShootDateFacets().catch((e) => ({ _error: e.message })),
       ])
       viewGen.apply(gen, () => {
         stats = s
         sampleInfo = si
+        applyShotYearFacets(f)
         items = (m.items || []).map(toCard)
         total = m.total ?? items.length
-        moreParams = { limit: PAGE }
+        moreParams = mediaParams({ limit: PAGE, ...shotArgs() })
         liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
         liveCollections = (c?.collections || []).map((col) => ({
           key: col.key, title: col.title, count: col.count,
@@ -334,6 +363,27 @@
     activeCamera = next
     if (next && (activeCollection || query)) { activeCollection = null; query = ''; load() }
   }
+  // 拍攝日 quick-browse. Server-side, so it re-issues the request rather than
+  // filtering what is already on screen — and it re-issues through whichever path
+  // is current, keeping the date and a live search stacked instead of making the
+  // user choose between them (the backend wired these into the search branches for
+  // exactly this reason).
+  function reloadForShotFilter() {
+    if (query.trim()) runSearch()
+    else load() // also clears any active collection, whose members carry no shoot date
+  }
+  function onShotYearClick(year) {
+    activeShotYear = activeShotYear === year ? null : year
+    // Changing or closing the year always drops the day. The day rows belong to the
+    // year that is open; keeping one selected after the year moved would leave the
+    // grid filtered to a date that is no longer visible anywhere in the sidebar.
+    activeShotDate = null
+    reloadForShotFilter()
+  }
+  function onShotDateClick(date) {
+    activeShotDate = activeShotDate === date ? null : date
+    reloadForShotFilter()
+  }
   // Smart Pools → the rating dimension (shared with the toolbar FilterRow).
   // 'Unrated' maps to rating 'none' (ratingToUi(null)), which the visible
   // filter already handles. Clicking the active pool toggles back to all.
@@ -345,7 +395,12 @@
       // "All media" has to actually leave a collection. Clearing only the rating
       // filters left the grid showing the collection subset with its sidebar row
       // still highlighted, while the user had just asked for the whole library.
-      if (activeCollection || query) { query = ''; load() }
+      // Same argument for the shoot year: it is a server-side subset, so leaving it
+      // on would hand back one year while the pool row claims the whole library.
+      const hadShotFilter = activeShotYear !== null || activeShotDate !== null
+      activeShotYear = null
+      activeShotDate = null
+      if (activeCollection || query || hadShotFilter) { query = ''; load() }
       return
     }
     const map = { 'Needs review': 'rev', 'Rated good': 'good', 'N·G': 'ng', 'Unrated': 'none' }
@@ -374,6 +429,10 @@
     }
     query = ''
     activeCamera = null
+    // A collection's member list is served whole, with no shoot-date path behind it —
+    // a year or day left highlighted here would filter nothing while claiming to.
+    activeShotYear = null
+    activeShotDate = null
     // This writer is synchronous — the members are already in hand from
     // /api/collections — so without claiming a generation it would be the one path a
     // slow in-flight search could still overwrite a moment later.
@@ -418,6 +477,14 @@
   $: liveProjects = stats ? [{ id: 'proj', name: projectName, count: stats.total, active: true }] : null
   // real disk usage for the sidebar Storage footer (replaces the mock placeholder)
   $: liveStorage = stats?.disk ?? null
+  // The header used to always read stats.total, so picking "2025 · 54" left the only
+  // count on screen saying 62 while the sidebar and the grid both said 54 — and the
+  // "顯示 N / total" line below is hidden once everything is loaded, so there was
+  // nothing else to correct it. `total` is the server-side pool for whatever is on
+  // screen (search / year / day / collection / deep-link), so it reconciles with the
+  // facet exactly. null = nothing is narrowing the library; keep the original line,
+  // whose duration and size are library-wide aggregates we have no subset figure for.
+  $: subsetTotal = stats && state === 'ok' && total !== stats.total ? total : null
   // tag click → search that tag
   function onTagClick(name) {
     query = name
@@ -436,13 +503,13 @@
       // Same-DB search via /api/media?q= → {items, total, search:true}.
       // NOT /api/search/all — that's cross-project federation over the
       // ~/.arkiv-projects.json registry, which is empty here → 0 results.
-      const r = await api.getMedia({ q: query, limit: PAGE })
+      const r = await api.getMedia(mediaParams({ limit: PAGE, query, ...shotArgs() }))
       // Also fixes two searches in a row resolving out of order: the slower first
       // query used to repaint the grid while the box already read the second one.
       viewGen.apply(gen, () => {
         items = (r.items || []).map(toCard)
         total = r.total ?? items.length
-        moreParams = { q: query, limit: PAGE }
+        moreParams = mediaParams({ limit: PAGE, query, ...shotArgs() })
         selectedId = items.length ? items[0].id : null
         state = 'ok'
       })
@@ -478,11 +545,16 @@
       // Load the sidebar data (stats/tags/collections) too — otherwise the
       // deep-link path leaves stats=null and the whole sidebar (projects + pools)
       // silently falls back to mock data. Grid items come from the ?ids= subset.
-      const [s, m, t, c] = await Promise.all([
+      const [s, m, t, c, f] = await Promise.all([
         api.getStats(), api.getMedia({ ids, limit: PAGE }), api.getTags(), api.getCollections(),
+        // The year section is sidebar data like tags and collections, so it belongs
+        // on this path too — otherwise arriving from chat silently loses the time
+        // entry point until the user navigates back out.
+        api.getShootDateFacets().catch((e) => ({ _error: e.message })),
       ])
       viewGen.apply(gen, () => {
         stats = s
+        applyShotYearFacets(f)
         items = (m.items || []).map(toCard)
         // A deep-link ?ids= subset is exactly the returned rows — no further pages.
         total = items.length
@@ -784,14 +856,14 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
+    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
 
     <main class="center">
       <div class="toolrow">
         <div class="proj">
           <div class="ak-display projtitle">{projectName}</div>
           <Mono dim style="font-size:11px;margin-top:5px;letter-spacing:0.04em;white-space:nowrap;">
-            {#if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB · live{:else}loading…{/if}
+            {#if stats && subsetTotal !== null}{subsetTotal} / {stats.total} items · 篩選中{:else if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB · live{:else}loading…{/if}
           </Mono>
         </div>
         <input

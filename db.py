@@ -1224,6 +1224,82 @@ def shot_year(raw) -> Optional[str]:
 # string so the filter and the facet can't drift apart on a typo.
 UNKNOWN_SHOT_YEAR = "unknown"
 
+# One definition of "this row carries a readable shoot date", so that the three
+# selectable states — a year, a day, and `unknown` — are a partition of the library
+# rather than three independently-written predicates that happen to overlap.
+#
+# The GLOB accepts either separator because the two writers disagree (exiftool
+# "2025:10:03 13:56:20", XAVC sidecar "2025-10-03T13:56:20+08:00"), and the length
+# test requires the date to actually END at character 10. Without that test a value
+# like "2025-10-03XGARBAGE" passes the year and day filters while
+# normalise_shot_date rejects it and the facet files it under `unknown` — filter and
+# facet then disagree about the same row, which is the one property this feature was
+# built on.
+#
+# The component ranges are not belt-and-braces on top of the GLOB — they are the only
+# thing that rejects "0000:00:00 00:00:00", which is exiftool's sentinel for an UNSET
+# date field and therefore one of the most common values in the column. It is
+# shape-perfect and calendar-impossible, so a shape check alone files it under a real
+# year while normalise_shot_date correctly calls it unreadable.
+#
+# Known residual: this validates ranges, not the calendar, so "2025-02-30" still reads
+# as dated here and as `unknown` to normalise_shot_date. That one needs a real calendar
+# — i.e. a stored normalised column rather than a predicate over raw text — and no
+# writer produces it, since both format an already-parsed date. Pinned by
+# test_impossible_calendar_dates_are_the_known_residual.
+_DATED_SQL = (
+    "creation_date IS NOT NULL "
+    "AND substr(creation_date,1,10) GLOB '[0-9][0-9][0-9][0-9][-:][0-9][0-9][-:][0-9][0-9]' "
+    "AND (length(creation_date) = 10 OR substr(creation_date,11,1) IN ('T',' ')) "
+    "AND CAST(substr(creation_date,1,4) AS INTEGER) BETWEEN 1 AND 9999 "
+    "AND CAST(substr(creation_date,6,2) AS INTEGER) BETWEEN 1 AND 12 "
+    "AND CAST(substr(creation_date,9,2) AS INTEGER) BETWEEN 1 AND 31"
+)
+_UNDATED_SQL = "NOT ({0})".format(_DATED_SQL)
+
+
+def shot_window_clause(
+    shot_year: Optional[str] = None,
+    shot_date: Optional[str] = None,
+) -> Tuple[str, List]:
+    """SQL for "shot in this year / on this day", shared by every caller.
+
+    Two SQL sites filter on the shoot date — `_build_filter_clause` for the list
+    query, and the degraded text search in `routers.media` — and they used to
+    hand-write the same predicate separately. That duplication is exactly how audits
+    H8 and H14 happened: a filter honoured on one path and quietly not on another.
+    Building it once means a day filter cannot be added to one site and forgotten on
+    the other.
+
+    The two arguments compose with AND rather than one overriding the other, so a
+    contradictory request (year 2025 *and* undated) returns nothing instead of
+    silently answering a question that wasn't asked.
+
+    Returns ("", []) when neither is set, so callers can concatenate unconditionally.
+    """
+    clauses: List[str] = []
+    params: List = []
+    if shot_year == UNKNOWN_SHOT_YEAR:
+        # "Show me the ones with no usable shoot date" has to be reachable, or those
+        # clips are invisible from the sidebar the moment any year is selected.
+        clauses.append(_UNDATED_SQL)
+    elif shot_year:
+        clauses.append("({0}) AND substr(creation_date,1,4) = ?".format(_DATED_SQL))
+        params.append(str(shot_year))
+    if shot_date == UNKNOWN_SHOT_YEAR:
+        clauses.append(_UNDATED_SQL)
+    elif shot_date:
+        # Unlike the year, the day is NOT safe to compare naively: the first ten
+        # characters differ between the two writers, so fold ':' to '-' first. The
+        # caller always passes the normalised ISO form (what the facet reports).
+        clauses.append(
+            "({0}) AND replace(substr(creation_date,1,10), ':', '-') = ?".format(_DATED_SQL)
+        )
+        params.append(str(shot_date))
+    if not clauses:
+        return "", []
+    return " AND ".join(clauses), params
+
 
 def _build_filter_clause(
     min_duration: float = 0,
@@ -1232,6 +1308,7 @@ def _build_filter_clause(
     rating: Optional[str] = None,
     media_type: Optional[str] = None,
     shot_year: Optional[str] = None,
+    shot_date: Optional[str] = None,
 ) -> Tuple[str, List]:
     """Build WHERE clause and params for common filters."""
     clauses = ["duration_s >= ?", "duration_s <= ?"]
@@ -1250,40 +1327,56 @@ def _build_filter_clause(
         clauses.append("ext IN " + mediatypes.sql_in_literal(mediatypes.VIDEO_EXT))
     elif media_type == "audio":
         clauses.append("ext IN " + mediatypes.sql_in_literal(mediatypes.AUDIO_EXT))
-    if shot_year == UNKNOWN_SHOT_YEAR:
-        # "Show me the ones with no usable shoot date" has to be reachable, or those
-        # clips are invisible from the sidebar the moment any year is selected.
-        clauses.append(
-            "(creation_date IS NULL OR TRIM(creation_date) = '' "
-            "OR substr(creation_date,1,4) NOT GLOB '[0-9][0-9][0-9][0-9]')"
-        )
-    elif shot_year:
-        # Safe on both stored shapes: each is YYYY-prefixed (see the note above).
-        clauses.append("substr(creation_date,1,4) = ?")
-        params.append(str(shot_year))
+    shot_sql, shot_params = shot_window_clause(shot_year=shot_year, shot_date=shot_date)
+    if shot_sql:
+        clauses.append(shot_sql)
+        params.extend(shot_params)
     return " AND ".join(clauses), params
 
 
 def get_shoot_date_facets() -> dict:
-    """Year buckets for the sidebar's time entry point, newest first.
+    """Year buckets — each with its shoot DAYS — for the sidebar's time entry point.
 
     Counted in Python rather than `GROUP BY substr(...)` because a bucket must mean
     "this clip really was shot in 2025", and the raw column also contains values that
     only *look* like dates. Reads one column; trivial next to the ingest it describes.
+
+    Days are inlined rather than served from a second lazy endpoint. This function
+    already reads every `creation_date` in the library, so grouping them costs
+    nothing extra, and the number of distinct shoot days is bounded by the number of
+    clips. A year alone is too coarse to be the answer: a documentary shot across one
+    season collapses into a single bucket, which is the same "one bucket answers
+    nothing" failure that ruled `processed_at` out of this facet in the first place.
+
+    Both lists are newest-first, and the client is expected not to re-sort — the raw
+    column cannot be ordered lexically (':' sorts above '-'), so ordering is settled
+    here, on normalised values, once.
     """
     with get_conn() as conn:
         rows = conn.execute("SELECT creation_date FROM media").fetchall()
+    days_by_year: Dict[str, Dict[str, int]] = {}
     counts: Dict[str, int] = {}
     unknown = 0
     for row in rows:
-        year = shot_year(row["creation_date"])
-        if year is None:
+        iso = normalise_shot_date(row["creation_date"])
+        if iso is None:
             unknown += 1
-        else:
-            counts[year] = counts.get(year, 0) + 1
+            continue
+        year = iso[:4]
+        counts[year] = counts.get(year, 0) + 1
+        per_day = days_by_year.setdefault(year, {})
+        per_day[iso] = per_day.get(iso, 0) + 1
     return {
         "years": [
-            {"year": y, "count": counts[y]} for y in sorted(counts, reverse=True)
+            {
+                "year": y,
+                "count": counts[y],
+                "days": [
+                    {"date": d, "count": days_by_year[y][d]}
+                    for d in sorted(days_by_year[y], reverse=True)
+                ],
+            }
+            for y in sorted(counts, reverse=True)
         ],
         "unknown": unknown,
         "total": len(rows),

@@ -3,6 +3,7 @@
   import Eyebrow from './Eyebrow.svelte'
   import Mono from './Mono.svelte'
   import { PROJECTS, TAGS } from './mockData.js'
+  import { DAY_CAP } from './shotYear.js'
   // Live overrides — all default to mock so mock screens stay byte-identical.
   export let liveProjects = null // [{id,name,count,active,health?}]
   export let livePools = null // [[label, count], ...]
@@ -16,6 +17,11 @@
   export let liveStorage = null // {pct, used_gb, total_gb} from /api/stats.disk; null → mock placeholder
   export let onPool = null // (label) => void; click a Smart Pool → rating filter
   export let activePool = null // currently-active pool label (for row highlight)
+  export let liveShotYears = null // [{year, count, label, days:[{date,count,label}]}]; null → section hidden
+  export let onShotYear = null // (year) => void; click → filter the library to that shoot year
+  export let activeShotYear = null // currently-filtered shoot year (also the expanded one)
+  export let onShotDate = null // (isoDate) => void; click → narrow to that shoot day
+  export let activeShotDate = null // currently-filtered shoot day (for row highlight)
   export let liveCameras = null // [{model, count}] normalized camera category; null → section hidden
   export let onCamera = null // (model) => void; click → filter grid to that camera category
   export let activeCamera = null // currently-filtered camera model (for row highlight)
@@ -44,6 +50,11 @@
   $: visibleCollections = showAllCollections
     ? (liveCollections || [])
     : (liveCollections || []).slice(0, COLLECTION_CAP)
+  // Day list expansion, capped like the tag cloud above. Only one year is open at a
+  // time, so a single flag suffices — but it has to reset when the open year changes,
+  // or a year with three days inherits "expanded" from the one with two hundred.
+  let showAllDays = false
+  $: if (activeShotYear !== null) showAllDays = false
   // Storage footer: real disk usage when wired (live), else the design placeholder.
   const gb = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
   $: storage = liveStorage
@@ -82,6 +93,43 @@
       {/each}
     </div>
   </section>
+
+  {#if liveShotYears && liveShotYears.length}
+    <section>
+      <Eyebrow style="margin-bottom:10px;">Shoot date · 拍攝日</Eyebrow>
+      <div class="col">
+        {#each liveShotYears as y (y.year)}
+          <!-- Picking a year both filters to it and opens its days: one affordance,
+               because a separate disclosure control would be a second way to say the
+               same thing in a column that already has one idiom for everything. -->
+          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <div class="poolrow yearrow" class:activeyear={activeShotYear === y.year}
+            on:click={() => onShotYear && onShotYear(y.year)}>
+            <span class="ellip">
+              {#if y.days.length}<span class="caret">{activeShotYear === y.year ? '▾' : '▸'}</span>{/if}{y.label}
+            </span>
+            <Mono dim style="font-size:10px;flex:0 0 auto;">{y.count}</Mono>
+          </div>
+          {#if activeShotYear === y.year && y.days.length}
+            {#each showAllDays ? y.days : y.days.slice(0, DAY_CAP) as d (d.date)}
+              <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+              <div class="poolrow dayrow" class:activeday={activeShotDate === d.date}
+                on:click={() => onShotDate && onShotDate(d.date)}>
+                <span class="ellip">{d.label}</span>
+                <Mono dim style="font-size:10px;flex:0 0 auto;">{d.count}</Mono>
+              </div>
+            {/each}
+            {#if y.days.length > DAY_CAP}
+              <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+              <span class="moretag daymore" on:click={() => (showAllDays = !showAllDays)}>
+                {showAllDays ? '收合' : `+${y.days.length - DAY_CAP} 更多`}
+              </span>
+            {/if}
+          {/if}
+        {/each}
+      </div>
+    </section>
+  {/if}
 
   {#if liveCameras && liveCameras.length}
     <section>
@@ -197,6 +245,18 @@
   .collrow { border-left: 2px solid transparent; }
   .collrow:hover { color: var(--ink); }
   .collrow.activecoll { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }
+  .yearrow { border-left: 2px solid transparent; }
+  .yearrow:hover { color: var(--ink); }
+  .yearrow.activeyear { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }
+  /* Fixed-width so the year labels stay aligned whether or not a row has a caret. */
+  .caret { display: inline-block; width: 11px; color: var(--quiet); font-size: 9px; }
+  .dayrow {
+    border-left: 2px solid transparent; padding-left: 26px;
+    font-family: var(--ak-mono); font-size: 11px;
+  }
+  .dayrow:hover { color: var(--ink); }
+  .dayrow.activeday { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }
+  .daymore { margin-top: 2px; margin-bottom: 4px; padding-left: 26px; }
   .camrow { border-left: 2px solid transparent; }
   .camrow:hover { color: var(--ink); }
   .camrow.activecam { border-left-color: var(--invert); color: var(--ink); font-weight: 600; }

@@ -240,6 +240,9 @@ export async function offloadRun(body, { signal } = {}) {
 
 // /api/media?limit&offset&projects&tag&rating  → {items, total, search}
 export const getMedia = (params = {}, opts) => req(`/api/media${qs(params)}`, opts)
+// /api/media/facets/shoot-date → {years:[{year,count}], unknown, total}
+// Grouped on the EXIF/sidecar shoot date, not the ingest date — see #291.
+export const getShootDateFacets = (opts) => req('/api/media/facets/shoot-date', opts)
 export const getMediaDetail = (id, opts) => req(`/api/media/${id}`, opts)
 export const getWaveform = (id, opts) => req(`/api/media/${id}/waveform`, opts)
 export const getScenes = (id, opts) => req(`/api/media/${id}/scenes`, opts)
