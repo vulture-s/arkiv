@@ -3,6 +3,7 @@
 // clips that fall out of reach, or a filter that quietly stops applying.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { shotYearRows, mediaParams, UNKNOWN_SHOT_YEAR, DAY_CAP } from '../src/lib/shotYear.js'
 
 // Shaped like GET /api/media/facets/shoot-date on the real 62-clip library.
@@ -128,6 +129,39 @@ test('picking a day sends the day alone, not the day and its year', () => {
   const p = mediaParams({ limit: 500, shotYear: '2025', shotDate: '2025-10-03' })
   assert.equal(p.shot_date, '2025-10-03')
   assert.equal('shot_year' in p, false)
+})
+
+test('every /api/media request in MainLive is built through mediaParams with shotArgs', () => {
+  // The cases above prove the BUILDER keeps the filter. They cannot prove the call
+  // sites use it — an audit pointed out that they all keep passing if MainLive drops
+  // `...shotArgs()` from one of its three requests, which is the exact H8/H14 shape
+  // one layer up. MainLive is a .svelte file, so this reads the source instead of
+  // importing it: crude, but it fails on the thing that would actually break.
+  const src = readFileSync(new URL('../src/routes/MainLive.svelte', import.meta.url), 'utf8')
+
+  const calls = [...src.matchAll(/api\.getMedia\(([^\n]*)/g)].map((m) => m[1])
+  assert.ok(calls.length >= 3, `expected the browse/search/page requests, found ${calls.length}`)
+
+  for (const call of calls) {
+    // ?ids= is a deep link to an explicit set of clips, not a view of the library —
+    // a shoot filter on top of it would narrow a list the user asked for by id.
+    if (call.includes('ids')) continue
+    // Paging re-issues the params the originating request already built, so it
+    // inherits the filter rather than rebuilding it; the moreParams check below is
+    // what holds that end up.
+    if (call.includes('moreParams')) continue
+    assert.match(call, /mediaParams\(/, `raw params bypass the builder: ${call}`)
+    assert.match(call, /\.\.\.shotArgs\(\)/, `request drops the shoot filter: ${call}`)
+  }
+
+  // moreParams is the pagination request, re-issued later with a new offset — same
+  // requirement, different assignment shape.
+  const pageParams = [...src.matchAll(/moreParams = ([^\n]*)/g)].map((m) => m[1])
+    .filter((s) => s.includes('mediaParams'))
+  assert.ok(pageParams.length >= 2, 'expected the browse and search pagination params')
+  for (const p of pageParams) {
+    assert.match(p, /\.\.\.shotArgs\(\)/, `page 2 would leave the filter behind: ${p}`)
+  }
 })
 
 test('clearing the year drops the key instead of sending an empty one', () => {

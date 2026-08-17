@@ -286,26 +286,23 @@ def list_media(
             if media_type == "audio" and ext not in _AUDIO_EXTS:
                 return False
             # Same class as H8/H14: a filter honoured only on the SQL path silently
-            # stops applying the moment the user types a query. Compare through
-            # db.shot_year so the two stored date shapes are read identically here
-            # and in SQL.
+            # stops applying the moment the user types a query.
+            # Both read `shot_date`, the column the facet groups on and the other two
+            # branches compare against — not a re-parse of the raw text. Re-deriving
+            # it here would make this a second implementation of the same rule, which
+            # is precisely how this filter drifted between branches before.
+            day = rec.get("shot_date")
             if shot_year:
-                y = db.shot_year(rec.get("creation_date"))
                 if shot_year == db.UNKNOWN_SHOT_YEAR:
-                    if y is not None:
+                    if day is not None:
                         return False
-                elif y != str(shot_year):
+                elif (day or "")[:4] != str(shot_year):
                     return False
-            # The day narrows the same way the year does, and for the same reason it
-            # cannot be read off the raw text: the two writers separate it
-            # differently. normalise_shot_date is what the facet counted with, so
-            # comparing through it keeps this branch agreeing with the sidebar.
             if shot_date:
-                d = db.normalise_shot_date(rec.get("creation_date"))
                 if shot_date == db.UNKNOWN_SHOT_YEAR:
-                    if d is not None:
+                    if day is not None:
                         return False
-                elif d != str(shot_date):
+                elif day != str(shot_date):
                     return False
             return True
 

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+- **Browse footage by the day it was shot (#316).** v0.12.0 landed the facet endpoint and `?shot_year=`; the sidebar half was deliberately left out while we waited on a patch from the documentary user who reported the gap. `Shoot date · 拍攝日` now sits between Smart Pools and Cameras: pick a year to filter to it and open its shoot days, pick a day to narrow further, with undated clips in a selectable `未知日期` bucket so they never fall out of reach. Days cap at 20 with 更多/收合, the same answer the tag cloud already gave to the same problem.
+
+  Both filters run server-side (`?shot_year=` / the new `?shot_date=`), unlike the camera pool beside them. The counts in that column describe the whole library, so filtering only the loaded page would put "2025 · 54" next to a grid holding whichever of those happened to fall inside the first 500 rows.
+
+  The year alone was not enough to ship: footage shot across one season collapses into a single bucket, which is the same "one bucket answers nothing" failure that kept `processed_at` out of this facet to begin with. Days cost nothing extra — establishing the years already required normalising every `creation_date`. They cannot be compared naively the way years can, though: both writers are YYYY-prefixed so the year works by luck, while exiftool's `2025:10:03 13:56:20` and the XAVC sidecar's `2025-10-03T13:56:20+08:00` differ at characters 5 and 8, so the comparison folds `':'` to `'-'` first.
+
+### Fixed
+- **The shoot-year filter disagreed with its own sidebar count, and no amount of SQL was going to fix it (#316).** The facet decides what a bucket contains by calling `normalise_shot_date`, a Python parser. The filters ran in SQL. Two parsers for one question is a bug generator, and it produced real ones: `0000:00:00 00:00:00` — what exiftool writes for an *unset* date field, so a common value rather than an exotic one — was counted as unreadable by the facet and filed under year `"0000"` by the filter. Tightening the SQL only moved the boundary; a Codex audit of the tightened version found seven more values that disagreed, in both directions: `2025:10-03` and `2025-10-03Tgarbage` admitted where the parser refused, ` 2025-10-03` and `2025-10-03+08:00` refused where the parser accepted. SQLite cannot reproduce `datetime.strptime`, and the set of near-misses has no edge to chase to.
+
+  So there is one parser now. `media.shot_date` holds the normalised ISO day, derived by `normalise_shot_date` at the single write path and backfilled for existing libraries on upgrade; the facet groups on that column and all three filter branches compare against it. A year, a day and `unknown` are a partition by construction rather than by three predicates agreeing. Nothing was failing loudly before this — the sidebar simply advertised numbers it could not deliver.
+
+  Two things follow that are worth knowing: the raw `creation_date` is now display-only (it was never sortable anyway — `':'` sorts above `'-'`), and the previously documented "calendar-impossible dates" residual is gone rather than reduced.
+- **The header contradicted the grid whenever a filter was on (#316).** Picking "2025 · 54" left the toolbar reading `62 items`, and the `顯示 N / total` line is hidden once everything has loaded, so nothing on screen corrected it — the sidebar and the grid agreed with each other and the only number in the chrome disagreed with both. It now reads `54 / 62 items · 篩選中` whenever the view is narrowed, counting the cards actually rendered: stacking a rating filter on a shoot year previously left the header on the server-side total while the grid showed a smaller number, and counting what is drawn cannot disagree with what is drawn.
+- **`?shot_year=` was never actually exercised on the semantic-search branch.** `/api/media` filters on three paths, and both existing `?q=` tests fell through to the SQL fallback, because tests run without embeddings — so the third implementation of the rule was assumed correct rather than verified. Faking the vector store reaches it, and a new test asserts the three branches return *the same rows* rather than each passing its own case. The two SQL sites also stopped hand-writing the predicate separately, that duplication being the mechanism behind audits H8 and H14.
+
 ## v0.12.1 - 2026-08-13
 
 **Native dialogs worked for the first time.** Not "worked again" — the ACL had never let a single Tauri command through, on either platform, and nothing had noticed because no frontend code had ever called one.

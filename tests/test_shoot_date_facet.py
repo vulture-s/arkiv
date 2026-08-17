@@ -251,13 +251,24 @@ _ADVERSARIAL_CORPUS = [
     "garbage",
     "2025",                         # year-shaped, not a date
     "2025-10-03XGARBAGE",           # date-prefixed, not a date
-    # Shape-perfect, calendar-impossible. One per component, because each is caught
-    # by a different range check and a corpus that only carries the zero sentinel
-    # cannot tell whether the month guard is doing anything (its day is also 00).
+    # Shape-perfect, calendar-impossible.
     "0000:00:00 00:00:00",          # exiftool's unset-field sentinel: all zero
-    "0000:01:01 00:00:00",          # year only
-    "2025:13:05 10:00:00",          # month only
-    "2025:10:00 10:00:00",          # day only
+    "0000:01:01 00:00:00",          # year out of range
+    "2025:13:05 10:00:00",          # month out of range
+    "2025:10:00 10:00:00",          # day out of range
+    "2025-02-30T00:00:00",          # in range, but February has no 30th
+    # Found by the Codex audit of the first cut of this feature, which approximated
+    # `normalise_shot_date` in SQL. Each of these disagreed between the two, in one
+    # direction or the other, which is why there is one parser now instead of a
+    # predicate that tries to keep up with it. Kept as a corpus because the fix is
+    # only worth anything if it is still true later.
+    "2025:10-03",                   # mixed separators — admitted by a shape check
+    "2025-10:03",                   # mixed separators, other way round
+    "2025-10-03Tgarbage",           # valid prefix, junk after the T
+    "2025-10-03 99:99:99",          # valid prefix, impossible time
+    "2025-10-03T13:56:20.",         # trailing bare dot, no digits
+    " 2025-10-03",                  # READABLE: leading whitespace, stripped
+    "2025-10-03+08:00",             # READABLE: date-only with a trailing offset
 ]
 
 
@@ -268,7 +279,9 @@ def test_facet_reports_shoot_days_within_each_year_newest_first(tmp_db, sample_r
     years = {b["year"]: b for b in db.get_shoot_date_facets()["years"]}
 
     assert [d["date"] for d in years["2025"]["days"]] == ["2025-10-03", "2025-10-02"]
-    assert [d["count"] for d in years["2025"]["days"]] == [3, 2]
+    # 10-03 reaches five clips through five different spellings, two of which an
+    # earlier SQL-side approximation of the parser rejected outright.
+    assert [d["count"] for d in years["2025"]["days"]] == [5, 2]
     # Days must sum to their year, or the drill-down loses rows on the way in.
     for bucket in years.values():
         assert sum(d["count"] for d in bucket["days"]) == bucket["count"], bucket["year"]
@@ -379,23 +392,101 @@ def test_shape_valid_but_impossible_dates_are_unknown_to_the_filter_too(
     assert as_day == 0, "must not be reachable as a day either"
 
 
-def test_impossible_calendar_dates_are_the_known_residual(tmp_db, sample_record):
-    """`_DATED_SQL` validates component RANGES, not the calendar.
+@pytest.mark.parametrize("raw,day", [
+    # Every value a SQL-side approximation of the parser got wrong, in both
+    # directions. There is no residual class left to document: the filters read the
+    # column `normalise_shot_date` wrote, so "does SQL agree with Python" is not a
+    # question that can be asked any more.
+    ("2025-02-30T00:00:00", "2025-02-30"),   # in range, but February has no 30th
+    ("2025:10-03", "2025-10-03"),            # mixed separators
+    ("2025-10:03", "2025-10-03"),
+    ("2025-10-03Tgarbage", "2025-10-03"),    # valid prefix, junk suffix
+    ("2025-10-03 99:99:99", "2025-10-03"),
+    ("2025-10-03T13:56:20.", "2025-10-03"),
+])
+def test_values_sql_could_not_parse_are_unknown_to_every_reader(
+    tmp_db, sample_record, raw, day
+):
+    """Unreadable to the normaliser means unreadable everywhere.
 
-    So `2025-02-30` — day 30 of a 28-day month — reads as dated to the filter and as
-    unknown to the facet. Pinned rather than fixed: no writer produces it (exiftool and
-    the XAVC parser both format an already-parsed date, and the unset-field case is the
-    zero sentinel covered above), and closing it needs a real calendar, i.e. a stored
-    normalised column rather than a predicate over raw text. If this test ever fails
-    because the two now agree, the residual is gone and the note on `db._DATED_SQL`
-    should go with it.
+    Each of these was admitted by the shape-and-range predicate this feature shipped
+    with first — the facet filed them under `unknown` while the filters handed them
+    back for a real year and a real day.
     """
     db = importlib.import_module("db")
-    _seed(db, sample_record, ["2025-02-30T00:00:00"])
+    # The control sits on a day none of the probes resemble, so "the filter returned
+    # one row" can only mean the control and never the malformed value.
+    _seed(db, sample_record, ["2025:01:15 13:56:20", raw])
 
     assert db.get_shoot_date_facets()["unknown"] == 1
-    _, day_total = db.get_media_filtered(shot_date="2025-02-30", limit=100)
-    assert day_total == 1, "known divergence: SQL admits a range the facet rejected"
+    _, as_day = db.get_media_filtered(shot_date=day, limit=100)
+    assert as_day == 0, "unreadable, so it must not answer to a day"
+    _, as_year = db.get_media_filtered(shot_year=day[:4], limit=100)
+    assert as_year == 1, "only the genuinely dated clip belongs to the year"
+    _, as_unknown = db.get_media_filtered(shot_year=db.UNKNOWN_SHOT_YEAR, limit=100)
+    assert as_unknown == 1
+
+
+@pytest.mark.parametrize("raw", [" 2025-10-03", "2025-10-03+08:00", "  2025:10:03 13:56:20  "])
+def test_values_sql_wrongly_rejected_are_reachable_from_their_bucket(
+    tmp_db, sample_record, raw
+):
+    """The mirror image, and the more damaging half.
+
+    `normalise_shot_date` strips surrounding whitespace and a trailing offset, so
+    these ARE readable and the facet counts them under 2025-10-03. The SQL
+    approximation read the untrimmed prefix and rejected them, so the sidebar
+    advertised a day whose row could not be retrieved — a count that clicks through to
+    a grid missing the very clip it counted.
+    """
+    db = importlib.import_module("db")
+    _seed(db, sample_record, [raw])
+
+    facets = db.get_shoot_date_facets()
+    assert facets["unknown"] == 0
+    assert [b["year"] for b in facets["years"]] == ["2025"]
+    _, as_day = db.get_media_filtered(shot_date="2025-10-03", limit=100)
+    assert as_day == 1, "the facet counted it here, so this filter must return it"
+
+
+def test_backfill_populates_shot_date_for_a_pre_migration_library(tmp_db, sample_record):
+    """Upgrading an existing library must not leave every clip in `unknown`.
+
+    The column arrives empty on an old database, and nothing rewrites those rows —
+    ingest only touches what it re-ingests. Simulated by writing `creation_date`
+    behind `upsert`'s back, which is exactly the state a pre-#316 row is in.
+    """
+    db = importlib.import_module("db")
+    _seed(db, sample_record, ["2025:10:03 13:56:20", "2024-06-01T10:00:00Z", "garbage"])
+    with db.get_conn() as conn:
+        conn.execute("UPDATE media SET shot_date = NULL")
+        conn.commit()
+    assert db.get_shoot_date_facets()["unknown"] == 3, "precondition: looks empty"
+
+    db.init_db()  # the upgrade
+
+    facets = db.get_shoot_date_facets()
+    assert [(b["year"], b["count"]) for b in facets["years"]] == [("2025", 1), ("2024", 1)]
+    assert facets["unknown"] == 1, "the unreadable one stays unreadable"
+    _, got = db.get_media_filtered(shot_date="2025-10-03", limit=100)
+    assert got == 1
+
+
+def test_a_partial_upsert_does_not_blank_an_established_shoot_date(tmp_db, sample_record):
+    """`shot_date` is derived, so it is only rewritten when the date is being written.
+
+    A later pass that updates, say, the rating must not erase the day — that would
+    move the clip into `unknown` for reasons unrelated to its date.
+    """
+    db = importlib.import_module("db")
+    _seed(db, sample_record, ["2025:10:03 13:56:20"])
+    rows, _ = db.get_media_filtered(limit=10)
+    path = rows[0]["path"]
+
+    db.upsert({"path": path, "rating": "good"})
+
+    _, got = db.get_media_filtered(shot_date="2025-10-03", limit=100)
+    assert got == 1, "an unrelated write must not un-date the clip"
 
 
 def _seed_named(db, sample_record, rows):
@@ -428,27 +519,72 @@ def test_shot_date_filter_holds_on_every_branch(fastapi_client, sample_record, q
         "shot_date must apply on this branch too, not silently pass everything"
 
 
-def test_shot_date_applies_on_the_semantic_branch(fastapi_client, sample_record, monkeypatch):
-    """The branch the `?q=` cases above cannot reach.
+def _force_semantic(monkeypatch, db):
+    """Make `?q=` actually reach the semantic branch.
 
-    Without embeddings they fall straight through to the degraded SQL path, so the
-    Python predicate that filters semantic hits has never actually been exercised by a
-    test — it is a third, independently-written copy of the same rule. Faking the
-    vector store is what reaches it.
+    Tests run without embeddings, so every `?q=` case above falls straight through to
+    the degraded SQL path — which means the branch that filters semantic hits in
+    Python was described as covered while never executing. Returning canned hits from
+    the vector store is what reaches it.
     """
     import vectordb
 
-    db = importlib.import_module("db")
-    _seed_named(db, sample_record, _BRANCH_ROWS)
-    rows, _ = db.get_media_filtered(limit=100)
+    rows, _ = db.get_media_filtered(limit=1000)
     hits = [{"media_id": r["id"], "score": 0.9, "excerpt": ""} for r in rows]
     monkeypatch.setattr(vectordb, "search", lambda q, n_results=10: hits, raising=False)
 
-    r = fastapi_client.get("/api/media?q=anything&shot_date=2025-10-03")
+
+@pytest.mark.parametrize("param,expected", [
+    ("shot_year=2025", ["clip-a.mp4", "clip-b.mp4", "clip-c.mp4"]),
+    ("shot_date=2025-10-03", ["clip-a.mp4", "clip-b.mp4"]),
+    ("shot_year=unknown", ["clip-d.mp4"]),
+])
+def test_shoot_filters_apply_on_the_semantic_branch(
+    fastapi_client, sample_record, monkeypatch, param, expected
+):
+    """Year, day and unknown, on the one branch the `?q=` cases cannot reach.
+
+    `shot_year` shipped in #291 with two `?q=` tests that both landed on the SQL
+    fallback, so its semantic-branch behaviour was assumed rather than tested.
+    """
+    db = importlib.import_module("db")
+    _seed_named(db, sample_record, _BRANCH_ROWS)
+    _force_semantic(monkeypatch, db)
+
+    r = fastapi_client.get("/api/media?q=anything&{0}".format(param))
     assert r.status_code == 200, r.text
     body = r.json()
     assert not body.get("search_degraded"), "this case must not fall back to SQL"
-    assert sorted(i["filename"] for i in body["items"]) == ["clip-a.mp4", "clip-b.mp4"]
+    assert sorted(i["filename"] for i in body["items"]) == expected
+
+
+def test_the_three_branches_answer_a_shoot_filter_identically(
+    fastapi_client, sample_record, monkeypatch
+):
+    """The equivalence itself, asserted rather than inferred from three separate tests.
+
+    Each branch is a differently-written implementation of one rule — SQL over the
+    derived column, the same SQL through the degraded search, and a Python comparison
+    over enriched records — so the property worth pinning is that they agree, not that
+    each happens to pass its own case.
+    """
+    db = importlib.import_module("db")
+    _seed_named(db, sample_record, _BRANCH_ROWS + [
+        ("clip-e.mp4", "2025-10-03Tgarbage"),   # unreadable, must land in unknown
+        ("clip-f.mp4", " 2025-10-03"),          # readable once trimmed
+    ])
+
+    for param in ("shot_year=2025", "shot_date=2025-10-03", "shot_year=unknown"):
+        sql_list = fastapi_client.get("/api/media?{0}".format(param)).json()
+        degraded = fastapi_client.get("/api/media?q=clip&{0}".format(param)).json()
+        assert degraded.get("search_degraded") or degraded.get("search"), "expected the fallback"
+        _force_semantic(monkeypatch, db)
+        semantic = fastapi_client.get("/api/media?q=anything&{0}".format(param)).json()
+
+        names = [sorted(i["filename"] for i in r["items"]) for r in (sql_list, degraded, semantic)]
+        assert names[0] == names[1] == names[2], \
+            "branches disagree on {0}: sql={1} degraded={2} semantic={3}".format(
+                param, names[0], names[1], names[2])
 
 
 def test_frontend_agrees_on_the_unknown_bucket_string():

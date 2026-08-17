@@ -198,6 +198,31 @@ def _add_column_if_missing(conn, table: str, col: str, typ: str):
             raise
 
 
+def _backfill_shot_date(conn):
+    """Populate `media.shot_date` for rows written before the column existed.
+
+    Scoped to rows that have a creation_date but no shot_date, so it costs one
+    indexless scan on an already-migrated library and nothing after the first run.
+    Rows whose date is unreadable stay NULL — that is the `unknown` bucket, and
+    re-deriving them every startup is exactly the work this column exists to avoid.
+
+    Deliberately does NOT clear a shot_date whose creation_date is now NULL: writes
+    go through `upsert`, which keeps the pair consistent, and a repair pass that also
+    deletes is a repair pass that can lose data on a partial row.
+    """
+    rows = conn.execute(
+        "SELECT id, creation_date FROM media "
+        "WHERE shot_date IS NULL AND creation_date IS NOT NULL"
+    ).fetchall()
+    updates = [
+        (normalise_shot_date(r["creation_date"]), r["id"])
+        for r in rows
+    ]
+    updates = [u for u in updates if u[0] is not None]
+    if updates:
+        conn.executemany("UPDATE media SET shot_date = ? WHERE id = ?", updates)
+
+
 def init_db():
     with get_conn() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -321,8 +346,18 @@ def init_db():
             # data premise for multicam edit decisions (S-cam).
             ("camera_id", "TEXT"),
             ("angle", "TEXT"),
+            # The shoot DAY as ISO `YYYY-MM-DD`, derived from creation_date by
+            # normalise_shot_date at write time; NULL when that date can't be read.
+            # Stored rather than computed per query because SQL cannot reproduce
+            # `datetime.strptime` — an earlier attempt to approximate it with GLOB and
+            # range checks disagreed with the Python normaliser in BOTH directions
+            # (it admitted "2025-10-03Tgarbage" and "2025:10-03", and rejected
+            # " 2025-10-03" and "2025-10-03+08:00"), which made the sidebar advertise
+            # counts its own filters could not deliver. One parser, run once, at write.
+            ("shot_date", "TEXT"),
         ]:
             _add_column_if_missing(conn, "media", col, typ)  # audit L10
+        _backfill_shot_date(conn)
         for col, typ in [
             ("content_type", "TEXT"),
             ("focus_score", "INTEGER"),
@@ -661,6 +696,14 @@ def upsert(record: dict, _conn=None):
     safe = {k: v for k, v in record.items() if k in _ALLOWED_COLS}
     if not safe:
         return
+    # shot_date is DERIVED, never accepted from the caller — it is not in
+    # _ALLOWED_COLS, so a record carrying one is ignored above and recomputed here.
+    # Deriving it at the single write path is what makes the facet and the three
+    # filter branches agree by construction instead of by three matching predicates.
+    # Keyed on `creation_date` being present in this write: a partial upsert that
+    # doesn't touch the date must not blank the day derived from the last one.
+    if "creation_date" in safe:
+        safe["shot_date"] = normalise_shot_date(safe["creation_date"])
     cols = ", ".join(safe.keys())
     placeholders = ", ".join(["?"] * len(safe))
     updates = ", ".join(f"{k}=excluded.{k}" for k in safe if k != "path")
@@ -712,11 +755,14 @@ LIGHT_COLS = (
     "camera_make, camera_model, lens_model, reel_name, start_tc, codec, "
     # A-cam: multicam angle annotation, so list/grid views can group by camera.
     "camera_id, angle, "
-    # Shoot date, for browsing footage by when it was filmed. Needed in the LIGHT
-    # shape specifically so the semantic-search branch can filter on it too: that
-    # branch filters enriched records rather than in SQL, and a column missing here
-    # is a filter that silently does nothing on ?q= — the shape of audit H8/H14.
-    "creation_date"
+    # Shoot date, for browsing footage by when it was filmed. Both are needed in the
+    # LIGHT shape: `creation_date` is what the inspector displays, and `shot_date` is
+    # what the semantic-search branch filters on — that branch filters enriched
+    # records rather than in SQL, so a column missing here is a filter that silently
+    # does nothing on ?q=, the shape of audits H8/H14. It reads the SAME derived
+    # column the SQL branches compare against, which is what keeps the three
+    # equivalent rather than merely similar.
+    "creation_date, shot_date"
 )
 
 
@@ -1175,10 +1221,15 @@ def delete_media(media_id: int, _conn=None):
 #   exiftool (EXIF CreateDate)        -> "2025:10:03 13:56:20"     colon-separated
 #   XAVC NRT sidecar (parse_xavc_...) -> "2025-10-03T13:56:20+08:00"  ISO 8601
 #
-# Both happen to start with YYYY, which is why grouping by year via substr works on
-# either. Ordering does NOT: ':' (0x3A) sorts above '-' (0x2D), so a library holding
-# both shapes sorts wrong under a plain string comparison. Anything beyond "what
-# year" therefore goes through normalise_shot_date rather than touching the raw text.
+# Both happen to start with YYYY, which is why grouping by year via substr LOOKS like
+# it works on either. Ordering does not: ':' (0x3A) sorts above '-' (0x2D), so a
+# library holding both shapes sorts wrong under a plain string comparison.
+#
+# Nothing reads this column to answer a date question any more. `normalise_shot_date`
+# runs once at write and its output is stored in `media.shot_date`; the facet groups
+# on that column and all three filter branches compare against it. The raw text is
+# kept only for display. Approximating the parser in SQL was tried and abandoned —
+# see `shot_window_clause` for the seven values that broke it.
 _SHOT_DATE_FORMATS = (
     "%Y:%m:%d %H:%M:%S",   # exiftool default
     "%Y-%m-%dT%H:%M:%S",   # ISO, timezone stripped by the caller
@@ -1236,42 +1287,31 @@ UNKNOWN_SHOT_YEAR = "unknown"
 # facet then disagree about the same row, which is the one property this feature was
 # built on.
 #
-# The component ranges are not belt-and-braces on top of the GLOB — they are the only
-# thing that rejects "0000:00:00 00:00:00", which is exiftool's sentinel for an UNSET
-# date field and therefore one of the most common values in the column. It is
-# shape-perfect and calendar-impossible, so a shape check alone files it under a real
-# year while normalise_shot_date correctly calls it unreadable.
-#
-# Known residual: this validates ranges, not the calendar, so "2025-02-30" still reads
-# as dated here and as `unknown` to normalise_shot_date. That one needs a real calendar
-# — i.e. a stored normalised column rather than a predicate over raw text — and no
-# writer produces it, since both format an already-parsed date. Pinned by
-# test_impossible_calendar_dates_are_the_known_residual.
-_DATED_SQL = (
-    "creation_date IS NOT NULL "
-    "AND substr(creation_date,1,10) GLOB '[0-9][0-9][0-9][0-9][-:][0-9][0-9][-:][0-9][0-9]' "
-    "AND (length(creation_date) = 10 OR substr(creation_date,11,1) IN ('T',' ')) "
-    "AND CAST(substr(creation_date,1,4) AS INTEGER) BETWEEN 1 AND 9999 "
-    "AND CAST(substr(creation_date,6,2) AS INTEGER) BETWEEN 1 AND 12 "
-    "AND CAST(substr(creation_date,9,2) AS INTEGER) BETWEEN 1 AND 31"
-)
-_UNDATED_SQL = "NOT ({0})".format(_DATED_SQL)
-
-
 def shot_window_clause(
     shot_year: Optional[str] = None,
     shot_date: Optional[str] = None,
 ) -> Tuple[str, List]:
     """SQL for "shot in this year / on this day", shared by every caller.
 
-    Two SQL sites filter on the shoot date — `_build_filter_clause` for the list
-    query, and the degraded text search in `routers.media` — and they used to
-    hand-write the same predicate separately. That duplication is exactly how audits
-    H8 and H14 happened: a filter honoured on one path and quietly not on another.
-    Building it once means a day filter cannot be added to one site and forgotten on
-    the other.
+    Reads the derived `shot_date` column, never the raw `creation_date`. That is the
+    whole design: `normalise_shot_date` runs once, at write, and every reader compares
+    its output. An earlier version of this function approximated the parser in SQL —
+    GLOB for the shape, range checks for the components — and a Codex audit produced
+    seven values where it disagreed with the real parser in both directions:
 
-    The two arguments compose with AND rather than one overriding the other, so a
+        admitted but unreadable:  "2025:10-03"  "2025-10-03Tgarbage"
+                                  "2025-10-03 99:99:99"  "2025-10-03T13:56:20."
+        readable but rejected:    " 2025-10-03"  "2025-10-03+08:00"
+
+    Each one made the sidebar advertise a count its own filter could not deliver.
+    SQLite cannot reproduce `datetime.strptime`, and the set of near-misses has no
+    edge to chase to — so there is one parser now, not two.
+
+    Two SQL sites use this — `_build_filter_clause` for the list query and the
+    degraded text search in `routers.media` — and they used to hand-write the
+    predicate separately, which is how audits H8 and H14 happened.
+
+    The arguments compose with AND rather than one overriding the other, so a
     contradictory request (year 2025 *and* undated) returns nothing instead of
     silently answering a question that wasn't asked.
 
@@ -1282,19 +1322,14 @@ def shot_window_clause(
     if shot_year == UNKNOWN_SHOT_YEAR:
         # "Show me the ones with no usable shoot date" has to be reachable, or those
         # clips are invisible from the sidebar the moment any year is selected.
-        clauses.append(_UNDATED_SQL)
+        clauses.append("shot_date IS NULL")
     elif shot_year:
-        clauses.append("({0}) AND substr(creation_date,1,4) = ?".format(_DATED_SQL))
+        clauses.append("substr(shot_date,1,4) = ?")
         params.append(str(shot_year))
     if shot_date == UNKNOWN_SHOT_YEAR:
-        clauses.append(_UNDATED_SQL)
+        clauses.append("shot_date IS NULL")
     elif shot_date:
-        # Unlike the year, the day is NOT safe to compare naively: the first ten
-        # characters differ between the two writers, so fold ':' to '-' first. The
-        # caller always passes the normalised ISO form (what the facet reports).
-        clauses.append(
-            "({0}) AND replace(substr(creation_date,1,10), ':', '-') = ?".format(_DATED_SQL)
-        )
+        clauses.append("shot_date = ?")
         params.append(str(shot_date))
     if not clauses:
         return "", []
@@ -1337,28 +1372,30 @@ def _build_filter_clause(
 def get_shoot_date_facets() -> dict:
     """Year buckets — each with its shoot DAYS — for the sidebar's time entry point.
 
-    Counted in Python rather than `GROUP BY substr(...)` because a bucket must mean
-    "this clip really was shot in 2025", and the raw column also contains values that
-    only *look* like dates. Reads one column; trivial next to the ingest it describes.
+    Grouped on the derived `shot_date` column — the same column the filters compare
+    against — so a bucket and the query behind it cannot disagree about which rows
+    belong to it. That is not a stylistic preference: when the facet counted in Python
+    and the filters approximated the parser in SQL, seven ordinary values landed in
+    different buckets on the two sides.
 
     Days are inlined rather than served from a second lazy endpoint. This function
-    already reads every `creation_date` in the library, so grouping them costs
-    nothing extra, and the number of distinct shoot days is bounded by the number of
-    clips. A year alone is too coarse to be the answer: a documentary shot across one
-    season collapses into a single bucket, which is the same "one bucket answers
-    nothing" failure that ruled `processed_at` out of this facet in the first place.
+    already reads the whole column, so grouping it costs nothing extra, and the number
+    of distinct shoot days is bounded by the number of clips. A year alone is too
+    coarse to be the answer: a documentary shot across one season collapses into a
+    single bucket, which is the same "one bucket answers nothing" failure that ruled
+    `processed_at` out of this facet in the first place.
 
-    Both lists are newest-first, and the client is expected not to re-sort — the raw
-    column cannot be ordered lexically (':' sorts above '-'), so ordering is settled
-    here, on normalised values, once.
+    Both lists are newest-first, and the client is expected not to re-sort. Note this
+    is only orderable BECAUSE the values are normalised: the raw column cannot be
+    sorted lexically at all, since ':' (0x3A) sorts above '-' (0x2D).
     """
     with get_conn() as conn:
-        rows = conn.execute("SELECT creation_date FROM media").fetchall()
+        rows = conn.execute("SELECT shot_date FROM media").fetchall()
     days_by_year: Dict[str, Dict[str, int]] = {}
     counts: Dict[str, int] = {}
     unknown = 0
     for row in rows:
-        iso = normalise_shot_date(row["creation_date"])
+        iso = row["shot_date"]
         if iso is None:
             unknown += 1
             continue

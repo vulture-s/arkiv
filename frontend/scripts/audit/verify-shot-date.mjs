@@ -44,6 +44,17 @@ const probe = () => {
     more: txt(document.querySelector('.daymore')),
     header: txt(document.querySelector('.toolrow .proj')),
     cards: document.querySelectorAll('.card').length,
+    // The count the clicked day row itself advertises, and the library total from the
+    // Projects row — both read from the sidebar, independently of the header.
+    sidebarDayCount: (() => {
+      const active = document.querySelector('.dayrow.activeday')
+      const n = active && /(\d+)\s*$/.exec(active.textContent.replace(/\s+/g, ' ').trim())
+      return n ? Number(n[1]) : null
+    })(),
+    libraryTotal: (() => {
+      const n = /(\d+)\s*$/.exec((document.querySelector('.projrow') || {}).textContent?.replace(/\s+/g, ' ').trim() || '')
+      return n ? Number(n[1]) : null
+    })(),
     // Layout facts
     poolScrollH: pool ? pool.scrollHeight : 0,
     poolClientH: pool ? pool.clientHeight : 0,
@@ -80,6 +91,10 @@ for (const width of [1440, 900]) {
 
   if (opened.days.length !== 20) problems.push(`${width}: expected DAY_CAP=20 day rows, got ${opened.days.length}`)
   if (!/更多/.test(opened.more || '')) problems.push(`${width}: no 更多 affordance for the capped days`)
+  // The sidebar row for 2025 says 54, and the fixture is small enough that all 54 are
+  // on one page — so the header must agree with the row that produced the view. This
+  // number is deliberately hardcoded to the fixture rather than derived from the page,
+  // because deriving it from what is rendered is what makes such a check vacuous.
   if (!/54 \/ 62 items/.test(opened.header || '')) {
     problems.push(`${width}: header did not reconcile with the sidebar — got "${opened.header}"`)
   }
@@ -119,12 +134,50 @@ for (const width of [1440, 900]) {
   }
   const m = /(\d+) \/ (\d+) items/.exec(dayPicked.header || '')
   if (!m) problems.push(`${width}: header lost its filtered count on the day view`)
-  else if (Number(m[1]) !== dayPicked.cards) {
-    problems.push(`${width}: header says ${m[1]} but ${dayPicked.cards} cards are shown`)
+  else {
+    // The header reports what is rendered, so numerator==cards is true by
+    // construction and worth nothing on its own. What is worth checking is that both
+    // agree with the SIDEBAR row that was clicked — three independent paths to the
+    // same number — and that the denominator stayed the library, not the subset.
+    if (Number(m[1]) !== dayPicked.sidebarDayCount) {
+      problems.push(`${width}: day row says ${dayPicked.sidebarDayCount}, header says ${m[1]}`)
+    }
+    if (Number(m[1]) !== dayPicked.cards) {
+      problems.push(`${width}: header says ${m[1]} but ${dayPicked.cards} cards are shown`)
+    }
+    if (Number(m[2]) !== dayPicked.libraryTotal) {
+      problems.push(`${width}: denominator ${m[2]} is not the library total ${dayPicked.libraryTotal}`)
+    }
+  }
+
+  // The audit finding this exists to catch: a client-side filter narrows the grid
+  // without changing the server total, so a header reading the server total ends up
+  // contradicting the cards beneath it. Back to the whole year first (54 rows
+  // server-side), then stack a rating filter on top.
+  await p.evaluate(() => {
+    document.querySelector('.dayrow.activeday').click() // release the day, keep 2025
+  })
+  await sleep(1500)
+  await p.evaluate(() => {
+    const row = [...document.querySelectorAll('.poolrow')].find((r) => r.textContent.includes('Rated good'))
+    row.click()
+  })
+  await sleep(900)
+  const withRating = await p.evaluate(probe)
+  await p.screenshot({ path: `${outDir}/${width}-06-year-plus-rating.png`, fullPage: false })
+  if (withRating.cards >= 54 || withRating.cards === 0) {
+    // Guards the guard: if the rating filter removed nothing, the assertion below
+    // would pass without the contradiction ever being possible.
+    problems.push(`${width}: rating filter did not narrow the year (${withRating.cards} cards) — check is vacuous`)
+  }
+  const m2 = /(\d+) \/ (\d+) items/.exec(withRating.header || '')
+  if (!m2) problems.push(`${width}: header lost its count once a rating filter was added`)
+  else if (Number(m2[1]) !== withRating.cards) {
+    problems.push(`${width}: with a client-side filter the header says ${m2[1]} but ${withRating.cards} cards render`)
   }
 
   if (errs.length) problems.push(`${width}: console errors ${JSON.stringify(errs)}`)
-  report[width] = { initial, opened, expanded, dayPicked, errs }
+  report[width] = { initial, opened, expanded, dayPicked, withRating, errs }
   await p.close()
 }
 

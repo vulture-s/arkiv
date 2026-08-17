@@ -62,6 +62,9 @@
   let activeShotYear = null
   let activeShotDate = null // an ISO day inside activeShotYear; narrows it further
   let liveShotYears = null
+  // #/main-live?ids=… is a narrowing with no sidebar row to represent it, so the
+  // header has no other way to know the grid is a subset.
+  let deepLinkSubset = false
   // Spread into every mediaParams() call, so the shoot filters cannot end up present
   // on one request path and missing on another — which is the whole failure this
   // feature's backend went out of its way to prevent.
@@ -299,6 +302,7 @@
       viewGen.apply(gen, () => {
         stats = s
         sampleInfo = si
+        deepLinkSubset = false
         applyShotYearFacets(f)
         items = (m.items || []).map(toCard)
         total = m.total ?? items.length
@@ -433,6 +437,7 @@
     // a year or day left highlighted here would filter nothing while claiming to.
     activeShotYear = null
     activeShotDate = null
+    deepLinkSubset = false // the collection is now what makes this a subset
     // This writer is synchronous — the members are already in hand from
     // /api/collections — so without claiming a generation it would be the one path a
     // slow in-flight search could still overwrite a moment later.
@@ -480,11 +485,24 @@
   // The header used to always read stats.total, so picking "2025 · 54" left the only
   // count on screen saying 62 while the sidebar and the grid both said 54 — and the
   // "顯示 N / total" line below is hidden once everything is loaded, so there was
-  // nothing else to correct it. `total` is the server-side pool for whatever is on
-  // screen (search / year / day / collection / deep-link), so it reconciles with the
-  // facet exactly. null = nothing is narrowing the library; keep the original line,
-  // whose duration and size are library-wide aggregates we have no subset figure for.
-  $: subsetTotal = stats && state === 'ok' && total !== stats.total ? total : null
+  // nothing else to correct it.
+  //
+  // It reports `visible.length` — literally the cards being rendered — rather than the
+  // server-side `total`. Those differ whenever a client-side filter is also on: pick
+  // 2025 (54 rows server-side), then Rated good, and the grid shows 10 while `total`
+  // is still 54. Counting what is drawn cannot disagree with what is drawn, and it
+  // sidesteps the fact that `total` is itself only a bounded match count on the search
+  // path (audit M19). How many rows are still unfetched is a different question, and
+  // the 顯示 N / total line below already answers it.
+  //
+  // Gated on an explicit "is anything narrowing this" rather than on the counts
+  // differing: in a library larger than one page they differ with no filter at all,
+  // and reading 篩選中 then would be a new lie in place of the old one.
+  $: isFiltered = !!(
+    query.trim() || activeShotYear || activeShotDate || activeCollection ||
+    activeRating || activeCamera || activeFilter !== 'all' || deepLinkSubset
+  )
+  $: subsetTotal = stats && state === 'ok' && isFiltered ? visible.length : null
   // tag click → search that tag
   function onTagClick(name) {
     query = name
@@ -497,6 +515,7 @@
     // Leaving the collection view: clear the highlight too, or the sidebar keeps
     // claiming a collection is active while the grid shows search results.
     activeCollection = null
+    deepLinkSubset = false // searching replaces a ?ids= subset with a real query
     const gen = viewGen.begin()
     state = 'loading'
     try {
@@ -555,6 +574,7 @@
       viewGen.apply(gen, () => {
         stats = s
         applyShotYearFacets(f)
+        deepLinkSubset = true
         items = (m.items || []).map(toCard)
         // A deep-link ?ids= subset is exactly the returned rows — no further pages.
         total = items.length
