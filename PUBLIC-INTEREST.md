@@ -10,7 +10,7 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 用它產出的成品永遠是你的。公益工作要用核心，不需要向我們申請任何東西。
 
 要收費的只有一個東西：**Pro 附加元件**（無限專案 + 跨專案聚合，NT$3,000 買斷）。
-免費核心支援 3 個專案，長期經營的紀錄片團隊、地方影像資料庫、口述歷史計畫很快就會超過。
+免費核心支援 3 個專案。長期經營的紀錄片團隊、地方影像資料庫與口述歷史計畫，通常會超出此一額度。
 
 **公益方案就是為這種情況設的：只要你做的是有公共價值的影像工作，這個附加元件我們免費提供，
 且為終身授權。**
@@ -28,8 +28,8 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 
 ## 什麼不在這個方案裡
 
-- 純商業廣告、品牌行銷、企業形象片。這些用 arkiv 完全沒問題（授權本來就允許），
-  只是超過 3 個專案時請正常購買 Pro 附加元件。
+- 純商業廣告、品牌行銷、企業形象片。此類用途使用 arkiv 不受任何限制（授權本即允許），
+  惟專案數超過 3 個時，請循一般管道購買 Pro 附加元件。
 - 把 arkiv（或其 fork）當產品／服務**販售、架站、重新包裝**——這在任何情況都不允許，
   [授權正文](LICENSE)的 Noncompete 與 Competition 兩節已明訂。
 - 「有社會意義」的空泛主張但實質是商業專案——我們保留逐案判斷、婉拒的權利。
@@ -57,8 +57,8 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 也保留隨時調整方案內容的權利。核准後若專案性質有重大改變（例如轉為純商業發行），
 請再來談——不過就算談不成，你原本的授權仍然有效，我們不追回已發出的 grant。
 
-這樣設計是刻意的：不做自動資格表，是為了避免「人人都能自稱有社會價值」而讓方案失去意義。
-我們寧可一封一封讀。
+本方案不設自動資格表，係為避免以自我宣稱取代實質審查、致使方案失去意義。
+每一封申請均由專人閱讀。
 
 ---
 
@@ -96,9 +96,9 @@ shouldn't be something only big productions can afford.
 
 ## What this program does *not* cover
 
-- Pure commercial advertising, brand marketing, or corporate promos. Using arkiv for these is
-  entirely fine — the license already permits it — but past 3 projects, please just buy the
-  Pro add-on.
+- Pure commercial advertising, brand marketing, or corporate promos. Such use of arkiv is
+  entirely unrestricted — the licence already permits it — but beyond 3 projects, please
+  purchase the Pro add-on through the standard channel.
 - Selling, hosting, or repackaging arkiv (or a fork) as a product or service — never
   permitted, per the Noncompete and Competition sections of the [license](LICENSE) itself.
 - Vague "social value" claims over what is really a commercial project — we reserve the right
@@ -133,6 +133,6 @@ program over time. If a project's nature changes substantially after approval (e
 a purely commercial release), please come talk to us again — though even if we can't agree,
 your existing grant stands. We don't claw back grants already issued.
 
-This is deliberate: we don't publish an automatic eligibility checklist, because a checklist
-invites everyone to self-declare "social value" and hollows the program out. We'd rather read
-requests one at a time.
+No automatic eligibility checklist is published, as a checklist invites self-declared "social
+value" to substitute for substantive review and hollows the programme out. Every request is
+read individually.

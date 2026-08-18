@@ -48,9 +48,9 @@ distributed under the terms on this page.
 The license is granted to **one named individual, or one named organization for
 its internal use**.
 
-There is no seat counter and no activation server. arkiv does not phone home,
-and the add-on does not either — that property is worth more than enforcement,
-so scope is a matter of these terms rather than of code. Concretely:
+There is no seat counter and no activation server. Neither arkiv nor the add-on
+transmits any data externally; scope is therefore defined by these terms rather
+than enforced in software. Specifically:
 
 - **One individual** may use the add-on on the machines they personally work on.
 - **One organization** may use it on the machines of people working for that
@@ -70,18 +70,17 @@ so scope is a matter of these terms rather than of code. Concretely:
 
 **7 days from delivery, no questions asked.** Email the address on the receipt.
 
-That is the statutory period for a distance sale in Taiwan (Consumer Protection
-Act art. 19 para. 1) — given in full rather than claimed away. This add-on
-would in fact qualify for the digital-content exception (Standards for
-Reasonable Exceptions to the Right of Withdrawal in Distance Sales, art. 2
-subparas. 4–5), which permits **no** withdrawal right at all. We are not using
-it.
+This matches the statutory period for a distance sale in Taiwan (Consumer
+Protection Act art. 19 para. 1), **provided in full and not contracted away**.
+Under the Standards for Reasonable Exceptions to the Right of Withdrawal in
+Distance Sales, art. 2 subparas. 4–5, non-tangible digital content is an
+enumerated exception and the add-on could carry no withdrawal right at all;
+we do not rely on that exception.
 
-There is no extra goodwill window on top of the statutory one, and there does
-not need to be: **arkiv itself is already free to use commercially**, so nothing
-here gates access to the product. What you are buying is extra capacity on
-software you could already run and earn with — and you can reach that decision
-on the free core, across three real projects, before paying anything.
+No discretionary window is offered beyond the statutory one. **arkiv itself is
+already free for commercial use**, so nothing here restricts access to the
+product — the add-on provides additional capacity, and the decision can be made
+on the free core across three real projects before any payment.
 
 `[LEGAL REVIEW]` — this policy sits *exactly on* the statutory floor rather
 than above it, so two mechanics become load-bearing and the purchase flow must
@@ -161,8 +160,8 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 
 授予**一位具名個人，或一個具名組織供其內部使用**。
 
-沒有席次計數器，也沒有啟用伺服器。arkiv 不對外回報，附加元件也不會——
-這個性質比執法更值錢，所以範圍靠條款約束而不是靠程式。具體而言：
+本附加元件不設席次計數器，亦無啟用伺服器。arkiv 與本附加元件均不對外傳送
+任何資料，授權範圍因此由本條款界定，而非由程式強制。具體而言：
 
 - **個人**：可在自己實際工作的機器上使用。
 - **組織**：可在該組織成員的機器上、為該組織自己的製作使用。
@@ -179,9 +178,9 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 
 **自交付起 7 天內，無條件退款。** 來信收據上的信箱即可。
 
-這就是台灣通訊交易的法定解除權期間（消保法第 19 條第 1 項）—— **完整給出，不主張
-排除**。事實上本附加元件符合數位內容的法定例外（通訊交易解除權合理例外情事適用準則
-第 2 條第 4、5 款），依法**可以完全不給解除權**，我們不用那條。
+此為台灣通訊交易之法定解除權期間（消費者保護法第 19 條第 1 項），本附加元件
+**完整提供，不予排除**。依通訊交易解除權合理例外情事適用準則第 2 條第 4、5 款，
+非以有形媒介提供之數位內容屬法定例外，本得不提供解除權；本方案選擇不援用該例外。
 
 法定期間之上不另外加碼，也不需要加碼：**arkiv 本體已經任何用途免費、包含商用**，
 這裡沒有任何東西擋著你使用產品。你買的是**額外容量**，加在一個你早就能跑、能拿來

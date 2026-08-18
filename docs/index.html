@@ -132,14 +132,14 @@ footer a:hover{color:var(--cyan)}
     <div class="wordmark">arkiv<span class="dot">.</span></div>
     <p class="lede">拍過的東西，找得回來。</p>
     <p class="sub">
-      arkiv 自動幫每一支素材做轉錄、看懂畫面、標記氛圍與剪輯位置，
-      然後讓你用一句中文找到那顆鏡頭 ——「五月所有黃昏空景」。
-      全部在你自己的機器上跑，零雲端、不對外回報。
+      arkiv 為每一支素材自動產生逐字稿、視覺描述，並標記氛圍與剪輯位置，
+      使你得以一句中文找到所需鏡頭 ——「五月所有黃昏空景」。
+      全程於本機執行，不依賴雲端服務，不對外傳送資料。
     </p>
 
     <div class="badges">
       <span class="badge"><b>免費</b>　任何用途</span>
-      <span class="badge"><b>商用不受限</b>　接案／工作室都可以</span>
+      <span class="badge"><b>商用不受限</b>　含客戶委製</span>
       <span class="badge"><b>原始碼公開</b>　source-available</span>
       <span class="badge">DaVinci Resolve 原生</span>
       <span class="badge">中／日／英 語意搜尋</span>
@@ -158,41 +158,41 @@ footer a:hover{color:var(--cyan)}
     </div>
     <p class="dl-note">
       最新版 <span class="mono">v0.12.1</span>　·　安裝前請先看下方
-      <a href="#real">實際需要什麼</a>　·　English: <a href="https://github.com/vulture-s/arkiv#readme">README</a>
+      <a href="#real">系統需求</a>　·　English: <a href="https://github.com/vulture-s/arkiv#readme">README</a>
     </p>
   </div>
 </header>
 
 <section>
   <div class="wrap">
-    <h2>授權：一句話講完</h2>
+    <h2>授權條款</h2>
     <div class="lic">
       <ul>
         <li>
           <span class="mk yes">✓</span>
           <div>
-            <b>免費使用，任何用途 —— 包含商業工作。</b>
-            <p>接客戶的案子、工作室日常、有補助的製作，全部可以。不需要跟我們談授權，也不需要通知我們。</p>
+            <b>免費使用，任何用途 —— 包含商業用途。</b>
+            <p>客戶委製、工作室日常作業、受補助之製作，均在授權範圍內。無需另行取得授權，亦無需事前通知。</p>
           </div>
         </li>
         <li>
           <span class="mk yes">✓</span>
           <div>
-            <b>你做出來的東西是你的。</b>
-            <p>影片、時間軸、EDL / FCPXML / OTIO 匯出檔、縮圖 —— 授權不對它們加任何限制。</p>
+            <b>產出物之權利完全歸你所有。</b>
+            <p>影片、時間軸、EDL / FCPXML / OTIO 匯出檔與縮圖，本授權均不加以限制。</p>
           </div>
         </li>
         <li>
           <span class="mk no">✕</span>
           <div>
-            <b>唯一不允許：把 arkiv 做成跟它競爭的產品。</b>
-            <p>fork 成對手素材管理工具、包成索引服務賣給第三方、或重新實作成替代品 —— 即使免費提供也一樣。</p>
+            <b>唯一的限制：不得用於開發與 arkiv 競爭的產品。</b>
+            <p>將其衍生為競爭性素材管理工具、以索引服務形式提供予第三方，或重新實作為替代產品 —— 即使免費提供亦同。</p>
           </div>
         </li>
       </ul>
       <p class="fine">
-        界線在於<b style="color:var(--ink-2)">你的客戶買的是什麼</b>：買你用 arkiv 做出來的成品，是一般的工具使用；
-        買 arkiv 的功能本身（當成產品、服務、函式庫或外掛），才構成競爭。
+        判斷基準在於<b style="color:var(--ink-2)">客戶所購買的標的</b>：購買你以 arkiv 完成的成品，屬一般工具使用；
+        購買 arkiv 的功能本身（無論以產品、服務、函式庫或外掛形式提供），則構成競爭。
         條文為 <a href="https://github.com/vulture-s/arkiv/blob/main/LICENSE">PolyForm Perimeter 1.0.1</a>。
       </p>
     </div>
@@ -201,27 +201,27 @@ footer a:hover{color:var(--cyan)}
 
 <section>
   <div class="wrap">
-    <h2>它解決什麼</h2>
+    <h2>解決的問題</h2>
     <div class="why">
       <div class="row">
         <span class="n">01</span>
         <div>
           <h3>素材太多，找不到那顆鏡頭</h3>
-          <p>用自然語言搜，中日英都行 —— 搜的是<b style="color:var(--ink)">畫面內容和逐字稿</b>，不是檔名。</p>
+          <p>以自然語言檢索，支援中、日、英 —— 比對的是<b style="color:var(--ink)">畫面內容與逐字稿</b>，而非檔名。</p>
         </div>
       </div>
       <div class="row">
         <span class="n">02</span>
         <div>
-          <h3>AI 剪輯工具只看得懂「有人在講話」的素材</h3>
-          <p>arkiv 對每支 clip 做視覺分析 <b style="color:var(--ink)">加</b> 轉錄，所以大量 B-roll、無對白空景一樣可搜可管。</p>
+          <h3>多數 AI 剪輯工具僅能處理有對白的素材</h3>
+          <p>arkiv 對每一支素材同時執行視覺分析<b style="color:var(--ink)">與</b>語音轉錄，因此 B-roll 與無對白空景同樣可檢索、可管理。</p>
         </div>
       </div>
       <div class="row">
         <span class="n">03</span>
         <div>
           <h3>素材庫要能餵給下游任何剪法</h3>
-          <p>手動剪、自動剪、腳本剪都接得上：Resolve 原生 plugin、EDL / FCPXML 匯出、REST API 與 MCP 介面。</p>
+          <p>無論手動剪輯、自動化流程或腳本驅動皆可銜接：Resolve 原生外掛、EDL / FCPXML 匯出、REST API 與 MCP 介面。</p>
         </div>
       </div>
     </div>
@@ -230,12 +230,12 @@ footer a:hover{color:var(--cyan)}
 
 <section>
   <div class="wrap">
-    <h2>不是 demo 專案</h2>
+    <h2>實際運作規模</h2>
     <div class="proof">
       <div class="big">1,506 支</div>
       <p>
-        真實產品拍攝素材完整索引跑通，其中 <b style="color:var(--ink-2)">1,161 支是無對白 B-roll</b>
-        —— 也就是一般字幕工具完全抓不到的那些。單張 RTX 4070，5,732 幀視覺描述，零缺口。
+        真實商業案件素材已完成完整索引，其中 <b style="color:var(--ink-2)">1,161 支為無對白 B-roll</b>。
+        單張 RTX 4070，產出 5,732 幀視覺描述，索引覆蓋率 100%。
       </p>
     </div>
   </div>
@@ -257,23 +257,23 @@ footer a:hover{color:var(--cyan)}
       </tbody>
     </table>
     <p class="tier-note">
-      Pro 還沒開賣，購買流程還在建 ——
+      Pro 尚未開放購買 ——
       <a href="https://github.com/vulture-s/arkiv/blob/main/docs/pro-addon-license.md">條款先公開</a>，
-      讓你在那之前就能讀。做紀錄片、非營利、檔案保存、公共教育的，
-      <a href="https://github.com/vulture-s/arkiv/blob/main/PUBLIC-INTEREST.md">公益方案</a>免費給。
-      <br><b style="color:var(--ink-2)">現在裝的人不受影響</b>：專案上限只對日後的新安裝生效，既有素材庫永久沿用無限。
+      供事前查閱。紀錄片、非營利、檔案保存與公共教育類製作，
+      可循<a href="https://github.com/vulture-s/arkiv/blob/main/PUBLIC-INTEREST.md">公益方案</a>免費申請。
+      <br><b style="color:var(--ink-2)">既有使用者不受影響</b>：專案數上限僅對日後的新安裝生效，現有素材庫永久沿用無限制。
     </p>
   </div>
 </section>
 
 <section id="real">
   <div class="wrap">
-    <h2>安裝前先知道</h2>
+    <h2>系統需求與注意事項</h2>
     <div class="real">
-      <div><span class="m">01</span><span>安裝檔<b style="color:var(--ink)">包含 Python 後端與 ML 套件</b>，但你<b style="color:var(--ink)">仍需自行安裝 FFmpeg 與 Ollama</b>（抽幀、向量、視覺分析要用）。</span></div>
-      <div><span class="m">02</span><span>macOS 版<b style="color:var(--ink)">僅支援 Apple Silicon</b>，沒有 Intel build。</span></div>
-      <div><span class="m">03</span><span>安裝檔<b style="color:var(--ink)">未經簽章</b>。macOS 首次要「右鍵 → 打開」，Windows 會跳一次 SmartScreen 警告。這是刻意的：簽章憑證每年要錢，那筆錢目前寧可不花。</span></div>
-      <div><span class="m">04</span><span>視覺分析吃 GPU。沒有獨顯也跑得動，但會慢很多。</span></div>
+      <div><span class="m">01</span><span>安裝檔<b style="color:var(--ink)">已內含 Python 後端與 ML 套件</b>，惟<b style="color:var(--ink)">仍需自行安裝 FFmpeg 與 Ollama</b>，供抽幀、向量運算與視覺分析使用。</span></div>
+      <div><span class="m">02</span><span>macOS 版<b style="color:var(--ink)">僅支援 Apple Silicon</b>，未提供 Intel 版本。</span></div>
+      <div><span class="m">03</span><span>安裝檔<b style="color:var(--ink)">尚未經數位簽章</b>。macOS 首次開啟請使用「右鍵 → 打開」，Windows 會顯示一次 SmartScreen 提示，後續開啟不再出現。</span></div>
+      <div><span class="m">04</span><span>視覺分析仰賴 GPU 加速。無獨立顯示卡亦可運作，處理時間將顯著增加。</span></div>
     </div>
   </div>
 </section>
@@ -287,8 +287,8 @@ footer a:hover{color:var(--cyan)}
 -->
 <section id="signup">
   <div class="wrap">
-    <h2>新版本出來時通知我</h2>
-    <p>不定期、只講實質更新，隨時可退訂。</p>
+    <h2>訂閱產品更新</h2>
+    <p>僅於重要版本更新時寄送，可隨時取消訂閱。</p>
     <form id="signup-form" method="post">
       <input type="email" name="email" placeholder="your@email.com" required aria-label="Email">
       <button type="submit">訂閱</button>
@@ -306,8 +306,8 @@ footer a:hover{color:var(--cyan)}
       <a href="https://www.instagram.com/vulture.s/">@vulture.s</a>
     </div>
     <p>
-      PolyForm Perimeter 1.0.1 · source-available（非 OSI 開源授權，所以我們不寫「open source」）<br>
-      本機優先 · 零雲端 · 不對外回報
+      PolyForm Perimeter 1.0.1 · source-available（非 OSI 認證之開源授權）<br>
+      本機優先 · 不依賴雲端服務 · 不對外傳送資料
     </p>
   </div>
 </footer>

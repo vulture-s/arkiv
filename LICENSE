@@ -17,17 +17,17 @@ This summary is for convenience and does not modify them.
     timelines, EDL/FCPXML/OTIO exports, thumbnails, and any other output -- are
     yours, with no restriction of any kind arising from this license.
 
-  * The one thing you may not do is provide other people with a product that
-    competes with arkiv. Forking it into a rival asset manager, wrapping it as a
-    hosted indexing service sold to third parties, or reimplementing its
-    functionality as a substitute product are all covered by the Noncompete and
-    Competition sections below -- including when the competing product is given
-    away free of charge.
+  * The sole restriction is that you may not provide others with a product that
+    competes with arkiv. Deriving a rival asset manager from it, offering it to
+    third parties as a hosted indexing service, or reimplementing its
+    functionality as a substitute product all fall under the Noncompete and
+    Competition sections below -- including where the competing product is
+    supplied free of charge.
 
-The line is what your customer is buying. If they are buying a deliverable you
-produced with arkiv, that is ordinary tool use and is permitted. If they are
-buying arkiv's functionality itself -- as a product, a service, a library, or a
-plug-in -- that competes with the software.
+The test is what your customer is purchasing. A deliverable you produced with
+arkiv is ordinary tool use and is permitted. arkiv's functionality itself --
+supplied as a product, a service, a library, or a plug-in -- competes with the
+software.
 
 Separately licensed component: the optional Pro add-on (unlimited projects and
 cross-project aggregation) is NOT covered by this license. It is a closed-source

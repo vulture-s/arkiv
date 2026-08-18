@@ -8,8 +8,8 @@
 
 > 🌐 [English](README.md) | **繁體中文**
 >
-> 📦 **只想拿到 app？** → **[https://vulture-s.github.io/arkiv/](https://vulture-s.github.io/arkiv/)** —— 下載、它在做什麼、授權，一頁講完。
-> 免費，任何用途皆可，包含商業工作。
+> 📦 **尋找應用程式？** → **[https://vulture-s.github.io/arkiv/](https://vulture-s.github.io/arkiv/)** —— 下載、功能說明與授權條款，單頁完整呈現。
+> 免費，任何用途皆可，包含商業用途。
 
 arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附上 AI 標註（逐字稿、視覺標籤、氛圍、能量、剪輯位置），並用任何語言（中文、日文、英文）的語義搜尋找回 clip。Resolve plugin 讓你搜尋、帶 clip color 匯入、加 frame marker，不用離開 NLE。
 
