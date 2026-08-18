@@ -3,8 +3,8 @@
 > ⚠️ **DRAFT — not yet reviewed by a lawyer.** This document states the intended
 > commercial terms for the Pro add-on. Items marked `[LEGAL REVIEW]` below must
 > be settled with counsel before the add-on is offered for sale. The licensing
-> entity is settled (a Taiwanese company); what remains is the core/add-on
-> relationship and the choice of venue. Until then this
+> entity is settled and stated in full below; what remains is the core/add-on
+> relationship, the choice of venue, and a contact address. Until then this
 > file is a specification, not an offer.
 >
 > Statutory citations were checked against the Ministry of Justice database
@@ -126,10 +126,14 @@ these terms or from use of the add-on.
 
 ## Who grants this licence
 
-The Pro add-on is a closed-source component owned and licensed by **立凡科技有限公司**
-(Lifan Technology Co., Ltd.), a company registered in Taiwan. It is **not**
-covered by the arkiv core licence, and the core's copyright holder is a separate
-party: arkiv core remains under PolyForm Perimeter 1.0.1,
+The Pro add-on is a closed-source component owned and licensed by:
+
+> **立凡科技有限公司** (Lifan Technology Co., Ltd.)
+> Unified Business No. **00066982**
+> 2F, No. 1, Sec. 4, Xinyi Rd., Da'an Dist., Taipei City, Taiwan
+
+It is **not** covered by the arkiv core licence, and the core's copyright holder
+is a separate party: arkiv core remains under PolyForm Perimeter 1.0.1,
 `Copyright (c) 2026 Hevin Yeh`.
 
 That split is deliberate. The open, source-available core stays with the
@@ -147,17 +151,17 @@ Proposed: the laws of the Republic of China (Taiwan), with a Taiwanese court of
 first instance as the venue — the licensor is registered in Taiwan and the
 statutory consumer protections cited above are Taiwanese.
 `[LEGAL REVIEW]` — confirm and name the specific court.
-`[LEGAL REVIEW]` — the licensor's tax ID and registered address still need to be
-stated here before anything is sold; a receipt or invoice cannot be issued
-without them.
+`[LEGAL REVIEW]` — a contact address for refunds and receipts is still to be
+added above; the refund clause tells buyers to email "the address on the
+receipt", which presumes one exists.
 
 ---
 
 # arkiv Pro 附加元件 — 授權條款（繁體中文）
 
 > ⚠️ **草稿 — 尚未經律師審閱。** 標 `[LEGAL REVIEW]` 的項目必須先與律師確認，
-> 才能對外販售。在那之前本檔是規格，不是要約。**授權主體已定案**（台灣公司），
-> 待解的是核心／add-on 的關係與管轄法院。
+> 才能對外販售。在那之前本檔是規格，不是要約。**授權主體已定案並完整載明於下**，
+> 待解的是核心／add-on 的關係、管轄法院，以及聯絡信箱。
 >
 > 條文引用已於 2026-08-18 對照法務部全國法規資料庫（`law.moj.gov.tw`）現行條文查核。
 > **引得出條文不等於有法律意見。**
@@ -253,7 +257,12 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 
 ## 授權方
 
-Pro 附加元件為閉源元件，由**立凡科技有限公司**持有並授權。
+Pro 附加元件為閉源元件，由下列主體持有並授權：
+
+> **立凡科技有限公司**
+> 統一編號 **00066982**
+> 臺北市大安區信義路4段1號2樓
+
 它**不在** arkiv 核心授權範圍內，且核心的著作權人為另一主體：arkiv 核心依
 PolyForm Perimeter 1.0.1 授權，`Copyright (c) 2026 Hevin Yeh`。
 
@@ -269,8 +278,8 @@ grant 不涉對價。
 提案：以**中華民國法律**為準據法，並以台灣之地方法院為第一審管轄法院 ——
 授權方登記於台灣，且本頁引用的消費者保護規定亦為台灣法。
 `[LEGAL REVIEW]` —— 確認並指定法院。
-`[LEGAL REVIEW]` —— 授權方之統一編號與登記地址尚待補列於本頁；未補齊前無法開立
-發票或收據，亦不得對外販售。
+`[LEGAL REVIEW]` —— 退款與收據用的聯絡信箱尚待補列於上方；退款條款要求買方
+來信「收據上的信箱」，前提是那個信箱存在。
 
 ---
 
