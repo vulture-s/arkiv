@@ -106,6 +106,11 @@ td b{color:var(--ink)}
   color:var(--ink);border-radius:10px;padding:13px 16px;font-size:15px;font-family:inherit;
 }
 #signup input:focus{outline:2px solid var(--cyan);outline-offset:1px}
+#signup-trap{position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
+.signup-status{margin-top:14px;font-size:14px;min-height:1.4em}
+.signup-status.ok{color:var(--cyan)}
+.signup-status.bad{color:#e2686d}
+#signup button[disabled]{opacity:.5;cursor:default}
 #signup button{
   background:var(--invert);color:var(--invert-ink);border:0;border-radius:10px;
   padding:13px 26px;font-weight:600;font-size:15px;cursor:pointer;font-family:inherit;
@@ -284,9 +289,26 @@ footer a:hover{color:var(--cyan)}
 
 <!--
   ────────────────────────────────────────────────────────────────
-  EMAIL 名單：尚未接上，所以整段預設不顯示（不放壞掉的表單上線）。
-  接法：去 Kit / Buttondown / Google Form 開一個表單，把它的 POST
-  endpoint 貼進下面的 FORM_ENDPOINT，這一段就會自動出現。
+  EMAIL 名單 — 尚未接上，整段預設不顯示（不放壞掉的表單上線）。
+
+  接法：在頁尾 <script> 的 SIGNUP 物件填 endpoint 與 emailField 即可，
+  這一段會自動出現。各家的值：
+
+    Kit (ConvertKit)
+      endpoint   https://app.kit.com/forms/<FORM_ID>/subscriptions
+      emailField email_address        ← 不是 email，填錯會靜默收不到
+
+    Buttondown
+      endpoint   https://buttondown.com/api/emails/embed-subscribe/<USERNAME>
+      emailField email
+
+    Formspree
+      endpoint   https://formspree.io/f/<FORM_ID>
+      emailField email                ← 支援 CORS，能拿到真實成功／失敗
+
+  送出邏輯：先試 fetch（拿得到真答案就顯示真結果）；若因 CORS 或網路失敗，
+  退回原生 form submit（會離開本站，但由對方站台自己顯示確認）。
+  **永遠不在無法確認的情況下顯示「訂閱成功」。**
   ────────────────────────────────────────────────────────────────
 -->
 <section id="signup">
@@ -294,9 +316,12 @@ footer a:hover{color:var(--cyan)}
     <h2>訂閱產品更新</h2>
     <p>僅於重要版本更新時寄送，可隨時取消訂閱。</p>
     <form id="signup-form" method="post">
-      <input type="email" name="email" placeholder="your@email.com" required aria-label="Email">
-      <button type="submit">訂閱</button>
+      <input id="signup-email" type="email" placeholder="your@email.com" required aria-label="Email">
+      <!-- 蜜罐：真人看不到也填不到；機器人會填，填了就不送 -->
+      <input id="signup-trap" type="text" name="_confirm" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <button id="signup-btn" type="submit">訂閱</button>
     </form>
+    <p id="signup-status" class="signup-status" role="status" aria-live="polite"></p>
   </div>
 </section>
 
@@ -317,13 +342,64 @@ footer a:hover{color:var(--cyan)}
 </footer>
 
 <script>
-  // 把這行換成真的表單 endpoint，訂閱區塊就會自動顯示。
-  const FORM_ENDPOINT = "";
+  // ── 填這裡就會上線。各家的 endpoint / emailField 見上方 signup 區塊的註解。
+  const SIGNUP = {
+    endpoint: "",
+    emailField: "email",
+  };
 
-  if (FORM_ENDPOINT) {
-    document.getElementById("signup").style.display = "block";
-    document.getElementById("signup-form").action = FORM_ENDPOINT;
-  }
+  (function () {
+    if (!SIGNUP.endpoint) return;           // 沒設就整段不顯示，不放壞表單上線
+
+    const sec = document.getElementById("signup");
+    const form = document.getElementById("signup-form");
+    const email = document.getElementById("signup-email");
+    const trap = document.getElementById("signup-trap");
+    const btn = document.getElementById("signup-btn");
+    const status = document.getElementById("signup-status");
+
+    sec.style.display = "block";
+    form.action = SIGNUP.endpoint;
+    email.name = SIGNUP.emailField;         // Kit 要 email_address，寫死 email 會靜默收不到
+
+    function say(msg, cls) {
+      status.textContent = msg;
+      status.className = "signup-status" + (cls ? " " + cls : "");
+    }
+
+    form.addEventListener("submit", async function (e) {
+      if (trap.value) { e.preventDefault(); return; }   // 機器人填了蜜罐，安靜丟掉
+
+      e.preventDefault();
+      btn.disabled = true;
+      say("送出中…");
+
+      const body = new FormData();
+      body.append(SIGNUP.emailField, email.value);
+
+      try {
+        const res = await fetch(SIGNUP.endpoint, {
+          method: "POST",
+          body: body,
+          headers: { Accept: "application/json" },
+        });
+        if (res.ok) {
+          say("訂閱成功，謝謝。", "ok");
+          form.reset();
+        } else {
+          // 對方回了、但不是成功 —— 這是真的失敗，不能當成功帶過
+          say("訂閱失敗（" + res.status + "）。請稍後再試，或直接來信。", "bad");
+          btn.disabled = false;
+        }
+      } catch (err) {
+        // 多半是 CORS 或離線：拿不到答案，所以不宣稱成功。
+        // 退回原生送出 —— 會離開本站，但由對方站台自己顯示確認，
+        // 比在這裡假裝成功誠實。
+        say("轉往訂閱確認頁…");
+        form.submit();
+      }
+    });
+  })();
 </script>
 
 </body>
