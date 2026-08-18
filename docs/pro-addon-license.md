@@ -68,24 +68,34 @@ so scope is a matter of these terms rather than of code. Concretely:
 
 ## Refunds
 
-**14 days, no questions asked.** Email the address on the receipt.
+**7 days from delivery, no questions asked.** Email the address on the receipt.
 
-This is deliberately more than Taiwan law requires, and it is also the simpler
-position rather than the costlier one. The Consumer Protection Act gives a
-distance buyer 7 days to withdraw (art. 19 para. 1), and non-tangible digital
-content supplied with prior consent is an enumerated exception to even that
-(Standards for Reasonable Exceptions to the Right of Withdrawal in Distance
-Sales, art. 2 subparas. 4–5) — so this add-on could lawfully carry no
-withdrawal right at all. Relying on that exception would require disclosing it
-up front and taking consent before delivery, and getting that wrong is
-expensive: art. 19 para. 3 stops the 7-day clock from starting for up to four
-months, and para. 5 voids any agreement that conflicts with the article.
-Fourteen unconditional days clears the floor and makes all of that irrelevant.
+That is the statutory period for a distance sale in Taiwan (Consumer Protection
+Act art. 19 para. 1) — given in full rather than claimed away. This add-on
+would in fact qualify for the digital-content exception (Standards for
+Reasonable Exceptions to the Right of Withdrawal in Distance Sales, art. 2
+subparas. 4–5), which permits **no** withdrawal right at all. We are not using
+it.
 
-`[LEGAL REVIEW]` — one narrow point remains: art. 3 of those Standards defers
-to any mandatory standard-contract terms (定型化契約應記載及不得記載事項) the
-competent authority has published for this product category. Confirm none
-covers downloadable software before publishing.
+There is no extra goodwill window on top of the statutory one, and there does
+not need to be: **arkiv itself is already free to use commercially**, so nothing
+here gates access to the product. What you are buying is extra capacity on
+software you could already run and earn with — and you can reach that decision
+on the free core, across three real projects, before paying anything.
+
+`[LEGAL REVIEW]` — this policy sits *exactly on* the statutory floor rather
+than above it, so two mechanics become load-bearing and the purchase flow must
+satisfy both:
+
+- **art. 19 para. 3** — the 7 days do not start until the withdrawal
+  information required by art. 18 para. 1 subpara. 3 is supplied at delivery.
+  Omit it and the right stays open for up to four months.
+- **art. 19 para. 5** — any term conflicting with the article is void, so
+  nothing in checkout may shorten or condition these 7 days.
+
+Also confirm art. 3 of the same Standards: mandatory standard-contract terms
+(定型化契約應記載及不得記載事項) published for this product category would
+displace the above.
 
 ## Free grants
 
@@ -167,20 +177,26 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 
 ## 退款
 
-**14 天無條件退款。** 來信收據上的信箱即可。
+**自交付起 7 天內，無條件退款。** 來信收據上的信箱即可。
 
-這刻意比台灣法律要求的多，而且**寬鬆的那個做法同時也是麻煩比較少的那個**。消保法
-第 19 條第 1 項給通訊交易消費者 7 日解除權，而「非以有形媒介提供之數位內容或一經
-提供即為完成之線上服務，經消費者事先同意始提供」是該條但書的法定例外（通訊交易
-解除權合理例外情事適用準則第 2 條第 4、5 款）—— 也就是說，本附加元件**在法律上
-可以完全不給解除權**。但要主張那個例外，必須事先告知消費者將排除解除權、並取得
-事先同意；做錯的代價很高：第 19 條第 3 項規定未提供解除契約資訊時**七日期間根本
-不起算**（最長可拖到四個月），第 5 項則規定**違反本條的約定一律無效**。給 14 天
-無條件退款直接高過門檻，上面那整套機制就都不必碰。
+這就是台灣通訊交易的法定解除權期間（消保法第 19 條第 1 項）—— **完整給出，不主張
+排除**。事實上本附加元件符合數位內容的法定例外（通訊交易解除權合理例外情事適用準則
+第 2 條第 4、5 款），依法**可以完全不給解除權**，我們不用那條。
 
-`[LEGAL REVIEW]` — 只剩一個窄問題：同準則第 3 條規定，若中央主管機關已就本類商品
-公告**定型化契約應記載及不得記載事項**，則適用該事項關於解除契約的規定。發佈前確認
-沒有涵蓋下載軟體的公告。
+法定期間之上不另外加碼，也不需要加碼：**arkiv 本體已經任何用途免費、包含商用**，
+這裡沒有任何東西擋著你使用產品。你買的是**額外容量**，加在一個你早就能跑、能拿來
+接案賺錢的軟體上 —— 而且你可以先在免費核心用滿三個真實專案，再決定要不要付錢。
+
+`[LEGAL REVIEW]` — 本政策**剛好落在法定門檻上**而非高於它，因此有兩個機制變成
+必須做對，購買流程要同時滿足：
+
+- **第 19 條第 3 項** —— 交付時未提供第 18 條第 1 項第 3 款所定之解除契約相關資訊，
+  **七日期間不起算**，解除權最長可存續四個月。
+- **第 19 條第 5 項** —— 違反本條所為之約定**無效**，故結帳流程中不得有任何縮短或
+  附條件於這 7 天的條款。
+
+另需確認同準則第 3 條：若中央主管機關已就本類商品公告**定型化契約應記載及不得記載
+事項**，則從其規定，會取代上述。
 
 ## 免費 grant
 
