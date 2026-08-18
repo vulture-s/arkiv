@@ -2,7 +2,9 @@
 
 > ⚠️ **DRAFT — not yet reviewed by a lawyer.** This document states the intended
 > commercial terms for the Pro add-on. Items marked `[LEGAL REVIEW]` below must
-> be settled with counsel before the add-on is offered for sale. Until then this
+> be settled with counsel before the add-on is offered for sale. The licensing
+> entity is settled (a Taiwanese company); what remains is the core/add-on
+> relationship and the choice of venue. Until then this
 > file is a specification, not an offer.
 >
 > Statutory citations were checked against the Ministry of Justice database
@@ -122,18 +124,36 @@ The add-on is provided **as is**, without warranty or condition of any kind. As
 far as the law allows, the licensor is not liable for any damages arising from
 these terms or from use of the add-on.
 
+## Who grants this licence
+
+The Pro add-on is a closed-source component owned and licensed by a Taiwanese
+company (details on the certificate issued to you). It is **not** covered by the
+arkiv core licence, and the core's copyright holder is a separate party: arkiv
+core remains under PolyForm Perimeter 1.0.1, `Copyright (c) 2026 Hevin Yeh`.
+
+That split is deliberate. The open, source-available core stays with the
+individual author; the commercial component sits with the company. Nothing you
+do with the core depends on this page.
+
+`[LEGAL REVIEW]` — how the add-on relates to the core (extent of dependency,
+whether it constitutes a derivative work, and what grant from the core's
+copyright holder the company therefore needs) must be settled before the add-on
+is sold. It does not affect free grants, which involve no consideration.
+
 ## Governing law
 
-`[LEGAL REVIEW]` — governing law and venue to be set.
-`[LEGAL REVIEW]` — the contracting entity (individual vs. company) to be set;
-this is the "holding entity" question already flagged in CHANGELOG #225.
+Proposed: the laws of the Republic of China (Taiwan), with a Taiwanese court of
+first instance as the venue — the licensor is a Taiwanese company and the
+statutory consumer protections cited above are Taiwanese.
+`[LEGAL REVIEW]` — confirm and name the specific court.
 
 ---
 
 # arkiv Pro 附加元件 — 授權條款（繁體中文）
 
 > ⚠️ **草稿 — 尚未經律師審閱。** 標 `[LEGAL REVIEW]` 的項目必須先與律師確認，
-> 才能對外販售。在那之前本檔是規格，不是要約。
+> 才能對外販售。在那之前本檔是規格，不是要約。**授權主體已定案**（台灣公司），
+> 待解的是核心／add-on 的關係與管轄法院。
 >
 > 條文引用已於 2026-08-18 對照法務部全國法規資料庫（`law.moj.gov.tw`）現行條文查核。
 > **引得出條文不等於有法律意見。**
@@ -227,11 +247,24 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 附加元件依**現況**提供，不附任何明示或默示的擔保。在法律允許範圍內，
 授權方不對因本條款或使用附加元件而生的任何損害負責。
 
+## 授權方
+
+Pro 附加元件為閉源元件，由一家台灣公司持有並授權（公司資訊載於發給你的授權證明）。
+它**不在** arkiv 核心授權範圍內，且核心的著作權人為另一主體：arkiv 核心依
+PolyForm Perimeter 1.0.1 授權，`Copyright (c) 2026 Hevin Yeh`。
+
+這個分割是刻意的：source-available 的核心留在個人作者名下，商業元件歸公司。
+**你對核心做的任何事都不受本頁影響。**
+
+`[LEGAL REVIEW]` —— add-on 與核心的關係（依賴程度、是否構成衍生著作、若構成則
+公司需要核心著作權人的何種授權）必須在販售前釐清。**不影響免費 grant**，
+grant 不涉對價。
+
 ## 準據法
 
-`[LEGAL REVIEW]` — 準據法與管轄法院待定。
-`[LEGAL REVIEW]` — 締約主體（個人 vs 公司）待定；即 CHANGELOG #225 已標記的
-「holding entity」問題。
+提案：以**中華民國法律**為準據法，並以台灣之地方法院為第一審管轄法院 ——
+授權方為台灣公司，且本頁引用的消費者保護規定亦為台灣法。
+`[LEGAL REVIEW]` —— 確認並指定法院。
 
 ---
 
