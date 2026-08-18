@@ -1,6 +1,6 @@
 # arkiv
 
-[![License: PolyForm NC](https://img.shields.io/badge/License-PolyForm--NC--1.0.0-orange.svg)](LICENSE)
+[![License: PolyForm Perimeter](https://img.shields.io/badge/License-PolyForm--Perimeter--1.0.1-orange.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://python.org)
 [![Tauri](https://img.shields.io/badge/Tauri-Desktop_App-FFC131.svg)](https://tauri.app)
 
@@ -10,7 +10,7 @@
 
 arkiv sits between your media drive and DaVinci Resolve: it ingests your footage, attaches AI-generated metadata (transcript, vision tags, atmosphere, energy, edit position), and surfaces clips via semantic search in any language — Chinese, Japanese, or English. The Resolve plugin lets you search, import with clip color, and drop frame markers without leaving the NLE.
 
-Designed for solo DITs and small crews who own their data: local-first, self-hosted, source-available (PolyForm Noncommercial), no cloud dependency.
+Designed for solo DITs and small crews who own their data: local-first, self-hosted, source-available (PolyForm Perimeter), no cloud dependency.
 
 ---
 
@@ -20,7 +20,7 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **AI editing tools only understand footage with someone talking** → arkiv runs vision analysis + transcription on every clip, so B-roll and dialogue-free footage stay searchable and manageable.
 - **Your library has to feed any downstream edit** → manual, automated, or script-driven: native Resolve plugin, EDL / FCPXML export, API / MCP interface.
 
-> **License in one line:** arkiv itself is free for any noncommercial use (source-available); the videos, timelines and exports you make with it are **100% yours to use commercially**.
+> **License in one line:** arkiv is free to use for **any** purpose, commercial work included (source-available); what you make with it is **100% yours**. The only thing off-limits is turning arkiv into a product that competes with it.
 >
 > **Proven at scale:** fully indexed a **1,506-clip real production library** (1,161 of them dialogue-free B-roll) on a single RTX 4070.
 
@@ -429,15 +429,21 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 ## License
 
-PolyForm Noncommercial License 1.0.0, with a Commercial Output Exception — see [LICENSE](LICENSE).
+PolyForm Perimeter License 1.0.1 — see [LICENSE](LICENSE).
 
-Videos, timelines and exports you produce with arkiv are yours and may be used commercially. Using arkiv itself is free for any noncommercial purpose; selling, hosting, or repackaging arkiv (or a fork) as a commercial product or service is not permitted.
+Using arkiv is free for **any** purpose, commercial work included: paid client jobs, studio use, funded productions. Videos, timelines and exports you produce with it are yours, with no restriction from the license. The one thing that is not permitted is providing others with a product that competes with arkiv — forking it into a rival asset manager, wrapping it as a hosted indexing service sold to third parties, or reimplementing its functionality as a substitute product, including free of charge.
+
+The line is what your customer is buying: a deliverable you produced with arkiv is ordinary tool use; arkiv's functionality itself, sold as a product or service, competes.
+
+## Pro add-on
+
+The free core covers up to **3 projects**. The optional **Pro add-on** — a separate closed-source component — unlocks unlimited projects and cross-project aggregation (search and collections spanning projects) for **NT$3,000, one time, perpetual**. No subscription, no activation server, no phone-home. Terms: [docs/pro-addon-license.md](docs/pro-addon-license.md).
+
+> Not yet on sale — the purchase path is still being built. The terms page is published so you can read them before that happens.
 
 ## Public-Interest Program
 
-arkiv is free for noncommercial use, and what you make with it is always yours to use commercially (see the license above). On top of that, we want to go one step further.
-
-If your project has commercial elements (government grants, theatrical / platform distribution, institutional revenue), strictly speaking your use of arkiv *itself* becomes "commercial use" and would need a separate commercial license — but **if the work you're doing serves the public interest, we grant that license for free**:
+arkiv is free to use for any purpose, so public-interest work needs no permission from us to use the core. What the program grants is the **Pro add-on, free and perpetual**, for work that serves the public interest:
 
 - Public-issue documentaries
 - Nonprofit / public-good visual work

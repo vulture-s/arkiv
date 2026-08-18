@@ -66,6 +66,7 @@ python health.py   # all required checks should PASS
 
 ---
 
-*Source-available under the [PolyForm Noncommercial License 1.0.0](../LICENSE) with a
-Commercial Output Exception — arkiv is free for noncommercial use, and what you make with it
-is yours to use commercially. Self-hosted, no cloud, no telemetry.*
+*Source-available under the [PolyForm Perimeter License 1.0.1](../LICENSE) — arkiv is free
+to use for any purpose, commercial work included, and what you make with it is yours without
+restriction; the one prohibited use is providing others with a competing product.
+Self-hosted, no cloud, no telemetry.*

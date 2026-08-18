@@ -219,10 +219,15 @@ most likely to touch first, not the full set.
 
 ## License
 
-arkiv is licensed under the **PolyForm Noncommercial License 1.0.0**, with a **Commercial
-Output Exception** — see [LICENSE](LICENSE). In short: arkiv itself is source-available and
-free for noncommercial use, while whatever you *make* with it (videos, timelines,
-EDL/FCPXML/OTIO exports) is yours to use commercially.
+arkiv is licensed under the **PolyForm Perimeter License 1.0.1** — see [LICENSE](LICENSE).
+In short: arkiv is source-available and free to use for any purpose, commercial work
+included, and whatever you *make* with it (videos, timelines, EDL/FCPXML/OTIO exports) is
+yours without restriction. The one prohibited use is providing others with a product that
+competes with arkiv.
+
+The optional **Pro add-on** (unlimited projects, cross-project aggregation) is a separate
+closed-source component under its own terms — see [docs/pro-addon-license.md](docs/pro-addon-license.md).
+Contributions to this repository go to the source-available core, not to that component.
 
 ### Contributor terms
 
@@ -234,8 +239,7 @@ confirm that:
    Using an AI assistant to write or package your change is fine; the same condition applies
    to what it produced for you.
 2. **It ships under the project's license.** Your contribution is licensed to the project and
-   its users under the same terms as arkiv itself (PolyForm NC 1.0.0 + Commercial Output
-   Exception).
+   its users under the same terms as arkiv itself (PolyForm Perimeter 1.0.1).
 3. **The maintainer may relicense it.** You grant Hevin Yeh — the copyright holder named in
    [LICENSE](LICENSE) — a perpetual, worldwide, irrevocable, royalty-free right to license
    your contribution under different terms, including proprietary ones. This is what lets

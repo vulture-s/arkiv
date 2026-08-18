@@ -1,6 +1,6 @@
 # arkiv
 
-[![License: PolyForm NC](https://img.shields.io/badge/License-PolyForm--NC--1.0.0-orange.svg)](LICENSE)
+[![License: PolyForm Perimeter](https://img.shields.io/badge/License-PolyForm--Perimeter--1.0.1-orange.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://python.org)
 [![Tauri](https://img.shields.io/badge/Tauri-Desktop_App-FFC131.svg)](https://tauri.app)
 
@@ -10,7 +10,7 @@
 
 arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附上 AI 標註（逐字稿、視覺標籤、氛圍、能量、剪輯位置），並用任何語言（中文、日文、英文）的語義搜尋找回 clip。Resolve plugin 讓你搜尋、帶 clip color 匯入、加 frame marker，不用離開 NLE。
 
-為 solo DIT 與小團隊設計，資料自己持有：本地優先、自架、source-available（PolyForm Noncommercial），零雲端依賴。
+為 solo DIT 與小團隊設計，資料自己持有：本地優先、自架、source-available（PolyForm Perimeter），零雲端依賴。
 
 ---
 
@@ -20,7 +20,7 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 - **AI 剪輯工具只看得懂「有人在講話」的素材** → arkiv 對每支 clip 做視覺分析 + 轉錄，大量 B-roll、無語音空景一樣可搜可管。
 - **素材庫要能餵給下游任何剪法** → 手動剪、自動剪、腳本剪都接得上：Resolve 原生 plugin、EDL / FCPXML 匯出、API / MCP 介面。
 
-> **授權一句話**：arkiv 軟體本身非商業用途免費（source-available），**用它產出的影片、時間軸、匯出檔 100% 可商用**。
+> **授權一句話**：arkiv **任何用途免費，包含商業工作**（source-available），做出來的東西 **100% 是你的**。唯一不准的是把 arkiv 變成跟它競爭的產品。
 >
 > **實戰驗證**：已在 **1,506 支真實產品拍攝素材**（其中 1,161 支無對白 B-roll）、單張 RTX 4070 上完整索引跑通。
 
@@ -412,15 +412,21 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 
 ## 授權
 
-PolyForm Noncommercial License 1.0.0，附 Commercial Output Exception — 見 [LICENSE](LICENSE)。
+PolyForm Perimeter License 1.0.1 — 見 [LICENSE](LICENSE)。
 
-你用 arkiv 剪出的影片、時間軸、匯出檔都是你的，可商用；arkiv 軟體本身任何非商業用途皆免費，但**不得**把 arkiv（或其 fork）當商業產品/服務販售、架站或重新包裝。
+arkiv **任何用途皆免費，包含商業工作**：接案、工作室內部使用、有補助的製作都可以。你用它剪出的影片、時間軸、匯出檔都是你的，授權不加任何限制。唯一不允許的是**提供他人跟 arkiv 競爭的產品** —— 把它 fork 成對手素材管理工具、包成索引服務賣給第三方、或重新實作成替代品，即使免費提供也一樣。
+
+界線在於**你的客戶買的是什麼**：買你用 arkiv 做出來的成品，是一般的工具使用；買 arkiv 的功能本身（當成產品、服務、函式庫或外掛），就構成競爭。
+
+## Pro 附加元件
+
+免費核心支援 **3 個專案**。選購的 **Pro 附加元件**（另一個閉源元件）解鎖無限專案與跨專案聚合（跨專案搜尋與精選集），**NT$3,000 一次買斷、終身有效**。無訂閱、無啟用伺服器、不對外回報。條款：[docs/pro-addon-license.md](docs/pro-addon-license.md)。
+
+> 尚未開賣 —— 購買流程還在建。條款先公開，讓你在那之前就能讀。
 
 ## 公益方案
 
-arkiv 軟體非商業用途免費，用它產出的成品永遠可商用（見上方授權段）。在這之上，我們想再往前一步。
-
-如果你的專案帶有商業成分（政府補助、院線／平台發行、機構營收），對 arkiv 軟體本身的使用嚴格說會落入「商業使用」、需要另談商業授權 —— 但**只要你做的是有公共價值的影像工作**，這份商業授權我們**免費提供**：
+arkiv 任何用途都免費，所以公益工作使用核心不需要我們同意。這個方案給的是 **Pro 附加元件，免費且終身**，對象是有公共價值的影像工作：
 
 - 公共議題紀錄片
 - 非營利／公益團體的影像
