@@ -28,6 +28,14 @@ things the free core does not provide:
 | Projects | Up to 3 | Unlimited |
 | Cross-project aggregation (search and collections spanning projects) | — | ✅ |
 
+> **Current builds impose neither limit.** No shipped version of arkiv caps
+> projects or withholds cross-project aggregation; the table describes the
+> intended tiers, not today's behaviour. The free allowance will apply to **new
+> installations** from a future release onward. **Libraries already in use
+> before that release keep unlimited projects permanently** — the software
+> records the version a library was first seen under (`library_meta.
+> first_seen_version`) so this can be honoured rather than guessed at.
+
 The add-on is **not** covered by the PolyForm Perimeter License. It is
 distributed under the terms on this page.
 
@@ -142,6 +150,12 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 |---|---|---|
 | 專案數 | 最多 3 個 | 無限 |
 | 跨專案聚合（跨專案搜尋與精選集） | — | ✅ |
+
+> **現行版本兩項限制均未實施。** 目前已發布的任何版本都不限制專案數，
+> 亦未保留跨專案聚合功能；上表描述的是規劃中的方案分層，而非現況。
+> 免費額度將自未來某一版起對**新安裝**生效；**在該版之前已在使用的素材庫，
+> 永久保留無限制專案數** —— 軟體會記錄素材庫初次使用時的版本
+> （`library_meta.first_seen_version`），使此一承諾得以查證而非事後推測。
 
 附加元件**不在** PolyForm Perimeter 授權範圍內，依本頁條款授權。
 

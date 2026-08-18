@@ -492,6 +492,48 @@ def init_db():
                 UNIQUE(scope, key)
             )
         """)
+        # ── library provenance ─────────────────────────────────────────────
+        # Written once, on the first init that runs this code, and never
+        # updated. Its only job is to answer a question the paid tier will ask
+        # later: was this library already in use before the free-tier project
+        # cap existed?
+        #
+        # The key is `first_seen_version`, not `created_with_version`, because
+        # that is what it truthfully records. A brand-new library gets stamped
+        # at creation; an existing library upgrading into a build that carries
+        # this code gets stamped on its next init. Both are the earliest
+        # version we can prove the library was in use by, and both answer the
+        # grandfathering question the same way — but only one of them is
+        # literally a creation date, so the key does not claim to be one.
+        #
+        # The cap does not exist yet — every build in the wild today allows
+        # unlimited projects — and the published terms promise that libraries
+        # created before it ships keep that permanently. Keeping that promise
+        # needs evidence recorded NOW: once the cap ships there is no way to
+        # tell, after the fact, whether a two-project library was started under
+        # the old terms or the new ones. Behavioural inference ("already has
+        # more than three") only catches libraries that had already exceeded
+        # the cap, not the ones that would grow into it.
+        #
+        # INSERT OR IGNORE, not upsert: an upgrade must never restamp an old
+        # library with a new version and silently revoke its exemption.
+        #
+        # A library with no row at all predates this stamp, which is strictly
+        # older, so absence reads as exempt. This is a goodwill promise, not
+        # DRM — the row is trivially editable and that is fine; the licence is
+        # enforced by its terms, not by the database.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS library_meta (
+                key        TEXT PRIMARY KEY,
+                value      TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "INSERT OR IGNORE INTO library_meta (key, value) VALUES ('first_seen_version', ?)",
+            (_config.VERSION,),
+        )
+
         # audit M6: PRAGMA foreign_keys was never enabled before, so orphan
         # child rows accumulated (e.g. scopes of revoked tokens, tags/frames of
         # deleted media). Clear them once here so the now-active enforcement in
@@ -516,6 +558,38 @@ def init_db():
                 "[init_db] foreign_key_check: removed {0} orphan child row(s)"
                 " left from pre-enforcement era (audit M6)".format(removed)
             )
+
+
+
+def get_library_origin():
+    """Earliest version known to have used this library, or None if it predates the stamp.
+
+    Not a creation date. See `first_seen_version` in `init_db`: an upgraded
+    library is stamped on its next init, not retroactively at its real birth.
+    What the value guarantees is an upper bound — the library was in use by
+    this version at the latest — which is exactly what grandfathering needs.
+
+    None is the older case, not an error: libraries created before
+    `library_meta` existed carry no row, and every build that shipped before it
+    allowed unlimited projects. Callers deciding whether the free-tier project
+    cap applies must therefore treat None as exempt — the same as an explicitly
+    pre-cap version. Defaulting the other way would revoke the exemption from
+    exactly the users who have held it longest.
+
+    Missing table is handled rather than raised for the same reason: a
+    read-only or partially-migrated legacy database must not turn a licensing
+    question into a crash.
+    """
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT value, created_at FROM library_meta WHERE key='first_seen_version'"
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    return {"version": row["value"], "created_at": row["created_at"]}
 
 
 def migrate_to_relative():

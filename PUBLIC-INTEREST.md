@@ -10,12 +10,17 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 用它產出的成品永遠是你的。公益工作要用核心，不需要向我們申請任何東西。
 
 要收費的只有一個東西：**Pro 附加元件**（無限專案 + 跨專案聚合，NT$3,000 買斷）。
-免費核心支援 3 個專案。長期經營的紀錄片團隊、地方影像資料庫與口述歷史計畫，通常會超出此一額度。
+免費核心規劃的額度為 3 個專案（**現行版本尚未實施此限制**，詳見下方說明）。
+長期經營的紀錄片團隊、地方影像資料庫與口述歷史計畫，通常會超出此一額度。
 
 **公益方案就是為這種情況設的：只要你做的是有公共價值的影像工作，這個附加元件我們免費提供，
 且為終身授權。**
 
 素材的知識層——「拍過的東西找得回來、可重複使用」——不該只有大製作用得起。
+
+> **現況說明**：目前已發布的任何 arkiv 版本，都**不限制專案數、也未保留跨專案聚合功能**。
+> 免費額度將自未來某一版起對**新安裝**生效；在該版之前已在使用的素材庫永久不受限制。
+> 因此若你現在就開始用，實際上還不需要這個方案 —— 但先申請、先入列也可以，grant 是終身的。
 
 ## 誰適合申請（例示，非窮舉）
 
@@ -29,7 +34,7 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 ## 什麼不在這個方案裡
 
 - 純商業廣告、品牌行銷、企業形象片。此類用途使用 arkiv 不受任何限制（授權本即允許），
-  惟專案數超過 3 個時，請循一般管道購買 Pro 附加元件。
+  惟日後專案數超過免費額度時，請循一般管道購買 Pro 附加元件。
 - 把 arkiv（或其 fork）當產品／服務**販售、架站、重新包裝**——這在任何情況都不允許，
   [授權正文](LICENSE)的 Noncompete 與 Competition 兩節已明訂。
 - 「有社會意義」的空泛主張但實質是商業專案——我們保留逐案判斷、婉拒的權利。
@@ -48,7 +53,7 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 > 我們是三人獨立團隊，正在拍一部關於濁水溪出海口濕地與周邊漁村的紀錄片，預計投國內外影展、
 > 之後在公共電視與線上平台免費播出。有一筆國藝會補助。素材約 200 小時、大量無對白空景，
 > 想用 arkiv 建語義索引來管理與檢索。另外我們同時在整理過去五年拍的六個相關聚落的素材，
-> 想跨案一起搜，所以會超過免費的 3 個專案 —— 想循公益方案申請 Pro 附加元件。
+> 想跨案一起搜，會超出免費額度 —— 想循公益方案申請 Pro 附加元件。
 
 ## 逐案裁量聲明
 
@@ -71,14 +76,21 @@ arkiv itself is free to use for **any** purpose under the
 with it is always yours. Public-interest work needs no permission from us to use the core.
 
 Only one thing costs money: the **Pro add-on** (unlimited projects and cross-project
-aggregation, NT$3,000 one time). The free core covers 3 projects, which long-running
-documentary teams, community media archives, and oral-history projects outgrow quickly.
+aggregation, NT$3,000 one time). The free tier is planned at 3 projects — **no shipped
+version enforces this yet** — an allowance that long-running documentary teams, community
+media archives, and oral-history projects outgrow quickly.
 
 **The Public-Interest Program exists for exactly that case: if the work you're doing serves
 the public interest, we grant the add-on for free, perpetually.**
 
 The knowledge layer over footage — being able to find and reuse what you already shot —
 shouldn't be something only big productions can afford.
+
+> **Current status**: no released version of arkiv caps projects or withholds cross-project
+> aggregation. The free allowance will apply to **new installations** from a future release
+> onward; libraries already in use before then are permanently unrestricted. If you are
+> starting now you do not yet need this programme — applying early is still fine, as grants
+> are perpetual.
 
 ## Who can apply (examples, not exhaustive)
 
@@ -97,8 +109,8 @@ shouldn't be something only big productions can afford.
 ## What this program does *not* cover
 
 - Pure commercial advertising, brand marketing, or corporate promos. Such use of arkiv is
-  entirely unrestricted — the licence already permits it — but beyond 3 projects, please
-  purchase the Pro add-on through the standard channel.
+  entirely unrestricted — the licence already permits it — but once past the free allowance,
+  please purchase the Pro add-on through the standard channel.
 - Selling, hosting, or repackaging arkiv (or a fork) as a product or service — never
   permitted, per the Noncompete and Competition sections of the [license](LICENSE) itself.
 - Vague "social value" claims over what is really a commercial project — we reserve the right
