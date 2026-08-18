@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## v1.0.0 - 2026-08-18
+
+**1.0 because the product now has a front door, and the licence finally says one thing.**
+
+Not a feature milestone — v0.12.1 already indexed a 1,506-clip production library and shipped
+on three platforms. What was missing was everything around it: the only way to download arkiv
+was a GitHub Releases page, the repository's homepage field pointed at an Instagram account,
+and the licence required a paragraph of explanation before a working editor could tell whether
+they were allowed to use it on a paying job. All three are now answered, so the version number
+stops pretending this is still a preview.
+
+The change that made the rest possible is the licence. Under PolyForm-NC, a freelance editor
+organising a client's footage was outside the terms from their first project, while the README
+told them they were free up to three — a promise the licence did not authorise. PolyForm
+Perimeter replaces that with one sentence, and a product page can now lead with it.
+
+Nothing is on sale. The paid tier is defined and its terms are published, but no shipped build
+caps anything, and there is no payment path yet.
+
 ### Changed
 - **License: PolyForm Noncommercial 1.0.0 → PolyForm Perimeter 1.0.1. Using arkiv commercially is now free.** The NC license restricted *use of the software itself* to noncommercial purposes, and PolyForm-NC defines the permitted personal case as use "without any anticipated commercial application". A freelance editor organising a paying client's footage has an anticipated commercial application from the first project — so under the old terms, essentially every professional in arkiv's target audience needed a separate commercial license, and the README told them the opposite. The public wording promised free use with payment only past three projects; the license did not authorise that promise. Perimeter's Noncompete section replaces the whole problem with one sentence: "Any purpose is a permitted purpose, except for providing to others any product that competes with the software."
 
