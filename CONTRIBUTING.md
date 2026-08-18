@@ -162,9 +162,23 @@ from `main` by tag:
 
 1. Move `## Unreleased` in `CHANGELOG.md` to `## vX.Y.Z - YYYY-MM-DD`; leave a fresh
    `## Unreleased` on top.
-2. Bump the version to `X.Y.Z` in **both** `src-tauri/tauri.conf.json` and
-   `src-tauri/Cargo.toml` so it matches the tag (these historically drifted — stuck at 0.2.0
-   across the whole v0.2→v0.10 tag history, so every built DMG embedded 0.2.0).
+2. Bump the version to `X.Y.Z` in **all five** places, so it matches the tag:
+
+   | File | Field |
+   |---|---|
+   | `src-tauri/tauri.conf.json` | `version` |
+   | `src-tauri/Cargo.toml` | top-level `version` |
+   | `src-tauri/Cargo.lock` | the **root `arkiv` package entry** |
+   | `config.py` | `VERSION` — served by `GET /api/version` and `/api/health` |
+   | `frontend/src/lib/version.js` | `export const VERSION` — rendered in the SPA |
+
+   `tests/test_version_sync.py` fails if any of them disagree, so you cannot cut a
+   release with them out of step. Do not rely on this list alone — it has undershot
+   twice. The first two files were stuck at 0.2.0 across the whole v0.2→v0.10 tag
+   history (every DMG embedded 0.2.0, fixed in #244); the last two were then missed by
+   that fix *and* by #311, and were still reading 0.10.0 at v0.12.1 — the two that are
+   actually **user-visible**, in the app UI and in the version a support request
+   reports. If you add a sixth location, add it to `VERSION_SOURCES` in that test.
 3. Commit (`docs(changelog): cut vX.Y.Z`), then push an **annotated** tag: `git tag -a vX.Y.Z -m …`.
 4. The tag-triggered `release.yml` workflow builds the `.app`/`.dmg` on a macOS-arm runner. It
    **stamps the version from the tag**, so the bundle can't drift from the tag; signs +
