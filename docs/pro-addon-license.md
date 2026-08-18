@@ -126,10 +126,11 @@ these terms or from use of the add-on.
 
 ## Who grants this licence
 
-The Pro add-on is a closed-source component owned and licensed by a Taiwanese
-company (details on the certificate issued to you). It is **not** covered by the
-arkiv core licence, and the core's copyright holder is a separate party: arkiv
-core remains under PolyForm Perimeter 1.0.1, `Copyright (c) 2026 Hevin Yeh`.
+The Pro add-on is a closed-source component owned and licensed by **立凡科技有限公司**
+(Lifan Technology Co., Ltd.), a company registered in Taiwan. It is **not**
+covered by the arkiv core licence, and the core's copyright holder is a separate
+party: arkiv core remains under PolyForm Perimeter 1.0.1,
+`Copyright (c) 2026 Hevin Yeh`.
 
 That split is deliberate. The open, source-available core stays with the
 individual author; the commercial component sits with the company. Nothing you
@@ -143,9 +144,12 @@ is sold. It does not affect free grants, which involve no consideration.
 ## Governing law
 
 Proposed: the laws of the Republic of China (Taiwan), with a Taiwanese court of
-first instance as the venue — the licensor is a Taiwanese company and the
+first instance as the venue — the licensor is registered in Taiwan and the
 statutory consumer protections cited above are Taiwanese.
 `[LEGAL REVIEW]` — confirm and name the specific court.
+`[LEGAL REVIEW]` — the licensor's tax ID and registered address still need to be
+stated here before anything is sold; a receipt or invoice cannot be issued
+without them.
 
 ---
 
@@ -249,7 +253,7 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 
 ## 授權方
 
-Pro 附加元件為閉源元件，由一家台灣公司持有並授權（公司資訊載於發給你的授權證明）。
+Pro 附加元件為閉源元件，由**立凡科技有限公司**持有並授權。
 它**不在** arkiv 核心授權範圍內，且核心的著作權人為另一主體：arkiv 核心依
 PolyForm Perimeter 1.0.1 授權，`Copyright (c) 2026 Hevin Yeh`。
 
@@ -263,8 +267,10 @@ grant 不涉對價。
 ## 準據法
 
 提案：以**中華民國法律**為準據法，並以台灣之地方法院為第一審管轄法院 ——
-授權方為台灣公司，且本頁引用的消費者保護規定亦為台灣法。
+授權方登記於台灣，且本頁引用的消費者保護規定亦為台灣法。
 `[LEGAL REVIEW]` —— 確認並指定法院。
+`[LEGAL REVIEW]` —— 授權方之統一編號與登記地址尚待補列於本頁；未補齊前無法開立
+發票或收據，亦不得對外販售。
 
 ---
 
