@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arkiv — 拍過的東西，找得回來</title>
+<meta name="description" content="本機優先的 AI 素材索引層。自動轉錄、看懂畫面，用中文問句找到那顆鏡頭。Resolve 原生、零雲端、免費且商用不受限。">
+<meta property="og:title" content="arkiv — 拍過的東西，找得回來">
+<meta property="og:description" content="本機優先的 AI 素材索引層。免費、商用不受限、原始碼公開。">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ak-display:'Archivo Black','Inter',sans-serif;
+  --ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;
+  --ak-mono:'JetBrains Mono',ui-monospace,monospace;
+  --bg:#0a0a0c; --surface:#111114; --surface-2:#17171a;
+  --rule:#26262a; --rule-hi:#3a3a3f;
+  --ink:#f3f2ee; --ink-2:#b6b5b0; --quiet:#6a6a6d;
+  --invert:#f3f2ee; --invert-ink:#0a0a0c; --cyan:#18b6dc;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:var(--ak-sans); font-feature-settings:'ss01','cv11','tnum';
+  line-height:1.7; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:960px;margin:0 auto;padding:0 24px}
+section{padding:72px 0;border-bottom:1px solid var(--rule)}
+section:last-of-type{border-bottom:0}
+h2{font-size:clamp(20px,3.2vw,26px);font-weight:600;letter-spacing:-.01em;margin-bottom:28px}
+h3{font-size:16px;font-weight:600;margin-bottom:8px}
+p{color:var(--ink-2)}
+a{color:var(--cyan)}
+.mono{font-family:var(--ak-mono)}
+
+/* hero */
+.hero{padding:96px 0 80px;border-bottom:1px solid var(--rule)}
+.eyebrow{font-family:var(--ak-mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--quiet);margin-bottom:20px}
+.wordmark{font-family:var(--ak-display);font-size:clamp(52px,11vw,92px);line-height:.92;letter-spacing:-.03em}
+.wordmark .dot{color:var(--cyan)}
+.lede{font-size:clamp(22px,4vw,34px);font-weight:600;letter-spacing:-.02em;color:var(--ink);margin:28px 0 16px;line-height:1.3}
+.sub{font-size:clamp(15px,2.2vw,17px);max-width:62ch}
+.badges{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}
+.badge{font-family:var(--ak-mono);font-size:12px;color:var(--ink-2);border:1px solid var(--rule-hi);border-radius:999px;padding:5px 13px}
+.badge b{color:var(--cyan);font-weight:500}
+
+/* buttons */
+.dl{display:flex;flex-wrap:wrap;gap:12px;margin-top:36px}
+.btn{
+  display:inline-flex;flex-direction:column;gap:2px;
+  background:var(--invert);color:var(--invert-ink);
+  text-decoration:none;border-radius:10px;padding:13px 22px;
+  font-weight:600;font-size:15px;transition:transform .12s ease,opacity .12s ease;
+}
+.btn:hover{transform:translateY(-1px);opacity:.9}
+.btn small{font-weight:400;font-size:11.5px;opacity:.62;font-family:var(--ak-mono)}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--rule-hi)}
+.dl-note{margin-top:14px;font-size:13px;color:var(--quiet)}
+
+/* license — the wedge */
+.lic{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:32px}
+.lic ul{list-style:none;display:grid;gap:20px}
+.lic li{display:grid;grid-template-columns:26px 1fr;gap:14px;align-items:start}
+.lic .mk{font-family:var(--ak-mono);font-size:15px;line-height:1.5}
+.lic .yes{color:var(--cyan)}
+.lic .no{color:#e2686d}
+.lic b{color:var(--ink);font-weight:600}
+.lic .fine{margin-top:24px;padding-top:20px;border-top:1px solid var(--rule);font-size:13.5px;color:var(--quiet)}
+
+/* why */
+.why{display:grid;gap:26px}
+.why .row{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start}
+.why .n{font-family:var(--ak-mono);font-size:12px;color:var(--quiet);padding-top:4px}
+.why p{font-size:15px}
+
+/* proof */
+.proof{background:var(--surface-2);border-left:2px solid var(--cyan);padding:24px 26px;border-radius:0 10px 10px 0}
+.proof .big{font-family:var(--ak-mono);font-size:clamp(26px,5vw,34px);color:var(--ink);letter-spacing:-.02em}
+.proof p{font-size:14px;margin-top:8px}
+
+/* tiers */
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{text-align:left;padding:14px 12px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;font-family:var(--ak-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--quiet);font-weight:400}
+td:first-child{color:var(--ink-2)}
+td b{color:var(--ink)}
+.soon{display:inline-block;font-family:var(--ak-mono);font-size:11px;color:var(--invert-ink);background:var(--ink-2);border-radius:4px;padding:2px 7px;margin-left:8px;vertical-align:middle}
+.tier-note{margin-top:20px;font-size:14px;color:var(--quiet)}
+
+/* honesty */
+.real{display:grid;gap:14px}
+.real div{display:grid;grid-template-columns:20px 1fr;gap:12px;font-size:14.5px;color:var(--ink-2)}
+.real .m{color:var(--quiet);font-family:var(--ak-mono);font-size:13px}
+
+/* email */
+#signup{display:none}
+#signup form{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+#signup input{
+  flex:1 1 260px;background:var(--surface-2);border:1px solid var(--rule-hi);
+  color:var(--ink);border-radius:10px;padding:13px 16px;font-size:15px;font-family:inherit;
+}
+#signup input:focus{outline:2px solid var(--cyan);outline-offset:1px}
+#signup button{
+  background:var(--invert);color:var(--invert-ink);border:0;border-radius:10px;
+  padding:13px 26px;font-weight:600;font-size:15px;cursor:pointer;font-family:inherit;
+}
+
+footer{padding:48px 0 72px;font-size:14px;color:var(--quiet)}
+footer a{color:var(--ink-2);text-decoration:none;margin-right:20px}
+footer a:hover{color:var(--cyan)}
+.foot-links{margin-bottom:20px}
+
+@media (max-width:600px){
+  section{padding:56px 0}
+  .hero{padding:64px 0 56px}
+  .lic{padding:24px 20px}
+  table{font-size:14px}
+  th,td{padding:12px 8px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Media Asset Manager · 本機優先</div>
+    <div class="wordmark">arkiv<span class="dot">.</span></div>
+    <p class="lede">拍過的東西，找得回來。</p>
+    <p class="sub">
+      arkiv 自動幫每一支素材做轉錄、看懂畫面、標記氛圍與剪輯位置，
+      然後讓你用一句中文找到那顆鏡頭 ——「五月所有黃昏空景」。
+      全部在你自己的機器上跑，零雲端、不對外回報。
+    </p>
+
+    <div class="badges">
+      <span class="badge"><b>免費</b>　任何用途</span>
+      <span class="badge"><b>商用不受限</b>　接案／工作室都可以</span>
+      <span class="badge"><b>原始碼公開</b>　source-available</span>
+      <span class="badge">DaVinci Resolve 原生</span>
+      <span class="badge">中／日／英 語意搜尋</span>
+    </div>
+
+    <div class="dl">
+      <a class="btn" href="https://github.com/vulture-s/arkiv/releases/latest">
+        下載 macOS 版<small>Apple Silicon · .dmg</small>
+      </a>
+      <a class="btn" href="https://github.com/vulture-s/arkiv/releases/latest">
+        下載 Windows 版<small>x64 · .exe / .msi</small>
+      </a>
+      <a class="btn ghost" href="https://github.com/vulture-s/arkiv">
+        看原始碼<small>GitHub</small>
+      </a>
+    </div>
+    <p class="dl-note">
+      最新版 <span class="mono">v0.12.1</span>　·　安裝前請先看下方
+      <a href="#real">實際需要什麼</a>　·　English: <a href="https://github.com/vulture-s/arkiv#readme">README</a>
+    </p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>授權：一句話講完</h2>
+    <div class="lic">
+      <ul>
+        <li>
+          <span class="mk yes">✓</span>
+          <div>
+            <b>免費使用，任何用途 —— 包含商業工作。</b>
+            <p>接客戶的案子、工作室日常、有補助的製作，全部可以。不需要跟我們談授權，也不需要通知我們。</p>
+          </div>
+        </li>
+        <li>
+          <span class="mk yes">✓</span>
+          <div>
+            <b>你做出來的東西是你的。</b>
+            <p>影片、時間軸、EDL / FCPXML / OTIO 匯出檔、縮圖 —— 授權不對它們加任何限制。</p>
+          </div>
+        </li>
+        <li>
+          <span class="mk no">✕</span>
+          <div>
+            <b>唯一不允許：把 arkiv 做成跟它競爭的產品。</b>
+            <p>fork 成對手素材管理工具、包成索引服務賣給第三方、或重新實作成替代品 —— 即使免費提供也一樣。</p>
+          </div>
+        </li>
+      </ul>
+      <p class="fine">
+        界線在於<b style="color:var(--ink-2)">你的客戶買的是什麼</b>：買你用 arkiv 做出來的成品，是一般的工具使用；
+        買 arkiv 的功能本身（當成產品、服務、函式庫或外掛），才構成競爭。
+        條文為 <a href="https://github.com/vulture-s/arkiv/blob/main/LICENSE">PolyForm Perimeter 1.0.1</a>。
+      </p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>它解決什麼</h2>
+    <div class="why">
+      <div class="row">
+        <span class="n">01</span>
+        <div>
+          <h3>素材太多，找不到那顆鏡頭</h3>
+          <p>用自然語言搜，中日英都行 —— 搜的是<b style="color:var(--ink)">畫面內容和逐字稿</b>，不是檔名。</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">02</span>
+        <div>
+          <h3>AI 剪輯工具只看得懂「有人在講話」的素材</h3>
+          <p>arkiv 對每支 clip 做視覺分析 <b style="color:var(--ink)">加</b> 轉錄，所以大量 B-roll、無對白空景一樣可搜可管。</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">03</span>
+        <div>
+          <h3>素材庫要能餵給下游任何剪法</h3>
+          <p>手動剪、自動剪、腳本剪都接得上：Resolve 原生 plugin、EDL / FCPXML 匯出、REST API 與 MCP 介面。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>不是 demo 專案</h2>
+    <div class="proof">
+      <div class="big">1,506 支</div>
+      <p>
+        真實產品拍攝素材完整索引跑通，其中 <b style="color:var(--ink-2)">1,161 支是無對白 B-roll</b>
+        —— 也就是一般字幕工具完全抓不到的那些。單張 RTX 4070，5,732 幀視覺描述，零缺口。
+      </p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>免費版與 Pro</h2>
+    <table>
+      <thead>
+        <tr><th></th><th>免費</th><th>Pro<span class="soon">尚未開賣</span></th></tr>
+      </thead>
+      <tbody>
+        <tr><td>全部索引與搜尋功能</td><td><b>✓</b></td><td><b>✓</b></td></tr>
+        <tr><td>商業使用</td><td><b>✓</b></td><td><b>✓</b></td></tr>
+        <tr><td>專案數</td><td><b>3 個</b></td><td><b>無限</b></td></tr>
+        <tr><td>跨專案聚合搜尋</td><td>—</td><td><b>✓</b></td></tr>
+        <tr><td>價格</td><td><b>NT$0</b></td><td><b>NT$3,000</b> 一次買斷</td></tr>
+      </tbody>
+    </table>
+    <p class="tier-note">
+      Pro 還沒開賣，購買流程還在建 ——
+      <a href="https://github.com/vulture-s/arkiv/blob/main/docs/pro-addon-license.md">條款先公開</a>，
+      讓你在那之前就能讀。做紀錄片、非營利、檔案保存、公共教育的，
+      <a href="https://github.com/vulture-s/arkiv/blob/main/PUBLIC-INTEREST.md">公益方案</a>免費給。
+      <br><b style="color:var(--ink-2)">現在裝的人不受影響</b>：專案上限只對日後的新安裝生效，既有素材庫永久沿用無限。
+    </p>
+  </div>
+</section>
+
+<section id="real">
+  <div class="wrap">
+    <h2>安裝前先知道</h2>
+    <div class="real">
+      <div><span class="m">01</span><span>安裝檔<b style="color:var(--ink)">包含 Python 後端與 ML 套件</b>，但你<b style="color:var(--ink)">仍需自行安裝 FFmpeg 與 Ollama</b>（抽幀、向量、視覺分析要用）。</span></div>
+      <div><span class="m">02</span><span>macOS 版<b style="color:var(--ink)">僅支援 Apple Silicon</b>，沒有 Intel build。</span></div>
+      <div><span class="m">03</span><span>安裝檔<b style="color:var(--ink)">未經簽章</b>。macOS 首次要「右鍵 → 打開」，Windows 會跳一次 SmartScreen 警告。這是刻意的：簽章憑證每年要錢，那筆錢目前寧可不花。</span></div>
+      <div><span class="m">04</span><span>視覺分析吃 GPU。沒有獨顯也跑得動，但會慢很多。</span></div>
+    </div>
+  </div>
+</section>
+
+<!--
+  ────────────────────────────────────────────────────────────────
+  EMAIL 名單：尚未接上，所以整段預設不顯示（不放壞掉的表單上線）。
+  接法：去 Kit / Buttondown / Google Form 開一個表單，把它的 POST
+  endpoint 貼進下面的 FORM_ENDPOINT，這一段就會自動出現。
+  ────────────────────────────────────────────────────────────────
+-->
+<section id="signup">
+  <div class="wrap">
+    <h2>新版本出來時通知我</h2>
+    <p>不定期、只講實質更新，隨時可退訂。</p>
+    <form id="signup-form" method="post">
+      <input type="email" name="email" placeholder="your@email.com" required aria-label="Email">
+      <button type="submit">訂閱</button>
+    </form>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-links">
+      <a href="https://github.com/vulture-s/arkiv">GitHub</a>
+      <a href="quickstart.html">安裝說明</a>
+      <a href="faq.html">FAQ</a>
+      <a href="https://github.com/vulture-s/arkiv/blob/main/LICENSE">授權</a>
+      <a href="https://www.instagram.com/vulture.s/">@vulture.s</a>
+    </div>
+    <p>
+      PolyForm Perimeter 1.0.1 · source-available（非 OSI 開源授權，所以我們不寫「open source」）<br>
+      本機優先 · 零雲端 · 不對外回報
+    </p>
+  </div>
+</footer>
+
+<script>
+  // 把這行換成真的表單 endpoint，訂閱區塊就會自動顯示。
+  const FORM_ENDPOINT = "";
+
+  if (FORM_ENDPOINT) {
+    document.getElementById("signup").style.display = "block";
+    document.getElementById("signup-form").action = FORM_ENDPOINT;
+  }
+</script>
+
+</body>
+</html>

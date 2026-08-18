@@ -1,6 +1,8 @@
 # arkiv — Quickstart
 
-**Open-source AI metadata layer for DIT workflows — Resolve-native, CJK-first.**
+> ← [回產品頁](index.html)
+
+**Source-available AI metadata layer for DIT workflows — Resolve-native, CJK-first.**
 
 arkiv attaches AI metadata (transcript, vision tags, atmosphere, edit position) to your footage and surfaces clips via natural-language search in Chinese, Japanese, or English.
 
