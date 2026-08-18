@@ -1,9 +1,13 @@
 # arkiv Pro Add-on — License Terms
 
 > ⚠️ **DRAFT — not yet reviewed by a lawyer.** This document states the intended
-> commercial terms for the Pro add-on. Three items marked `[LEGAL REVIEW]` below
-> must be settled with counsel before the add-on is offered for sale. Until then
-> this file is a specification, not an offer.
+> commercial terms for the Pro add-on. Items marked `[LEGAL REVIEW]` below must
+> be settled with counsel before the add-on is offered for sale. Until then this
+> file is a specification, not an offer.
+>
+> Statutory citations were checked against the Ministry of Justice database
+> (`law.moj.gov.tw`) on 2026-08-18. Citing a statute is not the same as having
+> advice on it.
 
 > 繁體中文在下方 / Traditional Chinese below.
 
@@ -65,8 +69,23 @@ so scope is a matter of these terms rather than of code. Concretely:
 ## Refunds
 
 **14 days, no questions asked.** Email the address on the receipt.
-`[LEGAL REVIEW]` — Taiwan consumer-protection rules for digital goods may set a
-different floor; confirm before publishing this line.
+
+This is deliberately more than Taiwan law requires, and it is also the simpler
+position rather than the costlier one. The Consumer Protection Act gives a
+distance buyer 7 days to withdraw (art. 19 para. 1), and non-tangible digital
+content supplied with prior consent is an enumerated exception to even that
+(Standards for Reasonable Exceptions to the Right of Withdrawal in Distance
+Sales, art. 2 subparas. 4–5) — so this add-on could lawfully carry no
+withdrawal right at all. Relying on that exception would require disclosing it
+up front and taking consent before delivery, and getting that wrong is
+expensive: art. 19 para. 3 stops the 7-day clock from starting for up to four
+months, and para. 5 voids any agreement that conflicts with the article.
+Fourteen unconditional days clears the floor and makes all of that irrelevant.
+
+`[LEGAL REVIEW]` — one narrow point remains: art. 3 of those Standards defers
+to any mandatory standard-contract terms (定型化契約應記載及不得記載事項) the
+competent authority has published for this product category. Confirm none
+covers downloadable software before publishing.
 
 ## Free grants
 
@@ -96,8 +115,11 @@ this is the "holding entity" question already flagged in CHANGELOG #225.
 
 # arkiv Pro 附加元件 — 授權條款（繁體中文）
 
-> ⚠️ **草稿 — 尚未經律師審閱。** 三處標 `[LEGAL REVIEW]` 的項目必須先與律師確認，
+> ⚠️ **草稿 — 尚未經律師審閱。** 標 `[LEGAL REVIEW]` 的項目必須先與律師確認，
 > 才能對外販售。在那之前本檔是規格，不是要約。
+>
+> 條文引用已於 2026-08-18 對照法務部全國法規資料庫（`law.moj.gov.tw`）現行條文查核。
+> **引得出條文不等於有法律意見。**
 
 ## Pro 附加元件是什麼
 
@@ -146,7 +168,19 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 ## 退款
 
 **14 天無條件退款。** 來信收據上的信箱即可。
-`[LEGAL REVIEW]` — 台灣消保法對數位商品可能另有下限，發佈前確認這一行。
+
+這刻意比台灣法律要求的多，而且**寬鬆的那個做法同時也是麻煩比較少的那個**。消保法
+第 19 條第 1 項給通訊交易消費者 7 日解除權，而「非以有形媒介提供之數位內容或一經
+提供即為完成之線上服務，經消費者事先同意始提供」是該條但書的法定例外（通訊交易
+解除權合理例外情事適用準則第 2 條第 4、5 款）—— 也就是說，本附加元件**在法律上
+可以完全不給解除權**。但要主張那個例外，必須事先告知消費者將排除解除權、並取得
+事先同意；做錯的代價很高：第 19 條第 3 項規定未提供解除契約資訊時**七日期間根本
+不起算**（最長可拖到四個月），第 5 項則規定**違反本條的約定一律無效**。給 14 天
+無條件退款直接高過門檻，上面那整套機制就都不必碰。
+
+`[LEGAL REVIEW]` — 只剩一個窄問題：同準則第 3 條規定，若中央主管機關已就本類商品
+公告**定型化契約應記載及不得記載事項**，則適用該事項關於解除契約的規定。發佈前確認
+沒有涵蓋下載軟體的公告。
 
 ## 免費 grant
 
