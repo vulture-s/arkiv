@@ -355,9 +355,9 @@ footer a:hover{color:var(--cyan)}
 <script>
   // ── 填這裡就會上線。各家的 endpoint / emailField 見上方 signup 區塊的註解。
   const SIGNUP = {
-    endpoint: "",
-    emailField: "email",
-    mode: "fetch",        // Mailchimp 要改成 "jsonp"
+    endpoint: "https://app.kit.com/forms/9819208/subscriptions",
+    emailField: "email_address",   // Kit 的欄位名，不是 email
+    mode: "fetch",                 // Mailchimp 才要改成 "jsonp"
   };
 
   (function () {
@@ -432,12 +432,30 @@ footer a:hover{color:var(--cyan)}
           body: body,
           headers: { Accept: "application/json" },
         });
-        if (res.ok) {
+        // ⚠️ HTTP 狀態碼不足以判斷成功。**Kit 對失敗也回 200**，真正的結果在
+        // body：成功 {status:"success"}、失敗 {status:"failed", errors:[…]}。
+        // 只看 res.ok 會讓空的、格式錯的、被拒絕的訂閱全部顯示「訂閱成功」——
+        // 名單一個都沒進，而沒有人會發現。實測 2026-08-19 對真實 endpoint 驗過。
+        // Formspree / Buttondown 則用正常狀態碼，所以兩種都要接。
+        let payload = null;
+        try { payload = JSON.parse(await res.text()); } catch (e) { /* 非 JSON */ }
+
+        const explicit = payload && typeof payload.status === "string"
+          ? payload.status === "success"     // Kit：以 body 為準
+          : null;
+        const ok = explicit === null ? res.ok : explicit;
+
+        if (ok) {
           say("訂閱成功，謝謝。", "ok");
           form.reset();
         } else {
-          // 對方回了、但不是成功 —— 這是真的失敗，不能當成功帶過
-          say("訂閱失敗（" + res.status + "）。請稍後再試，或直接來信。", "bad");
+          let why = "";
+          if (payload && Array.isArray(payload.errors) && payload.errors.length) {
+            why = String(payload.errors[0]).replace(/<[^>]*>/g, "");
+          } else if (!res.ok) {
+            why = "（" + res.status + "）";
+          }
+          say("訂閱失敗" + (why ? "：" + why : "，請稍後再試，或直接來信。"), "bad");
           btn.disabled = false;
         }
       } catch (err) {
