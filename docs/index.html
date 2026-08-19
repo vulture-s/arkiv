@@ -306,6 +306,17 @@ footer a:hover{color:var(--cyan)}
       endpoint   https://formspree.io/f/<FORM_ID>
       emailField email                ← 支援 CORS，能拿到真實成功／失敗
 
+    Mailchimp                          ← 需額外設 mode: "jsonp"
+      endpoint   https://<DC>.list-manage.com/subscribe/post-json?u=<U>&id=<ID>
+      emailField EMAIL                 ← 全大寫，是 merge tag 不是欄位名
+      · 取得方式：Mailchimp → Audience → Signup forms → Embedded form，
+        表單 action 內就含 <DC>（如 us21）、u=、id= 三個值。
+        把 /subscribe/post 改成 /subscribe/post-json 即可。
+      · list-manage.com **不支援 CORS**，所以走 JSONP；否則每次送出都會
+        被帶離本站。
+      · Mailchimp 會把「已訂閱過」當成 error 回，訊息含 HTML，故顯示前
+        去標籤並改寫成人話。
+
   送出邏輯：先試 fetch（拿得到真答案就顯示真結果）；若因 CORS 或網路失敗，
   退回原生 form submit（會離開本站，但由對方站台自己顯示確認）。
   **永遠不在無法確認的情況下顯示「訂閱成功」。**
@@ -346,6 +357,7 @@ footer a:hover{color:var(--cyan)}
   const SIGNUP = {
     endpoint: "",
     emailField: "email",
+    mode: "fetch",        // Mailchimp 要改成 "jsonp"
   };
 
   (function () {
@@ -373,6 +385,43 @@ footer a:hover{color:var(--cyan)}
       e.preventDefault();
       btn.disabled = true;
       say("送出中…");
+
+      if (SIGNUP.mode === "jsonp") {
+        // Mailchimp：list-manage.com 無 CORS，fetch 一定失敗。JSONP 是唯一
+        // 能留在本站又拿到真實回應的方式。
+        const cb = "mcCallback" + Date.now();
+        const url = SIGNUP.endpoint
+          + (SIGNUP.endpoint.indexOf("?") === -1 ? "?" : "&")
+          + encodeURIComponent(SIGNUP.emailField) + "=" + encodeURIComponent(email.value)
+          + "&c=" + cb;
+        const tag = document.createElement("script");
+        let settled = false;
+
+        const done = function (ok, msg) {
+          if (settled) return;
+          settled = true;
+          try { delete window[cb]; } catch (e) { window[cb] = undefined; }
+          tag.remove();
+          if (ok) { say(msg, "ok"); form.reset(); }
+          else { say(msg, "bad"); btn.disabled = false; }
+        };
+
+        window[cb] = function (res) {
+          if (res && res.result === "success") return done(true, "訂閱成功，謝謝。");
+          // Mailchimp 的 msg 夾 HTML，且「已訂閱」也走 error
+          const raw = (res && res.msg ? String(res.msg) : "").replace(/<[^>]*>/g, "");
+          if (/already subscribed/i.test(raw)) return done(false, "這個信箱已經訂閱過了。");
+          done(false, raw ? "訂閱失敗：" + raw : "訂閱失敗，請稍後再試。");
+        };
+
+        // 對方沒回 = 拿不到答案，同樣不宣稱成功
+        tag.onerror = function () { done(false, "訂閱失敗，請稍後再試，或直接來信。"); };
+        setTimeout(function () { done(false, "訂閱逾時，請稍後再試。"); }, 10000);
+
+        tag.src = url;
+        document.body.appendChild(tag);
+        return;
+      }
 
       const body = new FormData();
       body.append(SIGNUP.emailField, email.value);
