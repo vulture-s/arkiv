@@ -113,7 +113,7 @@ jobs:
 
       - name: Import Apple signing cert (only when configured)
         if: steps.signcfg.outputs.signing == 'full'
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@v7
         with:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
