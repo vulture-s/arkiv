@@ -124,13 +124,48 @@ def resolve_project_db(project_root, explicit=None) -> Path:
     return project_db
 
 
+def _own_library_db() -> Optional[Path]:
+    """This install's CURRENT library — the one it has open right now.
+
+    Everything else `_known_project_dbs` collects is a library the user pointed
+    the install AT. This is the one it is actually using, which makes it the
+    strongest evidence that the install was in use before the cap — and it was
+    the one thing the grandfather probe never looked at.
+
+    `config.DB_PATH` first, because that is the resolved answer for this install
+    (and honours `ARKIV_DB_PATH` / a test that points config at a tmp library).
+    Only when that file does not exist do we fall back to resolving the root,
+    which is where `resolve_project_db` finds a pre-8.0c `.arkiv/media.db` —
+    the oldest libraries in the wild and the ones with the strongest claim.
+    """
+    import config as _config
+
+    try:
+        candidate = Path(_config.DB_PATH)
+        if candidate.exists():
+            return candidate
+        return resolve_project_db(Path(_config.PROJECT_ROOT))
+    except (OSError, ValueError):
+        return None
+
+
 def _known_project_dbs(registry_projects) -> List[Path]:
     """Every project DB this install knows about, for the grandfather probe.
 
-    Registry entries plus ``ARKIV_PROJECT_ROOTS``. Env roots are included
-    because an install driving its projects entirely through the env var is
-    still an install with libraries in use, and omitting them would cap exactly
-    the long-time operator the exemption exists to protect.
+    The install's OWN current library, plus registry entries, plus
+    ``ARKIV_PROJECT_ROOTS``. Env roots are included because an install driving
+    its projects entirely through the env var is still an install with libraries
+    in use, and omitting them would cap exactly the long-time operator the
+    exemption exists to protect.
+
+    The own-library entry is first, and its absence was a shipped bug (v1.1.0):
+    a user who never registered a second project produced an EMPTY list here, so
+    the probe had nothing to look at and every such install reported
+    `grandfathered: false` — cross-project search refused — no matter how old the
+    library it had open. Both earlier fixes in this area were inert against it:
+    the stamp (`db.PRE_ANCHOR_VERSION`) marked that library correctly and the
+    latch (`entitlements._record_grandfather_latch`) stood ready to remember it,
+    but nothing ever put it in the set being scanned.
 
     Resolution goes through ``resolve_project_db`` so a pre-8.0c library that
     still keeps its corpus in ``.arkiv/media.db`` is probed at the file that
@@ -139,6 +174,10 @@ def _known_project_dbs(registry_projects) -> List[Path]:
     """
     paths = []
     seen = set()
+    own = _own_library_db()
+    if own is not None:
+        seen.add(str(own).casefold())
+        paths.append(own)
     for project in registry_projects or []:
         try:
             db_path = resolve_project_db(project.path)

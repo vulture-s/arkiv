@@ -26,6 +26,30 @@ PRE_CAP = "1.0.0"                      # a build (and a library) from before it
 
 
 @pytest.fixture(autouse=True)
+def _no_ambient_own_library(tmp_path, monkeypatch):
+    """Never let the maintainer's real library decide a test in this file.
+
+    `projects._known_project_dbs` includes THIS install's current library
+    (`config.DB_PATH`, falling back to resolving `config.PROJECT_ROOT`). On a
+    maintainer's machine that resolves to the repo's own `.arkiv/` — an old,
+    exempt library — so every "the cap refuses this" assertion below would pass
+    locally for the wrong reason and flip in CI, where no such library exists.
+
+    Same shape as `_no_ambient_pro_license`, arriving through a different door.
+    Scoped to this module rather than `conftest.py` on purpose: pointing every
+    test in the suite at an absent DB makes the server tests boot a FRESH
+    library, which first-run then seeds with the four sample clips — measured,
+    not guessed (67 failures).
+
+    Points at paths that do not exist, so the own-library entry is present but
+    carries no evidence either way. Tests that need a real one assign
+    `config.DB_PATH` themselves and win, being set up after this.
+    """
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "absent" / "project.db")
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path / "absent")
+
+
+@pytest.fixture(autouse=True)
 def _no_ambient_pro_license(tmp_path, monkeypatch):
     """Never let the developer's real ~/.arkiv/pro-license.json decide a test.
 
@@ -223,6 +247,65 @@ def test_a_latch_that_cannot_be_written_still_answers(monkeypatch, tmp_path):
         entitlements, "_install_meta_path", lambda: blocker / "install-meta.json"
     )
     assert entitlements.install_is_grandfathered([old]) is True
+
+
+# ── the library the install actually has open ─────────────────────────────────
+
+def test_the_installs_own_library_counts_as_evidence(monkeypatch, tmp_path):
+    """An install with no REGISTERED projects still has the library it is using.
+
+    This was a shipped bug (v1.1.0). `known_project_dbs()` collected registry
+    entries and `ARKIV_PROJECT_ROOTS` and nothing else, so the overwhelmingly
+    common install — one library, never registered a second project — produced
+    an EMPTY list, and the probe reported `grandfathered: false` no matter how
+    old the library it had open.
+
+    The two earlier fixes in this area were both inert against it: the stamp
+    marked that library `pre-anchor` correctly, and the latch stood ready to
+    remember it, but nothing ever put it in the set being scanned. Asserted here
+    rather than in `test_projects.py` because what broke was the promise, not
+    the registry.
+    """
+    import config
+    import projects as project_registry
+
+    monkeypatch.setenv("ARKIV_PROJECTS_REGISTRY", str(tmp_path / "empty.json"))
+    monkeypatch.setattr(config, "VERSION", ARMED)
+    own = _library(tmp_path / "own" / "project.db", PRE_CAP)
+    monkeypatch.setattr(config, "DB_PATH", own)
+
+    assert project_registry.list_registry_projects() == []
+    assert own in project_registry.known_project_dbs(), (
+        "the library this install has open is missing from the grandfather probe"
+    )
+    paths = project_registry.known_project_dbs()
+    assert entitlements.install_is_grandfathered(paths) is True
+    assert entitlements.check_cross_project(db_paths=paths).allowed is True
+
+
+def test_registering_a_new_project_does_not_drop_the_own_library(monkeypatch, tmp_path):
+    """Adding a fresh project must not push the old library out of the evidence.
+
+    The live shape that exposed the bug: a grandfathered install registers ONE
+    new project (created by the capped build, so stamped with the current
+    version). If the probe sees only the registry, the whole install flips to
+    not-grandfathered — registering a project would revoke an exemption.
+    """
+    import config
+    import projects as project_registry
+
+    monkeypatch.setenv("ARKIV_PROJECTS_REGISTRY", str(tmp_path / "reg.json"))
+    monkeypatch.setattr(config, "VERSION", ARMED)
+    own = _library(tmp_path / "own" / "project.db", PRE_CAP)
+    monkeypatch.setattr(config, "DB_PATH", own)
+
+    fresh_root = tmp_path / "fresh"
+    _library(fresh_root / ".arkiv" / "project.db", ARMED)
+    project_registry.add_project("fresh", fresh_root)
+
+    paths = project_registry.known_project_dbs()
+    assert entitlements.install_is_grandfathered(paths) is True
+    assert entitlements.check_cross_project(db_paths=paths).allowed is True
 
 
 # ── the rule's own start date ─────────────────────────────────────────────────
