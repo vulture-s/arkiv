@@ -54,13 +54,48 @@ echo "[assemble] arkiv source (runtime .py + routers + built SPA; no tests/docs/
 # The server imports many top-level modules + the routers package, and serves the
 # SPA from ./frontend/dist relative to its cwd. Copy generously (repo minus the
 # heavy/irrelevant dirs) so no runtime import is missed.
+#
+# .env* is excluded because this is a DENYLIST and a denylist that misses a
+# secret is a silent leak, not a loud failure: install.sh does `cp .env.example
+# .env`, and .env.example tells you to fill in ARKIV_TOKEN_HMAC_KEY,
+# ARKIV_ADMIN_BOOTSTRAP_TOKEN and ARKIV_PG_DSN (which carries a DB password).
+# Without this line a release built on a real workstation ships that file inside
+# the .dmg, where anyone who downloads it can read it. .dockerignore already got
+# this right; this is the same discipline for the Tauri path.
+# .env.example goes too — nothing at runtime reads it (config._load_env only
+# looks for .env), so shipping it only widens the pattern we have to police.
+#
+# The scratch dirs mirror what assemble-backend-win.ps1 already excludes: they
+# are a dev box's local data. bench_*.json is called out in .gitignore as
+# containing private transcripts and filenames.
 rsync -a \
-  --exclude '.git/' --exclude '.venv/' --exclude 'node_modules/' \
+  --exclude '.git/' --exclude '.venv/' --exclude '.venv-pack/' \
+  --exclude 'node_modules/' \
   --exclude 'src-tauri/' --exclude 'tests/' --exclude 'docs/' \
   --exclude 'frontend/node_modules/' --exclude 'frontend/src/' \
   --exclude '__pycache__/' --exclude '*.pyc' \
+  --exclude '.pytest_cache/' --exclude '.ruff_cache/' \
   --exclude '.arkiv/' --exclude 'chroma_db/' \
+  --exclude '.env*' \
+  --exclude 'temp/' --exclude 'thumbnails/' --exclude 'proxies/' \
+  --exclude 'waveforms/' --exclude '.tmp-camera-report-tests/' \
+  --exclude 'bench_*.json' \
   "$REPO/" "$BACKEND/src/"
+
+# Fail loud rather than ship quietly. Two reasons this guard is not redundant
+# with the --exclude above:
+#   1. This rsync has no --delete (unlike the site-packages one), so a .env
+#      copied in by an OLDER build of this script is still sitting in
+#      $BACKEND/src and would ship even now that the exclude exists.
+#   2. A denylist only stops the patterns someone remembered. This stops the
+#      whole class.
+if find "$BACKEND/src" -name '.env*' -type f | grep -q .; then
+  echo "ERROR: dotenv file(s) found in the assembled backend — refusing to ship." >&2
+  find "$BACKEND/src" -name '.env*' -type f >&2
+  echo "       Delete them from $BACKEND/src and re-run. If you added a new" >&2
+  echo "       dotenv variant, add it to the rsync --exclude list above too." >&2
+  exit 1
+fi
 
 if [ ! -f "$BACKEND/src/frontend/dist/index.html" ]; then
   echo "WARN: frontend/dist/index.html missing — run 'cd frontend && npm run build' first," >&2

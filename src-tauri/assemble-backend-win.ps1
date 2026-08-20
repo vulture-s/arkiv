@@ -160,6 +160,16 @@ Write-Host "[assemble] arkiv source (runtime .py + routers + built SPA; no tests
 # enumerate, and 20 of them turned into robocopy's "directories failed" count ->
 # exit 9. A CI runner checks out clean and never sees them, so this only ever
 # bites a real workstation -- the one machine that also does the release build.
+# .env* is excluded because this is a DENYLIST, and a denylist that misses a
+# secret is a silent leak rather than a loud failure: install.sh does
+# `cp .env.example .env`, and .env.example tells you to fill in
+# ARKIV_TOKEN_HMAC_KEY, ARKIV_ADMIN_BOOTSTRAP_TOKEN and ARKIV_PG_DSN (which
+# carries a DB password). Without it a release built on a real workstation ships
+# that file inside the .exe/.msi for anyone to read. .dockerignore already
+# excludes .env; this is the same discipline for the Tauri path.
+# .env.example goes too -- nothing at runtime reads it (config._load_env only
+# looks for .env), so shipping it only widens the pattern we have to police.
+# bench_*.json is called out in .gitignore as containing private transcripts.
 Invoke-Robocopy -Source $REPO -Dest (Join-Path $BACKEND 'src') -ExtraArgs @(
     '/XD',
     (Join-Path $REPO '.git'),
@@ -178,8 +188,21 @@ Invoke-Robocopy -Source $REPO -Dest (Join-Path $BACKEND 'src') -ExtraArgs @(
     (Join-Path $REPO 'waveforms'),
     (Join-Path $REPO '.tmp-camera-report-tests'),
     'node_modules', '__pycache__', '.pytest_cache', '.ruff_cache',
-    '/XF', '*.pyc'
+    '/XF', '*.pyc', '.env', '.env.*'
 )
+
+# Fail loud rather than ship quietly. Not redundant with /XF above: robocopy is
+# not run with /MIR here, so a .env copied in by an OLDER build of this script is
+# still sitting in $BACKEND\src and would ship even now that the exclude exists.
+# A denylist only stops the patterns someone remembered; this stops the class.
+$leaked = @(Get-ChildItem -LiteralPath (Join-Path $BACKEND 'src') -Recurse -Force -File -Filter '.env*' -ErrorAction SilentlyContinue)
+if ($leaked.Count -gt 0) {
+    Write-Host "ERROR: dotenv file(s) found in the assembled backend -- refusing to ship." -ForegroundColor Red
+    $leaked | ForEach-Object { Write-Host "  $($_.FullName)" -ForegroundColor Red }
+    Write-Host "       Delete them from $(Join-Path $BACKEND 'src') and re-run. If you added a" -ForegroundColor Red
+    Write-Host "       new dotenv variant, add it to the /XF list above too." -ForegroundColor Red
+    exit 1
+}
 
 if (-not (Test-Path (Join-Path $BACKEND 'src\frontend\dist\index.html'))) {
     Write-Warning "frontend\dist\index.html missing -- run 'cd frontend; npm run build' first,"
