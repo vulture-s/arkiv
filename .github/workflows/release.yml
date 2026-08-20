@@ -249,6 +249,76 @@ jobs:
       - name: Install tauri-cli
         run: cargo install tauri-cli --version "^2.0" --locked
 
+      # -- Cache the bundler's packaging toolchain --------------------------
+      # tauri-bundler downloads WiX and NSIS from GitHub *at build time*, so every
+      # release stakes itself on two network round-trips. v0.12.1's Windows leg lost
+      # that bet on its very first run: the .msi was already built and the NSIS step
+      # died on `Downloading .../nsis-3.11.zip` -> `io: Peer disconnected`; a re-run
+      # passed. That is a structural weakness, not flaky noise -- and a retry wrapper
+      # would only re-roll the same dice, because it still downloads. This removes
+      # the dice.
+      #
+      # WHERE: tauri-bundler resolves its tools dir as `dirs::cache_dir()/tauri`,
+      # which is `%LOCALAPPDATA%\tauri` on Windows, then unpacks `NSIS/` and
+      # `WixTools314/` inside it (~125 MB together).
+      #
+      # SCOPE CAVEAT -- this is what makes the difference between working and being
+      # decorative: a tag run SAVES into the `refs/tags/<tag>` scope, and "workflow
+      # runs cannot restore caches created for different tag names", so a cache
+      # written by v0.12.2 is dead weight for v0.12.3. Restores DO fall back to the
+      # default branch, so the entry that actually serves releases has to be written
+      # by a run whose ref IS main -- i.e. the `workflow_dispatch` dry-run this
+      # workflow already supports. Run that once on main to prime it; every tag
+      # release restores from it afterwards.
+      - name: Resolve the Tauri toolchain dir + cache key
+        id: tauritools
+        shell: bash
+        run: |
+          # Forward slashes: actions/cache globs its `path` input, and there a
+          # backslash is an escape character rather than a separator.
+          dir="${LOCALAPPDATA//\\//}/tauri"
+          # Pre-create it so the post-job save cannot fail path validation on a
+          # build that produced no bundle at all. The bundler only probes the
+          # NSIS/ and WixTools314/ children, so an empty parent is invisible to it.
+          mkdir -p "$dir"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+          # Key on the RESOLVED tauri-cli version rather than the "^2.0" range in
+          # the step above: what lands in this dir is decided by the bundler
+          # compiled into whichever 2.x `cargo install` just picked.
+          ver="$(cargo tauri --version 2>/dev/null | tr -d '\r' | head -1 | awk '{print $NF}')"
+          case "$ver" in
+            2.*) ;;
+            *)
+              # Unparseable -> fall back to a key that CANNOT hit. Degrading to
+              # today's behaviour (download every time) is the safe direction; a
+              # constant fallback key would silently pin a stale toolchain forever.
+              echo "::warning::could not read tauri-cli version (got '$ver'); toolchain cache disabled for this run"
+              ver="unresolved-${GITHUB_RUN_ID}"
+              ;;
+          esac
+          echo "cli=$ver" >> "$GITHUB_OUTPUT"
+          echo "tauri-cli $ver -> caching $dir"
+
+      # HIT  = a previous run on this scope already built with the same tauri-cli
+      #        version. That is every release after the first, on the same 2.x.
+      # MISS = tauri-cli resolved to a new 2.x, so the toolchain it wants may differ
+      #        -> full re-download, then saved under the new key. Also a miss the
+      #        first time ever, by definition.
+      #
+      # No `restore-keys` prefix, deliberately. WiX unpacks into a version-stamped
+      # `WixTools314/` and self-invalidates by name, but NSIS unpacks into a plain
+      # `NSIS/` and the bundler only checks that the directory EXISTS (plus a hash
+      # check on its own nsis_tauri_utils.dll -- not on the NSIS 3.x base). A prefix
+      # fallback would therefore hand a newer bundler an older base NSIS and it
+      # would use it without a word. A miss costs exactly what today already costs,
+      # so tight beats loose here.
+      - name: Cache the Tauri packaging toolchain (WiX + NSIS)
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.tauritools.outputs.dir }}
+          key: tauri-toolchain-${{ runner.os }}-cli-${{ steps.tauritools.outputs.cli }}
+
       - name: Build app + installers
         working-directory: src-tauri
         run: cargo tauri build
