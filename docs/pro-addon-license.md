@@ -3,9 +3,9 @@
 > ⚠️ **DRAFT — not yet reviewed by a lawyer.** This document states the intended
 > commercial terms for the Pro add-on. Items marked `[LEGAL REVIEW]` below must
 > be settled with counsel before the add-on is offered for sale. The licensing
-> entity is settled and stated in full below; what remains is the core/add-on
-> relationship, the choice of venue, and a contact address. Until then this
-> file is a specification, not an offer.
+> entity and the refund contact address are settled and stated in full below;
+> what remains is the core/add-on relationship and the choice of venue. Until
+> then this file is a specification, not an offer.
 >
 > Statutory citations were checked against the Ministry of Justice database
 > (`law.moj.gov.tw`) on 2026-08-18. Citing a statute is not the same as having
@@ -79,7 +79,8 @@ than enforced in software. Specifically:
 
 ## Refunds
 
-**7 days from delivery, no questions asked.** Email the address on the receipt.
+**7 days from delivery, no questions asked.** Email **better@wafflehouse.com.tw**
+— the same address shown on the receipt.
 
 This matches the statutory period for a distance sale in Taiwan (Consumer
 Protection Act art. 19 para. 1), **provided in full and not contracted away**.
@@ -152,17 +153,14 @@ Proposed: the laws of the Republic of China (Taiwan), with a Taiwanese court of
 first instance as the venue — the licensor is registered in Taiwan and the
 statutory consumer protections cited above are Taiwanese.
 `[LEGAL REVIEW]` — confirm and name the specific court.
-`[LEGAL REVIEW]` — a contact address for refunds and receipts is still to be
-added above; the refund clause tells buyers to email "the address on the
-receipt", which presumes one exists.
 
 ---
 
 # arkiv Pro 附加元件 — 授權條款（繁體中文）
 
 > ⚠️ **草稿 — 尚未經律師審閱。** 標 `[LEGAL REVIEW]` 的項目必須先與律師確認，
-> 才能對外販售。在那之前本檔是規格，不是要約。**授權主體已定案並完整載明於下**，
-> 待解的是核心／add-on 的關係、管轄法院，以及聯絡信箱。
+> 才能對外販售。在那之前本檔是規格，不是要約。**授權主體與退款聯絡信箱均已定案
+> 並完整載明於下**，待解的是核心／add-on 的關係與管轄法院。
 >
 > 條文引用已於 2026-08-18 對照法務部全國法規資料庫（`law.moj.gov.tw`）現行條文查核。
 > **引得出條文不等於有法律意見。**
@@ -220,7 +218,8 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 
 ## 退款
 
-**自交付起 7 天內，無條件退款。** 來信收據上的信箱即可。
+**自交付起 7 天內，無條件退款。** 來信 **better@wafflehouse.com.tw**，
+與收據上所載信箱相同。
 
 此為台灣通訊交易之法定解除權期間（消費者保護法第 19 條第 1 項），本附加元件
 **完整提供，不予排除**。依通訊交易解除權合理例外情事適用準則第 2 條第 4、5 款，
@@ -280,8 +279,6 @@ grant 不涉對價。
 提案：以**中華民國法律**為準據法，並以台灣之地方法院為第一審管轄法院 ——
 授權方登記於台灣，且本頁引用的消費者保護規定亦為台灣法。
 `[LEGAL REVIEW]` —— 確認並指定法院。
-`[LEGAL REVIEW]` —— 退款與收據用的聯絡信箱尚待補列於上方；退款條款要求買方
-來信「收據上的信箱」，前提是那個信箱存在。
 
 ---
 
