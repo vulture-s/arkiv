@@ -117,6 +117,28 @@ def _install_fake_modules():
 _install_fake_modules()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_install_meta(tmp_path, monkeypatch):
+    """Keep the grandfather latch out of the developer's real home directory.
+
+    `entitlements._record_grandfather_latch` WRITES `~/.arkiv/install-meta.json`
+    the first time an install is observed to predate the cap, and more than ten
+    test modules reach that code path through `projects.add_project`,
+    `/api/search/all`, and the bins helpers. Without this fixture the suite
+    would leave a real latch on the maintainer's machine and then read it back
+    on the next run — every free-tier assertion silently inverting, green for
+    the wrong reason locally and red only in CI.
+
+    Autouse, unlike `pro_entitled` below, precisely because it does not switch
+    any gate off: it points at a path that does not exist, so the latch is
+    simply absent and every test still exercises the live scan it was written
+    for. A test that wants a latch writes one at this path itself.
+    """
+    monkeypatch.setenv(
+        "ARKIV_INSTALL_META", str(tmp_path / "install-state" / "install-meta.json")
+    )
+
+
 @pytest.fixture
 def pro_entitled(tmp_path, monkeypatch):
     """Run a test as an installation that owns the Pro add-on.

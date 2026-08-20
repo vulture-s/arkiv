@@ -280,6 +280,97 @@ def has_pro():
 
 # ── the machine-level grandfather question ────────────────────────────────────
 
+def _install_meta_path():
+    """Install-level state that has to outlive any single library being reachable.
+
+    Sits beside `pro-license.json` in `~/.arkiv/` rather than inside a project,
+    because the fact it records is about the INSTALL — and the entire point is
+    for it to survive the libraries that evidenced it being unmounted, renamed,
+    or deleted.
+    """
+    return Path(
+        os.getenv(
+            "ARKIV_INSTALL_META", str(Path.home() / ".arkiv" / "install-meta.json")
+        )
+    ).expanduser()
+
+
+def _read_grandfather_latch():
+    """True when an earlier run already observed a pre-cap library on this install.
+
+    Missing, unreadable, or corrupt all read as False, and that is not a
+    revocation: a False here only means this call falls through to the live scan
+    below — exactly the behaviour this function had before the latch existed.
+    The latch can therefore only ever add exemptions, never remove them.
+    """
+    try:
+        path = _install_meta_path()
+        if not path.exists():
+            return False
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    return data.get("grandfathered") is True
+
+
+def _record_grandfather_latch(evidence):
+    """Record, once, that this install was observed holding a pre-cap library.
+
+    One-way by construction: this only ever writes `true`, and nothing anywhere
+    in this module writes `false`. That asymmetry is the whole mechanism — it
+    can grant an exemption but never revoke one, and it cannot invent one
+    either, because it records only what was actually observed on disk.
+
+    Best-effort. A read-only home, a full disk, or a race with a second arkiv
+    process must not turn a licensing *check* into a user-visible failure: the
+    caller has already decided the answer is True, and persistence is an
+    optimisation for the NEXT call, not part of this one's correctness. Unknown
+    keys are preserved so a later writer of this file is not clobbered.
+
+    This does not contradict `read_library_origin`'s rule about never mutating
+    what it inspects. That rule protects the USER'S corpus — no stub DBs, no
+    -wal files next to their footage. This writes arkiv's own install-level
+    state under `~/.arkiv/`, never anything inside a project.
+
+    Written via a per-writer temp name + `os.replace`, per `projects.save_registry`
+    and `bins.py`. Deliberately NOT reusing `ingest._atomic_write_json`: this
+    module is a leaf on stdlib + `config` (see the module docstring), and
+    importing `ingest` for six lines would drag the entire ingest dependency
+    graph into every licensing question.
+    """
+    path = _install_meta_path()
+    payload = {}
+    try:
+        if path.exists():
+            with path.open("r", encoding="utf-8") as handle:
+                existing = json.load(handle)
+            if isinstance(existing, dict):
+                payload = existing
+    except (OSError, ValueError):
+        payload = {}
+    if payload.get("grandfathered") is True:
+        return
+    payload["grandfathered"] = True
+    payload["grandfathered_evidence"] = str(evidence)
+    payload["grandfathered_cap_version"] = CAP_VERSION
+    tmp = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name("%s.%d.tmp" % (path.name, os.getpid()))
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        os.replace(str(tmp), str(path))
+    except (OSError, ValueError):
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
 def install_is_grandfathered(db_paths):
     """True when this install was already in use before `CAP_VERSION`.
 
@@ -294,7 +385,28 @@ def install_is_grandfathered(db_paths):
     evidence of absence, and it is safe because it costs such a user nothing:
     they have zero projects, so the cap of three cannot bite them today, and by
     the time it could they will have been stamped with the current version.
+
+    ## Why the answer is latched
+
+    The scan below can only see libraries reachable RIGHT NOW. A user whose
+    grandfathered corpus lives on a NAS is not a new installation on the morning
+    that NAS fails to mount — but an unlatched scan says they are, and the cap
+    then refuses a fourth project and cross-project search while telling them to
+    buy Pro. The page promises the exemption "permanently"; an answer that
+    depends on today's mount state is the wrong shape no matter which way it
+    errs, and it violates this module's own rule that every uncertainty must
+    resolve in the user's favour.
+
+    So the observation is recorded the first time it is made, and from then on
+    the record is the answer. This is the same move `db.first_seen_version`
+    makes: write the fact down while it is still observable, so that a later
+    judgement does not depend on it still being observable. It also matches the
+    promise's wording more exactly than a live scan does — the subject is an
+    *install that was already in use*, so deleting that old library afterwards
+    does not turn the install back into a new one.
     """
+    if _read_grandfather_latch():
+        return True
     for db_path in db_paths or []:
         origin = read_library_origin(db_path)
         if origin is None:
@@ -302,16 +414,19 @@ def install_is_grandfathered(db_paths):
             # Both mean "cannot prove this is new" — but only count it when the
             # library actually exists, so that a registry entry pointing at a
             # deleted/unmounted project does not manufacture an exemption out of
-            # nothing. (An unmounted NAS project is exactly the case that would
-            # otherwise flip an install to exempt on a bad-mount day and back
-            # again the next.)
+            # nothing. Requiring existence is safe in the other direction only
+            # because of the latch above: an install that has ever been seen
+            # holding this library keeps the exemption even once the path stops
+            # resolving.
             try:
                 if Path(db_path).exists():
+                    _record_grandfather_latch(db_path)
                     return True
             except OSError:
                 continue
             continue
         if predates_cap(origin):
+            _record_grandfather_latch(db_path)
             return True
     return False
 

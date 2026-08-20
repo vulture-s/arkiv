@@ -147,6 +147,84 @@ def test_missing_library_does_not_manufacture_an_exemption(tmp_path):
     assert entitlements.install_is_grandfathered([tmp_path / "gone" / "project.db"]) is False
 
 
+# ── the latch: an exemption seen once must not depend on today's mounts ───────
+
+def test_grandfathered_install_survives_its_library_becoming_unreachable(
+    monkeypatch, tmp_path
+):
+    """"Permanently" cannot mean "until the NAS fails to mount".
+
+    The shape the latch exists for: one pre-cap library on removable storage,
+    observed while mounted, unreachable on a later run. Without the latch that
+    second run reads exactly like a fresh install — the cap refuses a fourth
+    project and cross-project search, and tells a permanently exempt user to buy
+    Pro because their NAS did not come up this morning.
+
+    Asserted at the verdict level as well as the predicate, because the verdicts
+    are what the published promise is actually about.
+    """
+    monkeypatch.setattr(config, "VERSION", ARMED)
+    nas = _library(tmp_path / "nas" / "project.db", PRE_CAP)
+    assert entitlements.install_is_grandfathered([nas]) is True
+
+    nas.unlink()  # the mount goes away; the registry entry does not
+    assert entitlements.install_is_grandfathered([nas]) is True
+    assert entitlements.check_add_project(99, db_paths=[nas]).code == "grandfathered"
+    assert entitlements.check_cross_project(db_paths=[nas]).allowed is True
+
+
+def test_no_latch_is_written_when_nothing_predates_the_cap(monkeypatch, tmp_path):
+    """The latch may only record what was observed, never invent it.
+
+    Pairs with `test_missing_library_does_not_manufacture_an_exemption`: that
+    one guards the scan, this one guards the store the scan now writes to.
+    """
+    monkeypatch.setattr(config, "VERSION", ARMED)
+    new = _library(tmp_path / "new" / "project.db", ARMED)
+    assert entitlements.install_is_grandfathered([new]) is False
+    assert entitlements._install_meta_path().exists() is False
+
+
+def test_a_corrupt_latch_is_not_a_revocation(monkeypatch, tmp_path):
+    """An unreadable latch falls through to the live scan, per the module rule."""
+    monkeypatch.setattr(config, "VERSION", ARMED)
+    latch = entitlements._install_meta_path()
+    latch.parent.mkdir(parents=True, exist_ok=True)
+    latch.write_text("{ not json", encoding="utf-8")
+    old = _library(tmp_path / "old" / "project.db", PRE_CAP)
+    assert entitlements.install_is_grandfathered([old]) is True
+
+
+def test_latch_write_preserves_unrelated_keys(monkeypatch, tmp_path):
+    """A licensing write must not clobber whatever else lives in this file."""
+    monkeypatch.setattr(config, "VERSION", ARMED)
+    latch = entitlements._install_meta_path()
+    latch.parent.mkdir(parents=True, exist_ok=True)
+    latch.write_text(json.dumps({"some_other_setting": "keep me"}), encoding="utf-8")
+    old = _library(tmp_path / "old" / "project.db", PRE_CAP)
+    assert entitlements.install_is_grandfathered([old]) is True
+
+    data = json.loads(latch.read_text(encoding="utf-8"))
+    assert data["grandfathered"] is True
+    assert data["some_other_setting"] == "keep me"
+
+
+def test_a_latch_that_cannot_be_written_still_answers(monkeypatch, tmp_path):
+    """A read-only home must not turn a licensing check into a user-facing error.
+
+    Persistence is an optimisation for the next call; this call already knows
+    the answer and has to return it either way.
+    """
+    monkeypatch.setattr(config, "VERSION", ARMED)
+    old = _library(tmp_path / "old" / "project.db", PRE_CAP)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where a directory would have to be", encoding="utf-8")
+    monkeypatch.setattr(
+        entitlements, "_install_meta_path", lambda: blocker / "install-meta.json"
+    )
+    assert entitlements.install_is_grandfathered([old]) is True
+
+
 # ── the rule's own start date ─────────────────────────────────────────────────
 
 def test_cap_does_not_bite_on_builds_that_predate_it(monkeypatch, tmp_path):
