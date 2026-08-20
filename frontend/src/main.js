@@ -14,8 +14,13 @@ import '@fontsource/noto-sans-tc/400.css'
 import '@fontsource/noto-sans-tc/500.css'
 import '@fontsource/noto-sans-tc/700.css'
 
+import { mount } from 'svelte'
 import App from './App.svelte'
 
-const app = new App({ target: document.getElementById('app') })
+// Svelte 5 removed the class-based client component API: `new App({ target })`
+// throws rather than mounting. `mount()` is the replacement and returns the
+// component instance for `unmount()`, which nothing here needs — the SPA owns
+// the page for its whole lifetime.
+const app = mount(App, { target: document.getElementById('app') })
 
 export default app

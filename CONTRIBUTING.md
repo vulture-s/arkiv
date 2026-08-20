@@ -105,7 +105,7 @@ chore: update requirements.txt
 - Python: follow existing patterns in the codebase
 - Keep modules small and focused — each `.py` file has a single responsibility
 - Use `config.py` for all configurable values (never hardcode paths/URLs)
-- Frontend: Svelte 4 + Vite 5 (`frontend/`). No CSS framework — styling goes through the
+- Frontend: Svelte 5 + Vite 8 (`frontend/`). No CSS framework — styling goes through the
   design tokens in `frontend/src/app.css` (CSS custom properties); don't introduce Tailwind
   or another framework without discussing it first. Fonts are self-hosted via `@fontsource`.
 - Before pushing frontend changes, run `npm run check` (svelte-check with

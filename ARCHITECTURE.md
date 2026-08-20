@@ -78,7 +78,7 @@ arkiv 是 local-first、source-available 的 media asset manager — ingest 拍�
 | `mcp_server.py` | Read-only MCP server（Phase 14）— 同 DB/search 的工具面 |
 | `bench_stt.py` | STT benchmark util |
 
-### Frontend（`frontend/src/`，Svelte 4 + Vite 5 SPA）
+### Frontend（`frontend/src/`，Svelte 5 + Vite 8 SPA）
 - **`App.svelte`** — `svelte-spa-router` hash routing。10 條 live route 佔 bare path（`/`→MainLive、`/chat-live`、`/search-live`、`/query-live`、`/ingest-setup`、`/ingest-live`、`/offload`、`/settings`、`/live`）；10 個 mock artboard 命名在 `/_design/*`（設計參考，S-Cleanup 保留）
 - **`routes/`** — MainLive（grid + inline Inspector，唯一掛 shared TopBar）、ChatLive（RAG 對話 + scene 縮圖 deep-link）、Search/QueryLive（排名檢視）、Ingest/Offload/Settings
 - **`lib/`（21 元件）** — TopBar、PoolSidebar、MediaCard、Inspector、Waveform、Pano360 等 + `api.js`（fetch client；base `VITE_API_URL`，remote 帶 Bearer token）+ `prefs.js`/`toast.js` stores

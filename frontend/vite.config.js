@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
-// arkiv frontend — Svelte 4 + Vite 5. Backend (FastAPI) runs on :8501;
+// arkiv frontend — Svelte 5 + Vite 8. Backend (FastAPI) runs on :8501;
 // dev proxy forwards /api + /thumbnails so the SPA can call it during `npm run dev`.
 export default defineConfig(({ mode }) => {
   // Extra dev-server Host-header allowlist, sourced from the environment so it stays

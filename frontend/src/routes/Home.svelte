@@ -3,7 +3,7 @@
 <div class="home">
   <div class="ak-eyebrow">arkiv · frontend scaffold</div>
   <h1 class="ak-display">arkiv.</h1>
-  <p class="lede">Svelte 4 + Vite foundation. 螢幕逐段（per overnight segment）落地。</p>
+  <p class="lede">Svelte 5 + Vite foundation. 螢幕逐段（per overnight segment）落地。</p>
   <div class="ak-mono stamp">SEG 0 — shell · tokens · fonts · router</div>
 </div>
 

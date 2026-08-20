@@ -24,7 +24,7 @@
     ['FIXED · 14', ['Inspector waveform clipping at >30min audio', 'EDL export drops first event when project starts on non-zero timecode', 'NAS unmount during ingest no longer kills the daemon', 'Whisper hallucinations on silence > 8s', '+ 10 minor']],
   ]
   const stack = [
-    ['FRONTEND', 'Tauri 2.0 · Svelte 4 · Vite'], ['BACKEND', 'Rust · SQLite + tantivy'],
+    ['FRONTEND', 'Tauri 2.0 · Svelte 5 · Vite'], ['BACKEND', 'Rust · SQLite + tantivy'],
     ['AUDIO', 'whisper.cpp · large-v3'], ['VISION', 'Ollama · llava-13b / qwen3-vl'], ['MEDIA', 'FFmpeg 7 · pyscenedetect'],
   ]
   const steps = [
