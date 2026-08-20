@@ -365,13 +365,13 @@ def check_cross_project(db_paths=None, pro=None, grandfathered=None):
     """May this install aggregate across projects (search / collections)?
 
     Same exemption rules as the project cap. The published zh product page says
-    of cross-project search: "未來版本起，新安裝不含" — from a future release,
-    NEW installs do not include it — which grants existing installs the same
-    permanent keep that the projects row grants. The English terms spell the
-    keep out only for projects; treating cross-project the same way is the
-    reading that keeps both promises rather than the one that breaks the zh
-    page. (`docs/pro-addon-license.md` should be tightened to match; tracked in
-    the todo rather than silently diverging here.)
+    of cross-project search: "新安裝不含" — NEW installs do not include it —
+    which grants existing installs the same permanent keep that the projects row
+    grants. The English terms used to spell the keep out for projects only;
+    treating cross-project the same way is the reading that keeps both promises
+    rather than the one that breaks the zh page, and
+    `docs/pro-addon-license.md` was tightened in the same change to say so in
+    both languages rather than leave the code and the terms disagreeing.
     """
     if not cap_is_active():
         return Verdict(
