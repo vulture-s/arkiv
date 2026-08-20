@@ -35,5 +35,9 @@ echo ""
 # Open browser
 open "http://localhost:$PORT" 2>/dev/null &
 
-# Run server (foreground so terminal stays open)
-uvicorn server:app --host 0.0.0.0 --port "$PORT"
+# Run server (foreground so terminal stays open).
+# Bind loopback by default — a double-clicked desktop launcher has no business
+# exposing the API to the LAN. Override with ARKIV_HOST=0.0.0.0 only when you
+# deliberately want tailnet/LAN access, and only after minting a token with a
+# tight --ip-allowlist (see arkiv_token.py).
+uvicorn server:app --host "${ARKIV_HOST:-127.0.0.1}" --port "$PORT"

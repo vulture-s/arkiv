@@ -3,7 +3,12 @@ Media Asset Manager — FastAPI Backend
 Serves the UI (index.html) and provides REST API for all CRUD operations.
 
 Usage:
-    uvicorn server:app --host 0.0.0.0 --port 8501
+    uvicorn server:app --host 127.0.0.1 --port 8501
+
+Bind loopback unless you deliberately want LAN/tailnet access. On 0.0.0.0 the
+access token is the only thing between an external caller and full admin, so mint
+one with a tight --ip-allowlist first (see arkiv_token.py). The packaged desktop
+app binds 127.0.0.1 in src-tauri/src/main.rs.
 """
 from __future__ import annotations
 

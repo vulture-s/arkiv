@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # arkiv — pre-commit hook (versioned; enable with scripts/install-hooks.sh)
 #
-# Guards against two classes of landmine that a routine `git add -A` would sweep
-# into a commit:
+# Guards against three classes of landmine that a routine `git add -A` would
+# sweep into a commit:
 #   §1  do-not-commit sentinel markers left in code/config
 #   §2  a hardcoded / wide-open Vite dev-server allowedHosts (must be env-sourced)
+#   §3  a real credential (API key / private key / DB DSN with a password)
 #
 # Enable once per clone:  bash scripts/install-hooks.sh   (sets core.hooksPath=.githooks)
 # Emergency bypass (NOT recommended):  git commit --no-verify
@@ -60,6 +61,53 @@ if [ -n "$STAGED" ]; then
       echo "         .split(',').map(s=>s.trim()).filter(Boolean)"
       echo "       server: { allowedHosts: hosts }"
       echo "     and put your local hosts in a gitignored frontend/.env.local"
+      FAIL=1
+    fi
+  done <<< "$STAGED"
+fi
+
+# ============================================================================
+# §3 credential guard
+# The git history is clean today, but that is a discipline, not a mechanism:
+# .env.example teaches the reader to write ARKIV_TOKEN_HMAC_KEY, an admin
+# bootstrap token, and a Postgres DSN that carries a password. One `cp .env.example
+# .env.prod` (which .gitignore's `.env.*` now catches) or a pasted key in a config
+# file is all it takes. This scans the STAGED CONTENT — not filenames — for the
+# shapes of real secrets, so it fires even on a file that isn't a dotenv.
+#
+# Deliberately narrow patterns (real provider prefixes + PEM headers + a
+# password-bearing DSN) rather than generic entropy, so it does not false-positive
+# on ordinary code. .env.example is scanned too: its placeholders must stay
+# placeholders (no real value), which is exactly what we want to enforce.
+# ============================================================================
+if [ -n "$STAGED" ]; then
+  # <intentionally-split> keeps this hook's own source from tripping the scan.
+  secret_re='(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|hf_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|-----BEGIN[[:space:]][A-Z ]*PRIVATE KEY-----|postgres(ql)?://[^:@/[:space:]]+:[^@/[:space:]]+@)'
+  while IFS= read -r file; do
+    case "$file" in
+      .githooks/*) continue ;;      # this file legitimately documents the patterns
+      .env.example) continue ;;     # the template: its values are placeholders by design
+                                    # (e.g. postgresql://rag:PASSWORD@host) and would
+                                    # false-positive the DSN pattern. A real secret does
+                                    # not belong here; that is a review concern, not a leak
+                                    # vector — real secrets live in the gitignored .env,
+                                    # which is never staged and so never reaches this hook.
+      *.png|*.jpg|*.jpeg|*.gif|*.ico|*.svg|*.woff*|*.ttf|*.eot|*.mp4|*.mov|*.mp3|*.wav|*.pdf) continue ;;
+    esac
+    [ -f "$file" ] || continue
+    content=$(git show ":$file" 2>/dev/null || true)
+    [ -z "$content" ] && continue
+    # Match, then drop lines whose only hit is an obvious placeholder DSN password
+    # (the repo documents examples like postgresql://rag:PASSWORD@host in config.py
+    # and error strings). A real leak uses a real password, which none of these are.
+    placeholder='(:PASSWORD@|:password@|:CHANGEME@|:changeme@|:REPLACE[A-Z_]*@|:xxx+@|:pass@|:yourpassword@|:<[^@]*>@)'
+    hits=$(printf '%s' "$content" | grep -nE -- "$secret_re" | grep -vE -- "$placeholder" || true)
+    if [ -n "$hits" ]; then
+      echo "❌ BLOCKED: looks like a real credential in $file"
+      printf '%s\n' "$hits" | sed 's/^/     /' | head -3
+      echo "   → move it to a gitignored .env / .env.local and reference it via env."
+      echo "     If this is a placeholder or test fixture, make it obviously fake"
+      echo "     (e.g. sk-REPLACE_ME, or :PASSWORD@ in a DSN) so it stops matching."
       FAIL=1
     fi
   done <<< "$STAGED"

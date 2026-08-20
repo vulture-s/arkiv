@@ -20,6 +20,14 @@ services:
       - ARKIV_EMBED_MODEL=bge-m3
       - ARKIV_VISION_MODEL=qwen2.5vl:7b
       - ARKIV_WHISPER_MODEL=large-v3-turbo
+      # 0.0.0.0 is correct INSIDE the container — the process must accept the
+      # forwarded connection from the host. Reachability is fenced by the port
+      # mapping above (host 8501 -> container 8501) on the default bridge network,
+      # where the caller's peer IP is the bridge gateway (172.x), not loopback.
+      # ⚠️ Do NOT run this with `--network host`: on host networking the external
+      # caller's peer IP resolves to 127.0.0.1, and arkiv trusts loopback as the
+      # local owner (ARKIV_TRUST_LOOPBACK, see auth.py) — that would hand every LAN
+      # caller full admin with no token. Keep bridge + port mapping.
       - ARKIV_HOST=0.0.0.0
       - ARKIV_PORT=8501
     depends_on:

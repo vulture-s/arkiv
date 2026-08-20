@@ -178,7 +178,7 @@
         {/each}
       </div>
       <div class="grow"></div>
-      <div class="emptyfoot"><Mono dim style="font-size:10px;letter-spacing:0.08em;">Local-first · MIT · arkiv v0.9.2</Mono></div>
+      <div class="emptyfoot"><Mono dim style="font-size:10px;letter-spacing:0.08em;">Local-first · PolyForm Perimeter · arkiv v0.9.2</Mono></div>
     </aside>
   </MainShell>
 
