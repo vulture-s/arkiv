@@ -3,6 +3,18 @@ __pycache__/
 *.pyc
 .env
 .env.local
+# Any other dotenv variant carries the same secrets as .env (HMAC key, admin
+# bootstrap token, PG DSN password). .env.example is the one exception — it is a
+# template with no real values and is meant to be committed.
+.env.*
+!.env.example
+# Credential material that has no business in version control. The repo has none
+# today; these keep a stray key/cert/keystore from being swept in by `git add -A`.
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.json
 *.db
 *.db-shm
 *.db-wal

@@ -289,3 +289,42 @@ jobs:
           if [ "$ok" != "1" ]; then echo "arkiv did not become healthy"; docker logs arkiv-ci; fi
           docker rm -f arkiv-ci
           [ "$ok" = "1" ]
+
+  secret-scan:
+    name: secret-scan
+    # Mirrors .githooks/pre-commit §3, but as a mechanism rather than a discipline:
+    # the hook only fires for developers who ran scripts/install-hooks.sh, and only
+    # on staged content. This runs the SAME patterns over the whole tree on every
+    # PR, so a credential that slips past (or predates) the hook still gets caught.
+    # Deliberately no external action / no `secrets:` — keeps CI's zero-secret
+    # property intact and has nothing to leak itself.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Scan tracked files for credential shapes
+        shell: bash
+        run: |
+          secret_re='(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|hf_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|-----BEGIN[[:space:]][A-Z ]*PRIVATE KEY-----|postgres(ql)?://[^:@/[:space:]]+:[^@/[:space:]]+@)'
+          placeholder='(:PASSWORD@|:password@|:CHANGEME@|:changeme@|:REPLACE[A-Z_]*@|:xxx+@|:pass@|:yourpassword@|:<[^@]*>@)'
+          fail=0
+          while IFS= read -r f; do
+            case "$f" in
+              .githooks/*|.env.example|.github/workflows/ci.yml) continue ;;
+              *.png|*.jpg|*.jpeg|*.gif|*.ico|*.svg|*.woff*|*.ttf|*.eot|*.mp4|*.mov|*.mp3|*.wav|*.pdf) continue ;;
+            esac
+            [ -f "$f" ] || continue
+            hits=$(grep -nE -- "$secret_re" "$f" 2>/dev/null | grep -vE -- "$placeholder" || true)
+            if [ -n "$hits" ]; then
+              echo "::error file=$f::possible credential"
+              echo "$f:"; echo "$hits" | sed 's/^/  /' | head -3
+              fail=1
+            fi
+          done < <(git ls-files)
+          if [ "$fail" != "0" ]; then
+            echo ""
+            echo "A tracked file matches a credential shape. Move the value into a"
+            echo "gitignored .env and reference it via env; make test placeholders"
+            echo "obviously fake (sk-REPLACE_ME, :PASSWORD@ in a DSN)."
+            exit 1
+          fi
+          echo "No credential shapes in tracked files."

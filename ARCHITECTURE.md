@@ -8,7 +8,7 @@
 
 ## Overview
 
-arkiv 是 local-first、source-available 的 media asset manager — ingest 拍攝素材，做 transcoding probe / Whisper 轉錄 / Vision tagging / metadata extraction，存 SQLite + ChromaDB，並提供**語意搜尋 + 自然語言 chat（RAG）+ NLE/DIT 導出**。四條入口：Svelte SPA（Tauri WebView / 瀏覽器）、REST API、CLI、read-only MCP server。PolyForm Perimeter 1.0.1（見 [LICENSE](LICENSE)），0 雲端，0 phone-home。
+arkiv 是 local-first、source-available 的 media asset manager — ingest 拍攝素材，做 transcoding probe / Whisper 轉錄 / Vision tagging / metadata extraction，存 SQLite + ChromaDB，並提供**語意搜尋 + 自然語言 chat（RAG）+ NLE/DIT 導出**。四條入口：Svelte SPA（Tauri WebView / 瀏覽器）、REST API、CLI、read-only MCP server。PolyForm Perimeter 1.0.1（見 [LICENSE](LICENSE)），0 雲端，0 phone-home（runtime 所有出站呼叫只打使用者設定的 `ARKIV_OLLAMA_URL` 與本機 `:8501`；`config._validate_http_url` 另擋 `169.254.*` metadata 位址）。**唯一例外**：首次使用某模型時，faster-whisper / mlx-whisper 會從 Hugging Face、`ollama pull` 會從 ollama registry 下載權重 —— 一次性、使用者觸發，之後完全離線。
 
 設計取捨：
 - **Local-first** — 全部運算本機（FFmpeg / Whisper / Ollama），檔案不離開使用者磁碟

@@ -492,7 +492,13 @@ def _default_vocab_file() -> str:
 # merged with (and appended after) the comma-separated ARKIV_CUSTOM_VOCABULARY.
 VOCABULARY_FILE = os.getenv("ARKIV_VOCABULARY_FILE", "") or _default_vocab_file()
 
-HOST = os.getenv("ARKIV_HOST", "0.0.0.0")
+# Default to loopback: the safe posture is "nobody can reach it unless the owner
+# opts in". Binding 0.0.0.0 exposes the API to the whole LAN/tailnet, where the
+# access token becomes the only thing between a caller and full admin — that is a
+# deliberate decision (`ARKIV_HOST=0.0.0.0`), not a default. The packaged desktop
+# app already binds 127.0.0.1 explicitly (src-tauri/src/main.rs); this makes the
+# same choice the default for every other entry point.
+HOST = os.getenv("ARKIV_HOST", "127.0.0.1")
 PORT = int(os.getenv("ARKIV_PORT", "8501"))
 
 # --- Phase 11.5 resource-aware pipeline ---

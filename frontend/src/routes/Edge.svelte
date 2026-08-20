@@ -138,14 +138,14 @@
           </div>
         </div>
         <div class="splashright">
-          <section><Eyebrow style="margin-bottom:10px;">Stack</Eyebrow><div class="sptext">Local-first. Zero cloud. FFmpeg probe · Whisper transcript · Ollama vision tags. Export to DaVinci Resolve EDL / FCPXML. MIT licensed.</div></section>
+          <section><Eyebrow style="margin-bottom:10px;">Stack</Eyebrow><div class="sptext">Local-first. Zero cloud. FFmpeg probe · Whisper transcript · Ollama vision tags. Export to DaVinci Resolve EDL / FCPXML. Source-available (PolyForm Perimeter).</div></section>
           <section><Eyebrow style="margin-bottom:12px;">Built with</Eyebrow><div class="builtgrid">{#each stack as [k, v]}<Mono dim>{k}</Mono><Mono>{v}</Mono>{/each}</div></section>
           <section><Eyebrow style="margin-bottom:12px;">Why local-first</Eyebrow><div class="sptext sm">Your footage is your work. Cloud DAMs lock you in, ration your bandwidth, and read your transcripts.<br /><br />arkiv stays on your machine. Same models the big platforms run — Whisper, llava — but on hardware you already own. Nothing leaves unless you export it yourself.</div></section>
           <section><Eyebrow style="margin-bottom:10px;">Acknowledgements</Eyebrow><Mono dim style="font-size:11px;line-height:1.65;">FFmpeg · whisper.cpp · Ollama · pyscenedetect · tantivy · Tauri · the SvelteKit team. Type: Helvetica Now Display Black ·  Inter · JetBrains Mono ·  Noto Sans TC. The mark above arkiv is still water with a single quiet event — Nordic, vertical, not painted.</Mono></section>
           <div class="grow"></div>
         </div>
       </div>
-      <div class="splashfoot"><Mono dim style="font-size:10.5px;letter-spacing:0.06em;">MIT  ·  © 2026 vulture.s  ·  no telemetry  ·  no phone-home</Mono><div class="fbtns"><button class="ak-btn">License</button><button class="ak-btn">Diagnostics</button><button class="ak-btn ak-btn--primary">Get started →</button></div></div>
+      <div class="splashfoot"><Mono dim style="font-size:10.5px;letter-spacing:0.06em;">PolyForm Perimeter  ·  © 2026 vulture.s  ·  no telemetry  ·  no phone-home</Mono><div class="fbtns"><button class="ak-btn">License</button><button class="ak-btn">Diagnostics</button><button class="ak-btn ak-btn--primary">Get started →</button></div></div>
     </div>
   </div>
 
