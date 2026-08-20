@@ -194,6 +194,36 @@ def api_version():
     return {"version": config.VERSION}
 
 
+@router.get("/api/entitlements")
+def api_entitlements(_tok: dict = Depends(require_scopes("projects_read"))):
+    """What this installation is allowed to do, in one probe.
+
+    Lives with /api/version rather than under /api/projects: it describes the
+    build and its licence, and the projects router owns the /api/projects group
+    (a route-ownership invariant the R5-25 split pinned with a test).
+
+    The UI needs the tier in order to label the Pro features honestly, and it
+    must read it from the code that ENFORCES the tier rather than keeping a
+    second copy of the rules in the frontend. Two copies drift, and the way that
+    drift shows up is a user being promised one thing and refused another.
+
+    Imported lazily: the registry drags the health/probe chain, and misc.py is
+    also the module serving the unauthenticated /api/health and /api/version.
+
+    A registry it cannot read degrades to zero projects rather than 500 — this
+    endpoint answers "what may I do", and a broken registry file is a separate
+    problem that GET /api/projects already reports properly.
+    """
+    import entitlements
+    import projects as project_registry
+
+    try:
+        used = len(project_registry.list_registry_projects())
+    except project_registry.RegistryError:
+        used = 0
+    return entitlements.status(used, db_paths=project_registry.known_project_dbs())
+
+
 @router.get("/api/health")
 def api_health():
     """Unauthenticated self-diagnostic — a user (or support) curls this ONE URL to

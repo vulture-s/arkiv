@@ -190,6 +190,11 @@ def add_bin_items(bin_id: str, body: BinAddItems, _tok: dict = Depends(require_s
     ]
     try:
         b = bins_store.add_items(bin_id, payload)
+    except bins_store.BinEntitlementError as exc:
+        # Before the generic BinsError arm — it is a subclass, so order decides.
+        raise HTTPException(
+            status_code=403, detail={"code": exc.code, "message": str(exc)}
+        )
     except bins_store.BinsError as exc:
         code = 404 if "not found" in str(exc) else 400
         raise HTTPException(status_code=code, detail=str(exc))

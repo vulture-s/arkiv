@@ -24,13 +24,30 @@ class ApiError extends Error {
     // toast that shows e.message surfaces WHY it failed (e.g. "找不到媒體檔案") instead
     // of an opaque "arkiv API 500 on /path". body is usually {detail: "..."}.
     const detail = body && typeof body === 'object' ? body.detail : body
-    const suffix = detail
-      ? `：${typeof detail === 'string' ? detail : JSON.stringify(detail)}`
+    // ...but the entitlement refusals (403 {code, message}) send a STRUCTURED
+    // detail, and JSON.stringify would put raw JSON in front of the user. The
+    // code half is for this file to branch on; the message half is the only
+    // part a person should ever read. A refusal that renders as
+    // `{"code":"project_limit",...}` tells the user less than the plain
+    // sentence it contains, which defeats the reason the message exists.
+    const human =
+      detail && typeof detail === 'object' && typeof detail.message === 'string'
+        ? detail.message
+        : detail
+    const suffix = human
+      ? `：${typeof human === 'string' ? human : JSON.stringify(human)}`
       : ''
     super(`arkiv API ${status} on ${path}${suffix}`)
     this.status = status
     this.path = path
     this.body = body
+    // Machine-readable reason when the backend sent one ('project_limit',
+    // 'cross_project'), null otherwise — so a caller can offer the right next
+    // step without string-matching a localised sentence.
+    this.code =
+      detail && typeof detail === 'object' && typeof detail.code === 'string'
+        ? detail.code
+        : null
   }
 }
 

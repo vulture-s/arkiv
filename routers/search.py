@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import db
+import entitlements
 import federation
 import projects as project_registry
 from auth import require_scopes
@@ -53,6 +54,20 @@ def search_all(
     no_fallback_sql: bool = False,
     _tok: dict = Depends(require_scopes("videos_read")),
 ):
+    # Cross-project aggregation is a Pro feature (docs/pro-addon-license.md).
+    # Refused BEFORE the fan-out, not by filtering results afterwards: a search
+    # that quietly returns only the current project would be the same lie as a
+    # control that goes grey without saying why, and the caller could not tell a
+    # licensing refusal from "no matches in your other projects".
+    verdict = entitlements.check_cross_project(
+        db_paths=project_registry.known_project_dbs()
+    )
+    if not verdict.allowed:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": verdict.code, "message": verdict.reason},
+        )
+
     try:
         payload = federation.search_all_projects(
             q,

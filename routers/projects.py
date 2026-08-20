@@ -90,6 +90,11 @@ def add_project(
         raise HTTPException(status_code=409, detail="project name already exists: {0}".format(body.name))
     try:
         project = project_registry.add_project(body.name, body.path, body.tags or [])
+    except project_registry.ProjectEntitlementError as exc:
+        # Before the generic RegistryError arm — it is a subclass, so order decides.
+        raise HTTPException(
+            status_code=403, detail={"code": exc.code, "message": str(exc)}
+        )
     except project_registry.RegistryError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return project.to_dict()

@@ -35,6 +35,21 @@ class BinsError(Exception):
     pass
 
 
+class BinEntitlementError(BinsError):
+    """A bin operation refused because it needs the Pro add-on.
+
+    Subclasses BinsError so every existing `except BinsError` keeps working —
+    but is its own type so the API layer can answer 403 with a machine-readable
+    code instead of folding a licensing refusal into a generic 400. A caller
+    that cannot tell "you may not" from "you asked wrong" cannot show the user
+    the one thing that would help: what to do next.
+    """
+
+    def __init__(self, message, code="cross_project"):
+        super(BinEntitlementError, self).__init__(message)
+        self.code = code
+
+
 # Per-item reachability, surfaced in GET /api/bins/{id} and gated before copy.
 # OK plus the HealthStatus values (passed through) plus three bin-specific ones.
 STATUS_OK = "ok"
@@ -264,9 +279,39 @@ def add_items(bin_id: str, items: List[Dict[str, Any]]) -> Bin:
             raise BinsError("bin not found: {0}".format(bin_id))
         existing = {item.key() for item in target.items}
         now = _now_iso()
+
+        # A bin holding items from more than one project IS the "collections
+        # spanning projects" half of the Pro cross-project feature
+        # (docs/pro-addon-license.md). Gate the operation that INTRODUCES a new
+        # project into a bin — not the bin's existing contents.
+        #
+        # That distinction is the whole design. Refusing to touch a bin that is
+        # already cross-project would retroactively break data the user already
+        # has, which is the one thing the grandfather promise exists to prevent;
+        # and it would punish exactly the pre-cap installs the promise protects.
+        # So adding items from a project the bin already contains stays allowed
+        # even on the free tier, while widening the bin to a NEW project is what
+        # requires entitlement.
+        parsed = [BinItem.from_mapping(raw) for raw in items or []]
+        incoming_projects = {
+            item.project_name for item in parsed if item.key() not in existing
+        }
+        existing_projects = {item.project_name for item in target.items}
+        if incoming_projects and not incoming_projects.issubset(existing_projects):
+            if len(existing_projects | incoming_projects) > 1:
+                # Lazy, matching bin_item_status above: pure-CRUD callers and
+                # tests should not pay for the registry/health import chain.
+                import entitlements
+                from projects import known_project_dbs
+
+                verdict = entitlements.check_cross_project(
+                    db_paths=known_project_dbs()
+                )
+                if not verdict.allowed:
+                    raise BinEntitlementError(verdict.reason, verdict.code)
+
         added = 0
-        for raw in items or []:
-            item = BinItem.from_mapping(raw)
+        for item in parsed:
             if item.key() in existing:
                 continue
             item.added_at = now

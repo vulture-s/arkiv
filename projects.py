@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+import entitlements
 from health import HealthStatus, project_health
 
 
@@ -23,6 +24,20 @@ _REGISTRY_LOCK = threading.Lock()
 
 class RegistryError(Exception):
     pass
+
+
+class ProjectEntitlementError(RegistryError):
+    """Registration refused by the free-tier project cap.
+
+    Subclasses RegistryError so existing handlers keep catching it, but is its
+    own type so the API can answer 403 with a code rather than a generic 400 —
+    "you have hit the free limit" and "your request was malformed" need
+    different words in front of the user, and only one of them has a next step.
+    """
+
+    def __init__(self, message, code="project_limit"):
+        super(ProjectEntitlementError, self).__init__(message)
+        self.code = code
 
 
 def _default_registry_path() -> Path:
@@ -107,6 +122,57 @@ def resolve_project_db(project_root, explicit=None) -> Path:
         if _media_row_count(legacy_db) > 0:
             return legacy_db
     return project_db
+
+
+def _known_project_dbs(registry_projects) -> List[Path]:
+    """Every project DB this install knows about, for the grandfather probe.
+
+    Registry entries plus ``ARKIV_PROJECT_ROOTS``. Env roots are included
+    because an install driving its projects entirely through the env var is
+    still an install with libraries in use, and omitting them would cap exactly
+    the long-time operator the exemption exists to protect.
+
+    Resolution goes through ``resolve_project_db`` so a pre-8.0c library that
+    still keeps its corpus in ``.arkiv/media.db`` is probed at the file that
+    actually holds its anchor — those are the OLDEST libraries in the wild and
+    the ones with the strongest claim to the exemption.
+    """
+    paths = []
+    seen = set()
+    for project in registry_projects or []:
+        try:
+            db_path = resolve_project_db(project.path)
+        except OSError:
+            continue
+        key = str(db_path).casefold()
+        if key not in seen:
+            seen.add(key)
+            paths.append(db_path)
+    for root in _split_roots(os.getenv("ARKIV_PROJECT_ROOTS", "")):
+        try:
+            db_path = resolve_project_db(Path(root).expanduser())
+        except OSError:
+            continue
+        key = str(db_path).casefold()
+        if key not in seen:
+            seen.add(key)
+            paths.append(db_path)
+    return paths
+
+
+def known_project_dbs() -> List[Path]:
+    """`_known_project_dbs` over the registry as it currently stands.
+
+    A corrupt registry degrades to the env-sourced roots rather than raising:
+    the caller is asking a licensing question, and a broken registry file is not
+    evidence that the install is new. Callers that need the registry itself
+    still get their RegistryError from `list_registry_projects()`.
+    """
+    try:
+        registry_projects = list_registry_projects()
+    except RegistryError:
+        registry_projects = []
+    return _known_project_dbs(registry_projects)
 
 
 @dataclass
@@ -259,6 +325,22 @@ def add_project(name: str, path: str, tags: Optional[List[str]] = None) -> Proje
             existing_path_key = _normalize_key(project_path)
             if any(p.key() == existing_path_key for p in projects):
                 raise RegistryError("project path already registered: {0}".format(path))
+
+            # Free-tier project cap. Only re-registration under an existing name
+            # reaches the branch above, and that leaves the count unchanged — so
+            # the check belongs here, on the one path that actually grows the
+            # registry. Gating both would refuse to let a capped user RENAME or
+            # relocate a project they already own, which the terms never claimed.
+            #
+            # Evidence for the grandfather test is every project already known
+            # to this install, env-sourced roots included: they are libraries in
+            # use, and the published promise is about use, not about which file
+            # happens to record them.
+            verdict = entitlements.check_add_project(
+                len(projects), db_paths=_known_project_dbs(projects)
+            )
+            if not verdict.allowed:
+                raise ProjectEntitlementError(verdict.reason, verdict.code)
 
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         project = ProjectMeta(
