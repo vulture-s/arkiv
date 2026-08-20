@@ -355,9 +355,16 @@ def check_add_project(existing_count, db_paths=None, pro=None, grandfathered=Non
     return Verdict(
         False,
         "project_limit",
+        # Points at the terms rather than asserting the add-on can be bought:
+        # as of 1.1.0 it is not on sale yet, and a refusal that tells someone to
+        # go and buy something that does not exist is a dead end wearing the
+        # costume of a next step. The terms page states its own availability, so
+        # this sentence stays true both before and after it ships.
         "The free tier allows {0} projects and this installation already has "
-        "{1}. Remove a project, or license the Pro add-on for unlimited "
-        "projects.".format(FREE_PROJECT_LIMIT, existing_count),
+        "{1}. Remove a project, or see the Pro add-on terms "
+        "(docs/pro-addon-license.md) for unlimited projects.".format(
+            FREE_PROJECT_LIMIT, existing_count
+        ),
     )
 
 

@@ -3,9 +3,9 @@
 > ⚠️ **DRAFT — not yet reviewed by a lawyer.** This document states the intended
 > commercial terms for the Pro add-on. Items marked `[LEGAL REVIEW]` below must
 > be settled with counsel before the add-on is offered for sale. The licensing
-> entity is settled and stated in full below; what remains is the core/add-on
-> relationship, the choice of venue, and a contact address. Until then this
-> file is a specification, not an offer.
+> entity and the refund contact address are settled and stated in full below;
+> what remains is the core/add-on relationship and the choice of venue. Until
+> then this file is a specification, not an offer.
 >
 > Statutory citations were checked against the Ministry of Justice database
 > (`law.moj.gov.tw`) on 2026-08-18. Citing a statute is not the same as having
@@ -30,16 +30,14 @@ things the free core does not provide:
 | Projects | Up to 3 | Unlimited |
 | Cross-project aggregation (search and collections spanning projects) | — | ✅ |
 
-> **Current builds impose neither limit.** No shipped version of arkiv up to and
-> including 1.0.0 caps projects or withholds cross-project aggregation; the
-> table describes the intended tiers, not today's behaviour. The free allowance
-> applies to **new installations** from **release 1.1.0** onward. **An
-> installation already in use before 1.1.0 keeps BOTH — unlimited projects and
-> cross-project aggregation — permanently**, not merely the project count. The
-> software records the version a library was first seen under
-> (`library_meta.first_seen_version`) so this can be honoured rather than
-> guessed at, and a build older than 1.1.0 does not enforce the allowance at
-> all.
+> **In effect from release 1.1.0.** No shipped version up to and including 1.0.0
+> capped projects or withheld cross-project aggregation, and those builds do not
+> enforce the allowance at all. From 1.1.0 the free allowance applies to **new
+> installations**. **An installation already in use before 1.1.0 keeps BOTH —
+> unlimited projects and cross-project aggregation — permanently**, not merely
+> the project count. The software records the version a library was first seen
+> under (`library_meta.first_seen_version`) so this is honoured from the record
+> rather than guessed at after the fact.
 
 The add-on is **not** covered by the PolyForm Perimeter License. It is
 distributed under the terms on this page.
@@ -81,7 +79,8 @@ than enforced in software. Specifically:
 
 ## Refunds
 
-**7 days from delivery, no questions asked.** Email the address on the receipt.
+**7 days from delivery, no questions asked.** Email **better@wafflehouse.com.tw**
+— the same address shown on the receipt.
 
 This matches the statutory period for a distance sale in Taiwan (Consumer
 Protection Act art. 19 para. 1), **provided in full and not contracted away**.
@@ -154,17 +153,14 @@ Proposed: the laws of the Republic of China (Taiwan), with a Taiwanese court of
 first instance as the venue — the licensor is registered in Taiwan and the
 statutory consumer protections cited above are Taiwanese.
 `[LEGAL REVIEW]` — confirm and name the specific court.
-`[LEGAL REVIEW]` — a contact address for refunds and receipts is still to be
-added above; the refund clause tells buyers to email "the address on the
-receipt", which presumes one exists.
 
 ---
 
 # arkiv Pro 附加元件 — 授權條款（繁體中文）
 
 > ⚠️ **草稿 — 尚未經律師審閱。** 標 `[LEGAL REVIEW]` 的項目必須先與律師確認，
-> 才能對外販售。在那之前本檔是規格，不是要約。**授權主體已定案並完整載明於下**，
-> 待解的是核心／add-on 的關係、管轄法院，以及聯絡信箱。
+> 才能對外販售。在那之前本檔是規格，不是要約。**授權主體與退款聯絡信箱均已定案
+> 並完整載明於下**，待解的是核心／add-on 的關係與管轄法院。
 >
 > 條文引用已於 2026-08-18 對照法務部全國法規資料庫（`law.moj.gov.tw`）現行條文查核。
 > **引得出條文不等於有法律意見。**
@@ -182,12 +178,12 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 | 專案數 | 最多 3 個 | 無限 |
 | 跨專案聚合（跨專案搜尋與精選集） | — | ✅ |
 
-> **現行版本兩項限制均未實施。** 截至 1.0.0 為止已發布的任何版本都不限制專案數，
-> 亦未保留跨專案聚合功能；上表描述的是規劃中的方案分層，而非現況。
-> 免費額度自 **1.1.0** 起對**新安裝**生效；**在 1.1.0 之前已在使用的安裝，
+> **自 1.1.0 起實施。** 截至 1.0.0 為止已發布的任何版本都不限制專案數、
+> 亦未保留跨專案聚合功能，且那些版本完全不執行此額度。
+> 自 1.1.0 起，免費額度對**新安裝**生效；**在 1.1.0 之前已在使用的安裝，
 > 永久保留兩項功能 —— 無限專案數與跨專案聚合**，不限於專案數一項。
 > 軟體會記錄素材庫初次使用時的版本（`library_meta.first_seen_version`），
-> 使此一承諾得以查證而非事後推測；且早於 1.1.0 的版本完全不執行此額度。
+> 此一承諾依該紀錄履行，而非事後推測。
 
 附加元件**不在** PolyForm Perimeter 授權範圍內，依本頁條款授權。
 
@@ -222,7 +218,8 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 
 ## 退款
 
-**自交付起 7 天內，無條件退款。** 來信收據上的信箱即可。
+**自交付起 7 天內，無條件退款。** 來信 **better@wafflehouse.com.tw**，
+與收據上所載信箱相同。
 
 此為台灣通訊交易之法定解除權期間（消費者保護法第 19 條第 1 項），本附加元件
 **完整提供，不予排除**。依通訊交易解除權合理例外情事適用準則第 2 條第 4、5 款，
@@ -282,8 +279,6 @@ grant 不涉對價。
 提案：以**中華民國法律**為準據法，並以台灣之地方法院為第一審管轄法院 ——
 授權方登記於台灣，且本頁引用的消費者保護規定亦為台灣法。
 `[LEGAL REVIEW]` —— 確認並指定法院。
-`[LEGAL REVIEW]` —— 退款與收據用的聯絡信箱尚待補列於上方；退款條款要求買方
-來信「收據上的信箱」，前提是那個信箱存在。
 
 ---
 

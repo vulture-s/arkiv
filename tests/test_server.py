@@ -1597,7 +1597,7 @@ def test_cache_info_does_not_return_absolute_paths(fastapi_client):
         assert "path" not in info, f"cache '{name}' must not expose its absolute path"
 
 
-def test_search_all_strips_absolute_and_project_paths(fastapi_client, monkeypatch):
+def test_search_all_strips_absolute_and_project_paths(fastapi_client, monkeypatch, pro_entitled):
     """Codex: /api/search/all must not leak absolute media/project paths to a
     videos_read client. absolute_path dropped, path → relative, project_path →
     basename."""
@@ -1623,7 +1623,7 @@ def test_search_all_strips_absolute_and_project_paths(fastapi_client, monkeypatc
     assert "/Volumes" not in item["project_path"]
 
 
-def test_search_all_basenames_absolute_relative_path_edge(fastapi_client, monkeypatch):
+def test_search_all_basenames_absolute_relative_path_edge(fastapi_client, monkeypatch, pro_entitled):
     """Edge: federation may hand back an absolute relative_path (empty stored
     path). The boundary must still basename it, never emit the absolute path."""
     import server

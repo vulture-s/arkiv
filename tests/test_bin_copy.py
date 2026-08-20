@@ -94,7 +94,7 @@ def test_copy_skips_index_when_ingest_slot_busy(fastapi_client, tmp_path, monkey
     server._release_ingest_slot()
 
 
-def test_copy_reference_gates_unreachable_and_registers_new(fastapi_client, tmp_path, monkeypatch):
+def test_copy_reference_gates_unreachable_and_registers_new(fastapi_client, tmp_path, monkeypatch, pro_entitled):
     bins = _setup(tmp_path, monkeypatch)
     calls = _stub_ingest(monkeypatch)
 
@@ -179,7 +179,7 @@ def test_copy_mode_copies_verified_bytes_and_keeps_source(fastapi_client, tmp_pa
     assert str(copied) in calls[0]["cmd"]
 
 
-def test_copy_same_basename_never_clobbers(fastapi_client, tmp_path, monkeypatch):
+def test_copy_same_basename_never_clobbers(fastapi_client, tmp_path, monkeypatch, pro_entitled):
     """fable-audit 2026-07-12 CRITICAL #3: two clips sharing a basename (C0001.MP4
     from two different source projects) must both survive the copy — the second must
     NOT os.replace over the first. Pre-fix, verified-copy reported `copied: 2` while
