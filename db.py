@@ -13,6 +13,14 @@ import mediatypes
 from contextlib import contextmanager
 
 
+# Stamped as `first_seen_version` for a library that already existed before the
+# provenance anchor shipped: we know it predates the anchor, but not under which
+# build, and a made-up number would claim otherwise. `entitlements` treats an
+# unparseable version as exempt by design, so this reads as grandfathered — see
+# the long comment at the INSERT in init_db() for why that matters.
+PRE_ANCHOR_VERSION = "pre-anchor"
+
+
 # R5-23 (#54): the DB path is a SINGLE source of truth reached ONLY through
 # get_db_path()/set_db_path(). Previously db.py did `from config import DB_PATH`
 # (a frozen value copy) while `--db` rebound db.DB_PATH and health/server read
@@ -226,6 +234,14 @@ def _backfill_shot_date(conn):
 def init_db():
     with get_conn() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
+        # Asked BEFORE any CREATE TABLE below, because that is the only moment
+        # the answer still exists: once `media` is created we can no longer tell
+        # a library that has been in use for a year from one born on this line.
+        # Consumed by the provenance stamp further down — see the long comment
+        # there for why the distinction decides a published promise.
+        library_predates_this_init = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media'"
+        ).fetchone() is not None
         conn.execute("""
             CREATE TABLE IF NOT EXISTS media (
                 id             INTEGER PRIMARY KEY,
@@ -522,6 +538,40 @@ def init_db():
         # older, so absence reads as exempt. This is a goodwill promise, not
         # DRM — the row is trivially editable and that is fine; the licence is
         # enforced by its terms, not by the database.
+        #
+        # ── why the stamped VALUE is conditional ──────────────────────────────
+        # The paragraph above says absence reads as exempt. This INSERT is what
+        # destroys that absence, so what it writes decides whether the promise
+        # survives.
+        #
+        # Stamping `_config.VERSION` unconditionally is only correct while that
+        # version predates the cap. That was true for exactly one release: the
+        # anchor shipped in 1.0.0 and the cap armed in 1.1.0, one day apart. A
+        # user who upgraded straight from 0.12.x to 1.1.0 — i.e. almost anyone,
+        # since people upgrade to the newest release, not to whichever one
+        # happened to carry the anchor — would have their long-standing library
+        # stamped `1.1.0` on first open and silently lose the exemption the
+        # product page promises permanently. Reproduced end to end before this
+        # change: stamp 1.1.0 -> grandfathered False -> the 4th project and
+        # cross-project search both refused, with a message telling them to buy
+        # Pro.
+        #
+        # `entitlements`' latch cannot save them either: init_db runs when the
+        # app opens, long before any entitlement question is asked, so there is
+        # never a moment where the pre-cap state is observable to be latched.
+        #
+        # So the stamp records what is actually known. A `media` table that
+        # existed BEFORE this init is proof the library was in use under an
+        # earlier build — we just cannot say which one, and `pre-anchor` says
+        # exactly that instead of inventing a number. `entitlements.parse_version`
+        # returns None for it and `predates_cap(None)` is True, per that module's
+        # documented rule that every uncertainty resolves in the user's favour.
+        #
+        # This is the "behavioural inference" the note above rejects, but for a
+        # different question: rejected was "does it already hold more than three
+        # projects", which only catches libraries that had already exceeded the
+        # cap. "Did this library exist at all before this code ran" has no such
+        # blind spot.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS library_meta (
                 key        TEXT PRIMARY KEY,
@@ -531,7 +581,7 @@ def init_db():
         """)
         conn.execute(
             "INSERT OR IGNORE INTO library_meta (key, value) VALUES ('first_seen_version', ?)",
-            (_config.VERSION,),
+            (PRE_ANCHOR_VERSION if library_predates_this_init else _config.VERSION,),
         )
 
         # audit M6: PRAGMA foreign_keys was never enabled before, so orphan
