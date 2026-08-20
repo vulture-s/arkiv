@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+## v1.1.0 - 2026-08-19
+
+**The free allowance the product page has described for months now exists in the software.**
+
+Every build up to and including 1.0.0 shipped with the tier table published and *nothing
+enforcing it* — `project_limit`, `entitlement` and `is_pro` had zero hits across the whole
+repository. v1.0.0's own notes said it plainly ("no shipped build caps anything"), so this is
+not a regression being fixed; it is the other half of a design finally arriving. Until now
+every user was running the Pro feature set.
+
+**If you already use arkiv, nothing changes for you — permanently.** The allowance applies to
+installations that begin with 1.1.0 or later. An installation already in use before this
+release keeps *both* Pro features, unlimited projects and cross-project aggregation, forever.
+That is not a grace period and not a setting: 1.0.0 recorded the version each library was first
+seen under (`library_meta.first_seen_version`), specifically so this could be honoured from a
+record instead of guessed at afterwards. A build older than 1.1.0 does not enforce the
+allowance at all.
+
+**The add-on is still not on sale.** The tier is now enforced, but the Pro component and a
+payment path do not exist yet, so a new installation that reaches three projects cannot
+currently buy its way past it. The refusal points at the published terms, which state their own
+availability. If that limit is in your way today, say so — the grandfathering rule is generous
+by design and the terms have a public-interest route.
+
+### Added
+- **Free tier: 3 projects, no cross-project aggregation — enforced.** A single decision point
+  (`entitlements.py`) answers every "is this allowed?" question, rather than three independent
+  `if`s that would drift apart the way the extension sets did before `mediatypes.py`. Three
+  enforcement points, each with a deliberate choice about *where* to stop:
+  - `projects.add_project()` — only the path that actually grows the registry. Re-registering
+    an existing name (a rename, or a library that moved) leaves the count unchanged and is not
+    refused; gating it would leave someone at the limit unable to repair a project they already
+    own, which the terms never claimed.
+  - `GET /api/search/all` — refused *before* the fan-out, not by filtering results afterwards.
+    A federated search that quietly returned only the current project would be indistinguishable
+    on screen from "your other projects had no matches".
+  - `bins.add_items()` — refuses only the operation that widens a collection to a *new* project.
+    Adding to a project the collection already contains stays available, so existing
+    cross-project collections are never retroactively frozen.
+- **`GET /api/entitlements`** — the tier, in one probe, from the code that enforces it. Reports
+  `armed` explicitly, because "allowed" and "entitled" are otherwise indistinguishable through
+  the API, and that is exactly how a shipped-but-inert gate goes unnoticed.
+- **Pro entitlement detection**, two independent routes, either sufficient: the closed-source
+  `arkiv_pro` component being importable, or `~/.arkiv/pro-license.json` naming a licensee and a
+  key. Unsigned and unobfuscated on purpose — the licence is enforced by its terms, not by the
+  database, and the anchor row has always been trivially editable.
+
+### Fixed
+- **The cap would have taken effect one release early for a specific user.** The grandfathering
+  machinery answers "has this installation been in use for a while?", but nothing answered "is
+  the rule in force yet?". An installation that had registered several project roots without
+  ingesting into them owns no `project.db`, therefore no version anchor, therefore reads as new
+  — and a 1.0.0 build would have refused its fourth project even though 1.0.0 promised no limit
+  at all. Builds older than the allowance now decline to enforce it regardless of what the
+  registry looks like.
+- **Refusals reached the UI as raw JSON.** The new 403s carry a structured `{code, message}`
+  detail — the first endpoint to do so — and the client folded any non-string detail through
+  `JSON.stringify`, putting braces and quotes in a toast where a sentence belonged. The client
+  now shows the message and keeps the code on the error for callers to branch on.
+
+### Changed
+- Product page and `docs/pro-addon-license.md` state 1.1.0 as the boundary instead of "a future
+  release", and the English terms now spell out that a grandfathered installation keeps **both**
+  features. The Chinese page had always promised that ("新安裝不含"); the English had only
+  spelled it out for the project count, and the code follows the stronger reading.
+
 ## v1.0.0 - 2026-08-18
 
 **1.0 because the product now has a front door, and the licence finally says one thing.**

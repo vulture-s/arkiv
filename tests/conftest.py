@@ -118,6 +118,30 @@ _install_fake_modules()
 
 
 @pytest.fixture
+def pro_entitled(tmp_path, monkeypatch):
+    """Run a test as an installation that owns the Pro add-on.
+
+    For tests whose SUBJECT is a cross-project feature — federated search path
+    sanitisation, bin dedup/copy across projects — rather than the licence gate
+    itself. Post-1.1.0 those features need entitlement, so without this the test
+    would be asserting on a 403 and quietly stop covering the thing it was
+    written for.
+
+    Deliberately opt-in per test rather than autouse. An autouse version would
+    switch the gate off for the whole suite, and the next regression that
+    wrongly opened a Pro feature to the free tier would go green — the exact
+    failure mode this fixture exists to avoid creating. `tests/
+    test_entitlements.py` does NOT use it and keeps asserting the refusals.
+    """
+    licence = tmp_path / "pro-license.json"
+    licence.write_text(
+        json.dumps({"licensee": "test suite", "key": "TEST-PRO"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("ARKIV_PRO_LICENSE", str(licence))
+    return licence
+
+
+@pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
     config = importlib.import_module("config")
     db = importlib.import_module("db")

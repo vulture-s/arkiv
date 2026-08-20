@@ -46,7 +46,7 @@ def _leaky_payload(*args, **kwargs):
     }
 
 
-def test_search_all_strips_absolute_paths_from_items_and_errors(fastapi_client, monkeypatch):
+def test_search_all_strips_absolute_paths_from_items_and_errors(fastapi_client, monkeypatch, pro_entitled):
     monkeypatch.setattr(federation, "search_all_projects", _leaky_payload)
 
     resp = fastapi_client.get("/api/search/all", params={"q": "x"})
@@ -70,7 +70,7 @@ def test_search_all_strips_absolute_paths_from_items_and_errors(fastapi_client, 
     assert "/Volumes/" not in blob
 
 
-def test_search_all_handles_none_project_path_in_errors(fastapi_client, monkeypatch):
+def test_search_all_handles_none_project_path_in_errors(fastapi_client, monkeypatch, pro_entitled):
     # the "no matching projects" error path sets project_path=None — must not crash
     def _payload(*a, **k):
         return {
@@ -92,7 +92,7 @@ WIN_ABS = "C:\\Users\\me\\secret-proj\\footage\\clip.mov"
 WIN_ROOT = "C:\\Users\\me\\secret-proj"
 
 
-def test_search_all_strips_windows_style_absolute_paths(fastapi_client, monkeypatch):
+def test_search_all_strips_windows_style_absolute_paths(fastapi_client, monkeypatch, pro_entitled):
     def _payload(*a, **k):
         return {
             "query": "x", "total_results": 1, "projects_queried": 2, "projects_failed": 1,

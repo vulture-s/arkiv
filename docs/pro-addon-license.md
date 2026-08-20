@@ -30,16 +30,14 @@ things the free core does not provide:
 | Projects | Up to 3 | Unlimited |
 | Cross-project aggregation (search and collections spanning projects) | — | ✅ |
 
-> **Current builds impose neither limit.** No shipped version of arkiv up to and
-> including 1.0.0 caps projects or withholds cross-project aggregation; the
-> table describes the intended tiers, not today's behaviour. The free allowance
-> applies to **new installations** from **release 1.1.0** onward. **An
-> installation already in use before 1.1.0 keeps BOTH — unlimited projects and
-> cross-project aggregation — permanently**, not merely the project count. The
-> software records the version a library was first seen under
-> (`library_meta.first_seen_version`) so this can be honoured rather than
-> guessed at, and a build older than 1.1.0 does not enforce the allowance at
-> all.
+> **In effect from release 1.1.0.** No shipped version up to and including 1.0.0
+> capped projects or withheld cross-project aggregation, and those builds do not
+> enforce the allowance at all. From 1.1.0 the free allowance applies to **new
+> installations**. **An installation already in use before 1.1.0 keeps BOTH —
+> unlimited projects and cross-project aggregation — permanently**, not merely
+> the project count. The software records the version a library was first seen
+> under (`library_meta.first_seen_version`) so this is honoured from the record
+> rather than guessed at after the fact.
 
 The add-on is **not** covered by the PolyForm Perimeter License. It is
 distributed under the terms on this page.
@@ -182,12 +180,12 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 | 專案數 | 最多 3 個 | 無限 |
 | 跨專案聚合（跨專案搜尋與精選集） | — | ✅ |
 
-> **現行版本兩項限制均未實施。** 截至 1.0.0 為止已發布的任何版本都不限制專案數，
-> 亦未保留跨專案聚合功能；上表描述的是規劃中的方案分層，而非現況。
-> 免費額度自 **1.1.0** 起對**新安裝**生效；**在 1.1.0 之前已在使用的安裝，
+> **自 1.1.0 起實施。** 截至 1.0.0 為止已發布的任何版本都不限制專案數、
+> 亦未保留跨專案聚合功能，且那些版本完全不執行此額度。
+> 自 1.1.0 起，免費額度對**新安裝**生效；**在 1.1.0 之前已在使用的安裝，
 > 永久保留兩項功能 —— 無限專案數與跨專案聚合**，不限於專案數一項。
 > 軟體會記錄素材庫初次使用時的版本（`library_meta.first_seen_version`），
-> 使此一承諾得以查證而非事後推測；且早於 1.1.0 的版本完全不執行此額度。
+> 此一承諾依該紀錄履行，而非事後推測。
 
 附加元件**不在** PolyForm Perimeter 授權範圍內，依本頁條款授權。
 

@@ -59,7 +59,7 @@ def test_bin_crud_round_trip(tmp_path, monkeypatch):
     assert bins.list_bins() == []
 
 
-def test_add_items_dedupes_and_preserves_order(tmp_path, monkeypatch):
+def test_add_items_dedupes_and_preserves_order(tmp_path, monkeypatch, pro_entitled):
     bins = _fresh_bins(tmp_path, monkeypatch)
     b = bins.create_bin("selection")
     bins.add_items(b.id, [
