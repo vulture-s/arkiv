@@ -188,7 +188,7 @@ Invoke-Robocopy -Source $REPO -Dest (Join-Path $BACKEND 'src') -ExtraArgs @(
     (Join-Path $REPO 'waveforms'),
     (Join-Path $REPO '.tmp-camera-report-tests'),
     'node_modules', '__pycache__', '.pytest_cache', '.ruff_cache',
-    '/XF', '*.pyc', '.env', '.env.*'
+    '/XF', '*.pyc', '.env', '.env.*', 'bench_*.json'
 )
 
 # Fail loud rather than ship quietly. Not redundant with /XF above: robocopy is
