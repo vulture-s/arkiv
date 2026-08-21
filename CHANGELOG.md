@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+## v1.1.1 - 2026-08-21
+
+**1.1.0 shipped the free allowance. It also shipped three ways for a long-time user to lose
+the exemption 1.1.0 had just promised them.** All three are fixed here. If you have been using
+arkiv since before 1.1.0, this release is the one that actually keeps that promise.
+
+They are the same bug wearing three faces: the guarantee is written down in one place, and the
+code that honours it depends on an observation that can disappear.
+
+### Fixed
+
+- **Your exemption no longer depends on whether a drive is mounted today.** The check only ever
+  looked at libraries reachable *at that moment*, so an install whose grandfathered corpus lives
+  on a NAS looked like a brand-new install on any morning the NAS did not mount — refusing a
+  fourth project and cross-project search, and pointing the user at a Pro add-on they should
+  never have been asked to buy. The observation is now recorded the first time it is made and
+  the record is the answer, the same move `first_seen_version` makes: write the fact down while
+  it is still observable. The record can only ever grant, never revoke.
+- **Upgrading straight from 0.12.x no longer costs you the exemption.** The provenance anchor
+  assumed it would ship a release or two ahead of the cap; in fact the window was one day
+  (anchor in 1.0.0, cap in 1.1.0). Anyone who upgraded to the newest release rather than to
+  whichever one happened to carry the anchor had their years-old library stamped `1.1.0` on
+  first open and silently reclassified as new. An existing library is now stamped `pre-anchor`
+  — which is what is actually known about it — instead of a version number it never ran.
+- **The library you have open now counts as evidence.** The grandfather probe collected
+  registered projects and an environment variable and nothing else, so the ordinary install —
+  one library, no second project ever registered — produced an empty set and reported itself as
+  new no matter how old that library was. This is why the two fixes above did not help anyone on
+  their own: they marked the library correctly and stood ready to remember it, while nothing put
+  it in front of the check.
+- **Local builds no longer bundle a developer's `.env`.** Both assemble scripts copied the repo
+  into the bundle through a denylist that did not list `.env`. **Artifacts published from this
+  repository are unaffected** — releases build from a clean CI checkout, where a gitignored
+  `.env` does not exist — but anyone building an installer on their own machine was shipping
+  their own secrets. The Windows script's exclusion list also claimed to drop `bench_*.json`
+  while its `/XF` arguments did not.
+
+### Changed
+
+- **Frontend moved to Svelte 5** (with Vite 8, `vite-plugin-svelte` 7 and `svelte-spa-router` 5).
+  No behaviour change is intended; it is here because the dependency set had been pinned by it
+  for weeks. Verified by rendering the real UI on both platforms rather than by the build going
+  green — a build that compiles proves nothing about a framework whose breaking change is at
+  mount time. The initial bundle dropped from ~404 kB to ~219 kB as a side effect.
+- Release builds cache the Tauri packaging toolchain instead of downloading WiX and NSIS during
+  every build, which had already failed one release mid-flight.
+
 ## v1.1.0 - 2026-08-19
 
 **The free allowance the product page has described for months now exists in the software.**
