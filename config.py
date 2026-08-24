@@ -338,6 +338,13 @@ _diar = os.getenv("ARKIV_DIARIZATION_ENABLED", "").strip().lower()
 DIARIZATION_ENABLED = _diar in ("1", "true", "yes", "on")
 PYANNOTE_TOKEN = os.getenv("ARKIV_PYANNOTE_TOKEN", "").strip()
 
+# Silero's own default. Exposed because it is the one VAD knob that changes BOTH
+# what audio reaches whisper and the offset map used to put its timestamps back on
+# the media timeline — so changing it invalidates timings stored under the old
+# value. Deliberately not a whisper-guard layer key: those layers are a benchmark
+# ladder that gets serialised into run snapshots, and this is an operator override.
+VAD_THRESHOLD = float(os.getenv("ARKIV_VAD_THRESHOLD", "0.5"))
+
 WHISPER_GUARD_DEFAULT_MODE = 4
 WHISPER_GUARD_LAYERS = {
     0: {

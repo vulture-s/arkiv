@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
 import subprocess
@@ -28,6 +29,7 @@ from config import (
     FFMPEG_PATH,
     DIARIZATION_ENABLED,
     PYANNOTE_TOKEN,
+    VAD_THRESHOLD,
 )
 from llm import chat
 NO_SPEECH_THRESHOLD = 0.6
@@ -144,25 +146,58 @@ def _get_vad_model():
 
 
 def _vad_filter(wav_path: str, sample_rate: int = 16000):
-    """Run Silero VAD on WAV, return new WAV with only speech segments.
-    Returns None if no speech detected. Returns original path if VAD disabled."""
+    """Run Silero VAD, returning (wav_to_transcribe, offset_map).
+
+    The second element is the whole point. VAD physically removes silence, so the
+    audio whisper reads is shorter than the file the user has open and every
+    timestamp it reports is in *gapless-speech* time. `offset_map` is what
+    translates back:
+
+        [(trimmed_start, trimmed_end, original_start), ...]   # seconds
+
+    one triple per kept chunk, in concatenation order. `None` means the two clocks
+    are already the same (VAD off, sample-rate skip) and the caller must not remap.
+
+    Returns `(None, None)` when there is no speech at all.
+
+    Before this returned a bare path, and the stamps — the only record of where the
+    kept speech came from — went out of scope. Nothing downstream could recover it:
+    the trimmed wav is unlinked moments later, so the mapping had to be built here
+    or not at all.
+    """
     if not VAD_ENABLED:
-        return wav_path
+        return wav_path, None
 
     audio, sr = sf.read(wav_path, dtype="float32")
     if sr != sample_rate:
-        return wav_path  # safety: skip VAD if sample rate mismatch
+        return wav_path, None  # safety: skip VAD if sample rate mismatch
 
     tensor = torch.from_numpy(audio)
     stamps = get_speech_timestamps(tensor, _get_vad_model(),
                                    sampling_rate=sample_rate,
                                    min_silence_duration_ms=300,
-                                   speech_pad_ms=150)
+                                   speech_pad_ms=150,
+                                   threshold=VAD_THRESHOLD)
     if not stamps:
-        return None  # no speech at all
+        return None, None  # no speech at all
 
-    # Concatenate speech segments
-    chunks = [audio[s["start"]:s["end"]] for s in stamps]
+    # Concatenate speech segments, recording where each one came from.
+    #
+    # The cursor advances by the chunk's ACTUAL length rather than by
+    # (end - start) arithmetic on the stamp: `speech_pad_ms` widens stamps and can
+    # make neighbours overlap, and a clamped slice is then shorter than the stamp
+    # claims. Measuring the slice keeps the map exact by construction.
+    chunks, offset_map, cursor = [], [], 0.0
+    for s in stamps:
+        chunk = audio[s["start"]:s["end"]]
+        if not len(chunk):
+            continue  # a zero-width stamp would add a triple that swallows later lookups
+        dur = len(chunk) / float(sample_rate)
+        offset_map.append((cursor, cursor + dur, s["start"] / float(sample_rate)))
+        cursor += dur
+        chunks.append(chunk)
+    if not chunks:
+        return None, None
     speech = np.concatenate(chunks)
 
     _fd, out = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
@@ -173,7 +208,49 @@ def _vad_filter(wav_path: str, sample_rate: int = 16000):
         raise
     kept = len(speech) / max(len(audio), 1)
     print(f"  [VAD] kept {kept:.0%} of audio ({len(stamps)} segments)", flush=True)
-    return out
+    return out, offset_map
+
+
+def _remap_vad_time(t: float, offset_map, ends) -> float:
+    """One gapless-speech second → the second it came from in the source media.
+
+    The trimmed timeline is contiguous by construction (`trimmed_end[i]` ==
+    `trimmed_start[i+1]`), so `t` can never land in a gap and the first chunk whose
+    end is at or past `t` is the right one. `bisect` rather than a scan because a
+    long clip is hundreds of chunks and thousands of words.
+
+    Past the last chunk we extrapolate instead of clamping. Whisper pads to 30 s
+    windows and can report an `end` a hair beyond the audio; clamping would stack
+    every trailing cue on one instant, which is worse than a cue that runs slightly
+    long.
+    """
+    i = bisect.bisect_left(ends, t)
+    if i >= len(offset_map):
+        i = len(offset_map) - 1
+    trimmed_start, _trimmed_end, original_start = offset_map[i]
+    return original_start + (t - trimmed_start)
+
+
+def _remap_result_times(text, lang, segments, words, offset_map):
+    """Rewrite segment and word times from gapless-speech time to media time.
+
+    Returns new dicts rather than mutating: `speaker_id` and any future key rides
+    along via `{**s}`, and a pure function is testable without building a whole
+    transcription. `offset_map is None` (whisperx, VAD off) is the identity.
+    """
+    if not offset_map:
+        return text, lang, segments, words
+
+    ends = [o[1] for o in offset_map]
+
+    def _fix(item):
+        return {
+            **item,
+            "start": round(_remap_vad_time(float(item.get("start", 0) or 0), offset_map, ends), 3),
+            "end": round(_remap_vad_time(float(item.get("end", 0) or 0), offset_map, ends), 3),
+        }
+
+    return text, lang, [_fix(s) for s in segments or []], [_fix(w) for w in words or []]
 
 
 def warm_up():
@@ -233,9 +310,12 @@ def transcribe(media_path: str, language=None) -> tuple:
     if not wav:
         return "", "", [], []
 
+    # None means "the backend read the original audio, so its clock is already
+    # media time". The whisperx branch below never trims, and so never sets it.
+    offset_map = None
     try:
         if _USE_MLX:
-            vad_wav = _vad_filter(wav)
+            vad_wav, offset_map = _vad_filter(wav)
             if vad_wav is None:
                 return "", "", [], []
             try:
@@ -246,7 +326,7 @@ def transcribe(media_path: str, language=None) -> tuple:
         elif _non_mac_backend() == "whisperx":
             result = _transcribe_whisperx(wav, language)
         else:
-            vad_wav = _vad_filter(wav)
+            vad_wav, offset_map = _vad_filter(wav)
             if vad_wav is None:
                 return "", "", [], []
             try:
@@ -256,6 +336,11 @@ def transcribe(media_path: str, language=None) -> tuple:
                     Path(vad_wav).unlink(missing_ok=True)
     finally:
         Path(wav).unlink(missing_ok=True)
+    # Put the timestamps back on the media timeline BEFORE anything else sees them.
+    # Everything downstream — SRT cue times, /api/media/{id}/segments, the MCP
+    # get_transcript contract, click-to-seek — reads these as "seconds from the
+    # start of the clip", so gapless-speech time must not escape this function.
+    result = _remap_result_times(*result, offset_map=offset_map)
     # Phase 9.8b: whisper emits Simplified for zh — store Taiwan Traditional so the
     # search index / UI / every export are Traditional (write-path; see zh_convert).
     return zh_convert.convert_result(*result)

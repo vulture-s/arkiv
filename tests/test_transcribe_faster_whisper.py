@@ -139,7 +139,7 @@ def test_dispatcher_routes_to_faster_whisper_on_non_mac(monkeypatch, hermetic):
     faster-whisper path: _to_wav → _vad_filter → _transcribe_faster_whisper."""
     monkeypatch.setattr(transcribe, "_USE_MLX", False)
     monkeypatch.setattr(transcribe, "_to_wav", lambda p: "/fake_to.wav")
-    monkeypatch.setattr(transcribe, "_vad_filter", lambda w: w)  # speech present, no trim
+    monkeypatch.setattr(transcribe, "_vad_filter", lambda w: (w, None))  # speech present, no trim
     segs = [FakeSegment("路由測試", 0.0, 1.0, words=[FakeWord("路由測試", 0.0, 1.0, 0.8)])]
     monkeypatch.setattr(transcribe, "_fw_model", FakeModel(segs, FakeInfo("zh")))
 
@@ -154,7 +154,7 @@ def test_dispatcher_no_speech_returns_empty(monkeypatch, hermetic):
     """VAD finding no speech short-circuits to the empty contract."""
     monkeypatch.setattr(transcribe, "_USE_MLX", False)
     monkeypatch.setattr(transcribe, "_to_wav", lambda p: "/fake_to.wav")
-    monkeypatch.setattr(transcribe, "_vad_filter", lambda w: None)  # no speech
+    monkeypatch.setattr(transcribe, "_vad_filter", lambda w: (None, None))  # no speech
 
     assert transcribe.transcribe("/clip.mp4", language="zh") == ("", "", [], [])
 

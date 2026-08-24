@@ -78,7 +78,7 @@ def test_transcribe_wires_zh_conversion(monkeypatch):
     tr = importlib.import_module("transcribe")
     monkeypatch.setattr(tr, "_to_wav", lambda p: "/tmp/arkiv_zhwire_nonexistent.wav")
     monkeypatch.setattr(tr, "_USE_MLX", True)
-    monkeypatch.setattr(tr, "_vad_filter", lambda w: w)  # pass through, no cleanup branch
+    monkeypatch.setattr(tr, "_vad_filter", lambda w: (w, None))  # pass through, no cleanup branch
     monkeypatch.setattr(tr, "_transcribe_mlx", lambda w, lang: (
         "内存和软件", "zh",
         [{"start": 0.0, "end": 1.0, "text": "内存和软件"}],
