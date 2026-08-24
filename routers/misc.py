@@ -24,7 +24,7 @@ import config
 import db
 import mediatypes
 from auth import require_scopes
-from pathres import _proxy_ready, _resolve_media_path
+from pathres import _proxy_ready, _resolve_media_path, editor_proxy_for
 from state import _rebuild_embeddings, embed_rebuild as _embed_guard
 from webguard import _assert_same_site
 
@@ -65,14 +65,29 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
     # proxies/ directory copied between installations cannot serve another
     # user's content under the same media_id.
     resolved_src = _resolve_media_path(rec["path"])
-    proxy_path = config.proxy_path_for(media_id, resolved_src)
-    if _proxy_ready(proxy_path):
+
+    # Pick a candidate first, then put EVERY candidate through the same gate.
+    # The old shape returned arkiv's proxy early, which was fine while ours was
+    # the only alternative — it is H.264 by construction. It stops being fine the
+    # moment a second candidate exists: a ProRes original sitting next to a ProRes
+    # sidecar proxy would have been declared playable purely because a file was
+    # found, and the browser would show "cannot play" with no explanation.
+    arkiv_proxy = config.proxy_path_for(media_id, resolved_src)
+    if _proxy_ready(arkiv_proxy):
+        # Ours is H.264 by construction — the one candidate that needs no probe.
         return FileResponse(
-            path=str(proxy_path),
+            path=str(arkiv_proxy),
             media_type="video/mp4",
             filename=Path(resolved_src).stem + "_proxy.mp4",
         )
-    file_path = Path(resolved_src)
+
+    # A cutting-room sidecar. `.mxf` is excluded on purpose: a browser cannot demux
+    # it whatever the codec inside, so serving one is a guaranteed black player.
+    file_path = editor_proxy_for(resolved_src, rec.get("duration_s"), rec.get("fps"),
+                                 exts=(".mp4", ".mov"))
+    serving_editor_proxy = file_path is not None
+    if file_path is None:
+        file_path = Path(resolved_src)
     if not file_path.exists():
         raise HTTPException(404, "找不到檔案")
     # Only serve known media extensions
@@ -88,15 +103,23 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
     # on EVERY playback; only probe when the column is NULL (legacy rows) and
     # backfill so the next play is probe-free. None (probe failed / audio-only)
     # keeps the UNKNOWN fall-through behavior.
-    stored_codec = (rec.get("codec") or "").strip().lower() or None
-    if stored_codec is None:
+    if serving_editor_proxy:
+        # Probe the CANDIDATE, never the record: `media.codec` describes the
+        # original, and a sidecar is frequently a different codec (that is the
+        # point of it). And do NOT write the answer back — backfilling
+        # `media.codec` from a proxy would make the library claim the camera
+        # original is H.264, which every later decision then acts on.
         stored_codec = codec.probe_codec(str(file_path))
-        if stored_codec:
-            try:
-                with db.get_conn() as conn:
-                    conn.execute("UPDATE media SET codec=? WHERE id=?", (stored_codec, media_id))
-            except Exception:
-                pass  # backfill is best-effort; playback must not fail on it
+    else:
+        stored_codec = (rec.get("codec") or "").strip().lower() or None
+        if stored_codec is None:
+            stored_codec = codec.probe_codec(str(file_path))
+            if stored_codec:
+                try:
+                    with db.get_conn() as conn:
+                        conn.execute("UPDATE media SET codec=? WHERE id=?", (stored_codec, media_id))
+                except Exception:
+                    pass  # backfill is best-effort; playback must not fail on it
     if stored_codec and stored_codec in codec.PROXY_CODECS:
         return JSONResponse(
             status_code=409,
