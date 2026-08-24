@@ -28,6 +28,11 @@ def _install_fake_modules():
             return False
 
     fake_torch.cuda = _Cuda()
+    # `_vad_filter` does `torch.from_numpy(audio)` purely to hand silero a tensor;
+    # it never calls a tensor method itself. Identity keeps the numpy array flowing
+    # through, which is what the energy-VAD fixture below wants to slice. Without
+    # this the function cannot be executed at all — see the note on soundfile.
+    fake_torch.from_numpy = lambda a: a
     sys.modules.setdefault("torch", fake_torch)
 
     fake_silero = types.ModuleType("silero_vad")
@@ -35,9 +40,45 @@ def _install_fake_modules():
     fake_silero.load_silero_vad = lambda *args, **kwargs: object()
     sys.modules.setdefault("silero_vad", fake_silero)
 
+    # soundfile is a real dependency (requirements.txt), but CI does NOT install it
+    # — ci.yml hand-picks its packages and soundfile is not on the list — so the fake
+    # is load-bearing there and cannot simply be deleted.
+    #
+    # It used to be inert: read() returned ([], 16000) and write() dropped its input
+    # on the floor. Combined with torch having no from_numpy, that made
+    # `transcribe._vad_filter` *structurally unreachable* in the suite: it could not
+    # be executed even by a test that wanted to. That is why a timestamp bug in it
+    # went unnoticed — not because nobody wrote the test, but because nobody could.
+    #
+    # Backed by stdlib `wave` (mono 16-bit PCM ↔ float32), which is all the
+    # transcription path ever asks of it: _to_wav already produces mono 16 kHz.
     fake_soundfile = types.ModuleType("soundfile")
-    fake_soundfile.read = lambda *args, **kwargs: ([], 16000)
-    fake_soundfile.write = lambda *args, **kwargs: None
+
+    def _sf_read(path, dtype="float32"):
+        import numpy as _np
+        import wave as _wave
+
+        with _wave.open(str(path), "rb") as w:
+            sr = w.getframerate()
+            raw = w.readframes(w.getnframes())
+        data = _np.frombuffer(raw, dtype="<i2").astype("float32") / 32768.0
+        return data, sr
+
+    def _sf_write(path, data, samplerate, *args, **kwargs):
+        import numpy as _np
+        import wave as _wave
+
+        arr = _np.asarray(data, dtype="float32")
+        pcm = _np.clip(arr, -1.0, 1.0)
+        pcm = (pcm * 32767.0).astype("<i2")
+        with _wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(int(samplerate))
+            w.writeframes(pcm.tobytes())
+
+    fake_soundfile.read = _sf_read
+    fake_soundfile.write = _sf_write
     sys.modules.setdefault("soundfile", fake_soundfile)
 
     # Production mlx_whisper.transcribe returns {text, language, segments=[
@@ -115,6 +156,80 @@ def _install_fake_modules():
 
 
 _install_fake_modules()
+
+
+@pytest.fixture
+def synth_wav(tmp_path):
+    """Build a mono 16 kHz wav from a (kind, seconds) script, and say where the speech is.
+
+    Returns `make(script) -> (path, samples, sample_rate, speech_windows)` where
+    `speech_windows` is the ground truth in ORIGINAL-media seconds — the thing a
+    transcript timestamp is supposed to agree with.
+
+        path, audio, sr, truth = make([("silence", 3), ("tone", 1), ("silence", 4)])
+        # truth == [(3.0, 4.0)]
+    """
+    import numpy as np
+    import soundfile as sf
+
+    def make(script, sample_rate=16000, freq=220.0):
+        parts, windows, cursor = [], [], 0.0
+        for kind, seconds in script:
+            n = int(round(seconds * sample_rate))
+            if kind == "tone":
+                t = np.arange(n, dtype="float32") / sample_rate
+                parts.append((0.6 * np.sin(2 * np.pi * freq * t)).astype("float32"))
+                windows.append((cursor, cursor + seconds))
+            else:
+                parts.append(np.zeros(n, dtype="float32"))
+            cursor += seconds
+        audio = np.concatenate(parts) if parts else np.zeros(0, dtype="float32")
+        path = tmp_path / "synth-{0}.wav".format(len(list(tmp_path.iterdir())))
+        sf.write(str(path), audio, sample_rate)
+        return str(path), audio, sample_rate, windows
+
+    return make
+
+
+@pytest.fixture
+def energy_vad(monkeypatch):
+    """Replace Silero with a deterministic energy gate, in the module that uses it.
+
+    `transcribe.py:14` does `from silero_vad import get_speech_timestamps`, so the
+    name is bound into `transcribe` — patch it there, not on the fake module.
+
+    Why not the real Silero: `load_silero_vad()` downloads a model (three runners,
+    three chances to flake), the torch wheel CI deliberately avoids is ~2 GB, and
+    real stamps move with the model version — the test would then assert against a
+    moving target instead of against our own arithmetic. Our arithmetic is what broke.
+    """
+    import numpy as np
+
+    def _fake(tensor, model, sampling_rate=16000, min_silence_duration_ms=300,
+              speech_pad_ms=0, threshold=0.5, **kwargs):
+        audio = np.asarray(tensor, dtype="float32")
+        frame = max(1, int(sampling_rate * 0.03))
+        loud = [
+            (i, min(i + frame, len(audio)))
+            for i in range(0, len(audio), frame)
+            if len(audio[i:i + frame]) and float(np.max(np.abs(audio[i:i + frame]))) > 0.1
+        ]
+        stamps = []
+        for start, end in loud:
+            if stamps and start - stamps[-1]["end"] <= int(sampling_rate * min_silence_duration_ms / 1000.0):
+                stamps[-1]["end"] = end
+            else:
+                stamps.append({"start": start, "end": end})
+        pad = int(sampling_rate * speech_pad_ms / 1000.0)
+        if pad:
+            for s in stamps:
+                s["start"] = max(0, s["start"] - pad)
+                s["end"] = min(len(audio), s["end"] + pad)
+        return stamps
+
+    transcribe = importlib.import_module("transcribe")
+    monkeypatch.setattr(transcribe, "get_speech_timestamps", _fake)
+    return _fake
 
 
 @pytest.fixture(autouse=True)
