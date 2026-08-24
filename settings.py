@@ -72,6 +72,14 @@ def _schema() -> Dict[str, Dict[str, Any]]:
             "type": "str",
             "default": lambda: "",
         },
+        "export.subtitle_max_cjk": {
+            "group": "export",
+            "label": "Subtitle line width (CJK units per line)",
+            "type": "int",
+            "default": lambda: config.SUBTITLE_MAX_CJK,
+            "min": 8,
+            "max": 40,
+        },
         # --- Ingest defaults ---
         "ingest.recursive": {
             "group": "ingest",
@@ -161,6 +169,12 @@ def effective(key: str, project: Optional[str] = None) -> Any:
         if key in p and p[key] is not None:
             value = _stored_to_typed(key, p[key])
     return value
+
+
+def subtitle_max_cjk(project: Optional[str] = None) -> int:
+    """Effective caption line width. Equals config.SUBTITLE_MAX_CJK when unset, so
+    every subtitle export is unchanged until an operator actually moves it."""
+    return effective("export.subtitle_max_cjk", project=project)
 
 
 def vision_model(project: Optional[str] = None) -> str:

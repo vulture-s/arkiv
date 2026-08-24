@@ -22,6 +22,7 @@ NOTE: `_attachment_headers` (Content-Disposition builder) and `_log_safe`
 import json
 
 import db
+import settings as settings_store
 import subtitle
 
 
@@ -258,7 +259,7 @@ def transcript_fallback_segments(transcript: str, duration: float) -> list:
             for i, line in enumerate(lines)]
 
 
-def render_subtitle_cues(segments, fmt: str = "srt", max_units: float = 14.0,
+def render_subtitle_cues(segments, fmt: str = "srt", max_units=None,
                          max_lines: int = 2) -> str:
     """Render segments as SRT or VTT **through the Phase 12.5 layout engine**.
 
@@ -274,6 +275,8 @@ def render_subtitle_cues(segments, fmt: str = "srt", max_units: float = 14.0,
     out, then apply the punctuation policy inside the renderer. Sanitising after
     layout would let injected text through the line-splitter first.
     """
+    if max_units is None:
+        max_units = float(settings_store.subtitle_max_cjk())
     safe = [{**seg, "text": _subtitle_text(seg.get("text") or "")}
             for seg in segments if isinstance(seg, dict)]
     render = subtitle.segments_to_vtt if fmt == "vtt" else subtitle.segments_to_srt

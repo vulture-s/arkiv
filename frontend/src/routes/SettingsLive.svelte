@@ -48,13 +48,14 @@
   let settingsList = []     // describe() output
   let settingsBusy = false
   let settingsMsg = ''
-  let visModel = '', visNumCtx = 16384, expDir = ''  // local edit buffers
+  let visModel = '', visNumCtx = 16384, expDir = '', subMaxCjk = 14  // local edit buffers
   function settingMeta(key) { return settingsList.find((s) => s.key === key) || null }
   async function loadSettings() {
     try { settingsList = (await api.getSettings()).settings || [] } catch { settingsList = [] }
     const vm = settingMeta('vision.model'); if (vm) visModel = vm.value
     const vc = settingMeta('vision.num_ctx'); if (vc) visNumCtx = vc.value
     const ed = settingMeta('export.default_dir'); if (ed) expDir = ed.value
+    const sm = settingMeta('export.subtitle_max_cjk'); if (sm) subMaxCjk = sm.value
   }
   async function saveSetting(values) {
     settingsBusy = true; settingsMsg = ''
@@ -504,7 +505,7 @@
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">EXPORT · DEFAULT DEST</Eyebrow>
               <div class="ak-display fstitle">Export defaults</div>
-              <div class="fsdesc">預設匯出資料夾。<strong>真實生效</strong>：server-write CSV 匯出（Tauri 存檔路徑）未指定時落這個目錄。EDL fps / proxy 解析度 / drop-frame 仍每次呼叫帶入、無持久預設（待後端）。</div>
+              <div class="fsdesc">預設匯出資料夾。<strong>真實生效</strong>：server-write CSV 匯出（Tauri 存檔路徑）未指定時落這個目錄。字幕行寬<strong>真實生效</strong>：SRT/VTT（單支、批次、時間軸）與 CLI 都讀這個值。EDL fps / proxy 解析度 / drop-frame 仍每次呼叫帶入、無持久預設（待後端）。</div>
             </div>
             <div class="frows">
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Default export dir</Mono>
@@ -513,10 +514,17 @@
                   {#if settingMeta('export.default_dir')}<span class="srctag">{settingMeta('export.default_dir').source}</span>{/if}
                 </div>
               </div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">字幕行寬 · CJK 單位</Mono>
+                <div class="setctl">
+                  <input class="ak-input" type="number" min="8" max="40" bind:value={subMaxCjk}
+                         title="一行字幕最多幾個中文字（拉丁字母算 1/3）。14 = Netflix 繁中規範" />
+                  {#if settingMeta('export.subtitle_max_cjk')}<span class="srctag">{settingMeta('export.subtitle_max_cjk').source}</span>{/if}
+                </div>
+              </div>
               <div class="frow"><span></span>
                 <div class="setctl">
-                  <button class="ak-btn" on:click={() => saveSetting({ 'export.default_dir': expDir })} disabled={settingsBusy}>儲存</button>
-                  <button class="ak-btn" on:click={() => resetSettingKey('export.default_dir')} disabled={settingsBusy}>重設</button>
+                  <button class="ak-btn" on:click={() => saveSetting({ 'export.default_dir': expDir, 'export.subtitle_max_cjk': Number(subMaxCjk) })} disabled={settingsBusy}>儲存</button>
+                  <button class="ak-btn" on:click={() => { resetSettingKey('export.default_dir'); resetSettingKey('export.subtitle_max_cjk') }} disabled={settingsBusy}>重設</button>
                   {#if settingsMsg}<span class="setmsg">{settingsMsg}</span>{/if}
                 </div>
               </div>

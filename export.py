@@ -119,7 +119,7 @@ def export_txt(media_id: int) -> str:
     return (rec.get("transcript") or "").strip()
 
 
-def export_srt(media_id: int, max_units: float = 14.0) -> str:
+def export_srt(media_id: int, max_units=None) -> str:
     """Laid-out SRT for one clip, using the Phase 12.5 subtitle engine.
 
     Uses segment-aligned timestamps (segments_json) when present; falls back to
@@ -150,6 +150,11 @@ def export_srt(media_id: int, max_units: float = 14.0) -> str:
                                                 rec.get("duration_s") or 0.0)
         if not segments:
             return ""
+    if max_units is None:
+        # Same resolution the HTTP export uses, so the CLI can't disagree with the
+        # app about how wide a caption line is.
+        import settings as settings_store
+        max_units = float(settings_store.subtitle_max_cjk())
     return subtitle.segments_to_srt(segments, max_units=max_units)
 
 
@@ -281,7 +286,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_srt = sub.add_parser("srt", help="A single clip's laid-out SRT (Phase 12.5 engine)")
     p_srt.add_argument("media_id", type=int)
-    p_srt.add_argument("--max-cjk", type=float, default=14.0, help="Max CJK units per line (default 14)")
+    p_srt.add_argument("--max-cjk", type=float, default=None,
+                       help="Max CJK units per line (default: the export.subtitle_max_cjk setting)")
     p_srt.add_argument("--out", default=None, help="Output file (default: stdout)")
 
     p_ch = sub.add_parser("chapters", help="A single clip's chapter markers from scene frames")

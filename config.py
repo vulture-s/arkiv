@@ -185,6 +185,22 @@ def _read_vision_num_ctx() -> int:
 
 OLLAMA_VISION_NUM_CTX = _read_vision_num_ctx()
 
+
+# Caption line width, in CJK units (a Latin char counts as 1/3). 14 is the
+# Netflix zh-Hant spec and subtitle.wrap()'s own default. It used to be hard-coded
+# in four places — the engine's default, the CLI flag, and two call sites — which
+# is three chances to disagree.
+def _read_subtitle_max_cjk() -> int:
+    raw = os.getenv("ARKIV_SUBTITLE_MAX_CJK", "14")
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return 14
+    return val if 8 <= val <= 40 else 14
+
+
+SUBTITLE_MAX_CJK = _read_subtitle_max_cjk()
+
 def _detect_exiftool() -> str:
     """Resolve ExifTool binary path via fallback chain.
 
