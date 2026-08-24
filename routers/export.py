@@ -576,8 +576,11 @@ def export_timeline(
 
     if fmt == "srt":
         import json as _json
-        srt = ""
-        idx = 1
+        # Build ONE segment list already positioned on the timeline, then hand it
+        # to the same seam the single-clip export uses. This was the third
+        # hand-written cue emitter; sequencing is this endpoint's job, layout is
+        # not.
+        timeline_segments = []
         offset = 0.0  # cumulative timeline position in seconds
         for rec in recs:
             win_in, dur = _clip_window(rec)  # D2: honor the clip's IN/OUT marks
@@ -588,6 +591,7 @@ def export_timeline(
                     segs = _json.loads(rec["segments_json"])
                 except Exception:
                     segs = []
+            segs = [s for s in segs if isinstance(s, dict)]
             if segs:
                 for seg in segs:
                     seg_s = seg.get("start", 0) or 0
@@ -598,28 +602,23 @@ def export_timeline(
                     hi = min(seg_e, win_out)
                     if hi <= lo:
                         continue  # caption falls entirely outside the trim
-                    text = _subtitle_text(seg.get("text") or "")
-                    if not text:
-                        continue
-                    s = offset + (lo - win_in)
-                    e = offset + (hi - win_in)
-                    srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{text}\n\n"
-                    idx += 1
+                    # {**seg}: carry every other key through. A rebuilt {start,end,
+                    # text} dict would silently drop speaker_id today and a
+                    # translation tomorrow.
+                    timeline_segments.append({**seg,
+                                              "start": offset + (lo - win_in),
+                                              "end": offset + (hi - win_in)})
             else:
                 # No segment timestamps (legacy rows / segmentless transcription):
-                # mirror the single-clip /export/srt fallback and distribute the
-                # transcript lines evenly across the clip, offset onto the timeline
+                # same fallback as the single-clip export, offset onto the timeline
                 # (Codex review P2 — otherwise transcript-only clips vanish).
-                lines = [l.strip() for l in (rec.get("transcript") or "").split("\n") if l.strip()]
-                n = max(len(lines), 1)
-                for li, line in enumerate(lines):
-                    s = offset + li * (dur / n)
-                    e = offset + (li + 1) * (dur / n)
-                    srt += f"{idx}\n{_subtitle_ts(s)} --> {_subtitle_ts(e)}\n{_subtitle_text(line)}\n\n"
-                    idx += 1
+                for seg in transcript_fallback_segments(rec.get("transcript") or "", dur):
+                    timeline_segments.append({**seg,
+                                              "start": offset + seg["start"],
+                                              "end": offset + seg["end"]})
             offset += dur
         return HTMLResponse(
-            content=srt,
+            content=render_subtitle_cues(timeline_segments, "srt"),
             media_type="text/plain; charset=utf-8",
             headers={"Content-Disposition": 'attachment; filename="arkiv-timeline.srt"'},
         )

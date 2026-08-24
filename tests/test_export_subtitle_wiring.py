@@ -194,3 +194,86 @@ def test_the_transcript_fallback_shares_the_clip_between_its_lines():
 def test_the_transcript_fallback_is_empty_for_an_empty_transcript():
     export_builders = importlib.import_module("export_builders")
     assert export_builders.transcript_fallback_segments("  \n\n ", 9.0) == []
+
+
+# ── the timeline export: the third hand-written emitter ──────────────────────
+
+def _seed_two(db):
+    """Two 10-second clips, each with one caption."""
+    for i, (name, text) in enumerate([("a.mp4", "甲段台詞"), ("b.mp4", "乙段台詞")], 1):
+        db.upsert({
+            "path": "/tmp/{0}".format(name), "filename": name, "ext": ".mp4",
+            "duration_s": 10.0, "size_mb": 5.0, "width": 1920, "height": 1080,
+            "fps": 30.0, "has_audio": 1, "transcript": text, "lang": "zh",
+            "frame_tags": "", "thumbnail_path": "",
+            "processed_at": "2026-05-0{0}T09:00:00".format(i),
+            "segments_json": json.dumps(
+                [{"start": 0.0, "end": 4.0, "text": text, "speaker_id": "SPEAKER_0{0}".format(i)}],
+                ensure_ascii=False),
+        })
+
+
+def test_timeline_srt_goes_through_the_layout_engine(
+    fastapi_client, server_module, monkeypatch
+):
+    _seed_two(importlib.import_module("db"))
+    monkeypatch.setattr(subtitle, "layout_cues", lambda *a, **k: [(1.0, 2.0, ["哨兵"])])
+
+    r = fastapi_client.get("/api/export/timeline/srt?ids=1,2")
+
+    assert r.status_code == 200
+    assert "哨兵" in r.text
+
+
+def test_timeline_srt_keeps_every_other_segment_key(
+    fastapi_client, server_module, monkeypatch
+):
+    """Sequencing rebases start/end. Rebuilding the dict from just those three
+    fields would drop `speaker_id` today and a `translation` tomorrow."""
+    _seed_two(importlib.import_module("db"))
+    seen = {}
+    real = subtitle.layout_cues
+
+    def spy(segments, *a, **k):
+        seen["segments"] = segments
+        return real(segments, *a, **k)
+
+    monkeypatch.setattr(subtitle, "layout_cues", spy)
+    fastapi_client.get("/api/export/timeline/srt?ids=1,2")
+
+    assert [s.get("speaker_id") for s in seen["segments"]] == ["SPEAKER_01", "SPEAKER_02"]
+
+
+def test_timeline_srt_wraps_long_lines_too(fastapi_client, server_module):
+    db = importlib.import_module("db")
+    db.upsert({
+        "path": "/tmp/long.mp4", "filename": "long.mp4", "ext": ".mp4",
+        "duration_s": 12.0, "size_mb": 5.0, "width": 1920, "height": 1080,
+        "fps": 30.0, "has_audio": 1, "transcript": LONG, "lang": "zh",
+        "frame_tags": "", "thumbnail_path": "", "processed_at": "2026-05-01T09:00:00",
+        "segments_json": json.dumps([{"start": 0.0, "end": 12.0, "text": LONG}],
+                                    ensure_ascii=False),
+    })
+
+    srt = fastapi_client.get("/api/export/timeline/srt?ids=1").text
+    body_lines = [ln for ln in srt.split("\n") if ln and "-->" not in ln and not ln.isdigit()]
+
+    assert len(body_lines) > 1
+    assert all(subtitle.display_units(ln) <= 14.0 for ln in body_lines), body_lines
+
+
+def test_timeline_srt_applies_the_punctuation_policy(fastapi_client, server_module):
+    db = importlib.import_module("db")
+    db.upsert({
+        "path": "/tmp/p.mp4", "filename": "p.mp4", "ext": ".mp4",
+        "duration_s": 12.0, "size_mb": 5.0, "width": 1920, "height": 1080,
+        "fps": 30.0, "has_audio": 1, "transcript": PUNCT, "lang": "zh",
+        "frame_tags": "", "thumbnail_path": "", "processed_at": "2026-05-01T09:00:00",
+        "segments_json": json.dumps([{"start": 0.0, "end": 12.0, "text": PUNCT}],
+                                    ensure_ascii=False),
+    })
+
+    srt = fastapi_client.get("/api/export/timeline/srt?ids=1").text
+
+    assert "。" not in srt and "「" not in srt
+    assert "，" in srt and "？" in srt
