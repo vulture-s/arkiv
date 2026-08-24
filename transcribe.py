@@ -7,6 +7,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 import platform
 from pathlib import Path
 
@@ -38,6 +39,15 @@ WHISPER_LANGUAGE_HINT = None
 WHISPER_LLM_MODEL = "qwen2.5:14b"
 VAD_ENABLED = True
 LLM_POLISH = True
+
+# Polish is the slowest thing in the pipeline: ~3-4 chars/s locally, so a whole
+# transcript in one call blows any sane timeout. Chunked, with a ceiling on the
+# total — the ceiling matters because polish runs inside the shared ingest slot,
+# so an unbounded retry would make the queue worse than the silent failure it
+# replaces. Both are overridable for a machine with a faster box behind Ollama.
+_LLM_POLISH_CHUNK_CHARS = 300
+_LLM_POLISH_TIMEOUT_S = int(os.getenv("ARKIV_LLM_POLISH_TIMEOUT", "300"))
+_LLM_POLISH_BUDGET_S = int(os.getenv("ARKIV_LLM_POLISH_BUDGET", "900"))
 
 # ── Platform Detection ───────────────────────────────────────────────────────
 _USE_MLX = platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -643,7 +653,7 @@ def _postprocess(text: str, lang: str, segments: list, language: str,
 
     # Step 5: LLM polish
     if LLM_POLISH and len(filtered_text) > 10:
-        filtered_text = _llm_polish(filtered_text, language)
+        filtered_text = _llm_polish_batched(filtered_text, language)
 
     # Step 6: words_json reconciliation. The per-segment filter above rebuilt
     # timed_segments from the SURVIVING segments, but `words` still carries every
@@ -726,13 +736,74 @@ def _llm_polish(text: str, language: str = "zh") -> str:
 校正後："""
 
     try:
-        result = chat(prompt, model=MODEL)
+        result = chat(prompt, model=MODEL, timeout=_LLM_POLISH_TIMEOUT_S, temperature=0.2)
         polished = result.get("text", "").strip()
         if polished and 0.5 < len(polished) / max(len(text), 1) < 2.0:
             return polished
-    except Exception:
-        pass
+        print("  [polish] rejected (length ratio out of range), keeping raw text", flush=True)
+    except Exception as exc:
+        # This used to be a bare `except: pass`, and that silence is the whole
+        # reason a 120 s timeout went unnoticed for months: a transcript long
+        # enough to blow the budget came back as raw, unpunctuated Whisper output
+        # and looked exactly like a transcript the model had declined to improve.
+        print(f"  [polish] skipped ({type(exc).__name__}): {exc}", flush=True)
     return text
+
+
+def _polish_chunks(text: str, max_chars: int = _LLM_POLISH_CHUNK_CHARS) -> list:
+    """Greedily pack `text` into ≤max_chars pieces, splitting only on spaces.
+
+    A space is exactly where `_postprocess` joined the kept segments, so a chunk
+    boundary can never land inside one — the model always sees whole segments.
+    """
+    words, chunks, current = text.split(" "), [], ""
+    for word in words:
+        if current and len(current) + 1 + len(word) > max_chars:
+            chunks.append(current)
+            current = word
+        else:
+            current = f"{current} {word}" if current else word
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _llm_polish_batched(text: str, language: str = "zh") -> str:
+    """Polish a transcript in pieces, under a total time budget.
+
+    Why pieces: qwen2.5:14b runs at roughly 3-4 characters/second locally, so a
+    4,000-character transcript needs 20+ minutes in one call. It blew the old
+    hardcoded 120 s timeout, the exception was swallowed, and the user silently got
+    raw unpunctuated text.
+
+    Why a BUDGET and not just a bigger timeout: raising the timeout alone converts
+    a silent 120 s failure into a real 20-70 minute one, held inside the shared
+    ingest slot — every other clip in the queue waits behind it. Past the budget the
+    remaining chunks are returned raw, which is the same outcome as before but
+    bounded and announced.
+
+    The length-ratio guard now applies per chunk, so one bad chunk degrades 300
+    characters rather than the whole transcript.
+    """
+    if not text.strip():
+        return text
+    chunks = _polish_chunks(text)
+    if len(chunks) <= 1:
+        return _llm_polish(text, language)
+
+    started, out = time.monotonic(), []
+    for i, chunk in enumerate(chunks):
+        elapsed = time.monotonic() - started
+        if elapsed > _LLM_POLISH_BUDGET_S:
+            print(
+                f"  [polish] budget reached after {elapsed:.0f}s — "
+                f"{len(chunks) - i} of {len(chunks)} chunks kept raw",
+                flush=True,
+            )
+            out.extend(chunks[i:])
+            break
+        out.append(_llm_polish(chunk, language))
+    return " ".join(out)
 
 
 def _to_wav(media_path: str):

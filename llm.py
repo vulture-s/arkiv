@@ -42,6 +42,8 @@ def chat(
     json_mode: bool = False,
     schema: Optional[Dict[str, Any]] = None,
     provider: Provider = Provider.OLLAMA,
+    timeout: int = 120,
+    temperature: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Call the chat model. `json_mode` asks for syntactically valid JSON; it does
     NOT constrain the shape, so the model can answer a "return {"groups":[...]}"
@@ -67,8 +69,15 @@ def chat(
         payload["format"] = schema
     elif json_mode:
         payload["format"] = "json"
+    # Left unset by default on purpose: forcing a temperature here would silently
+    # change tag generation (ingest.py) and every RAG answer (chat.py).
+    if temperature is not None:
+        payload["options"] = {"temperature": temperature}
 
-    response = _ollama_post("/api/chat", payload, timeout=120)
+    # 120 s stays the default for the ten existing call sites — chat.py's
+    # interactive RAG path SHOULD fail fast. Only long-form work (transcript
+    # polish) asks for patience, and it asks explicitly.
+    response = _ollama_post("/api/chat", payload, timeout=timeout)
     response.raise_for_status()
     data = response.json()
     return {

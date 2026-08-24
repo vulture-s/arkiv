@@ -158,3 +158,68 @@ def test_chat_uses_default_model_if_none(monkeypatch):
     llm.chat("hello")
 
     assert captured["model"] == "sentinel-model"
+
+
+# ── long-form callers ask for patience explicitly ────────────────────────────
+# Transcript polish needs 20+ minutes on a laptop; interactive RAG must fail fast.
+# Both parameters therefore keep their old defaults, and only the caller that
+# needs the difference states it. See tests/test_transcribe_polish.py.
+
+class _EchoResponse(object):
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"message": {"content": "ok"}}
+
+
+def _capture_post(monkeypatch, llm):
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return _EchoResponse()
+
+    monkeypatch.setattr(llm.requests, "post", fake_post)
+    return captured
+
+
+def test_chat_forwards_an_explicit_timeout(monkeypatch):
+    llm = importlib.import_module("llm")
+    captured = _capture_post(monkeypatch, llm)
+
+    llm.chat("hello", timeout=900)
+
+    assert captured["timeout"] == 900
+
+
+def test_chat_omits_options_unless_temperature_is_given(monkeypatch):
+    """An unset temperature must stay unset: sending Ollama's default explicitly
+    would silently change tag generation (ingest.py) and every RAG answer."""
+    llm = importlib.import_module("llm")
+    captured = _capture_post(monkeypatch, llm)
+
+    llm.chat("hello")
+
+    assert "options" not in captured["json"]
+
+
+def test_chat_sends_an_explicit_temperature(monkeypatch):
+    llm = importlib.import_module("llm")
+    captured = _capture_post(monkeypatch, llm)
+
+    llm.chat("hello", temperature=0.2)
+
+    assert captured["json"]["options"] == {"temperature": 0.2}
+
+
+def test_chat_temperature_zero_is_not_treated_as_unset(monkeypatch):
+    """`if temperature:` would drop 0.0 — the one value a caller is most likely to
+    want when it asks for determinism."""
+    llm = importlib.import_module("llm")
+    captured = _capture_post(monkeypatch, llm)
+
+    llm.chat("hello", temperature=0.0)
+
+    assert captured["json"]["options"] == {"temperature": 0.0}
