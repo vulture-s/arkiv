@@ -224,8 +224,11 @@ GOLDEN_SRT = (
 )
 
 
-def test_srt_output_is_byte_identical_after_the_extraction():
-    assert sub.segments_to_srt(GOLDEN_SEGMENTS, translate_key="translation") == GOLDEN_SRT
+def test_srt_layout_is_byte_identical_after_the_extraction():
+    """`restrict_punct=False` is the pre-punctuation-policy output. Layout has not
+    moved a byte since the layout/render split; only the punctuation policy did."""
+    assert sub.segments_to_srt(GOLDEN_SEGMENTS, translate_key="translation",
+                               restrict_punct=False) == GOLDEN_SRT
 
 
 def test_layout_cues_returns_start_end_lines():
@@ -260,13 +263,14 @@ def test_layout_cues_keeps_a_bilingual_segment_as_one_cue():
 def test_vtt_is_the_same_layout_in_webvtt_syntax():
     srt = sub.segments_to_srt(GOLDEN_SEGMENTS, translate_key="translation")
     vtt = sub.segments_to_vtt(GOLDEN_SEGMENTS, translate_key="translation")
+    # 。 is gone from both by then — the punctuation policy, not the renderer.
 
     assert vtt.startswith("WEBVTT\n\n")
     # Same cue count, same text, same times — only the syntax differs.
     assert vtt.count(" --> ") == srt.count(" --> ")
     assert "00:00:00.000 --> 00:00:03.000" in vtt
     assert "00:00:00,000" not in vtt, "comma separator is SRT's, not WebVTT's"
-    for line in ("今天天氣很好，我們去了海邊。", "cue，時間按比例分。", "你好世界。"):
+    for line in ("今天天氣很好，我們去了海邊", "cue，時間按比例分", "你好世界"):
         assert line in vtt
 
 
@@ -304,3 +308,96 @@ def test_whitespace_only_text_never_becomes_a_cue():
     `if not text` skip above and the `if not lines` skip after wrapping — and only
     the first is reachable; the second stays as defence, not as behaviour.)"""
     assert sub.layout_cues([{"start": 1.0, "end": 2.0, "text": " \t\n "}]) == []
+
+
+# ── the punctuation policy (product decision, from Penny's transcripts) ──────
+# On screen a cue's own start/end already says "pause here", so 。、；：…— and
+# quote marks compete with a 14-unit line budget for nothing. Subtitles keep
+# ，！？ only. The stored transcript is untouched, so .txt stays complete —
+# one test below pins both halves at once, because the decision IS both halves.
+
+PUNCT_SAMPLE = "他說：「這很好。」對嗎？我想是的，3.5公斤、12:30、50%"
+
+
+def test_subtitles_keep_only_the_three_marks():
+    out = sub.restrict_punctuation(PUNCT_SAMPLE)
+
+    for gone in "。：「」、…；—":
+        assert gone not in out, "{0} should not survive into a cue".format(gone)
+    assert "，" in out and "？" in out
+
+
+def test_numbers_and_hyphenated_words_survive_intact():
+    """The exemption that makes an allowlist unnecessary: a mark with ASCII
+    alphanumerics on both sides is structural, not clause-ending."""
+    out = sub.restrict_punctuation("3.5公斤 12:30 don't state-of-the-art 50% a,b")
+
+    assert "3.5" in out
+    assert "12:30" in out
+    assert "don't" in out
+    assert "state-of-the-art" in out
+    assert "50%" in out
+    assert "a,b" in out  # ASCII comma is in the keep list anyway
+
+
+def test_a_fullwidth_mark_between_digits_is_still_dropped():
+    """The exemption requires the MARK to be ASCII too. `12:30、50%` — that 、 has a
+    digit on each side but it is a list separator, not part of either number."""
+    assert "、" not in sub.restrict_punctuation("12:30、50%")
+
+
+def test_removing_a_mark_does_not_leave_a_double_space():
+    assert sub.restrict_punctuation("word — word") == "word word"
+    assert sub.restrict_punctuation("…leading and trailing…") == "leading and trailing"
+
+
+def test_a_line_of_pure_punctuation_disappears_rather_than_rendering_blank():
+    srt = sub.segments_to_srt([{"start": 0.0, "end": 1.0, "text": "「。」"}])
+    assert srt.count("-->") == 1        # the cue and its timing are still real
+    assert "「" not in srt and "。" not in srt
+
+
+def test_an_emptied_line_is_removed_not_left_as_a_blank_row():
+    """A bilingual cue whose translation is all punctuation. Keeping the emptied
+    line would put a blank row inside the cue — which in SRT reads as the end of
+    the cue, so every parser downstream sees a stray fragment."""
+    srt = sub.segments_to_srt(
+        [{"start": 0.0, "end": 1.0, "text": "今天天氣很好", "translation": "……"}],
+        translate_key="translation",
+    )
+
+    assert srt == "1\n00:00:00,000 --> 00:00:01,000\n今天天氣很好\n"
+
+
+def test_currency_and_math_are_not_punctuation():
+    """Unicode calls these Sc/Sm, not P. Dropping them would mangle prices."""
+    assert sub.restrict_punctuation("$30 + 5 = 35") == "$30 + 5 = 35"
+
+
+def test_the_policy_is_off_when_the_caller_says_so():
+    """`restrict_punct=False` is what .txt-shaped callers use. Without a way off,
+    the decision would not be reversible."""
+    assert "。" in sub.segments_to_srt([{"start": 0.0, "end": 1.0, "text": "好。"}],
+                                      restrict_punct=False)
+
+
+def test_both_renderers_apply_the_policy():
+    segs = [{"start": 0.0, "end": 1.0, "text": PUNCT_SAMPLE}]
+    for out in (sub.segments_to_srt(segs), sub.segments_to_vtt(segs)):
+        assert "。" not in out and "「" not in out
+        assert "，" in out and "？" in out
+
+
+def test_layout_still_sees_the_punctuation_it_breaks_on():
+    """Order matters: 。、；： are `wrap()`'s most valuable break points. Stripping
+    before layout would leave it breaking on width alone."""
+    text = "第一句話說完了。第二句話也說完了。第三句話同樣說完了。"
+    cues = sub.layout_cues([{"start": 0.0, "end": 9.0, "text": text}])
+    lines = [ln for _s, _e, ls in cues for ln in ls]
+
+    assert len(lines) > 1
+    assert all(ln.endswith("。") for ln in lines[:-1]), (
+        "layout must break after 。 — it can only do that if it still sees them"
+    )
+    # ...and the rendered cue has none of them left.
+    assert "。" not in sub.segments_to_srt([{"start": 0.0, "end": 9.0, "text": text}])

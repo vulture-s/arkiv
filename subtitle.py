@@ -12,6 +12,8 @@ Pure functions, no I/O — `segments_to_srt()` ties it to Whisper segments_json.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Dict, List, Optional, Tuple
 
 # One laid-out cue: start seconds, end seconds, the lines to show.
@@ -136,6 +138,52 @@ def wrap(text: str, max_units: float = 14.0) -> List[str]:
     return [ln for ln in lines if ln]
 
 
+# Subtitles keep only these. A cue's own start/end already expresses the pause
+# that 。 、 ； ： … — and quote marks are doing on a page, so on screen they are
+# noise competing with a 14-unit budget. `%` is punctuation by Unicode's
+# reckoning and a unit by everyone else's.
+_KEEP_PUNCT = "，,！!？?%"
+
+
+def _is_ascii_alnum(ch: str) -> bool:
+    return bool(ch) and ch.isascii() and ch.isalnum()
+
+
+def restrict_punctuation(text: str) -> str:
+    """Strip punctuation a subtitle line does not need, keeping `，！？` (and their
+    ASCII twins) — the product decision that came out of Penny's transcripts.
+
+    Two exemptions, and the second is the load-bearing one: a punctuation mark with
+    an ASCII alphanumeric on BOTH sides is kept. That one rule saves `3.5`, `12:30`,
+    `don't` and `state-of-the-art` without an allowlist of special cases, because in
+    every one of them the mark is doing structural work inside a token rather than
+    ending a clause.
+
+    Call this AFTER `wrap()`, per line. Whisper's `。、；：…` are the most valuable
+    break points `wrap()` has (`_BREAK_AFTER`); removing them first would make the
+    layout blind. And call it only when rendering — the stored transcript keeps its
+    full punctuation, so .txt stays complete, existing libraries benefit with no
+    re-transcription, and the decision stays reversible.
+    """
+    out = []
+    for i, ch in enumerate(text):
+        if not unicodedata.category(ch).startswith("P"):
+            out.append(ch)
+            continue
+        if ch in _KEEP_PUNCT:
+            out.append(ch)
+            continue
+        prev = text[i - 1] if i else ""
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        # The mark itself must be ASCII: a full-width 、 between two digits
+        # ("12:30、50%") is still a list separator, not part of either number.
+        if ch.isascii() and _is_ascii_alnum(prev) and _is_ascii_alnum(nxt):
+            out.append(ch)
+            continue
+        # dropped — a removed mark can leave two spaces behind, collapsed below.
+    return re.sub(r" {2,}", " ", "".join(out)).strip()
+
+
 def _ts(seconds: float, sep: str = ",") -> str:
     """SRT/VTT timecode HH:MM:SS,mmm.
 
@@ -200,15 +248,30 @@ def layout_cues(
     return cues
 
 
+def _render_lines(lines: List[str], restrict_punct: bool) -> List[str]:
+    """Apply the subtitle punctuation policy to already-laid-out lines.
+
+    A line can empty out entirely (`「。」`), and an empty line inside a cue would
+    render as a blank row, so those are dropped. A cue whose every line empties is
+    left with one empty string rather than no rows at all — dropping the cue here
+    would renumber everything after it, and the cue's timing is still real.
+    """
+    if not restrict_punct:
+        return lines
+    kept = [ln for ln in (restrict_punctuation(ln) for ln in lines) if ln]
+    return kept or [""]
+
+
 def segments_to_srt(
     segments: List[Dict],
     max_units: float = 14.0,
     max_lines: int = 2,
     translate_key: Optional[str] = None,
+    restrict_punct: bool = True,
 ) -> str:
     """Render Whisper segments to laid-out SRT. Layout lives in `layout_cues`."""
     cues = layout_cues(segments, max_units, max_lines, translate_key)
-    return "\n".join(format_cue(i, start, end, lines)
+    return "\n".join(format_cue(i, start, end, _render_lines(lines, restrict_punct))
                      for i, (start, end, lines) in enumerate(cues, 1))
 
 
@@ -217,12 +280,13 @@ def segments_to_vtt(
     max_units: float = 14.0,
     max_lines: int = 2,
     translate_key: Optional[str] = None,
+    restrict_punct: bool = True,
 ) -> str:
     """Same layout, WebVTT syntax: `.` for the millisecond separator, no cue
     numbers (they are optional in WebVTT, and the exports users already have
     don't carry them)."""
     cues = layout_cues(segments, max_units, max_lines, translate_key)
     body = "\n".join("{0} --> {1}\n{2}\n".format(_ts(start, "."), _ts(end, "."),
-                                                "\n".join(lines))
+                                                "\n".join(_render_lines(lines, restrict_punct)))
                      for start, end, lines in cues)
     return "WEBVTT\n\n" + body
