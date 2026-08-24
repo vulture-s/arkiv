@@ -289,3 +289,156 @@ def test_the_real_vision_loop_reports_each_frame(monkeypatch):
     frames = [e for e in seen if e.get("stage") == "frames"]
     assert [e["done"] for e in frames] == [0, 1, 2, 3]
     assert all(e["total"] == 3 for e in frames)
+
+
+# ── transcribe stages ────────────────────────────────────────────────────────
+# Stages, not a percentage. Whisper decoding is one opaque call per file, so
+# "decoding" for four minutes is the truth and a bar creeping to 90% is not.
+
+def _seed_playable(db, sample_record, tmp_path):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"\x00")
+    db.upsert(sample_record(path=str(media), filename="clip.mp4", ext=".mp4", has_audio=1))
+    return 1
+
+
+def test_transcribe_reports_each_stage_it_passes_through(monkeypatch, tmp_path):
+    """Pins the reports inside `transcribe.transcribe` itself, with the backend and
+    the wav extraction stubbed — the stage names are the contract the UI reads."""
+    import transcribe as tr
+
+    monkeypatch.setattr(tr, "_USE_MLX", False)
+    monkeypatch.setattr(tr, "_non_mac_backend", lambda: "faster-whisper")
+    monkeypatch.setattr(tr, "_to_wav", lambda p: str(tmp_path / "a.wav"))
+    monkeypatch.setattr(tr, "_vad_filter", lambda w: (w, None))
+    monkeypatch.setattr(tr, "_transcribe_faster_whisper",
+                        lambda w, lang: ("句子", "zh", [], []))
+
+    seen = []
+    with progress.capture(seen.append):
+        tr.transcribe("/clip.mp4", language="zh")
+
+    stages = [e["stage"] for e in seen if "stage" in e]
+    assert stages[:3] == ["extracting", "vad", "decoding"]
+
+
+def test_the_status_endpoint_shows_the_stage_mid_run(
+    fastapi_client, server_module, sample_record, tmp_path, monkeypatch
+):
+    db = importlib.import_module("db")
+    mid = _seed_playable(db, sample_record, tmp_path)
+    import transcribe as tr
+
+    seen = []
+
+    def fake_transcribe(path, language=None):
+        for stage in ("extracting", "decoding", "polishing"):
+            progress.report(stage=stage)
+            seen.append(fastapi_client.get(
+                "/api/media/%d/retranscribe/status" % mid).json())
+        return "新的逐字稿", "zh", [], []
+
+    monkeypatch.setattr(tr, "transcribe", fake_transcribe)
+
+    r = fastapi_client.post("/api/media/%d/retranscribe" % mid, json={"language": "zh"})
+
+    assert r.status_code == 200, r.text
+    assert [s.get("stage") for s in seen] == ["extracting", "decoding", "polishing"]
+    assert all(s.get("state") == "running" for s in seen)
+    # No percentage is claimed anywhere — the UI has stage names to show, not a bar.
+    assert not any("percent" in s for s in seen)
+    after = fastapi_client.get("/api/media/%d/retranscribe/status" % mid).json()
+    assert after["state"] == "done" and after["stage"] == "done"
+
+
+def test_a_second_retranscribe_is_refused_after_the_slot_is_already_free(
+    fastapi_client, server_module, sample_record, tmp_path, monkeypatch
+):
+    """The window the per-id claim actually covers, and the only one it covers.
+
+    While whisper runs, the process-wide ingest slot already refuses everything, so
+    the claim adds nothing there. But the slot is released the moment decoding ends
+    — deliberately, because the DB writes that follow hold no model — and during
+    those writes a second POST would sail past the slot and start overwriting the
+    same media row. The claim is what stops that, and this drives the request from
+    inside the write phase so the window is hit deterministically."""
+    db = importlib.import_module("db")
+    mid = _seed_playable(db, sample_record, tmp_path)
+    import transcribe as tr
+
+    monkeypatch.setattr(tr, "transcribe", lambda *a, **k: ("文字", "zh", [], []))
+
+    inner = {}
+    real_upsert = db.upsert_transcript
+
+    def spy_upsert(*a, **k):
+        if not inner.get("reentered"):
+            inner["reentered"] = True
+            import server
+            # The slot really is free at this point — that is the premise.
+            assert server._acquire_ingest_slot() is True
+            server._release_ingest_slot()
+            inner["status"] = fastapi_client.post(
+                "/api/media/%d/retranscribe" % mid, json={"language": "zh"}).status_code
+        return real_upsert(*a, **k)
+
+    monkeypatch.setattr(db, "upsert_transcript", spy_upsert)
+    fastapi_client.post("/api/media/%d/retranscribe" % mid, json={"language": "zh"})
+
+    assert inner["status"] == 409
+
+
+def test_losing_the_ingest_slot_does_not_leave_a_stale_claim(
+    fastapi_client, server_module, sample_record, tmp_path
+):
+    """The per-id claim is taken BEFORE the process-wide slot. If the slot is busy
+    the request 409s — and must hand the claim back, or this clip is wedged until
+    a restart even though it never ran."""
+    import server
+    db = importlib.import_module("db")
+    mid = _seed_playable(db, sample_record, tmp_path)
+
+    assert server._acquire_ingest_slot() is True
+    try:
+        r = fastapi_client.post("/api/media/%d/retranscribe" % mid, json={"language": "zh"})
+        assert r.status_code == 409
+    finally:
+        server._release_ingest_slot()
+
+    assert state.transcribe_jobs.get(mid)["state"] != "running"
+    assert state.transcribe_jobs.start(mid) is True
+    state.transcribe_jobs.finish(mid)
+
+
+def test_a_failed_retranscribe_clears_its_claim(
+    fastapi_client, server_module, sample_record, tmp_path, monkeypatch
+):
+    db = importlib.import_module("db")
+    mid = _seed_playable(db, sample_record, tmp_path)
+    import transcribe as tr
+    monkeypatch.setattr(tr, "transcribe",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    r = fastapi_client.post("/api/media/%d/retranscribe" % mid, json={"language": "zh"})
+
+    assert r.status_code == 500
+    assert state.transcribe_jobs.get(mid)["state"] == "error"
+    assert state.transcribe_jobs.start(mid) is True
+    state.transcribe_jobs.finish(mid)
+
+
+def test_a_refused_empty_result_also_clears_its_claim(
+    fastapi_client, server_module, sample_record, tmp_path, monkeypatch
+):
+    """The 422 path (transcribe returned nothing for a clip that already has a
+    transcript) is a third exit from the handler and leaks just as easily."""
+    db = importlib.import_module("db")
+    mid = _seed_playable(db, sample_record, tmp_path)
+    import transcribe as tr
+    monkeypatch.setattr(tr, "transcribe", lambda *a, **k: ("", "zh", [], []))
+
+    r = fastapi_client.post("/api/media/%d/retranscribe" % mid, json={"language": "zh"})
+
+    assert r.status_code == 422
+    assert state.transcribe_jobs.start(mid) is True
+    state.transcribe_jobs.finish(mid)

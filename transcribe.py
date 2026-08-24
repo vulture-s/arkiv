@@ -16,6 +16,7 @@ import soundfile as sf
 from silero_vad import load_silero_vad, get_speech_timestamps
 import torch
 
+import progress
 import subtitle
 import whisper_guard
 import zh_convert
@@ -327,6 +328,10 @@ def transcribe(media_path: str, language=None) -> tuple:
     """
     if language is None:
         language = WHISPER_LANGUAGE_HINT or DEFAULT_LANGUAGE
+    # Stages only, deliberately no percentage: whisper decoding is one opaque call
+    # per file and there is no honest number to put on it. "decoding" for four
+    # minutes is the truth; a bar creeping to 90% and sitting there is not.
+    progress.report(stage="extracting")
     wav = _to_wav(media_path)
     if not wav:
         return "", "", [], []
@@ -336,21 +341,26 @@ def transcribe(media_path: str, language=None) -> tuple:
     offset_map = None
     try:
         if _USE_MLX:
+            progress.report(stage="vad")
             vad_wav, offset_map = _vad_filter(wav)
             if vad_wav is None:
                 return "", "", [], []
             try:
+                progress.report(stage="decoding")
                 result = _transcribe_mlx(vad_wav, language)
             finally:
                 if vad_wav != wav:
                     Path(vad_wav).unlink(missing_ok=True)
         elif _non_mac_backend() == "whisperx":
+            progress.report(stage="decoding")
             result = _transcribe_whisperx(wav, language)
         else:
+            progress.report(stage="vad")
             vad_wav, offset_map = _vad_filter(wav)
             if vad_wav is None:
                 return "", "", [], []
             try:
+                progress.report(stage="decoding")
                 result = _transcribe_faster_whisper(vad_wav, language)
             finally:
                 if vad_wav != wav:
@@ -725,6 +735,7 @@ def _postprocess(text: str, lang: str, segments: list, language: str,
 
     # Step 5: LLM polish
     if LLM_POLISH and len(filtered_text) > 10:
+        progress.report(stage="polishing")
         filtered_text = _llm_polish_batched(filtered_text, language)
 
     # Step 6: words_json reconciliation. The per-segment filter above rebuilt
@@ -752,6 +763,7 @@ def _postprocess(text: str, lang: str, segments: list, language: str,
     # the same VAD-filtered wav the segments were timed against (passed by each
     # backend), so the labels line up with the timecodes.
     if wav_path and DIARIZATION_ENABLED:
+        progress.report(stage="diarizing")
         timed_segments = _attach_speaker_ids(timed_segments, wav_path)
 
     timed_segments = _split_long_segments(timed_segments)

@@ -37,7 +37,8 @@ from mediarecords import _get_light_records_by_ids, _get_tags_bulk
 from pathres import _display_path, _resolve_frame, _resolve_media_path, _resolve_record
 from reqopts import _parse_ids_query
 from scenes import _scenes_payload
-from state import _acquire_ingest_slot, _release_ingest_slot, vision_jobs
+from state import (_acquire_ingest_slot, _release_ingest_slot,
+                   transcribe_jobs, vision_jobs)
 from webguard import _assert_same_site
 
 router = APIRouter()
@@ -817,14 +818,23 @@ def retranscribe_media(
     # this one never did. So starting a batch and then clicking one clip's
     # retranscribe put two decodes side by side, which is precisely the case the
     # slot was added for. The batch paths already answer 409 the other way round.
+    # Two different guards, both needed. The ingest slot is process-wide and stops
+    # a second whisper loading at all; the per-id claim stops the SAME clip being
+    # retranscribed twice, which the slot would happily allow once the first one
+    # finished. The per-id one is also what gives the status endpoint an identity.
+    if not transcribe_jobs.start(media_id, stage="queued"):
+        raise HTTPException(409, "這支素材的轉錄正在進行中")
     if not _acquire_ingest_slot():
+        transcribe_jobs.finish(media_id, state="idle")
         raise HTTPException(409, "已有匯入或轉錄任務進行中，請稍候")
     try:
         import transcribe as tr
-        text, lang, segments, words = tr.transcribe(media_path, language=body.language)
+        with progress.capture(lambda ev: transcribe_jobs.update(media_id, **ev)):
+            text, lang, segments, words = tr.transcribe(media_path, language=body.language)
     except Exception as e:
         # Extraction/transcription failed — leave the existing transcript untouched
         # rather than blanking it (audit H1/H2).
+        transcribe_jobs.finish(media_id, state="error")
         raise HTTPException(500, "retranscribe 失敗：{0}".format(e))
     finally:
         # Released as soon as whisper is done: the DB writes below are milliseconds
@@ -835,6 +845,7 @@ def retranscribe_media(
     # that's almost always a regression (transient decode failure), not intent —
     # refuse to overwrite a good transcript with nothing (audit H1).
     if not (text or "").strip() and (rec.get("transcript") or "").strip():
+        transcribe_jobs.finish(media_id, state="error")
         raise HTTPException(422, "transcribe 回空，拒絕覆寫既有逐字稿（可能是音訊擷取失敗）")
     active_lang = lang or body.language
     seg_json = json.dumps(segments, ensure_ascii=False) if segments else None
@@ -865,7 +876,21 @@ def retranscribe_media(
         )
         # archive the new active language too (its row mirrors media.*).
         db.upsert_transcript(media_id, active_lang, text, seg_json, words_json, _conn=conn)
+    transcribe_jobs.finish(media_id, stage="done", transcript_length=len(text),
+                           language=active_lang)
     return {"ok": True, "transcript_length": len(text), "language": active_lang, "backup": backup_name}
+
+
+@router.get("/api/media/{media_id}/retranscribe/status")
+def retranscribe_status(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    """Which stage a retranscribe is in: extracting / vad / decoding / polishing /
+    diarizing. **No percentage** — whisper decoding is a single opaque call, and
+    inventing a number for it would be a worse answer than naming the stage."""
+    rec = transcribe_jobs.get(media_id)
+    return rec if rec is not None else {"state": "idle"}
 
 
 @router.get("/api/media/{media_id}/transcripts")

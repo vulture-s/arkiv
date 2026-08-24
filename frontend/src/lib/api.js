@@ -407,6 +407,10 @@ export const retryVision = (id, opts) =>
 // Polled WHILE the POST above is still open — the POST contract is unchanged.
 export const retryVisionStatus = (id, opts) =>
   req(`/api/media/${id}/retry-vision/status`, opts)
+// GET .../retranscribe/status → {state, stage:'extracting'|'vad'|'decoding'|…}
+// Stage only — whisper decoding is one opaque call, so there is no percentage.
+export const retranscribeStatus = (id, opts) =>
+  req(`/api/media/${id}/retranscribe/status`, opts)
 // POST /api/media/{id}/reingest → {ok, stdout, stderr}. 409 if an ingest is
 // already running (single-flight guard); 504 on the 10-min server timeout.
 export const reingest = (id, opts) =>

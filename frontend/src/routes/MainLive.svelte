@@ -809,6 +809,34 @@
   // Live progress label for the running per-clip action ('12/40'), '' when idle.
   let reProgress = ''
 
+  // Stage labels, not a progress bar: whisper decoding is a single opaque call and
+  // a percentage would be invented. Naming the stage is the honest version.
+  const TRANSCRIBE_STAGES = {
+    queued: '排隊中', extracting: '抽音軌', vad: '偵測語音',
+    decoding: '辨識中', polishing: '潤稿中', diarizing: '分辨語者',
+  }
+
+  // Poll `endpoint` every second and show `labels[stage]`. Shared by the two
+  // per-clip jobs that report stages rather than counts.
+  function pollStage(id, endpoint, labels) {
+    let alive = true
+    let timer = null
+    const tick = async () => {
+      if (!alive) return
+      try {
+        const s = await endpoint(id)
+        if (alive && s && s.state === 'running' && labels[s.stage]) reProgress = labels[s.stage]
+      } catch (_) {}
+      if (alive) timer = setTimeout(tick, 1000)
+    }
+    timer = setTimeout(tick, 1000)
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+      reProgress = ''
+    }
+  }
+
   // Returns a stop function. A failed poll is ignored on purpose: the job is the
   // POST, not this, and a status blip must never turn a working run into an error.
   function pollVisionProgress(id) {
@@ -840,7 +868,13 @@
     if (!selected) return { ok: false, message: '未選取素材' }
     const id = selected.id
     if (action === 'retranscribe') {
-      const r = await api.retranscribe(id, opts.language || 'zh')
+      const stopPolling = pollStage(id, api.retranscribeStatus, TRANSCRIBE_STAGES)
+      let r
+      try {
+        r = await api.retranscribe(id, opts.language || 'zh')
+      } finally {
+        stopPolling()
+      }
       if (detailId === id) await fetchDetail(id)
       await fetchTranscripts(id)  // G2: surface the (possibly new) language as a tab
       return { ok: r.ok, message: `轉錄完成 · ${r.transcript_length} 字 · ${r.language}` }

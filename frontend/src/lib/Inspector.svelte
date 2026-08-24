@@ -541,7 +541,7 @@
           {/each}
         </select>
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('retranscribe')}>
-          {reBusy === 'retranscribe' ? '轉錄中…' : '重轉錄'}
+          {reBusy === 'retranscribe' ? (reProgress ? `轉錄中… ${reProgress}` : '轉錄中…') : '重轉錄'}
         </button>
       </div>
       <div class="reprow">
