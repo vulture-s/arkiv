@@ -162,6 +162,28 @@ _VISION_FIELDS = (
 )
 
 
+def _to_taiwan_result(result: Dict) -> Dict:
+    """Traditionalise every human-readable field of a vision result, in place.
+
+    Only `description` was converted before, and the reason that mattered is not
+    cosmetic: **tags are index keys**. A Simplified tag is a permanently
+    unfindable one — the user searches 场景 and the library has 場景, or worse,
+    both exist as separate tags and the pool splits in two. The structured fields
+    (`content_type`, `atmosphere`, `energy`, `edit_position`, `edit_reason`) are
+    Chinese phrases too, and they are displayed and filtered on.
+
+    One place instead of four assignments, because four was how one of them came
+    to be missing.
+    """
+    result["description"] = zh_convert.to_taiwan(result.get("description") or "")
+    result["tags"] = [zh_convert.to_taiwan(t) for t in (result.get("tags") or [])]
+    for field in _VISION_FIELDS:
+        value = result.get(field)
+        if isinstance(value, str):  # focus_score is an int — leave it alone
+            result[field] = zh_convert.to_taiwan(value)
+    return result
+
+
 def _empty_result() -> Dict:
     result = {"description": "", "tags": []}
     for field in _VISION_FIELDS:
@@ -237,7 +259,7 @@ def _normalize_result(parsed: Dict) -> Dict:
     # description through zh_convert (s2twp), mirroring transcribe.py's write-path,
     # so frame descriptions honor the Traditional-Chinese contract (audit: 175 frames
     # / 159 clips had Simplified vision text because this path never converted).
-    result["description"] = zh_convert.to_taiwan(parsed.get("description", ""))
+    result["description"] = parsed.get("description", "")
     # Sanitize at the source: drop empty / pure-punctuation tags (e.g. the bare
     # "}" the JSON-fallback parser leaks) so they never enter the DB. Read-side
     # filtering (tag_quality.is_noise) also screens them, this just keeps storage clean.
@@ -247,7 +269,7 @@ def _normalize_result(parsed: Dict) -> Dict:
     ]
     for field in _VISION_FIELDS:
         result[field] = parsed.get(field)
-    return result
+    return _to_taiwan_result(result)
 
 
 def _call_vision(img_path, prompt, max_retries=2, model=None):
@@ -305,9 +327,9 @@ def _describe_one(img_path, max_retries=2, model=None):
         return result
     tags = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
     result = _empty_result()
-    result["description"] = zh_convert.to_taiwan(description)
+    result["description"] = description
     result["tags"] = tags
-    return result
+    return _to_taiwan_result(result)
 
 
 def _describe_one_light(img_path, max_retries=2, model=None):
@@ -322,20 +344,20 @@ def _describe_one_light(img_path, max_retries=2, model=None):
         if not isinstance(parsed, dict):
             return _empty_result()  # non-object payload → empty desc → flagged failed
         result = _empty_result()
-        result["description"] = zh_convert.to_taiwan(parsed.get("description", ""))
+        result["description"] = parsed.get("description", "")
         result["tags"] = parsed.get("tags", []) or []
         for field in _LIGHT_FIELDS:
             result[field] = parsed.get(field)
-        return result
+        return _to_taiwan_result(result)
     except json.JSONDecodeError:
         lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("```")]
         description = lines[0] if lines else ""
         if raw.lstrip().startswith(("{", "[")) or _is_degenerate_desc(description):
             return _empty_result()  # broken-JSON fragment → empty desc → flagged failed
         result = _empty_result()
-        result["description"] = zh_convert.to_taiwan(description)
+        result["description"] = description
         result["tags"] = [t.strip() for t in lines[-1].split(",")] if len(lines) > 1 else []
-        return result
+        return _to_taiwan_result(result)
 
 
 def _is_usable_frame(img_path):
