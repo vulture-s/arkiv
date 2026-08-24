@@ -102,3 +102,72 @@ def _proxy_ready(p: Path) -> bool:
         return p.exists() and p.stat().st_size > 0
     except OSError:
         return False
+
+
+# ── editor-supplied proxies (Resolve/Premiere sidecar folders) ───────────────
+# Cutting rooms already make proxies. When the footage came from one, there is a
+# `Proxy/` folder next to the media holding a small H.264 of every clip — and
+# arkiv has been re-encoding its own copy of something that already exists.
+_EDITOR_PROXY_DIRS = ("Proxy", "proxy", "PROXY")
+_EDITOR_PROXY_EXTS = (".mp4", ".mov", ".mxf")
+
+
+def _probe_duration(path: str):
+    """Seconds, or None if ffprobe can't say. Deliberately its own tiny call
+    (`-show_entries format=duration`) rather than ingest.probe: this runs on a
+    request path and does not need the full stream dump."""
+    import json as _json
+    import subprocess
+
+    import config
+    try:
+        r = subprocess.run(
+            [config.FFPROBE_PATH, "-v", "error", "-print_format", "json",
+             "-show_entries", "format=duration", path],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        return float(_json.loads(r.stdout)["format"]["duration"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def editor_proxy_for(src: str, duration_s, fps=None, exts=_EDITOR_PROXY_EXTS):
+    """A sidecar `Proxy/<stem>.<ext>` for `src`, ONLY if its duration matches.
+
+    The duration gate is not defensive padding — it is the whole reason this is
+    safe. A Resolve proxy routinely carries handles, a slate, or a different start
+    timecode, so "same stem, same folder" is not "same media". A proxy two seconds
+    longer would silently shift every trimmed SRT, every waveform bar, and every
+    IN/OUT derived from it, in a way that looks like a transcription bug rather
+    than a file-picking bug.
+
+    Tolerance is one frame, floored at 0.5 s: a proxy legitimately differs by up
+    to a frame from rounding, and below ~2 fps the frame-based bound gets silly.
+
+    Returns None — never a guess — when the duration is unknown on either side.
+    Not knowing is exactly the case where picking the wrong file is unrecoverable.
+    """
+    if not src or not duration_s or float(duration_s) <= 0:
+        return None
+    source = Path(src)
+    tolerance = max(0.5, 1.0 / float(fps)) if fps else 0.5
+    for dirname in _EDITOR_PROXY_DIRS:
+        folder = source.parent / dirname
+        if not folder.is_dir():
+            continue
+        for ext in exts:
+            candidate = folder / (source.stem + ext)
+            if not _proxy_ready(candidate):
+                continue
+            probed = _probe_duration(str(candidate))
+            if probed is None:
+                continue
+            if abs(probed - float(duration_s)) <= tolerance:
+                return candidate
+    return None

@@ -35,7 +35,7 @@ from auth import require_scopes
 from config import BASE_DIR
 from mediarecords import _get_light_records_by_ids, _get_tags_bulk
 from pathres import (_display_path, _proxy_ready, _resolve_frame,
-                     _resolve_media_path, _resolve_record)
+                     _resolve_media_path, _resolve_record, editor_proxy_for)
 from reqopts import _parse_ids_query
 from scenes import _scenes_payload
 from state import (_acquire_ingest_slot, _release_ingest_slot,
@@ -504,8 +504,8 @@ def get_media_waveform(
     """Return pre-computed audio peaks (0..1) for the inspector waveform.
 
     Cached per (id, bins, source) under `waveforms/<id>_<bins>_<p|o>.json`, where
-    the last part records whether the peaks came from the arkiv proxy or the
-    original file."""
+    the last part records where the peaks came from: `p` arkiv proxy, `e` the
+    cutting room's own sidecar proxy, `o` the original file."""
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
@@ -521,24 +521,43 @@ def get_media_waveform(
     # copy of. The proxy's AAC is a lossy re-encode, which moves a peak by less
     # than one pixel at 60 bins.
     resolved_src = _resolve_media_path(rec["path"])
-    proxy_path = config.proxy_path_for(media_id, resolved_src)
-    if _proxy_ready(proxy_path):
-        file_path, source_tag = proxy_path, "p"
-    else:
-        file_path, source_tag = Path(resolved_src), "o"
-
     cache_dir = BASE_DIR / "waveforms"
     cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _cache(tag):
+        return cache_dir / f"{media_id}_{bins}_{tag}.json"
+
+    arkiv_proxy = config.proxy_path_for(media_id, resolved_src)
+    if _proxy_ready(arkiv_proxy):
+        file_path, source_tag = arkiv_proxy, "p"
+    elif _cache("e").exists():
+        # An editor-proxy answer we already computed. Served without re-probing:
+        # finding that proxy costs an ffprobe, and paying it on every poll of an
+        # already-cached waveform would undo the point of caching.
+        file_path, source_tag = None, "e"
+    else:
+        editor = editor_proxy_for(resolved_src, rec.get("duration_s"), rec.get("fps"))
+        if editor is not None:
+            file_path, source_tag = editor, "e"
+        else:
+            file_path, source_tag = Path(resolved_src), "o"
+
     # The source tag is part of the key on purpose. The old `{id}_{bins}.json`
     # recorded nothing about WHERE the peaks came from, so the first cached answer
     # would be served forever — a clip drawn from its original before a proxy
     # existed would never be redrawn from the proxy, and vice versa.
-    cache_path = cache_dir / f"{media_id}_{bins}_{source_tag}.json"
+    cache_path = _cache(source_tag)
     if cache_path.exists():
         try:
             return json.loads(cache_path.read_text(encoding="utf-8"))
         except Exception:
             cache_path.unlink(missing_ok=True)
+    if file_path is None:
+        # The 'e' cache we were about to serve turned out to be unreadable; find
+        # the editor proxy again rather than 500 on a corrupt cache file.
+        file_path = editor_proxy_for(resolved_src, rec.get("duration_s"), rec.get("fps"))
+        if file_path is None:
+            file_path, cache_path = Path(resolved_src), _cache("o")
     if not file_path.exists():
         raise HTTPException(404, "找不到檔案")
     peaks = _compute_waveform(str(file_path), bins)
