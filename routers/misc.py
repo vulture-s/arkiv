@@ -13,7 +13,7 @@ _assert_same_site from webguard. No server import, no cycle.
 import mimetypes
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -41,7 +41,14 @@ def _log_safe(text: str, limit: int) -> str:
 
 
 class OpenFileRequest(BaseModel):  # audit M22: malformed JSON → clean 422, not a raw 500
-    path: str
+    # `path` alone cannot identify a clip from a library indexed before the
+    # relative-path migration: `_display_path` reduces an absolute path outside
+    # PROJECT_ROOT to its basename so the response can't leak the operator's
+    # directory tree, the UI hands that basename back, and `is_processed
+    # ("clip.mp4")` matches nothing — every "Show in Finder" on such a library is
+    # a 403. `media_id` names the row directly and closes that gap.
+    path: str = ""
+    media_id: Optional[int] = None
     reveal: bool = False
 
 
@@ -169,12 +176,22 @@ def open_file(
     read-only browse token is correctly refused.
     """
     import subprocess, platform
-    file_path = body.path
     reveal = body.reveal
-    # Validate: only allow paths that exist in our database
-    if not db.is_processed(file_path):
-        raise HTTPException(403, "只能開啟已索引的媒體檔案")
-    resolved_path = _resolve_media_path(file_path)
+    # Prefer the id. Note the security direction is CONVERGENT, not relaxed: an id
+    # can only ever name a row that already exists, and the path it yields is the
+    # library's own stored path — there is no attacker-controlled path in this
+    # branch at all, which is strictly less than the `path` branch allows.
+    if body.media_id is not None:
+        rec = db.get_record_by_id(body.media_id)
+        if not rec or not rec.get("path"):
+            raise HTTPException(403, "只能開啟已索引的媒體檔案")
+        resolved_path = _resolve_media_path(rec["path"])
+    else:
+        file_path = body.path
+        # Validate: only allow paths that exist in our database
+        if not file_path or not db.is_processed(file_path):
+            raise HTTPException(403, "只能開啟已索引的媒體檔案")
+        resolved_path = _resolve_media_path(file_path)
     if not Path(resolved_path).exists():
         raise HTTPException(404, "找不到檔案")
     system = platform.system()

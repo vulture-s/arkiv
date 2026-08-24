@@ -344,9 +344,16 @@ export const getChapters = (id, format = 'youtube', opts) =>
   req(`/api/media/${id}/chapters?format=${format}`, opts)
 // /api/media/{id}/remotion-props → word-level caption props (JSON)
 export const getRemotionProps = (id, opts) => req(`/api/media/${id}/remotion-props`, opts)
-// POST /api/open-file {path, reveal} → reveal in Finder/Explorer (reveal=true) or open
-export const openFile = (path, reveal = true, opts) =>
-  req('/api/open-file', { method: 'POST', body: { path, reveal }, ...opts })
+// POST /api/open-file {path?, media_id?, reveal} → reveal in Finder/Explorer or open.
+// Send media_id whenever it is known: a library indexed before the relative-path
+// migration reports only a basename as its path, which the server cannot match back
+// to a row — every reveal on such a library 403s.
+export const openFile = (path, reveal = true, opts, mediaId = null) =>
+  req('/api/open-file', {
+    method: 'POST',
+    body: mediaId != null ? { media_id: mediaId, reveal } : { path, reveal },
+    ...opts,
+  })
 // /api/cache/info → {caches:{...}}; POST /api/cache/clear?target=app|thumbnails|chromadb|waveforms|all
 export const cacheInfo = (opts) => req('/api/cache/info', opts)
 export const clearCache = (target = 'app', opts) =>

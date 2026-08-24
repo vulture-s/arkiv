@@ -203,8 +203,8 @@
       pushToast(`Remotion props 已匯出 · ${_stem(id, name)}.remotion.json`)
     } catch (e) { pushToast(`Remotion 匯出失敗: ${e.message}`, 'error') }
   }
-  async function revealFile(path) {
-    try { await api.openFile(path, true) } catch (e) { pushToast(`在 Finder 顯示失敗: ${e.message}`, 'error') }
+  async function revealFile(path, mediaId = null) {
+    try { await api.openFile(path, true, undefined, mediaId) } catch (e) { pushToast(`在 Finder 顯示失敗: ${e.message}`, 'error') }
   }
 
   // Poll /api/health, distinguishing deps-missing (503, immediate) from a still-
@@ -1147,7 +1147,7 @@
         onExport={selected ? (fmt, trim) => exportClip(selected.id, fmt, selected.name, trim) : null}
         onChapters={selected ? (fmt) => exportChapters(selected.id, selected.name, fmt) : null}
         onRemotion={selected ? () => exportRemotion(selected.id, selected.name) : null}
-        onReveal={inspPath ? () => revealFile(inspPath) : null}
+        onReveal={inspPath ? () => revealFile(inspPath, selected && selected.id) : null}
         onRate={rate}
         inPoint={detailLive ? detailLive.in_point : null}
         outPoint={detailLive ? detailLive.out_point : null}
