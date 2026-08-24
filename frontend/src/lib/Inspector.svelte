@@ -291,7 +291,15 @@
   }
   const RE_LANGS = [{ code: 'zh', label: '中文' }, { code: 'en', label: 'English' }]
   $: langOpts = languages && languages.length ? languages : RE_LANGS
-  const EXPORT_FMTS = ['edl', 'fcpxml', 'srt', 'vtt']
+  const EXPORT_FMTS = ['edl', 'fcpxml', 'srt', 'vtt', 'txt']
+  // The server has served .txt since Phase 12; only the button was missing, so the
+  // one format an editor actually pastes into a script doc was unreachable from
+  // the UI. The trim note is not padding: without ✂ the file is the LLM-polished
+  // transcript, with ✂ it is the raw Whisper segment text inside the window —
+  // those are not the same document.
+  const EXPORT_TITLES = {
+    txt: '逐字稿純文字（完整標點）。設了 ✂ 範圍時輸出的是該範圍內的 segment 原文，未經潤稿',
+  }
 
   const MOCK_TRANSCRIPT = [
     ['00:05', '我們從上海一路騎到拉薩，第十七天。', false],
@@ -568,13 +576,13 @@
     <div class="exports">
       {#if onExport}
         {#each EXPORT_FMTS as fmt}
-          <button class="ak-btn exp" on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{trimArgs ? ' ✂' : ''}</button>
+          <button class="ak-btn exp" title={EXPORT_TITLES[fmt] || ''}
+                  on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{trimArgs ? ' ✂' : ''}</button>
         {/each}
       {:else}
-        <button class="ak-btn exp">EDL</button>
-        <button class="ak-btn exp">FCPXML</button>
-        <button class="ak-btn exp">SRT</button>
-        <button class="ak-btn exp">VTT</button>
+        {#each EXPORT_FMTS as fmt}
+          <button class="ak-btn exp">{fmt.toUpperCase()}</button>
+        {/each}
       {/if}
     </div>
     {#if onChapters || onRemotion}
