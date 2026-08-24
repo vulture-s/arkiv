@@ -195,12 +195,32 @@ Invoke-Robocopy -Source $REPO -Dest (Join-Path $BACKEND 'src') -ExtraArgs @(
 # not run with /MIR here, so a .env copied in by an OLDER build of this script is
 # still sitting in $BACKEND\src and would ship even now that the exclude exists.
 # A denylist only stops the patterns someone remembered; this stops the class.
-$leaked = @(Get-ChildItem -LiteralPath (Join-Path $BACKEND 'src') -Recurse -Force -File -Filter '.env*' -ErrorAction SilentlyContinue)
-if ($leaked.Count -gt 0) {
-    Write-Host "ERROR: dotenv file(s) found in the assembled backend -- refusing to ship." -ForegroundColor Red
-    $leaked | ForEach-Object { Write-Host "  $($_.FullName)" -ForegroundColor Red }
-    Write-Host "       Delete them from $(Join-Path $BACKEND 'src') and re-run. If you added a" -ForegroundColor Red
-    Write-Host "       new dotenv variant, add it to the /XF list above too." -ForegroundColor Red
+#
+# One list, one scan. The previous version hard-coded '.env*' twice, so the guard
+# covered the class it named and nothing else -- the same "only what someone
+# remembered" failure it exists to prevent, one level up. Adding a pattern is now
+# a single line here, and the error names which pattern caught the file.
+$NeverShip = @(
+    '.env*'         # secrets -- see the /XF note above
+    'bench_*.json'  # dev-machine benchmark logs: GPU model + the filenames of
+                    # whatever was last ingested. On a real workstation that is a
+                    # list of client media. Added to /XF on 2026-08-20 (#341), but
+                    # the reason above is exactly why /XF is not enough: a staging
+                    # dir assembled BEFORE that still has one sitting in it.
+)
+$srcDir = Join-Path $BACKEND 'src'
+$anyLeaked = $false
+foreach ($pat in $NeverShip) {
+    $hits = @(Get-ChildItem -LiteralPath $srcDir -Recurse -Force -File -Filter $pat -ErrorAction SilentlyContinue)
+    if ($hits.Count -eq 0) { continue }
+    $anyLeaked = $true
+    Write-Host "ERROR: '$pat' matched inside the assembled backend -- refusing to ship." -ForegroundColor Red
+    $hits | ForEach-Object { Write-Host "  $($_.FullName)" -ForegroundColor Red }
+}
+if ($anyLeaked) {
+    Write-Host "       Delete them from $srcDir and re-run. If this is a new file" -ForegroundColor Red
+    Write-Host "       class that must never ship, add it to BOTH the /XF list above" -ForegroundColor Red
+    Write-Host "       and `$NeverShip here (and to assemble-backend.sh)." -ForegroundColor Red
     exit 1
 }
 

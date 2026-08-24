@@ -89,11 +89,31 @@ rsync -a \
 #      $BACKEND/src and would ship even now that the exclude exists.
 #   2. A denylist only stops the patterns someone remembered. This stops the
 #      whole class.
-if find "$BACKEND/src" -name '.env*' -type f | grep -q .; then
-  echo "ERROR: dotenv file(s) found in the assembled backend — refusing to ship." >&2
-  find "$BACKEND/src" -name '.env*' -type f >&2
-  echo "       Delete them from $BACKEND/src and re-run. If you added a new" >&2
-  echo "       dotenv variant, add it to the rsync --exclude list above too." >&2
+#
+# One list, one scan. The previous version hard-coded '.env*' twice, so the guard
+# covered the class it named and nothing else — the same "only what someone
+# remembered" failure it exists to prevent, one level up. Adding a pattern is now
+# a single line here, and the error names which pattern caught the file.
+NEVER_SHIP=(
+  '.env*'         # secrets — see the --exclude note above
+  'bench_*.json'  # dev-machine benchmark logs: GPU model + the filenames of
+                  # whatever was last ingested. On a real workstation that is a
+                  # list of client media. Excluded since 2026-08-20 (#341), but
+                  # reason 1 above is exactly why the exclude is not enough: a
+                  # staging dir assembled BEFORE that still has one sitting in it.
+)
+leaked=0
+for pat in "${NEVER_SHIP[@]}"; do
+  hits="$(find "$BACKEND/src" -name "$pat" -type f)"
+  [ -n "$hits" ] || continue
+  leaked=1
+  echo "ERROR: '$pat' matched inside the assembled backend — refusing to ship." >&2
+  printf '%s\n' "$hits" >&2
+done
+if [ "$leaked" -ne 0 ]; then
+  echo "       Delete them from $BACKEND/src and re-run. If this is a new file" >&2
+  echo "       class that must never ship, add it to BOTH the rsync --exclude" >&2
+  echo "       list above and NEVER_SHIP here (and to assemble-backend-win.ps1)." >&2
   exit 1
 fi
 
