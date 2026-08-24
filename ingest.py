@@ -607,6 +607,67 @@ def _build_proxy_cmd(src: str, dst: str, height: int, hwaccel: bool) -> list:
     return cmd
 
 
+def build_proxies() -> tuple:
+    """Generate proxies for every indexed clip that needs one. Returns (ok, skipped).
+
+    Lifted verbatim out of ingest Phase 3 so the decision can be tested. It has to
+    be: it is one half of a pair. `/api/stream` answers 409 "build a proxy" for
+    files this function decides about, and if the two halves disagree the user is
+    told to do something that then silently does nothing.
+    """
+    proxy_ok, proxy_skip = 0, 0
+    with db.get_conn() as conn:
+        all_media = conn.execute("SELECT id, path, codec FROM media").fetchall()
+    for mid, mpath, stored_codec in all_media:
+        resolved_path = db.resolve_path(mpath)
+        proxy_path = config.proxy_path_for(mid, resolved_path)
+        if proxy_path.exists():
+            proxy_skip += 1
+            continue
+        if not Path(resolved_path).suffix.lower() in VIDEO_EXT:
+            continue
+        # Decide proxy need from the stored codec (set at ingest time) instead of
+        # re-running ffprobe on every browser-compatible file each invocation
+        # (H1). Only legacy rows with NULL codec fall back to a one-time probe,
+        # whose result is then persisted so the next run skips it too.
+        if stored_codec:
+            # The stored codec cannot answer for the container. An AVCHD .mts is
+            # stored as "h264", so this branch used to skip it — and the stream
+            # endpoint now tells the user to build a proxy for exactly those
+            # files. Without this the two halves disagree and the 409 never clears.
+            want_proxy = (stored_codec.lower() in codec.PROXY_CODECS
+                          or codec.container_needs_remux(resolved_path))
+        else:
+            verdict = codec.needs_proxy(resolved_path)
+            want_proxy = verdict == codec.NEEDED
+            if verdict != codec.UNKNOWN:
+                probed = codec.probe_codec(resolved_path)
+                if probed:
+                    with db.get_conn() as conn:
+                        conn.execute(
+                            "UPDATE media SET codec=? WHERE id=?", (probed.lower(), mid)
+                        )
+        if want_proxy:
+            print(f"  [{mid}] {Path(resolved_path).name} >proxy", end="", flush=True)
+            result = generate_proxy(mid, resolved_path)
+            if result:
+                # B6: show original→proxy size delta so the compression win is
+                # visible per-clip (not just the proxy's absolute size).
+                mib = 1024 * 1024
+                proxy_sz = Path(result).stat().st_size
+                orig_sz = Path(resolved_path).stat().st_size
+                pct = (proxy_sz - orig_sz) / orig_sz * 100 if orig_sz else 0
+                print(f" [OK {proxy_sz / mib:.0f}MB ← {orig_sz / mib:.0f}MB, {pct:+.0f}%]")
+                proxy_ok += 1
+            else:
+                print(" [FAIL]")
+    if proxy_ok or proxy_skip:
+        print(f"Proxies: {proxy_ok} generated, {proxy_skip} already exist")
+    else:
+        print("No files need proxy (all browser-compatible)")
+    return proxy_ok, proxy_skip
+
+
 def generate_proxy(media_id: int, path: str, force: bool = False,
                    height: Optional[int] = None, hwaccel: Optional[bool] = None) -> Optional[str]:
     """Generate an H.264 proxy for browser playback. Returns proxy path or None.
@@ -2545,51 +2606,7 @@ def main():
     # ── Phase 3: Proxy generation (browser-incompatible codecs) ────────────
     print(f"\n{'─'*60}")
     print("Phase 3: Proxy generation for browser-incompatible codecs...")
-    proxy_ok, proxy_skip = 0, 0
-    with db.get_conn() as conn:
-        all_media = conn.execute("SELECT id, path, codec FROM media").fetchall()
-    for mid, mpath, stored_codec in all_media:
-        resolved_path = db.resolve_path(mpath)
-        proxy_path = config.proxy_path_for(mid, resolved_path)
-        if proxy_path.exists():
-            proxy_skip += 1
-            continue
-        if not Path(resolved_path).suffix.lower() in VIDEO_EXT:
-            continue
-        # Decide proxy need from the stored codec (set at ingest time) instead of
-        # re-running ffprobe on every browser-compatible file each invocation
-        # (H1). Only legacy rows with NULL codec fall back to a one-time probe,
-        # whose result is then persisted so the next run skips it too.
-        if stored_codec:
-            want_proxy = stored_codec.lower() in codec.PROXY_CODECS
-        else:
-            verdict = codec.needs_proxy(resolved_path)
-            want_proxy = verdict == codec.NEEDED
-            if verdict != codec.UNKNOWN:
-                probed = codec.probe_codec(resolved_path)
-                if probed:
-                    with db.get_conn() as conn:
-                        conn.execute(
-                            "UPDATE media SET codec=? WHERE id=?", (probed.lower(), mid)
-                        )
-        if want_proxy:
-            print(f"  [{mid}] {Path(resolved_path).name} >proxy", end="", flush=True)
-            result = generate_proxy(mid, resolved_path)
-            if result:
-                # B6: show original→proxy size delta so the compression win is
-                # visible per-clip (not just the proxy's absolute size).
-                mib = 1024 * 1024
-                proxy_sz = Path(result).stat().st_size
-                orig_sz = Path(resolved_path).stat().st_size
-                pct = (proxy_sz - orig_sz) / orig_sz * 100 if orig_sz else 0
-                print(f" [OK {proxy_sz / mib:.0f}MB ← {orig_sz / mib:.0f}MB, {pct:+.0f}%]")
-                proxy_ok += 1
-            else:
-                print(" [FAIL]")
-    if proxy_ok or proxy_skip:
-        print(f"Proxies: {proxy_ok} generated, {proxy_skip} already exist")
-    else:
-        print("No files need proxy (all browser-compatible)")
+    build_proxies()
 
     batch_elapsed = _time.time() - batch_start
     total_dur = sum(b["duration_s"] for b in bench_log)

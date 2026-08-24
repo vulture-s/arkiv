@@ -110,6 +110,23 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
     # on EVERY playback; only probe when the column is NULL (legacy rows) and
     # backfill so the next play is probe-free. None (probe failed / audio-only)
     # keeps the UNKNOWN fall-through behavior.
+    # The container decides first, and without a probe: an AVCHD .mts holds plain
+    # H.264, so the codec check says "playable" and we hand over bytes the browser
+    # cannot demux. That is a black player with no error rather than a 409 the UI
+    # can turn into "build a proxy".
+    if codec.container_needs_remux(str(file_path)):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "need_proxy": True,
+                "media_id": media_id,
+                "filename": rec.get("filename"),
+                "reason": "container cannot be demuxed in a browser ({0}); proxy required".format(
+                    file_path.suffix.lower()),
+                "hint": "POST /api/proxy/build to queue proxy generation",
+            },
+        )
+
     if serving_editor_proxy:
         # Probe the CANDIDATE, never the record: `media.codec` describes the
         # original, and a sidecar is frequently a different codec (that is the

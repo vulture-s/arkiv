@@ -20,6 +20,14 @@ PROXY_CODECS = frozenset({
     "prores", "ap4h", "ap4x", "apch", "apcn", "apcs", "apco",
 })
 
+# Containers a browser cannot demux, whatever is inside them. AVCHD camcorder
+# footage (.mts/.m2ts) is almost always plain H.264 — so the codec check says
+# "playable", we hand over the original bytes labelled video/mp4, and the
+# demuxer fails without a word. The user sees a black player and no error.
+# The container has to be decided BEFORE the codec, because the codec answer is
+# the thing that misleads here.
+REMUX_CONTAINERS = frozenset({".mts", ".m2ts", ".m2t", ".ts", ".mxf"})
+
 # Tri-state verdict: distinguishes "ffprobe says H.264" from "ffprobe failed",
 # so callers (e.g. stream endpoint) can pick a different fallback for each.
 NEEDED = "needed"
@@ -68,13 +76,28 @@ def probe_codec(path: str, timeout: float = 10.0) -> Optional[str]:
     return codec
 
 
+def container_needs_remux(path: str) -> bool:
+    """True for containers no browser can demux, independent of the codec.
+
+    Extension-only on purpose: this must answer before (and without) a probe,
+    since the probe is what produces the misleading "h264, looks fine" verdict.
+    """
+    return os.path.splitext(str(path))[1].lower() in REMUX_CONTAINERS
+
+
 def needs_proxy(path: str, timeout: float = 10.0) -> str:
     """Tri-state proxy verdict.
 
-    - NEEDED: codec is HEVC/ProRes/etc, browser can't play original.
+    - NEEDED: the browser can't play the original — an unplayable codec
+      (HEVC/ProRes) OR an undemuxable container (AVCHD .mts, .ts, .mxf).
     - NOT_NEEDED: codec is browser-friendly (H.264 etc).
     - UNKNOWN: ffprobe failed or file unreachable; caller decides fallback.
+
+    The container is checked first and without probing: an .mts holding H.264
+    probes as perfectly playable, which is precisely how it slipped through.
     """
+    if container_needs_remux(path):
+        return NEEDED
     codec = probe_codec(path, timeout=timeout)
     if codec is None:
         return UNKNOWN
