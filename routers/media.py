@@ -36,6 +36,7 @@ from mediarecords import _get_light_records_by_ids, _get_tags_bulk
 from pathres import _display_path, _resolve_frame, _resolve_media_path, _resolve_record
 from reqopts import _parse_ids_query
 from scenes import _scenes_payload
+from state import _acquire_ingest_slot, _release_ingest_slot
 from webguard import _assert_same_site
 
 router = APIRouter()
@@ -810,6 +811,13 @@ def retranscribe_media(
         # fable-audit 2026-07-12: don't leak the resolved absolute path in the
         # error body — surface the PROJECT_ROOT-relative/basename form (Phase 16.2).
         raise HTTPException(400, f"找不到媒體檔案：{_display_path(rec.get('path') or '')}")
+    # The ingest slot (audit H3) exists to stop two whisper decodes running at
+    # once — that is the OOM guard on a 16 GB box. Every batch path takes it;
+    # this one never did. So starting a batch and then clicking one clip's
+    # retranscribe put two decodes side by side, which is precisely the case the
+    # slot was added for. The batch paths already answer 409 the other way round.
+    if not _acquire_ingest_slot():
+        raise HTTPException(409, "已有匯入或轉錄任務進行中，請稍候")
     try:
         import transcribe as tr
         text, lang, segments, words = tr.transcribe(media_path, language=body.language)
@@ -817,6 +825,11 @@ def retranscribe_media(
         # Extraction/transcription failed — leave the existing transcript untouched
         # rather than blanking it (audit H1/H2).
         raise HTTPException(500, "retranscribe 失敗：{0}".format(e))
+    finally:
+        # Released as soon as whisper is done: the DB writes below are milliseconds
+        # and hold no model in memory, and keeping the slot across them would make
+        # the queue wait on sqlite for no reason.
+        _release_ingest_slot()
     # An empty result means "no speech"; for a clip that already has a transcript
     # that's almost always a regression (transient decode failure), not intent —
     # refuse to overwrite a good transcript with nothing (audit H1).
