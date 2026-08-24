@@ -222,6 +222,37 @@ jobs:
       - name: cargo check --locked
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml
 
+  tauri-check-windows:
+    name: tauri-check-windows
+    runs-on: windows-latest
+    # The comment above says "the app ships macOS-only". That stopped being true
+    # when W1-W4 shipped the .exe/.msi, and main.rs now carries three
+    # `#[cfg(windows)]` blocks — the CREATE_NO_WINDOW flags, the LOCALAPPDATA
+    # Ollama lookup, and the PATH augmentation — that the macOS runner does not
+    # compile at all. Until this job existed, a Windows-only type error would
+    # first appear during a `v*` release build, i.e. after the tag was pushed.
+    # Deliberately a SEPARATE job rather than a matrix on tauri-check: turning
+    # that one into a matrix renames it to `tauri-check (macos-latest)`, and the
+    # required check named `tauri-check` would then never report at all.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend (generate_context! embeds frontend/dist)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo check --locked
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
   audit:
     name: dependency-audit
     runs-on: ubuntu-latest

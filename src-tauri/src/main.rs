@@ -25,6 +25,132 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 /// Holds the spawned backend so we can kill it on exit.
 struct Backend(Mutex<Option<Child>>);
 
+/// Holds an Ollama we started ourselves. `None` when Ollama was already running —
+/// killing someone else's daemon on quit would be worse than not starting one.
+struct Ollama(Mutex<Option<Child>>);
+
+/// Ollama's fixed local port. Probed rather than configured: if the user already
+/// has it running (the normal case for anyone who installed it themselves), we
+/// must not start a second one.
+const OLLAMA_PORT: u16 = 11434;
+
+/// PATH for child processes.
+///
+/// A Finder-launched `.app` inherits a minimal PATH — roughly
+/// `/usr/bin:/bin:/usr/sbin:/sbin` — not the shell's. Homebrew is not on it. So
+/// `faster-whisper` calling a bare `ffmpeg`, and every `ollama` lookup, fail with
+/// `[Errno 2] No such file or directory` inside the packaged app while working
+/// perfectly from a terminal. That difference is invisible during development,
+/// which is exactly why it shipped.
+fn augmented_path() -> String {
+    let current = std::env::var("PATH").unwrap_or_default();
+    #[allow(unused_mut)]
+    let mut parts: Vec<String> = Vec::new();
+    #[cfg(unix)]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        #[cfg(target_os = "macos")]
+        {
+            parts.push("/opt/homebrew/bin".into()); // Apple Silicon Homebrew
+            parts.push("/usr/local/bin".into()); // Intel Homebrew / manual installs
+        }
+        #[cfg(target_os = "linux")]
+        parts.push("/usr/local/bin".into());
+        if !home.is_empty() {
+            parts.push(format!("{home}/.local/bin"));
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            parts.push(format!("{local}\\Programs\\Ollama"));
+        }
+    }
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    // Existing entries win: never shadow a binary the user has deliberately put
+    // earlier on their own PATH.
+    let mut out = current.clone();
+    for p in parts {
+        if !current.split(sep).any(|e| e == p) {
+            out.push_str(sep);
+            out.push_str(&p);
+        }
+    }
+    out
+}
+
+/// Is something listening on `port`?
+fn port_open(port: u16) -> bool {
+    format!("127.0.0.1:{port}")
+        .parse()
+        .ok()
+        .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok())
+        .unwrap_or(false)
+}
+
+/// Start `ollama serve` if nothing is already serving, returning the child we own.
+///
+/// The packaged app never did this — `main.rs` contained the string "ollama" zero
+/// times — so vision tagging, chat and embeddings all silently degraded inside the
+/// bundle while working from a dev shell. Silently, because each of those paths
+/// soft-fails by design: the clip just comes back with no description.
+fn spawn_ollama_if_needed(log_dir: &std::path::Path) -> Option<Child> {
+    if port_open(OLLAMA_PORT) {
+        eprintln!("[arkiv-tauri] ollama already running on {OLLAMA_PORT}");
+        return None;
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut candidates: Vec<String> = vec![
+        "/opt/homebrew/bin/ollama".into(),
+        "/usr/local/bin/ollama".into(),
+        "/Applications/Ollama.app/Contents/Resources/ollama".into(),
+    ];
+    if !home.is_empty() {
+        candidates.push(format!("{home}/.local/bin/ollama"));
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            candidates.push(format!("{local}\\Programs\\Ollama\\ollama.exe"));
+        }
+    }
+    // Last resort: whatever PATH resolves, using the augmented one.
+    candidates.push("ollama".into());
+
+    let log = std::fs::File::create(log_dir.join("ollama.log")).ok();
+    for bin in candidates {
+        if bin.contains(std::path::MAIN_SEPARATOR) && !std::path::Path::new(&bin).exists() {
+            continue;
+        }
+        let mut cmd = Command::new(&bin);
+        cmd.arg("serve").env("PATH", augmented_path());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        if let Some(f) = log.as_ref().and_then(|f| f.try_clone().ok()) {
+            let err = f.try_clone().ok();
+            cmd.stdout(Stdio::from(f));
+            if let Some(e) = err {
+                cmd.stderr(Stdio::from(e));
+            }
+        }
+        match cmd.spawn() {
+            Ok(child) => {
+                eprintln!("[arkiv-tauri] started ollama: {bin}");
+                return Some(child);
+            }
+            Err(e) => eprintln!("[arkiv-tauri] ollama spawn failed ({bin}): {e}"),
+        }
+    }
+    // Not fatal. arkiv indexes, searches and transcribes without Ollama; only the
+    // LLM-backed features degrade, and they already say so.
+    eprintln!("[arkiv-tauri] no ollama binary found; vision/chat/embed will be unavailable");
+    None
+}
+
 /// Ask the OS for a free TCP port (bind :0, read the assigned port, drop).
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
@@ -92,6 +218,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Backend(Mutex::new(None)))
+        .manage(Ollama(Mutex::new(None)))
         .setup(|app| {
             let port = free_port();
 
@@ -162,7 +289,11 @@ fn main() {
             .env("PYTHONPATH", &pythonpath)
             .env("ARKIV_PROJECT_ROOT", &proj_root)
             .env("ARKIV_PORT", port.to_string())
-            .env("ARKIV_TRUST_LOOPBACK", "1");
+            .env("ARKIV_TRUST_LOOPBACK", "1")
+            // Without this the bundled app cannot find ffmpeg (Homebrew is not on
+            // a Finder-launched process's PATH), and faster-whisper's bare
+            // `ffmpeg` call takes the whole batch down with [Errno 2].
+            .env("PATH", augmented_path());
             // `windows_subsystem = "windows"` (top of this file) only silences OUR
             // console. Spawning python.exe from a GUI process still allocates a new
             // one, so without this flag every launch parks a black console window
@@ -179,6 +310,12 @@ fn main() {
             if let Some(err) = stderr_cfg {
                 cmd.stderr(err);
             }
+            // Ollama first: the backend probes it during startup, and starting it
+            // after would leave the first minute of a session with vision off.
+            if let Some(o) = spawn_ollama_if_needed(&log_dir) {
+                app.state::<Ollama>().0.lock().unwrap().replace(o);
+            }
+
             let child = cmd.spawn();
 
             let child = match child {
@@ -210,6 +347,14 @@ fn main() {
             // survives the window closing.
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 if let Some(state) = app_handle.try_state::<Backend>() {
+                    if let Some(mut child) = state.0.lock().unwrap().take() {
+                        let _ = child.kill();
+                    }
+                }
+                // Only the Ollama we started. If it was already running when we
+                // launched, the state holds None and the user's daemon — very
+                // possibly serving something else — is left alone.
+                if let Some(state) = app_handle.try_state::<Ollama>() {
                     if let Some(mut child) = state.0.lock().unwrap().take() {
                         let _ = child.kill();
                     }
