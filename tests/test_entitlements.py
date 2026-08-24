@@ -14,6 +14,8 @@ pre-1.1.0 window and then start failing on the release that matters most.
 import importlib
 import json
 import sqlite3
+import sys
+import types
 
 import pytest
 
@@ -306,6 +308,101 @@ def test_registering_a_new_project_does_not_drop_the_own_library(monkeypatch, tm
     paths = project_registry.known_project_dbs()
     assert entitlements.install_is_grandfathered(paths) is True
     assert entitlements.check_cross_project(db_paths=paths).allowed is True
+
+
+# ── the Pro add-on interface ──────────────────────────────────────────────────
+#
+# `entitlements._pro_from_addon_module` is a contract with a component that does
+# not exist yet: the add-on is a separate distribution, so until it ships this
+# branch of `has_pro()` has never run against anything. That is exactly why it is
+# worth pinning now — the day the add-on arrives, a mistake here means either a
+# paying user is refused (bad) or the gate is bypassed (worse), and neither shows
+# up as a red test unless the contract was written down as one.
+#
+# The module is injected through `sys.modules`, the same trick `conftest.py` uses
+# for torch/chromadb. `_pro_from_addon_module` does `import arkiv_pro` INSIDE the
+# function, so the injection is seen on every call without reloading anything.
+
+
+def _install_addon(monkeypatch, **attrs):
+    """Make `import arkiv_pro` succeed, carrying whatever attributes are given."""
+    mod = types.ModuleType("arkiv_pro")
+    for key, value in attrs.items():
+        setattr(mod, key, value)
+    monkeypatch.setitem(sys.modules, "arkiv_pro", mod)
+    return mod
+
+
+def test_addon_reporting_a_valid_licence_grants_pro(monkeypatch):
+    _install_addon(monkeypatch, has_valid_license=lambda: True)
+    assert entitlements.has_pro() is True
+
+
+def test_addon_reporting_an_invalid_licence_does_not_grant_pro(monkeypatch):
+    """Installed but unlicensed is NOT entitled — otherwise the component being
+    on disk would itself be the licence."""
+    _install_addon(monkeypatch, has_valid_license=lambda: False)
+    assert entitlements.has_pro() is False
+
+
+def test_addon_without_the_hook_counts_as_pro(monkeypatch):
+    """Presence-as-answer is the deliberate lenient branch (see the docstring).
+
+    Pinned because it is the one that looks like an oversight: a reader tightening
+    this to "no hook means no licence" would gate a user who paid and installed
+    the component, on core's expectations about the component's internals.
+    """
+    _install_addon(monkeypatch)
+    assert entitlements.has_pro() is True
+
+
+def test_a_hook_that_raises_does_not_grant_pro_and_does_not_propagate(monkeypatch):
+    """A broken add-on must not take an unrelated user action down with it.
+
+    `has_pro()` is called on the path of adding a project and of searching; an
+    exception escaping here would surface as a 500 on an action that has nothing
+    to do with licensing.
+    """
+    def _boom():
+        raise RuntimeError("add-on internal error")
+
+    _install_addon(monkeypatch, has_valid_license=_boom)
+    assert entitlements.has_pro() is False
+
+
+def test_a_broken_addon_import_does_not_grant_pro(monkeypatch):
+    """`except Exception`, not `except ImportError`.
+
+    A half-installed component raises something other than ImportError on import
+    — and that is not proof of entitlement. Narrowing the catch here would turn a
+    broken add-on into a 500 on an unrelated action.
+
+    `sys.modules["arkiv_pro"] = None` is the documented way to make an import
+    raise: CPython treats a None entry as "this import must fail".
+    """
+    monkeypatch.setitem(sys.modules, "arkiv_pro", None)
+    assert entitlements.has_pro() is False
+
+
+def test_pro_lifts_the_cap_end_to_end(monkeypatch, tmp_path):
+    """The predicate is not the point — the verdicts are.
+
+    Mirrors the #343 lesson: a function returning the right answer proves nothing
+    about the call sites reaching it. This asserts through `check_add_project` /
+    `check_cross_project`, on an install that is otherwise capped (armed, not
+    grandfathered, already at the free limit).
+    """
+    monkeypatch.setattr(config, "VERSION", ARMED)
+    new = _library(tmp_path / "new" / "project.db", ARMED)
+
+    refused = entitlements.check_add_project(entitlements.FREE_PROJECT_LIMIT, db_paths=[new])
+    assert refused.allowed is False and refused.code == "project_limit"
+    assert entitlements.check_cross_project(db_paths=[new]).allowed is False
+
+    _install_addon(monkeypatch, has_valid_license=lambda: True)
+    allowed = entitlements.check_add_project(entitlements.FREE_PROJECT_LIMIT, db_paths=[new])
+    assert allowed.allowed is True and allowed.code == "pro"
+    assert entitlements.check_cross_project(db_paths=[new]).allowed is True
 
 
 # ── the rule's own start date ─────────────────────────────────────────────────
