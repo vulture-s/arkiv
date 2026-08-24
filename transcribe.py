@@ -403,7 +403,29 @@ def _transcribe_mlx(wav: str, language: str) -> tuple:
     text = result.get("text", "").strip()
     lang = result.get("language", language)
     raw_segments = result.get("segments", [])
-    return _postprocess(text, lang, raw_segments, language, words=[], wav_path=wav)
+    # mlx-whisper has been asked for word_timestamps=True since this function was
+    # written, and the words were thrown away — every clip ingested on a Mac stored
+    # words_json = NULL. So `/api/media/{id}/remotion-props` returns nothing useful
+    # on the primary platform, and MCP's opt-in word list is always empty there.
+    #
+    # Shape differs from faster-whisper: mlx returns plain dicts on the segment
+    # (`{"word", "start", "end", "probability"}`) where faster-whisper returns
+    # objects. Normalised to faster-whisper's output shape here so `_postprocess`
+    # and every consumer see one contract — the same reason `probability` is
+    # renamed `score`.
+    all_words = []
+    for seg in raw_segments:
+        for word in (seg.get("words") or []):
+            start, end = word.get("start"), word.get("end")
+            if start is None or end is None:
+                continue
+            all_words.append({
+                "word": (word.get("word") or "").strip(),
+                "start": round(float(start), 3),
+                "end": round(float(end), 3),
+                "score": round(float(word.get("probability") or 0.0), 3),
+            })
+    return _postprocess(text, lang, raw_segments, language, words=all_words, wav_path=wav)
 
 def _transcribe_faster_whisper(wav: str, language: str) -> tuple:
     """Transcribe using faster-whisper (non-Mac / CUDA).
