@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## v1.1.2 - 2026-08-24
+
+**Nothing in this release changes what arkiv does.** It exists so that three changes to the
+build and packaging path get exercised by a real release instead of waiting for the next one
+that happens to carry a feature — a release pipeline that has only ever been reasoned about is
+not a verified one. If you are on 1.1.1 there is no reason to update.
+
+### Fixed
+
+- **A local build no longer ships a developer's benchmark logs.** Both assemble scripts already
+  excluded them, and both already refused to ship a stray `.env` — but that refusal only looked
+  for the one pattern it named, which is the "only what someone remembered" failure it exists to
+  prevent, one level up. The check is now driven by a list, so covering a new file class is one
+  line and the error says which pattern matched. `bench_*.json` is the second entry: it carries
+  the machine's GPU model and the filenames of whatever was last ingested, which on a working
+  editor is a list of client media. **Artifacts published from this repository were never
+  affected** — releases build from a clean CI checkout.
+
+### Changed
+
+- **Release builds no longer recompile `tauri-cli` from source every time.** Measured on the
+  1.1.1 tag run: 9m38s on macOS and 10m05s on Windows, producing a binary identical to the last
+  one. The CLI version is now pinned and the built binary cached. Pinning also closes a hole
+  that had not yet bitten: `--version "^2.0"` resolves at run time, so two releases could embed
+  different bundlers with nothing in the repository changing.
+- The Pro add-on interface (`arkiv_pro`) now has tests. The component ships separately and does
+  not exist yet, which is exactly why the contract is worth writing down now: when it arrives, a
+  mistake on this side either refuses a paying user or bypasses the tier, and neither shows up
+  as a failing test unless the contract was pinned first.
+
 ## v1.1.1 - 2026-08-21
 
 **1.1.0 shipped the free allowance. It also shipped three ways for a long-time user to lose

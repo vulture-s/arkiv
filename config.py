@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).parent
 # Backend product version. Keep in sync with the release tag + frontend
 # version.js at release time. Served by GET /api/version and included in
 # GET /api/health so a user/support can identify the build.
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
 # Codex Round-2 audit (J3): without bounds, ARKIV_PROXIES_DIR=/etc would have
 # arkiv write generated proxy mp4 files into /etc on every HEVC ingest. Same
