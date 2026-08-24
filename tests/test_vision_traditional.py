@@ -20,6 +20,15 @@ import json
 import pytest
 
 import vision as vis
+import zh_convert
+
+# opencc has no cp39 arm64 wheel, so `zh_convert` degrades to identity on the 3.9
+# CI leg — the same guard the Phase 9.8b tests use. Skipping is right: identity is
+# a deliberate, tested degradation, and asserting conversion there would be
+# asserting that opencc is installed, which is a packaging question, not this one.
+_needs_opencc = pytest.mark.skipif(
+    zh_convert._converter("s2twp") is None, reason="opencc not installed"
+)
 
 
 SIMPLIFIED = {
@@ -41,6 +50,7 @@ def _vision_returns(monkeypatch, raw):
     monkeypatch.setattr(vis, "_call_vision", lambda *a, **k: raw)
 
 
+@_needs_opencc
 def test_tags_are_traditionalised(monkeypatch):
     """The one that costs recall: a Simplified tag can never be searched for."""
     _vision_returns(monkeypatch, json.dumps(SIMPLIFIED, ensure_ascii=False))
@@ -50,6 +60,7 @@ def test_tags_are_traditionalised(monkeypatch):
     assert result["tags"] == ["訪談", "場景", "人物"]
 
 
+@_needs_opencc
 def test_the_structured_fields_are_traditionalised(monkeypatch):
     _vision_returns(monkeypatch, json.dumps(SIMPLIFIED, ensure_ascii=False))
 
@@ -61,6 +72,7 @@ def test_the_structured_fields_are_traditionalised(monkeypatch):
     assert result["edit_reason"] == "適合作為開場"
 
 
+@_needs_opencc
 def test_the_description_still_is_too(monkeypatch):
     """The one field that already worked — a regression here would be silent."""
     _vision_returns(monkeypatch, json.dumps(SIMPLIFIED, ensure_ascii=False))
@@ -94,6 +106,7 @@ def test_a_missing_field_stays_none(monkeypatch):
     assert result["focus_score"] is None
 
 
+@_needs_opencc
 def test_the_light_path_converts_the_same_things(monkeypatch):
     """Every frame except the representative one goes through this path — it is
     the majority of what lands in the index."""
@@ -105,6 +118,7 @@ def test_the_light_path_converts_the_same_things(monkeypatch):
     assert result["content_type"] == "訪談"
 
 
+@_needs_opencc
 def test_the_non_json_fallback_path_converts_too(monkeypatch):
     """When the model answers in prose instead of JSON, the tags come off the last
     line. Same index, same requirement."""
@@ -116,6 +130,7 @@ def test_the_non_json_fallback_path_converts_too(monkeypatch):
     assert "這" in result["description"]
 
 
+@_needs_opencc
 def test_the_light_non_json_fallback_converts_too(monkeypatch):
     _vision_returns(monkeypatch, "这是访谈画面\n访谈, 场景")
 
@@ -124,6 +139,7 @@ def test_the_light_non_json_fallback_converts_too(monkeypatch):
     assert result["tags"] == ["訪談", "場景"]
 
 
+@_needs_opencc
 def test_text_that_is_already_traditional_is_untouched(monkeypatch):
     """Conversion must be idempotent — re-running vision on an existing library
     must not churn its tags."""
