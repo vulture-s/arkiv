@@ -195,3 +195,112 @@ def test_export_srt_segments_with_non_dict_items_filtered(ex, sample_record):
                             transcript="fallback", duration_s=5.0))
     out = ex.export_srt(1)
     assert "好" in out  # the one valid dict segment is used, junk filtered
+
+
+# ── layout / render split (Phase 12.5 → the HTTP export rewiring) ─────────────
+# `segments_to_srt` was the layout engine AND the only way to reach it, which is
+# exactly why every HTTP export grew its own cue emitter instead. Layout now lives
+# in `layout_cues`; SRT and VTT are two renderers over the same list.
+
+GOLDEN_SEGMENTS = [
+    {"start": 0.0, "end": 3.0, "text": "今天天氣很好，我們去了海邊。"},
+    {"start": 3.0, "end": 4.0, "text": "   "},
+    {"start": 4.0, "end": 16.0,
+     "text": "這是一段很長的旁白，長到一行字幕根本放不下，所以引擎會把它拆成好幾個 cue，時間按比例分。"},
+    {"start": 16.0, "end": 19.5, "text": "Hello world, state-of-the-art 3.5公斤。",
+     "translation": "你好世界。"},
+]
+
+# Captured from the pre-refactor implementation. A refactor that changes one byte
+# of this changes what lands in someone's Resolve timeline.
+GOLDEN_SRT = (
+    "1\n00:00:00,000 --> 00:00:03,000\n今天天氣很好，我們去了海邊。\n"
+    "\n"
+    "2\n00:00:04,000 --> 00:00:10,000\n這是一段很長的旁白，\n長到一行字幕根本放不下，\n"
+    "\n"
+    "3\n00:00:10,000 --> 00:00:16,000\n所以引擎會把它拆成好幾個\ncue，時間按比例分。\n"
+    "\n"
+    "4\n00:00:16,000 --> 00:00:19,500\nHello world, state-of-the-art 3.5公斤。\n你好世界。\n"
+)
+
+
+def test_srt_output_is_byte_identical_after_the_extraction():
+    assert sub.segments_to_srt(GOLDEN_SEGMENTS, translate_key="translation") == GOLDEN_SRT
+
+
+def test_layout_cues_returns_start_end_lines():
+    cues = sub.layout_cues(GOLDEN_SEGMENTS, translate_key="translation")
+
+    assert cues[0] == (0.0, 3.0, ["今天天氣很好，我們去了海邊。"])
+    assert all(isinstance(lines, list) for _s, _e, lines in cues)
+
+
+def test_layout_cues_drops_blank_segments():
+    """The blank third segment must not become an empty cue with a live timestamp."""
+    cues = sub.layout_cues(GOLDEN_SEGMENTS)
+    assert all(any(ln.strip() for ln in lines) for _s, _e, lines in cues)
+    assert not any(3.0 <= s < 4.0 for s, _e, _lines in cues)
+
+
+def test_layout_cues_splits_a_long_segment_and_divides_the_span():
+    cues = sub.layout_cues([{"start": 4.0, "end": 16.0, "text": GOLDEN_SEGMENTS[2]["text"]}])
+
+    assert len(cues) == 2
+    assert cues[0][0] == 4.0 and cues[1][1] == 16.0
+    assert cues[0][1] == cues[1][0] == 10.0  # contiguous, evenly split by cue count
+
+
+def test_layout_cues_keeps_a_bilingual_segment_as_one_cue():
+    cues = sub.layout_cues([GOLDEN_SEGMENTS[3]], translate_key="translation")
+
+    assert len(cues) == 1
+    assert cues[0][2][-1] == "你好世界。"
+
+
+def test_vtt_is_the_same_layout_in_webvtt_syntax():
+    srt = sub.segments_to_srt(GOLDEN_SEGMENTS, translate_key="translation")
+    vtt = sub.segments_to_vtt(GOLDEN_SEGMENTS, translate_key="translation")
+
+    assert vtt.startswith("WEBVTT\n\n")
+    # Same cue count, same text, same times — only the syntax differs.
+    assert vtt.count(" --> ") == srt.count(" --> ")
+    assert "00:00:00.000 --> 00:00:03.000" in vtt
+    assert "00:00:00,000" not in vtt, "comma separator is SRT's, not WebVTT's"
+    for line in ("今天天氣很好，我們去了海邊。", "cue，時間按比例分。", "你好世界。"):
+        assert line in vtt
+
+
+def test_vtt_carries_no_cue_numbers():
+    """WebVTT identifiers are optional and the exports users already have omit
+    them. Adding them now would change every downloaded file."""
+    vtt = sub.segments_to_vtt(GOLDEN_SEGMENTS)
+    for block in vtt.split("\n\n")[1:]:
+        if block.strip():
+            assert block.lstrip().startswith("00:"), "cue must open with its timing line"
+
+
+def test_both_renderers_read_the_same_layout(monkeypatch):
+    """The point of the seam: change layout once, both formats follow. A renderer
+    that quietly kept its own copy would ignore this."""
+    monkeypatch.setattr(sub, "layout_cues", lambda *a, **k: [(1.0, 2.0, ["哨兵"])])
+
+    assert "哨兵" in sub.segments_to_srt(GOLDEN_SEGMENTS)
+    assert "哨兵" in sub.segments_to_vtt(GOLDEN_SEGMENTS)
+
+
+def test_a_blank_original_is_dropped_even_when_a_translation_exists():
+    """The `if not text` guard earns its place only here — in the monolingual path
+    `wrap("  ")` already returns no lines. With a translate_key, dropping the guard
+    would emit a cue carrying the translation alone, over the silence's timestamp."""
+    cues = sub.layout_cues(
+        [{"start": 1.0, "end": 2.0, "text": "   ", "translation": "你好世界。"}],
+        translate_key="translation",
+    )
+    assert cues == []
+
+
+def test_whitespace_only_text_never_becomes_a_cue():
+    """Tabs and newlines count as blank too. (Two guards can catch this — the
+    `if not text` skip above and the `if not lines` skip after wrapping — and only
+    the first is reachable; the second stays as defence, not as behaviour.)"""
+    assert sub.layout_cues([{"start": 1.0, "end": 2.0, "text": " \t\n "}]) == []

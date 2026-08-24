@@ -12,7 +12,10 @@ Pure functions, no I/O — `segments_to_srt()` ties it to Whisper segments_json.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+# One laid-out cue: start seconds, end seconds, the lines to show.
+Cue = Tuple[float, float, List[str]]
 
 # Punctuation that a line should prefer to break AFTER (kept on the upper line).
 _BREAK_AFTER = "。，、！？；：…—)）」』】》”’"
@@ -152,22 +155,27 @@ def format_cue(index: int, start: float, end: float, lines: List[str], sep: str 
     return "{0}\n{1} --> {2}\n{3}\n".format(index, _ts(start, sep), _ts(end, sep), body)
 
 
-def segments_to_srt(
+def layout_cues(
     segments: List[Dict],
     max_units: float = 14.0,
     max_lines: int = 2,
     translate_key: Optional[str] = None,
-) -> str:
-    """Render Whisper segments to laid-out SRT.
+) -> List[Cue]:
+    """Lay Whisper segments out as cues: `[(start, end, lines), ...]`.
 
-    Each segment's text is wrapped to width-safe lines. A monolingual segment
-    that needs more than `max_lines` lines is split into multiple cues, its
-    time span divided proportionally — so a long segment never produces an
-    over-wide line nor a wall-of-text cue. A bilingual segment (translate_key
-    present) stays a single cue: original lines on top, translation below.
+    This is the layout engine on its own, with no output format attached. Each
+    segment's text is wrapped to width-safe lines. A monolingual segment needing
+    more than `max_lines` lines becomes several cues, its span divided
+    proportionally — so a long segment yields neither an over-wide line nor a
+    wall-of-text cue. A bilingual segment (translate_key present) stays one cue:
+    original lines on top, translation below.
+
+    Extracted from `segments_to_srt` because SRT was, for a long time, the only
+    caller — while the HTTP export path hand-rolled its own cue emitters and never
+    reached any of this. A renderer-independent seam is what lets every path
+    (SRT, VTT, timeline, batch) share one layout.
     """
-    out: List[str] = []
-    idx = 1
+    cues: List[Cue] = []
     for seg in segments:
         text = (seg.get("text") or "").strip()
         if not text:
@@ -177,8 +185,7 @@ def segments_to_srt(
 
         if translate_key and (seg.get(translate_key) or "").strip():
             lines = wrap(text, max_units) + wrap((seg.get(translate_key) or "").strip(), max_units)
-            out.append(format_cue(idx, start, end, lines))
-            idx += 1
+            cues.append((start, end, lines))
             continue
 
         lines = wrap(text, max_units)
@@ -189,8 +196,33 @@ def segments_to_srt(
         n = len(chunks)
         span = max(0.0, end - start)
         for ci, chunk in enumerate(chunks):
-            c_start = start + span * ci / n
-            c_end = start + span * (ci + 1) / n
-            out.append(format_cue(idx, c_start, c_end, chunk))
-            idx += 1
-    return "\n".join(out)
+            cues.append((start + span * ci / n, start + span * (ci + 1) / n, chunk))
+    return cues
+
+
+def segments_to_srt(
+    segments: List[Dict],
+    max_units: float = 14.0,
+    max_lines: int = 2,
+    translate_key: Optional[str] = None,
+) -> str:
+    """Render Whisper segments to laid-out SRT. Layout lives in `layout_cues`."""
+    cues = layout_cues(segments, max_units, max_lines, translate_key)
+    return "\n".join(format_cue(i, start, end, lines)
+                     for i, (start, end, lines) in enumerate(cues, 1))
+
+
+def segments_to_vtt(
+    segments: List[Dict],
+    max_units: float = 14.0,
+    max_lines: int = 2,
+    translate_key: Optional[str] = None,
+) -> str:
+    """Same layout, WebVTT syntax: `.` for the millisecond separator, no cue
+    numbers (they are optional in WebVTT, and the exports users already have
+    don't carry them)."""
+    cues = layout_cues(segments, max_units, max_lines, translate_key)
+    body = "\n".join("{0} --> {1}\n{2}\n".format(_ts(start, "."), _ts(end, "."),
+                                                "\n".join(lines))
+                     for start, end, lines in cues)
+    return "WEBVTT\n\n" + body
