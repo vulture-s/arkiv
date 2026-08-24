@@ -23,6 +23,21 @@ on:
 permissions:
   contents: write   # create the Release + upload assets
 
+env:
+  # Pinned, not a range. `cargo install tauri-cli --version "^2.0"` resolves at RUN
+  # time, so two releases can embed different bundlers with nothing in the repo
+  # changing — v1.1.0 and v1.1.1 both happened to land on 2.11.4, one day apart, so
+  # this is a hole that has not bitten yet rather than a bug being fixed.
+  #
+  # Pinning is also what makes the cache below correct: the key can be computed
+  # BEFORE the install, instead of reading the version back out of the binary the
+  # install just produced.
+  #
+  # Bumping: change this one value (both legs read it). Check the tauri-cli
+  # changelog for bundler behaviour first — this is the thing that builds the
+  # .dmg/.exe/.msi, so a surprise here surfaces as a broken installer, not a red CI.
+  TAURI_CLI_VERSION: "2.11.4"
+
 jobs:
   release:
     runs-on: macos-latest   # Apple Silicon — assemble-backend.sh bundles an aarch64-apple-darwin Python
@@ -108,8 +123,40 @@ jobs:
         run: bash src-tauri/assemble-backend.sh
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # -- tauri-cli: cache the BINARY, don't rebuild it every release ---------
+      # `cargo install tauri-cli` compiles the CLI from source. Measured on the
+      # v1.1.1 tag run (32446240446): 9m38s on the macOS leg and 10m05s on the
+      # Windows one — ~20 minutes per release spent producing a binary that is
+      # byte-identical to the last one, because the version is pinned above.
+      #
+      # This is a different cache from the WiX/NSIS one further down in the
+      # Windows leg (#340). That one holds what the BUNDLER downloads at build
+      # time; this one holds the CLI itself. #340 hit on v1.1.1 (2s) while this
+      # cost stayed — the two were conflated in the notes at the time.
+      #
+      # Only the binary is cached, not ~/.cargo/registry: the registry is large,
+      # varies with the toolchain, and is worthless on a hit (nothing compiles).
+      - name: Cache tauri-cli binary
+        id: tauri-cli-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri
+            ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-${{ runner.os }}-${{ env.TAURI_CLI_VERSION }}
+
       - name: Install tauri-cli
-        run: cargo install tauri-cli --version "^2.0" --locked
+        if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "${{ env.TAURI_CLI_VERSION }}" --locked
+
+      # A restored binary is only useful if it actually runs; a cache poisoned by
+      # a partial upload would otherwise surface much later as a confusing bundler
+      # failure. Cheap to check, and it also prints the version into the log so a
+      # future "which bundler built this installer?" is answerable from the run.
+      - name: Verify tauri-cli
+        shell: bash
+        run: cargo tauri --version
 
       - name: Import Apple signing cert (only when configured)
         if: steps.signcfg.outputs.signing == 'full'
@@ -246,8 +293,40 @@ jobs:
         run: .\src-tauri\assemble-backend-win.ps1
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # -- tauri-cli: cache the BINARY, don't rebuild it every release ---------
+      # `cargo install tauri-cli` compiles the CLI from source. Measured on the
+      # v1.1.1 tag run (32446240446): 9m38s on the macOS leg and 10m05s on the
+      # Windows one — ~20 minutes per release spent producing a binary that is
+      # byte-identical to the last one, because the version is pinned above.
+      #
+      # This is a different cache from the WiX/NSIS one further down in the
+      # Windows leg (#340). That one holds what the BUNDLER downloads at build
+      # time; this one holds the CLI itself. #340 hit on v1.1.1 (2s) while this
+      # cost stayed — the two were conflated in the notes at the time.
+      #
+      # Only the binary is cached, not ~/.cargo/registry: the registry is large,
+      # varies with the toolchain, and is worthless on a hit (nothing compiles).
+      - name: Cache tauri-cli binary
+        id: tauri-cli-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri
+            ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-${{ runner.os }}-${{ env.TAURI_CLI_VERSION }}
+
       - name: Install tauri-cli
-        run: cargo install tauri-cli --version "^2.0" --locked
+        if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "${{ env.TAURI_CLI_VERSION }}" --locked
+
+      # A restored binary is only useful if it actually runs; a cache poisoned by
+      # a partial upload would otherwise surface much later as a confusing bundler
+      # failure. Cheap to check, and it also prints the version into the log so a
+      # future "which bundler built this installer?" is answerable from the run.
+      - name: Verify tauri-cli
+        shell: bash
+        run: cargo tauri --version
 
       # -- Cache the bundler's packaging toolchain --------------------------
       # tauri-bundler downloads WiX and NSIS from GitHub *at build time*, so every
