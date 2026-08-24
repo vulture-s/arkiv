@@ -34,7 +34,8 @@ import tag_quality
 from auth import require_scopes
 from config import BASE_DIR
 from mediarecords import _get_light_records_by_ids, _get_tags_bulk
-from pathres import _display_path, _resolve_frame, _resolve_media_path, _resolve_record
+from pathres import (_display_path, _proxy_ready, _resolve_frame,
+                     _resolve_media_path, _resolve_record)
 from reqopts import _parse_ids_query
 from scenes import _scenes_payload
 from state import (_acquire_ingest_slot, _release_ingest_slot,
@@ -501,7 +502,10 @@ def get_media_waveform(
     _tok: dict = Depends(require_scopes("media_read")),
 ):
     """Return pre-computed audio peaks (0..1) for the inspector waveform.
-    Cached per (id, bins) under waveforms/<id>_<bins>.json."""
+
+    Cached per (id, bins, source) under `waveforms/<id>_<bins>_<p|o>.json`, where
+    the last part records whether the peaks came from the arkiv proxy or the
+    original file."""
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
@@ -510,15 +514,31 @@ def get_media_waveform(
     bins = max(8, min(500, bins))
     if not rec.get("has_audio"):
         return {"media_id": media_id, "bins": bins, "peaks": [0.0] * bins}
+    # Decode the proxy when there is one. /api/stream has done this since the
+    # proxy feature shipped; the waveform never did, so drawing the inspector's
+    # 60-bar strip meant a full ffmpeg decode of the 4K original — the single
+    # slowest thing the inspector does, on a file we already have a small H.264
+    # copy of. The proxy's AAC is a lossy re-encode, which moves a peak by less
+    # than one pixel at 60 bins.
+    resolved_src = _resolve_media_path(rec["path"])
+    proxy_path = config.proxy_path_for(media_id, resolved_src)
+    if _proxy_ready(proxy_path):
+        file_path, source_tag = proxy_path, "p"
+    else:
+        file_path, source_tag = Path(resolved_src), "o"
+
     cache_dir = BASE_DIR / "waveforms"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / f"{media_id}_{bins}.json"
+    # The source tag is part of the key on purpose. The old `{id}_{bins}.json`
+    # recorded nothing about WHERE the peaks came from, so the first cached answer
+    # would be served forever — a clip drawn from its original before a proxy
+    # existed would never be redrawn from the proxy, and vice versa.
+    cache_path = cache_dir / f"{media_id}_{bins}_{source_tag}.json"
     if cache_path.exists():
         try:
             return json.loads(cache_path.read_text(encoding="utf-8"))
         except Exception:
             cache_path.unlink(missing_ok=True)
-    file_path = Path(_resolve_media_path(rec["path"]))
     if not file_path.exists():
         raise HTTPException(404, "找不到檔案")
     peaks = _compute_waveform(str(file_path), bins)
