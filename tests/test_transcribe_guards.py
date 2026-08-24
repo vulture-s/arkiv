@@ -71,11 +71,11 @@ def test_postprocess_filters_bad_segments_but_keeps_threshold_boundary(monkeypat
     ]
     cleaned, _, timed_segments, words = transcribe._postprocess("原始文字", "zh", segments, "zh")
     assert cleaned == "這段應該保留，因為它剛好在邊界值。"
-    assert timed_segments == [{
-        "start": 0.0,
-        "end": 2.0,
-        "text": "這段應該保留，因為它剛好在邊界值。",
-    }]
+    # Exactly one segment survives the filters. It is wider than a caption line, so
+    # _split_long_segments hands it back as lines — the assertion is about which
+    # content survived and over what span, not about how it is laid out.
+    assert "".join(ts["text"] for ts in timed_segments) == "這段應該保留，因為它剛好在邊界值。"
+    assert (timed_segments[0]["start"], timed_segments[-1]["end"]) == (0.0, 2.0)
     assert words == []
 
 
@@ -120,11 +120,11 @@ def test_postprocess_removes_char_loops_and_polishes(monkeypatch):
         "zh",
     )
     assert cleaned == "校正後：字幕由，這是一段正常補充。"
-    assert timed_segments == [{
-        "start": 0.0,
-        "end": 4.0,
-        "text": "字幕由字幕由字幕由字幕由，這是一段正常補充。",
-    }]
+    # Note the segment text is NOT de-looped — char-loop removal applies to the
+    # transcript only. Same as above: assert the content and span, and let the
+    # caption-line split be tested where it belongs.
+    assert "".join(ts["text"] for ts in timed_segments) == "字幕由字幕由字幕由字幕由，這是一段正常補充。"
+    assert (timed_segments[0]["start"], timed_segments[-1]["end"]) == (0.0, 4.0)
     assert words == []
 
 

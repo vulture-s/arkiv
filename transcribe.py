@@ -16,6 +16,7 @@ import soundfile as sf
 from silero_vad import load_silero_vad, get_speech_timestamps
 import torch
 
+import subtitle
 import whisper_guard
 import zh_convert
 
@@ -48,6 +49,16 @@ LLM_POLISH = True
 _LLM_POLISH_CHUNK_CHARS = 300
 _LLM_POLISH_TIMEOUT_S = int(os.getenv("ARKIV_LLM_POLISH_TIMEOUT", "300"))
 _LLM_POLISH_BUDGET_S = int(os.getenv("ARKIV_LLM_POLISH_BUDGET", "900"))
+
+# One caption line. Whisper hands back whatever fits its 30 s window — often a
+# 40-character sentence on a single timestamp — and every consumer of that
+# timestamp (click-to-seek, SRT cues, frame-exact IN points) can then only ever
+# point at the start of the whole sentence. Matches subtitle.wrap()'s default;
+# the user-facing setting lands with the export work.
+_MAX_SEGMENT_UNITS = 14.0
+# Below this, splitting buys nothing and costs correctness: pieces that short are
+# unreadable as cues, and the proportional estimate is mostly rounding error.
+_MIN_SPLIT_PIECE_S = 0.2
 
 # ── Platform Detection ───────────────────────────────────────────────────────
 _USE_MLX = platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -584,6 +595,67 @@ def _attach_speaker_ids(timed_segments: list, wav_path: str) -> list:
         return timed_segments
 
 
+def _split_long_segments(timed_segments: list, max_units: float = _MAX_SEGMENT_UNITS) -> list:
+    """Break segments that are wider than one caption line, on the line boundaries.
+
+    Whisper times a whole sentence as one segment, so a 12-second line of dialogue
+    carries exactly one timestamp. Clicking that line in the Inspector jumps to the
+    start of the sentence no matter which part of it you clicked, an SRT cue holds
+    text nobody can read in the time given, and a frame-exact IN point can only be
+    the sentence's first frame.
+
+    `subtitle.wrap()` already knows where a line may break — after CJK punctuation,
+    at spaces, never inside a Latin word or between a number and its measure word.
+    This reuses it and shares the segment's span between the resulting lines.
+
+    The span is divided **in proportion to `display_units`**, not equally: lines
+    differ in width, and equal division would place every click at the geometric
+    midpoint of the sentence rather than near the words being pointed at. It is
+    still an estimate — it assumes an even speaking rate within the segment — but
+    the error is bounded by one line, where today it is bounded by the sentence.
+
+    The last piece keeps the original `end` and the first keeps the original
+    `start`, so the segment's outer span is unchanged: the words_json
+    reconciliation above and every downstream range check see the same coverage.
+
+    Runs AFTER `_attach_speaker_ids` on purpose. A 14-unit line can be half a
+    second long, and feeding pyannote half-second windows makes one speaker's
+    sentence flicker between labels.
+    """
+    out = []
+    for seg in timed_segments:
+        text = (seg.get("text") or "").strip()
+        start, end = seg.get("start"), seg.get("end")
+        if not text or start is None or end is None:
+            out.append(seg)
+            continue
+
+        lines = subtitle.wrap(text, max_units=max_units)
+        span = float(end) - float(start)
+        # The second condition also covers a zero or inverted span: dividing one of
+        # those would hand every piece the same instant.
+        if len(lines) < 2 or span / len(lines) < _MIN_SPLIT_PIECE_S:
+            out.append(seg)
+            continue
+
+        widths = [subtitle.display_units(ln) for ln in lines]
+        total = sum(widths)
+        if total <= 0:
+            out.append(seg)
+            continue
+
+        cursor = float(start)
+        for i, (line, width) in enumerate(zip(lines, widths)):
+            last = i == len(lines) - 1
+            piece_end = float(end) if last else cursor + span * (width / total)
+            out.append({**seg,
+                        "text": line,
+                        "start": round(cursor, 3),
+                        "end": round(piece_end, 3)})
+            cursor = piece_end
+    return out
+
+
 def _postprocess(text: str, lang: str, segments: list, language: str,
                  words: list = None, wav_path: str = None) -> tuple:
     """Shared post-processing: anti-hallucination + LLM polish (+ optional A4
@@ -681,6 +753,8 @@ def _postprocess(text: str, lang: str, segments: list, language: str,
     # backend), so the labels line up with the timecodes.
     if wav_path and DIARIZATION_ENABLED:
         timed_segments = _attach_speaker_ids(timed_segments, wav_path)
+
+    timed_segments = _split_long_segments(timed_segments)
 
     return filtered_text, lang, timed_segments, words or []
 
