@@ -29,6 +29,7 @@ import config
 import corrections
 import db
 import mediatypes
+import progress
 import tag_quality
 from auth import require_scopes
 from config import BASE_DIR
@@ -36,7 +37,7 @@ from mediarecords import _get_light_records_by_ids, _get_tags_bulk
 from pathres import _display_path, _resolve_frame, _resolve_media_path, _resolve_record
 from reqopts import _parse_ids_query
 from scenes import _scenes_payload
-from state import _acquire_ingest_slot, _release_ingest_slot
+from state import _acquire_ingest_slot, _release_ingest_slot, vision_jobs
 from webguard import _assert_same_site
 
 router = APIRouter()
@@ -938,24 +939,41 @@ def retry_vision(
     import vision as vis
     frame_paths = [_resolve_media_path(f["thumbnail_path"]) for f in empty_frames]
 
-    # Phase 1: try primary vision model
-    results = vis.describe_frames(frame_paths)
-    failed = [i for i, r in enumerate(results) if r.get("error") or not r.get("description")]
+    # Per-clip claim, not a process-wide one: two different clips may legitimately
+    # be retried at once, but the same clip twice would have both runs writing the
+    # same frame rows. The coarse OOM guard is the ingest slot, a separate thing.
+    if not vision_jobs.start(media_id, phase="primary", done=0, total=len(empty_frames)):
+        raise HTTPException(409, "這支素材的視覺重試正在進行中")
+    try:
+        # The sink is bound here and nowhere else: `vision.describe_frames` reports
+        # into whatever context it happens to run in, and knows nothing about jobs,
+        # ids, or HTTP. That is what keeps its signature unchanged.
+        with progress.capture(lambda ev: vision_jobs.update(media_id, **ev)):
+            # Phase 1: try primary vision model
+            results = vis.describe_frames(frame_paths)
+            failed = [i for i, r in enumerate(results) if r.get("error") or not r.get("description")]
 
-    # Phase 2: fallback to lighter model for failed frames. Config-driven (unified
-    # with ingest.py) and skipped gracefully when the fallback model isn't
-    # installed, instead of 404-ing once per failed frame.
-    if failed and config.VISION_FALLBACK_MODEL and vis.model_available(config.VISION_FALLBACK_MODEL):
-        fallback_model = config.VISION_FALLBACK_MODEL
-        # round-5 #50: pass the fallback model straight through to _call_vision.
-        # The old vis.VISION_MODEL global-swap was dead (_call_vision re-read the
-        # model from settings) — and being a module global it also raced across
-        # concurrent retry-vision calls. Threading the arg fixes both.
-        retry_paths = [frame_paths[i] for i in failed]
-        retry_results = vis.describe_frames(retry_paths, model=fallback_model)
-        for idx, retry_r in zip(failed, retry_results):
-            if retry_r.get("description") and not retry_r.get("error"):
-                results[idx] = retry_r
+            # Phase 2: fallback to lighter model for failed frames. Config-driven
+            # (unified with ingest.py) and skipped gracefully when the fallback
+            # model isn't installed, instead of 404-ing once per failed frame.
+            if failed and config.VISION_FALLBACK_MODEL and vis.model_available(config.VISION_FALLBACK_MODEL):
+                fallback_model = config.VISION_FALLBACK_MODEL
+                vision_jobs.update(media_id, phase="fallback", done=0, total=len(failed))
+                # round-5 #50: pass the fallback model straight through to
+                # _call_vision. The old vis.VISION_MODEL global-swap was dead
+                # (_call_vision re-read the model from settings) — and being a
+                # module global it also raced across concurrent retry-vision calls.
+                # Threading the arg fixes both.
+                retry_paths = [frame_paths[i] for i in failed]
+                retry_results = vis.describe_frames(retry_paths, model=fallback_model)
+                for idx, retry_r in zip(failed, retry_results):
+                    if retry_r.get("description") and not retry_r.get("error"):
+                        results[idx] = retry_r
+    except Exception:
+        # A crash must clear the claim, or this clip can never be retried again
+        # without restarting the server.
+        vision_jobs.finish(media_id, state="error")
+        raise
 
     # Write results to DB
     patched = 0
@@ -1011,9 +1029,25 @@ def retry_vision(
         )
 
     still_empty = sum(1 for vr in results if not vr.get("description") or vr.get("error"))
+    vision_jobs.finish(media_id, patched=patched, still_empty=still_empty,
+                       total=len(empty_frames))
     return {
         "ok": still_empty == 0,
         "patched": patched,
         "still_empty": still_empty,
         "total_frames": len(empty_frames),
     }
+
+
+@router.get("/api/media/{media_id}/retry-vision/status")
+def retry_vision_status(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    """Where a retry-vision run has got to. Polled while the POST is still open.
+
+    `idle` is a real answer, not an error: nothing is known about this id, either
+    because it never ran or because it finished long enough ago to be evicted.
+    """
+    rec = vision_jobs.get(media_id)
+    return rec if rec is not None else {"state": "idle"}

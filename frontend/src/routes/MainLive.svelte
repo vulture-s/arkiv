@@ -806,6 +806,33 @@
     }
   }
 
+  // Live progress label for the running per-clip action ('12/40'), '' when idle.
+  let reProgress = ''
+
+  // Returns a stop function. A failed poll is ignored on purpose: the job is the
+  // POST, not this, and a status blip must never turn a working run into an error.
+  function pollVisionProgress(id) {
+    let alive = true
+    let timer = null
+    const tick = async () => {
+      if (!alive) return
+      try {
+        const s = await api.retryVisionStatus(id)
+        if (alive && s && s.state === 'running' && s.total) {
+          const phase = s.phase === 'fallback' ? '備援 ' : ''
+          reProgress = `${phase}${s.done || 0}/${s.total}`
+        }
+      } catch (_) {}
+      if (alive) timer = setTimeout(tick, 1000)
+    }
+    timer = setTimeout(tick, 1000)
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+      reProgress = ''
+    }
+  }
+
   // Per-clip re-processing. Returns {ok, message} for the inspector to surface;
   // throws bubble up to the inspector's catch. Refetch detail on success so the
   // transcript / vision / tags reflect the new run.
@@ -819,7 +846,15 @@
       return { ok: r.ok, message: `轉錄完成 · ${r.transcript_length} 字 · ${r.language}` }
     }
     if (action === 'retry-vision') {
-      const r = await api.retryVision(id)
+      // Poll for progress while the POST is still open. The request contract is
+      // untouched — this only makes the middle of a multi-minute call visible.
+      const stopPolling = pollVisionProgress(id)
+      let r
+      try {
+        r = await api.retryVision(id)
+      } finally {
+        stopPolling()
+      }
       if (detailId === id) await fetchDetail(id)
       return {
         ok: r.ok,
@@ -1072,6 +1107,7 @@
         onAddTag={selected ? addTag : null}
         onRemoveTag={selected ? removeTag : null}
         onReprocess={selected ? reprocess : null}
+        {reProgress}
         languages={engineLangs}
         mediaLang={detailLive ? detailLive.lang : null}
         onExport={selected ? (fmt, trim) => exportClip(selected.id, fmt, selected.name, trim) : null}

@@ -170,3 +170,81 @@ class IngestBroadcaster:
 
 
 ingest_ws = IngestBroadcaster()
+
+
+# ── Per-job progress registry ─────────────────────────────────────────────────
+class JobRegistry:
+    """Progress records keyed by job id, for work that runs behind a blocking POST.
+
+    Deliberately NOT a queue or a task runner. The POST still runs the work and
+    still returns the result — this only makes the middle of it visible, so the UI
+    can poll `.../status` while its own request is in flight. Keeping the request
+    contract unchanged is the point: turning these into 202-and-poll would buy only
+    "survives a dropped connection", and the client is on loopback with no proxy.
+
+    Two things this has to get right:
+
+    * **`get` returns a copy.** The record is mutated by the worker thread while the
+      poller reads it; handing out the live dict would let a caller observe it
+      half-updated, or hold a reference that keeps changing under them.
+    * **Terminal records survive.** A job that finishes between two polls must still
+      be reportable, or the UI's last observation is "running" forever. They are
+      evicted oldest-first past `max_done` so a long session can't grow this
+      without bound.
+    """
+
+    def __init__(self, max_done: int = 32):
+        self._lock = _threading.Lock()
+        self._jobs = {}          # job_id -> record dict
+        self._done_order = []    # job_ids in completion order (eviction queue)
+        self._max_done = max_done
+
+    def start(self, job_id, **fields) -> bool:
+        """Claim `job_id`. False when it is already running — the caller answers 409.
+
+        Note this is per id, not global: two different clips may legitimately be
+        worked on at once. The process-wide OOM guard is the ingest slot, a
+        separate and coarser thing.
+        """
+        with self._lock:
+            rec = self._jobs.get(job_id)
+            if rec is not None and rec.get("state") == "running":
+                return False
+            self._jobs[job_id] = dict(fields, state="running")
+            if job_id in self._done_order:
+                self._done_order.remove(job_id)
+            return True
+
+    def update(self, job_id, **fields) -> None:
+        """Merge fields into a running record. Silently ignores unknown/finished
+        ids — a late report from a job nobody is tracking is not an error."""
+        with self._lock:
+            rec = self._jobs.get(job_id)
+            if rec is None or rec.get("state") != "running":
+                return
+            rec.update(fields)
+
+    def finish(self, job_id, state: str = "done", **fields) -> None:
+        with self._lock:
+            rec = self._jobs.get(job_id)
+            if rec is None:
+                rec = self._jobs[job_id] = {}
+            rec.update(fields)
+            rec["state"] = state
+            if job_id in self._done_order:
+                self._done_order.remove(job_id)
+            self._done_order.append(job_id)
+            while len(self._done_order) > self._max_done:
+                self._jobs.pop(self._done_order.pop(0), None)
+
+    def get(self, job_id):
+        """A snapshot, or None when nothing is known about this id."""
+        with self._lock:
+            rec = self._jobs.get(job_id)
+            return dict(rec) if rec is not None else None
+
+
+# One registry per kind of work, so a vision retry and a retranscribe on the same
+# clip don't collide on the same id.
+vision_jobs = JobRegistry()
+transcribe_jobs = JobRegistry()

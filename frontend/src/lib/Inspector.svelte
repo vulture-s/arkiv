@@ -257,6 +257,9 @@
   // reprocess local state, reset when the selected clip changes
   let reBusy = null // action currently running, or null
   let reMsg = ''
+  // Live progress for the running action, e.g. '12/40'. Supplied by the parent,
+  // which polls the job's status endpoint while its own POST is still in flight.
+  export let reProgress = ''
   let reLang = 'zh'
   let lastMediaId = null
   $: if (media && media.id !== lastMediaId) {
@@ -543,7 +546,7 @@
       </div>
       <div class="reprow">
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('retry-vision')}>
-          {reBusy === 'retry-vision' ? '分析中…' : '重試視覺'}
+          {reBusy === 'retry-vision' ? (reProgress ? `分析中… ${reProgress}` : '分析中…') : '重試視覺'}
         </button>
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('reingest')}>
           {reBusy === 'reingest' ? '重建中…' : '完整重建'}

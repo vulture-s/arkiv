@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 import requests
 
 import config
+import progress
 import zh_convert
 from llm import vision
 
@@ -182,7 +183,11 @@ def describe_frames(frame_paths: List[str], model: Optional[str] = None) -> List
     if not frame_paths:
         return []
 
-    rep_idx = len(frame_paths) // 2
+    total = len(frame_paths)
+    rep_idx = total // 2
+    # The representative frame is the expensive one (12 fields vs 11) and it runs
+    # before the loop, so without this the UI sits at 0 through the slowest call.
+    progress.report(stage="representative", done=0, total=total)
     rep_result = _describe_one(frame_paths[rep_idx], model=model)
     rep_result["file"] = frame_paths[rep_idx]
 
@@ -190,6 +195,7 @@ def describe_frames(frame_paths: List[str], model: Optional[str] = None) -> List
 
     results = []
     for i, path in enumerate(frame_paths):
+        progress.report(stage="frames", done=i, total=total)
         if i == rep_idx:
             results.append(rep_result)
             continue
@@ -209,6 +215,7 @@ def describe_frames(frame_paths: List[str], model: Optional[str] = None) -> List
             light[k] = rep_result.get(k)
         results.append(light)
 
+    progress.report(stage="frames", done=total, total=total)
     return results
 
 

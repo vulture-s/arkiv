@@ -403,6 +403,10 @@ export const retranscribe = (id, language = 'zh', opts) =>
 // POST /api/media/{id}/retry-vision → {ok, patched, still_empty, total_frames, message?}
 export const retryVision = (id, opts) =>
   req(`/api/media/${id}/retry-vision`, { method: 'POST', ...opts })
+// GET .../retry-vision/status → {state:'running'|'done'|'error'|'idle', phase, done, total}
+// Polled WHILE the POST above is still open — the POST contract is unchanged.
+export const retryVisionStatus = (id, opts) =>
+  req(`/api/media/${id}/retry-vision/status`, opts)
 // POST /api/media/{id}/reingest → {ok, stdout, stderr}. 409 if an ingest is
 // already running (single-flight guard); 504 on the 10-min server timeout.
 export const reingest = (id, opts) =>
