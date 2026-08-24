@@ -22,6 +22,7 @@ NOTE: `_attachment_headers` (Content-Disposition builder) and `_log_safe`
 import json
 
 import db
+import subtitle
 
 
 # ── CSV (DaVinci Resolve metadata) ───────────────────────────────────────────
@@ -239,6 +240,44 @@ def _subtitle_text(text: str) -> str:
         return ""
     one_line = " ".join(text.split())  # collapses any \n / \r / blank runs
     return one_line.replace("-->", "->")
+
+
+def transcript_fallback_segments(transcript: str, duration: float) -> list:
+    """Segments for a record that has no `segments_json`, from its transcript alone.
+
+    Without timings there is nothing to be clever with: the transcript's lines get
+    an equal share of the clip. This existed three times over — once in each
+    hand-written cue emitter — and the copies had already drifted. One copy, so a
+    fix lands everywhere.
+    """
+    lines = [ln.strip() for ln in (transcript or "").split("\n") if ln.strip()]
+    if not lines:
+        return []
+    step = float(duration or 0.0) / len(lines)
+    return [{"start": i * step, "end": (i + 1) * step, "text": line}
+            for i, line in enumerate(lines)]
+
+
+def render_subtitle_cues(segments, fmt: str = "srt", max_units: float = 14.0,
+                         max_lines: int = 2) -> str:
+    """Render segments as SRT or VTT **through the Phase 12.5 layout engine**.
+
+    Every HTTP subtitle export used to build its own cues: one `f"{i}\n{ts} --> ..."`
+    loop per endpoint, three copies, none of which called `subtitle.py`. So the
+    layout engine — CJK line widths, break points, the 14-unit cap, bilingual cues —
+    was reachable only from the CLI, while every file a user actually downloaded got
+    a raw Whisper segment per cue. The roadmap's "12.5 ✅" was true for `export.py`
+    and false for every real user.
+
+    Order matters: sanitize FIRST (`_subtitle_text` neutralises a literal `-->` and
+    folds embedded newlines, either of which would forge a cue boundary), then lay
+    out, then apply the punctuation policy inside the renderer. Sanitising after
+    layout would let injected text through the line-splitter first.
+    """
+    safe = [{**seg, "text": _subtitle_text(seg.get("text") or "")}
+            for seg in segments if isinstance(seg, dict)]
+    render = subtitle.segments_to_vtt if fmt == "vtt" else subtitle.segments_to_srt
+    return render(safe, max_units=max_units, max_lines=max_lines)
 
 
 def _edl_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:

@@ -142,10 +142,14 @@ def export_srt(media_id: int, max_units: float = 14.0) -> str:
         if isinstance(parsed, list):
             segments = [s for s in parsed if isinstance(s, dict)]
     if not segments:
-        transcript = (rec.get("transcript") or "").strip()
-        if not transcript:
+        # Same fallback the HTTP export uses, so the two agree byte for byte on a
+        # record with no segments_json (a one-line transcript yields one cue either
+        # way; a multi-line one used to differ).
+        from export_builders import transcript_fallback_segments
+        segments = transcript_fallback_segments(rec.get("transcript") or "",
+                                                rec.get("duration_s") or 0.0)
+        if not segments:
             return ""
-        segments = [{"start": 0.0, "end": rec.get("duration_s") or 0.0, "text": transcript}]
     return subtitle.segments_to_srt(segments, max_units=max_units)
 
 

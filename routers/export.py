@@ -37,6 +37,8 @@ from export_builders import (
     _start_tc_seconds,
     _subtitle_text,
     _subtitle_ts,
+    render_subtitle_cues,
+    transcript_fallback_segments,
 )
 from pathres import _resolve_media_path
 from reqopts import _parse_ids_query
@@ -182,7 +184,10 @@ def export_media(
     if has_trim and _segments:
         trimmed = []
         for seg in _segments:
-            s, e = seg.get("start", 0), seg.get("end", 0)
+            # `or 0`: an explicit null in segments_json (legacy rows have them)
+            # would make these comparisons raise TypeError → 500. Every other
+            # read of these fields already guards this way; this one did not.
+            s, e = seg.get("start", 0) or 0, seg.get("end", 0) or 0
             if e <= trim_in or s >= trim_out:
                 continue
             trimmed.append({
@@ -205,49 +210,15 @@ def export_media(
             headers=_attachment_headers(stem, "txt"),
         )
 
-    if fmt == "srt":
-        srt = ""
-        if _segments:
-            # Segment-aligned timestamps (precise). .get() tolerates legacy
-            # segment dicts missing keys; _subtitle_text blocks cue injection.
-            i = 1
-            for seg in _segments:
-                text = _subtitle_text(seg.get("text") or "")
-                if not text:
-                    continue
-                srt += f"{i}\n{_ts(seg.get('start', 0) or 0)} --> {_ts(seg.get('end', 0) or 0)}\n{text}\n\n"
-                i += 1
-        else:
-            # Fallback: evenly distributed
-            lines = [l.strip() for l in transcript.split("\n") if l.strip()]
-            for i, line in enumerate(lines, 1):
-                t_start = (i - 1) * (duration / max(len(lines), 1))
-                t_end = i * (duration / max(len(lines), 1))
-                srt += f"{i}\n{_ts(t_start)} --> {_ts(t_end)}\n{_subtitle_text(line)}\n\n"
+    if fmt in ("srt", "vtt"):
+        # One seam for every subtitle export (single clip, batch zip, timeline):
+        # sanitize → subtitle.layout_cues → punctuation policy. What used to be
+        # here was a hand-written cue loop that never reached the layout engine.
+        cue_segments = _segments or transcript_fallback_segments(transcript, duration)
         return HTMLResponse(
-            content=srt,
+            content=render_subtitle_cues(cue_segments, fmt),
             media_type="text/plain; charset=utf-8",
-            headers=_attachment_headers(stem, "srt"),
-        )
-
-    if fmt == "vtt":
-        vtt = "WEBVTT\n\n"
-        if _segments:
-            for seg in _segments:
-                text = _subtitle_text(seg.get("text") or "")
-                if not text:
-                    continue
-                vtt += f"{_ts(seg.get('start', 0) or 0, '.')} --> {_ts(seg.get('end', 0) or 0, '.')}\n{text}\n\n"
-        else:
-            lines = [l.strip() for l in transcript.split("\n") if l.strip()]
-            for i, line in enumerate(lines, 1):
-                t_start = (i - 1) * (duration / max(len(lines), 1))
-                t_end = i * (duration / max(len(lines), 1))
-                vtt += f"{_ts(t_start, '.')} --> {_ts(t_end, '.')}\n{_subtitle_text(line)}\n\n"
-        return HTMLResponse(
-            content=vtt,
-            media_type="text/plain; charset=utf-8",
-            headers=_attachment_headers(stem, "vtt"),
+            headers=_attachment_headers(stem, fmt),
         )
 
     if fmt in ("edl", "edl-markers"):
