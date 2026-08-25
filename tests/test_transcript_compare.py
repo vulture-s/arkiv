@@ -150,15 +150,15 @@ def test_no_phonetic_category_is_invented():
 # ── the whole thing ──────────────────────────────────────────────────────────
 
 def test_compare_separates_shippable_from_reviewable():
-    a = [seg(0, 2, "第一句一樣"), seg(2, 4, "我們今天"), seg(4, 6, "有講到東西")]
-    b = [seg(0, 2, "第一句一樣"), seg(2, 4, "阮今仔日"), seg(4, 6, "")]
+    """A long shared passage, then a stretch only one side heard."""
+    shared = "這一段兩邊都有而且完全一樣所以不需要任何人去聽"
+    a = [seg(0, 6, shared), seg(6, 12, "這一長段只有其中一邊聽到完全沒有出現在另一份稿裡")]
+    b = [seg(0, 6, shared)]
 
     out = tc.compare(a, b)
 
-    assert out["agreed"] == 1
-    assert out["by_kind"] == {tc.TAIGI: 1, tc.COVERAGE: 1}
-    assert {r["kind"] for r in out["review"]} == {tc.TAIGI, tc.COVERAGE}
-
+    assert out["agreed_chars"] >= len(shared) - 2
+    assert out["by_kind"] == {tc.COVERAGE: 1}
 
 def test_review_items_carry_both_readings_and_a_timestamp():
     """The point is to jump to the audio and listen. An item without a window, or
@@ -166,13 +166,17 @@ def test_review_items_carry_both_readings_and_a_timestamp():
     out = tc.compare([seg(3, 5, "我們今天")], [seg(3, 5, "阮今仔日")])
 
     item = out["review"][0]
-    assert item["start"] == 3 and item["end"] == 5
-    assert item["a"] == "我們今天" and item["b"] == "阮今仔日"
+    # The window is the DIFFERING run, not the whole segment — that is the point:
+    # it points at the part worth listening to, not at everything around it.
+    assert 3 <= item["start"] <= item["end"] <= 5
+    assert item["a"] and item["b"]
 
 
 def test_two_identical_transcripts_produce_no_review():
     a = [seg(0, 2, "完全一樣"), seg(2, 4, "第二句")]
-    assert tc.compare(a, list(a))["review"] == []
+    out = tc.compare(a, list(a))
+    assert out["review"] == []
+    assert out["agreed_chars"] == out["total_chars"]
 
 
 def test_empty_inputs_do_not_raise():
@@ -180,16 +184,98 @@ def test_empty_inputs_do_not_raise():
     assert tc.compare([seg(0, 1, "只有一邊")], [])["by_kind"] == {tc.COVERAGE: 1}
 
 
-def test_segments_without_timestamps_go_to_review_rather_than_claim_agreement():
-    """Legacy rows carry explicit nulls, and alignment is done by time — so with no
-    timestamps there is nothing to align on.
+def test_identical_text_agrees_even_without_timestamps():
+    """Changed deliberately when alignment moved from time to text.
 
-    They are reported as needing review, not as agreeing. Matching them up by
-    position instead would be a guess, and a guess that says "these agree" is the
-    one failure mode this module must not have: it would mark unverified text as
-    shippable."""
+    Agreement is a property of the TEXT; timestamps only exist to point a human at
+    the audio. Two identical transcripts agree whether or not they carry timings —
+    the earlier "no timestamps means we cannot judge" rule belonged to segment
+    pairing, where matching by position really would have been a guess."""
     out = tc.compare([{"start": None, "end": None, "text": "沒有時間"}],
                      [{"start": None, "end": None, "text": "沒有時間"}])
 
-    assert out["agreed"] == 0
-    assert out["review"], "silently dropped instead of flagged"
+    assert out["agreed_chars"] > 0
+    assert out["review"] == []
+
+
+# ── the failure that only real data showed ───────────────────────────────────
+
+def test_the_same_sentence_one_window_apart_is_not_two_coverage_holes():
+    """Measured on a real 199 s clip (49 vs 64 segments): segment-to-segment
+    pairing reported **1 agreement and 68 items to review**, and most of the
+    "coverage holes" were text BOTH sides had, sitting one window apart because the
+    two engines cut the speech differently.
+
+        whisper  25.5-27.0  還是全部都夾好再調
+        qwen     27.0-28.0  還是全部都夾好再調
+
+    Aligning on text instead of boundaries is what fixes it — boundaries are an
+    artefact of the engine, not of the speech."""
+    a = [seg(25.5, 27.0, "還是全部都夾好再調"), seg(27.0, 28.0, "夾好再調")]
+    b = [seg(27.0, 28.0, "還是全部都夾好再調")]
+
+    out = tc.compare(a, b)
+
+    assert out["agreed_chars"] >= len("還是全部都夾好再調") - 1
+    assert len(out["review"]) <= 1, out["review"]
+
+
+def test_a_short_word_swap_is_not_called_a_coverage_hole():
+    """`我們` vs `阮` is a 2:1 length ratio, and the ratio rule was firing on it —
+    swallowing the Taiwanese category it exists alongside. The rule only means
+    something when the longer side is long enough to be 'a sentence vs a
+    fragment'."""
+    out = tc.compare([seg(0, 2, "我們今天")], [seg(0, 2, "阮今仔日")])
+
+    assert tc.COVERAGE not in out["by_kind"]
+    assert tc.TAIGI in out["by_kind"]
+
+
+def test_agreement_is_counted_in_characters_not_runs():
+    """"12 equal runs" is not something a person can act on; "1,180 of 1,240
+    characters matched" says how much is left to listen to."""
+    a = [seg(0, 4, "完全相同的一整句話")]
+    out = tc.compare(a, list(a))
+
+    assert out["agreed_chars"] == out["total_chars"] == len("完全相同的一整句話")
+
+
+def test_a_run_of_one_word_disagreements_becomes_one_listening_window():
+    """On messy audio the two engines argue continuously, and character-level diffs
+    produce a stream of one-word entries. Six entries is six trips to the timeline
+    for one thing to listen to."""
+    a = [seg(30.0, 36.0, "到夾有頭夾到夾去這個他夾到夾")]
+    b = [seg(30.0, 36.0, "的話可以可以得它插不進")]
+
+    out = tc.compare(a, b)
+
+    assert len(out["review"]) <= 2, out["review"]
+    assert out["review"][0]["end"] - out["review"][0]["start"] > 1.0
+
+
+def test_merging_keeps_both_sides_text():
+    merged = tc._merge_nearby([
+        {"start": 1.0, "end": 1.4, "kind": tc.OTHER, "a": "甲", "b": "乙"},
+        {"start": 1.6, "end": 2.0, "kind": tc.OTHER, "a": "丙", "b": "丁"},
+    ])
+    assert len(merged) == 1
+    assert merged[0]["a"] == "甲 丙" and merged[0]["b"] == "乙 丁"
+
+
+def test_a_taigi_finding_is_not_buried_by_what_it_sits_next_to():
+    """"the Taiwanese was flattened here" is the finding worth surfacing; merging it
+    into a neighbour labelled `other` would hide the only category that names a
+    known, fixable failure."""
+    merged = tc._merge_nearby([
+        {"start": 1.0, "end": 1.4, "kind": tc.OTHER, "a": "x", "b": "y"},
+        {"start": 1.5, "end": 2.0, "kind": tc.TAIGI, "a": "我們", "b": "阮"},
+    ])
+    assert len(merged) == 1 and merged[0]["kind"] == tc.TAIGI
+
+
+def test_distant_disagreements_stay_separate():
+    merged = tc._merge_nearby([
+        {"start": 1.0, "end": 1.4, "kind": tc.OTHER, "a": "甲", "b": "乙"},
+        {"start": 40.0, "end": 41.0, "kind": tc.OTHER, "a": "丙", "b": "丁"},
+    ])
+    assert len(merged) == 2
