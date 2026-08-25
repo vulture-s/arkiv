@@ -263,3 +263,10 @@ confirm that:
 You keep the copyright to what you wrote — point 3 is a license you grant, not a transfer of
 ownership. Merged contributions are credited in the repository's contributor list; if you'd
 like to be credited under a different name than your Git identity, just say so in the PR.
+
+**Crediting someone who did not open the PR themselves** (a patch sent by mail, a bug report
+that turned into a fix): use their own Git author line from the patch, or name them in
+[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md). **Never construct a
+`<name>@users.noreply.github.com` address** — GitHub resolves those to whoever actually holds
+that account, so a guessed one credits a stranger. That has happened here once; see the
+correction in ACKNOWLEDGEMENTS.md.
