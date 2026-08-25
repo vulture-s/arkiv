@@ -201,6 +201,18 @@ def _read_subtitle_max_cjk() -> int:
 
 SUBTITLE_MAX_CJK = _read_subtitle_max_cjk()
 
+
+# Quiet recordings lose whole passages before whisper ever sees them: VAD reads a
+# low-level track as silence and drops it. Normalising fixes that — but only for
+# tracks that need it. Running dynaudnorm over already well-levelled audio pulls
+# the noise floor up in the quiet passages, which is where hallucinations come
+# from, so this is GATED on a measured level rather than applied to everything.
+#
+# -30 dB mean is well below normal dialogue (a healthy mix sits around -20 to
+# -26) and comfortably above the level at which VAD starts eating speech.
+AUDIO_NORMALISE = os.getenv("ARKIV_AUDIO_NORMALISE", "1").strip().lower() not in ("0", "false", "no", "off")
+AUDIO_NORMALISE_BELOW_DB = float(os.getenv("ARKIV_AUDIO_NORMALISE_BELOW_DB", "-30"))
+
 def _detect_exiftool() -> str:
     """Resolve ExifTool binary path via fallback chain.
 
