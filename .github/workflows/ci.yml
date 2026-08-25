@@ -278,10 +278,27 @@ jobs:
           # PYSEC id and its GHSA alias, so a pip-audit id switch can't red the gate
           # on the very advisory it means to skip — the gate still blocks on any
           # other/new advisory. Revisit when a fix ships or chromadb is dropped.
+          #
+          # 2026-08-25: three MORE from the same disclosure batch (consecutive CVE
+          # ids, same package, same "no fixed version" state) — and the same
+          # reasoning applies unchanged, so they get the same explicit treatment:
+          #   CVE-2026-45830  cross-tenant read/write by any authenticated user
+          #   CVE-2026-45831  SimpleRBACAuthorizationProvider ignores tenant scope
+          #   CVE-2026-45833  RCE via trust_remote_code, needs UPDATE_COLLECTION
+          # All three require a RUNNING ChromaDB server with authenticated users
+          # (two of them additionally require multiple tenants). arkiv calls
+          # `chromadb.PersistentClient(path=...)` and nothing else — verified: no
+          # HttpClient, no server process, no tenants, no auth provider anywhere in
+          # the tree. None of the three is reachable, and there is no fixed version
+          # to move to. Both the CVE id and its GHSA alias are listed for each, for
+          # the same id-switch reason as above.
           # NOTE: this only gates MERGES if `dependency-audit` (and `test-windows`)
           # are set as REQUIRED checks in branch protection — verify in repo settings.
           pip-audit -r requirements.txt -r requirements-dev.txt \
-            --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c
+            --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c \
+            --ignore-vuln CVE-2026-45830 --ignore-vuln GHSA-2wm9-hf6c-p5cr \
+            --ignore-vuln CVE-2026-45831 --ignore-vuln GHSA-xph7-9rjv-w5fr \
+            --ignore-vuln CVE-2026-45833 --ignore-vuln GHSA-36p7-vc44-83pf
       - uses: actions/setup-node@v7
         with:
           node-version: "20"
