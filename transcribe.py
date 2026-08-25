@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import platform
+import re
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,8 @@ from config import (
     OLLAMA_CHAT_MODEL,
     FFMPEG_PATH,
     DIARIZATION_ENABLED,
+    AUDIO_NORMALISE,
+    AUDIO_NORMALISE_BELOW_DB,
     PYANNOTE_TOKEN,
     VAD_THRESHOLD,
 )
@@ -892,12 +895,46 @@ def _llm_polish_batched(text: str, language: str = "zh") -> str:
     return " ".join(out)
 
 
+def _mean_volume_db(media_path: str):
+    """Mean audio level in dBFS, or None when ffmpeg can't say.
+
+    One cheap pass — `volumedetect` decodes to null, so nothing is written and no
+    re-encode happens. Cheap enough to run per clip, and the alternative is
+    guessing whether a track needs help.
+    """
+    cmd = [FFMPEG_PATH, "-i", media_path, "-map", "a:0",
+           "-af", "volumedetect", "-f", "null", "-"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    err = (r.stderr or b"").decode("utf-8", "replace")
+    match = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?) dB", err)
+    return float(match.group(1)) if match else None
+
+
 def _to_wav(media_path: str):
     _fd, out = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
+    filters = []
+    if AUDIO_NORMALISE:
+        # Gated, not unconditional. A quiet track loses whole passages before
+        # whisper sees them — VAD reads low level as silence and drops it, and the
+        # holes land disproportionately on relaxed, quietly-spoken passages. But
+        # normalising an already healthy track raises its noise floor in exactly
+        # the quiet stretches where hallucinations start, so measure first.
+        mean_db = _mean_volume_db(media_path)
+        if mean_db is not None and mean_db < AUDIO_NORMALISE_BELOW_DB:
+            print("  [audio] mean {0:.1f} dB < {1:.0f} dB — normalising".format(
+                mean_db, AUDIO_NORMALISE_BELOW_DB), flush=True)
+            filters.append("dynaudnorm")
     cmd = [
         FFMPEG_PATH, "-i", media_path,
         "-ac", "1", "-ar", "16000",
         "-map", "a:0",
+    ]
+    if filters:
+        cmd += ["-af", ",".join(filters)]
+    cmd += [
         "-loglevel", "error",
         out, "-y"
     ]
