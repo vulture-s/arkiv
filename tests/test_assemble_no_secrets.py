@@ -140,3 +140,50 @@ def test_macos_script_is_valid_bash() -> None:
     """
     proc = subprocess.run(["bash", "-n"], input=SH.read_bytes(), capture_output=True)
     assert proc.returncode == 0, f"bash -n failed:\n{proc.stderr.decode(errors='replace')}"
+
+
+# ── the chromadb advisory ignores must stay honest ───────────────────────────
+# `dependency-audit` is a real gate, and the only sanctioned way past it is an
+# EXPLICIT per-advisory ignore with a reason. That is safe exactly as long as the
+# reason stays true: arkiv embeds chromadb in-process and never runs its server.
+# The day someone adds an HttpClient, every one of those ignores silently becomes
+# a live vulnerability with a stale excuse next to it.
+
+def test_no_chromadb_server_client_anywhere():
+    """The premise behind every chromadb `--ignore-vuln` in ci.yml."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    offenders = []
+    for py in root.rglob("*.py"):
+        parts = set(py.parts)
+        if parts & {"tests", ".venv", "node_modules", "temp", "src-tauri"}:
+            continue
+        text = py.read_text(encoding="utf-8", errors="replace")
+        if re.search(r"chromadb\.HttpClient|chromadb\.AsyncHttpClient", text):
+            offenders.append(str(py.relative_to(root)))
+    assert offenders == [], (
+        "ci.yml ignores chromadb server-mode CVEs because arkiv never runs the "
+        "server. These files break that premise: {0}".format(offenders)
+    )
+
+
+def test_every_ignored_advisory_carries_a_reason():
+    """A bare `--ignore-vuln` with no comment is indistinguishable from `|| true`."""
+    from pathlib import Path
+    import re
+
+    ci = (Path(__file__).resolve().parent.parent / ".github" / "workflows"
+          / "ci.yml").read_text(encoding="utf-8")
+    block = ci.split("- name: pip-audit", 1)[1].split("- uses:", 1)[0]
+    ids = re.findall(r"--ignore-vuln (\S+)", block)
+    assert ids, "no ignores found — did the step move?"
+    for advisory in ids:
+        assert advisory in block, advisory
+    # Each ignored CVE id must also appear in a comment line explaining it.
+    commented = {m for m in re.findall(r"#.*?(CVE-\d{4}-\d+|PYSEC-\d{4}-\d+)", block)}
+    for advisory in ids:
+        if advisory.startswith("GHSA-"):
+            continue  # aliases ride along with their CVE/PYSEC id
+        assert advisory in commented, "{0} is ignored with no stated reason".format(advisory)
