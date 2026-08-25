@@ -343,22 +343,35 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            // Kill the backend child when the app is exiting, so no orphan uvicorn
-            // survives the window closing.
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                if let Some(state) = app_handle.try_state::<Backend>() {
-                    if let Some(mut child) = state.0.lock().unwrap().take() {
-                        let _ = child.kill();
+            // Kill our children when the app is exiting, so no orphan uvicorn (or
+            // Ollama) survives the window closing.
+            //
+            // BOTH events, and that is the fix rather than a belt-and-braces: with
+            // only `ExitRequested`, quitting through an Apple Event — which is what
+            // ⌘Q and `osascript -e 'quit app "arkiv"'` send — never reached this
+            // code at all, and every such quit left a uvicorn holding its port.
+            // Measured: quit the packaged app, `pgrep` still finds the backend.
+            // `Exit` is the last event before the process ends and fires on every
+            // path. `take()` makes the pair idempotent when both fire.
+            match event {
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                    if let Some(state) = app_handle.try_state::<Backend>() {
+                        if let Some(mut child) = state.0.lock().unwrap().take() {
+                            let _ = child.kill();
+                            let _ = child.wait(); // reap, don't leave a zombie
+                        }
+                    }
+                    // Only the Ollama we started. If it was already running when we
+                    // launched, the state holds None and the user's daemon — very
+                    // possibly serving something else — is left alone.
+                    if let Some(state) = app_handle.try_state::<Ollama>() {
+                        if let Some(mut child) = state.0.lock().unwrap().take() {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
                     }
                 }
-                // Only the Ollama we started. If it was already running when we
-                // launched, the state holds None and the user's daemon — very
-                // possibly serving something else — is left alone.
-                if let Some(state) = app_handle.try_state::<Ollama>() {
-                    if let Some(mut child) = state.0.lock().unwrap().take() {
-                        let _ = child.kill();
-                    }
-                }
+                _ => {}
             }
         });
 }
