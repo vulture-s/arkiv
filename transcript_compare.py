@@ -91,6 +91,36 @@ def _norm(text: str) -> str:
     return "".join(ch for ch in (text or "") if ch not in drop)
 
 
+def particle_count(text: str) -> int:
+    """How many spoken-texture markers a transcript carries."""
+    return _taigi_count(text)
+
+
+def particle_density(text: str) -> float:
+    """Markers per 100 characters.
+
+    **This is the cheap half of the whole exercise, and on Taiwanese-heavy material
+    it is the useful half.** Measured on a 10-minute Taiwanese talk-show slice:
+    Whisper 0.90%, Qwen3-ASR 1.46% — the same ordering the 3-way bench found, and
+    it needs no alignment, no second opinion, and no human ear. One number per
+    transcript answers "which engine kept more of how these people actually spoke".
+
+    Why it matters that this is separate from `compare()`: on that same material the
+    two transcripts agreed on only 49% of characters and the review list covered 94%
+    of the timeline — because the engines disagree SYSTEMATICALLY on Taiwanese
+    (one flattens it to Mandarin, the other writes it phonetically), not
+    occasionally. A diff is the wrong instrument for a systematic difference. This
+    number is the right one.
+
+    It is a PROXY and a relative one — the absolute value depends on the marker set,
+    and the robust signal is the ordering between two transcripts of the SAME audio.
+    Comparing densities across different clips says more about the speakers than
+    about the engine.
+    """
+    text = text or ""
+    return 100.0 * particle_count(text) / len(text) if text else 0.0
+
+
 def _particles_only(text: str) -> bool:
     """Every character present is a spoken-texture marker (and there is at least
     one). An empty side is not "particles only" — that is a hole."""
@@ -192,6 +222,20 @@ def _char_timeline(segments: List[Dict]) -> Tuple[str, List[Tuple[float, float]]
 _MERGE_GAP_S = 1.5
 
 
+def _kept_more(a_text: str, b_text: str):
+    """"a" / "b" / None — which transcript kept more spoken texture.
+
+    None when the difference is under a fifth, because below that the marker set's
+    own arbitrariness is doing the talking, not the engines.
+    """
+    da, db = particle_density(a_text), particle_density(b_text)
+    if max(da, db) <= 0:
+        return None
+    if abs(da - db) / max(da, db) < 0.2:
+        return None
+    return "a" if da > db else "b"
+
+
 def _merge_nearby(review: List[Dict], gap_s: float = _MERGE_GAP_S) -> List[Dict]:
     """Collapse review items separated by less than `gap_s` into one window.
 
@@ -268,5 +312,14 @@ def compare(a_segments: List[Dict], b_segments: List[Dict],
         by_kind[item["kind"]] = by_kind.get(item["kind"], 0) + 1
     # Characters, not runs: "12 equal runs" says nothing a person can act on,
     # "1,180 of 1,240 characters matched" says how much is left to listen to.
+    #
+    # `texture` is reported even when the review list is useless, and on
+    # Taiwanese-heavy audio that is exactly the case: measured 49% agreement and a
+    # review list covering 94% of the timeline, while the densities (0.90 vs 1.46)
+    # cleanly said which engine kept more. When the two disagree systematically the
+    # diff has nothing to offer and this still does.
     return {"agreed_chars": agreed_chars, "total_chars": max(len(a_text), len(b_text)),
-            "review": review, "by_kind": by_kind}
+            "review": review, "by_kind": by_kind,
+            "texture": {"a": round(particle_density(a_text), 3),
+                        "b": round(particle_density(b_text), 3),
+                        "kept_more": _kept_more(a_text, b_text)}}

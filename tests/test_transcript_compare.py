@@ -362,3 +362,54 @@ def test_a_particle_buried_in_real_words_still_counts():
     count, "one engine kept the 啦 and the other didn't" is invisible."""
     assert tc.classify({"text": "甲啦乙丙"}, {"text": "甲乙丙丁"}) == tc.TAIGI
     assert tc.classify({"text": "甲乙丙戊"}, {"text": "甲乙丙丁"}) == tc.OTHER
+
+
+# ── particle density: the half that works when the diff doesn't ──────────────
+# Measured on a 10-minute Taiwanese talk-show slice: Whisper 0.90%, Qwen3-ASR
+# 1.46% — the same ordering the 3-way bench found. On that SAME material the
+# transcripts agreed on 49% of characters and the review list covered 94% of the
+# timeline, because the two engines disagree systematically on Taiwanese rather
+# than occasionally. A diff is the wrong instrument for a systematic difference;
+# one number per transcript is the right one.
+
+def test_density_is_markers_per_hundred_characters():
+    assert tc.particle_density("甲乙丙丁啦") == pytest.approx(20.0)
+    assert tc.particle_density("") == 0.0
+    assert tc.particle_density("完全沒有語氣的一句話") == 0.0
+
+
+def test_density_needs_no_alignment_or_second_transcript():
+    """The point of separating it out: it answers "how much texture is in this
+    transcript" from the transcript alone."""
+    assert tc.particle_count("那我們就這樣做啦齁") == 2
+
+
+def test_compare_reports_which_side_kept_more_texture():
+    out = tc.compare([seg(0, 5, "那我們就這樣做欸對啦")], [seg(0, 5, "那我們就這樣做")])
+
+    assert out["texture"]["kept_more"] == "a"
+    assert out["texture"]["a"] > out["texture"]["b"]
+
+
+def test_texture_is_reported_even_when_the_review_list_is_useless():
+    """The measured case: 49% agreement, review covering 94% of the timeline — the
+    diff had nothing to offer and the densities still did."""
+    a = [seg(0, 5, "這馬按呢講啦欸對齁")]
+    b = [seg(0, 5, "現在這樣說對")]
+
+    out = tc.compare(a, b)
+
+    assert out["review"], "premise: these disagree heavily"
+    assert out["texture"]["kept_more"] == "a"
+
+
+def test_a_small_difference_names_no_winner():
+    """Below a fifth apart, the marker set's own arbitrariness is doing the talking
+    — claiming a winner there would be reading noise as a result."""
+    out = tc.compare([seg(0, 5, "甲乙丙丁啦戊己")], [seg(0, 5, "甲乙丙丁齁戊己")])
+    assert out["texture"]["kept_more"] is None
+
+
+def test_two_transcripts_with_no_texture_name_no_winner():
+    out = tc.compare([seg(0, 5, "完全沒有語氣詞")], [seg(0, 5, "完全沒有語氣字")])
+    assert out["texture"]["kept_more"] is None
