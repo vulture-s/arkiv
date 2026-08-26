@@ -198,6 +198,12 @@
   export let viewLang = null
   export let onViewLang = null // (lang) => void — view a language (no activate)
   export let onActivateLang = null // (lang) => void — make it the active transcript
+  // Spoken-texture reading for the language being viewed: {count, density}.
+  // Server-computed (one definition of the marker set, in transcript_compare) —
+  // `density` is null when the transcript is too short for a percentage to be
+  // anything but noise, and the count is shown alone. A count is honest at any
+  // length; a percentage needs a denominator.
+  export let particleStat = null
   export let frameDescriptions = null // string[]; when set, render a Vision block
   // Richer per-frame vision metadata for the scene timeline. When set, supersedes
   // frameDescriptions. [{tc?, description, content_type, atmosphere, energy,
@@ -316,6 +322,19 @@
   // stay populated for reference.
   export let live = false
   $: lines = live ? (transcriptLines ?? []) : (transcriptLines ?? MOCK_TRANSCRIPT)
+  // 語氣詞 readout, appended to the segment count rather than given its own row —
+  // it is a footnote on the transcript, not a headline about the clip.
+  $: particleLabel = particleStat
+    ? ` · 語氣 ${particleStat.count}` +
+      (particleStat.density != null ? ` · ${particleStat.density.toFixed(1)}%` : '')
+    : ''
+  $: particleTitle = !particleStat
+    ? undefined
+    : particleStat.density != null
+      ? '語氣詞密度：每 100 字裡的語氣詞（啦齁嘛蛤欸咧吼唷呴）。' +
+        '高＝保留了口說語氣，低＝被整理成書面語。' +
+        '這是相對指標 —— 比同一段聲音的兩份逐字稿有意義；跨片比較比到的是講話的人，不是引擎。'
+      : '這份逐字稿太短，百分比會被單一個字左右，所以只給個數。'
   $: pathStr = live
     ? (pathLabel ?? media.name)
     : (pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`)
@@ -454,7 +473,7 @@
   <div class="block transcript">
     <div class="blockhead">
       <Eyebrow>Transcript</Eyebrow>
-      <Mono dim style="font-size:9.5px;">{lines.length} 段</Mono>
+      <Mono dim style="font-size:9.5px;" title={particleTitle}>{lines.length} 段{particleLabel}</Mono>
     </div>
     {#if transcriptLangs && transcriptLangs.length}
       <div class="langtabs">

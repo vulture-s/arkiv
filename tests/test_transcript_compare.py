@@ -498,3 +498,59 @@ def test_the_denominator_is_the_longer_transcript():
 
     assert out["agreed_chars"] == 3
     assert out["total_chars"] == 8
+
+
+# ── the denominator ──────────────────────────────────────────────────────────
+
+def test_punctuation_does_not_change_the_reading():
+    """Punctuation only ever enters the denominator, so the more punctuated side
+    reads as having less texture. The Whisper path goes through LLM polish and the
+    Qwen path does not — which is exactly the comparison this metric is for.
+
+    Measured before the fix: 9.09% vs 11.76% on this pair, 29% apart, against a
+    `_kept_more` threshold of 20%. Punctuation alone could name the winner.
+    """
+    polished = "那我們就這樣做啦，齁，對，就是這樣，好不好？"
+    raw = "那我們就這樣做啦齁對就是這樣好不好"
+
+    assert tc.particle_density(polished) == pytest.approx(tc.particle_density(raw))
+    assert tc._kept_more(polished, raw) is None
+
+
+def test_the_denominator_ignores_layout_and_symbols():
+    assert tc._speech_chars("你好　嗎…，。！？「」—《》 %") == 3
+    assert tc._speech_chars("abc 123") == 6
+
+
+# ── the reading the UI renders ───────────────────────────────────────────────
+
+def test_a_latin_transcript_gets_no_reading_rather_than_zero():
+    """Every marker is CJK, so an English transcript scores a structural zero.
+    Rendering "0.0%" there reads as a measurement of the engine and is a statement
+    about the alphabet."""
+    assert tc.particle_reading("this is an english transcript of some length") is None
+    assert tc.particle_reading("") is None
+
+
+def test_a_short_transcript_reports_a_count_and_no_percentage():
+    """arkiv's transcripts average 42 characters. At that length one 啦 is 2.4% —
+    a number that moves further on one character than the whole engine gap."""
+    r = tc.particle_reading("那我們就這樣做啦齁")
+
+    assert r["count"] == 2
+    assert r["density"] is None
+
+
+def test_a_long_enough_transcript_reports_both():
+    text = "啦" * 4 + "甲" * 396  # 400 speech chars, 4 markers
+
+    r = tc.particle_reading(text)
+
+    assert r["count"] == 4
+    assert r["density"] == pytest.approx(1.0)
+
+
+def test_the_threshold_is_counted_in_speech_characters_not_string_length():
+    """A transcript padded to 200 with punctuation is not a 200-character
+    transcript — that is the same confound one level up."""
+    assert tc.particle_reading("啦" + "甲" * 99 + "，" * 200)["density"] is None

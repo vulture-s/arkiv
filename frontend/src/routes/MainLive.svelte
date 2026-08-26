@@ -736,9 +736,19 @@
   $: transcriptLangs = tdLive ? tdLive.transcripts.map((t) => ({ lang: t.lang, active: !!t.active })) : null
   // transcript: show the viewed language's segments_json when tabs are loaded,
   // else fall back to the live detail's active transcript.
+  $: _viewedRow = (tdLive && viewLang)
+    ? (tdLive.transcripts.find((t) => t.lang === viewLang) || null)
+    : null
   $: _displaySegs = (tdLive && viewLang)
-    ? (parseJson((tdLive.transcripts.find((t) => t.lang === viewLang) || {}).segments_json) || [])
+    ? (parseJson((_viewedRow || {}).segments_json) || [])
     : (detailLive ? (parseJson(detailLive.segments_json) || []) : null)
+  // 語氣詞 count/density for the viewed language. Computed server-side so the
+  // marker set has exactly one definition; absent (null) when the server declines
+  // to answer — a non-CJK transcript would score a structural 0, which reads as a
+  // measurement and is not one.
+  $: particleStat = _viewedRow && _viewedRow.particle_count != null
+    ? { count: _viewedRow.particle_count, density: _viewedRow.particle_density }
+    : null
   $: inspTranscript = _displaySegs
     ? _displaySegs.map((sg) => [secToTc(sg.start), sg.text, false, sg.start])
     : null
@@ -1130,6 +1140,7 @@
         peaks={inspPeaks}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
+        {particleStat}
         {transcriptLangs}
         {viewLang}
         {onViewLang}

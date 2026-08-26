@@ -31,6 +31,7 @@ import db
 import mediatypes
 import progress
 import tag_quality
+import transcript_compare
 from auth import require_scopes
 from config import BASE_DIR
 from mediarecords import _get_light_records_by_ids, _get_tags_bulk
@@ -957,6 +958,15 @@ def list_transcripts(media_id: int, _tok: dict = Depends(require_scopes("videos_
             r["active"] = True
         else:
             r["active"] = False
+        # 語氣詞 reading for the inspector. Computed here rather than in the
+        # frontend so the marker set has exactly one definition — a copy in JS
+        # would drift the first time the set is corrected, and it has been
+        # corrected twice already. Both fields are None when the module declines
+        # to answer (no CJK), and `particle_density` alone is None when the
+        # transcript is too short for a percentage to be anything but noise.
+        reading = transcript_compare.particle_reading(r.get("transcript"))
+        r["particle_count"] = reading["count"] if reading else None
+        r["particle_density"] = reading["density"] if reading else None
     return {"active_lang": active_lang, "transcripts": rows}
 
 

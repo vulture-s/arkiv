@@ -85,6 +85,20 @@ TAIGI_WORDS = ("按呢", "這馬")
 # missing speech.
 _COVERAGE_MIN_CHARS = 8
 
+# Below this many speech characters, no percentage is reported at all — only a
+# count. One marker moves the reading by `100/L` points, and the gap this metric
+# exists to resolve is 0.56 points (0.90 vs 1.46), so below L = 179 a single
+# character outweighs the entire signal. And arkiv's transcripts really are that
+# short: 541 real ones averaged 42 characters, where one 啦 reads as 2.4%.
+# `scripts/measure_particle_density.py` re-measures both numbers against any
+# library, so this threshold can be re-derived rather than believed. Writing it
+# turned up a counting trap the original one-off measurement may well have fallen
+# into: `media.transcript` and the active row of `transcripts` are the same text,
+# so a union over both tables counts every active transcript twice. If the 541 was
+# arrived at that way it is nearer 270. The MEAN length and the density ratio are
+# unaffected by a uniform double-count, and those are what this threshold rests on.
+DENSITY_MIN_CHARS = 200
+
 AGREE = "agree"
 COVERAGE = "coverage"   # one side has text the other simply doesn't
 TAIGI = "taigi"         # one side kept the spoken texture, the other tidied it
@@ -115,8 +129,24 @@ def particle_count(text: str) -> int:
     return _taigi_count(text)
 
 
+def _speech_chars(text: str) -> int:
+    """The denominator: characters that carry speech.
+
+    An allowlist (`str.isalnum`), not the drop-list `_norm` uses for comparison.
+    Punctuation only ever enters the denominator, never the numerator, so any
+    punctuation the drop-list happened to miss deflates the reading — and the two
+    engines do not punctuate alike, because the Whisper path runs through LLM polish
+    and the Qwen path does not.
+
+    Measured, same sentence, same two markers, with and without polish punctuation:
+    **9.09% vs 11.76% — a 29% difference from punctuation alone**, against a
+    `_kept_more` threshold of 20%. Punctuation could flip the winner by itself.
+    """
+    return sum(1 for ch in (text or "") if ch.isalnum())
+
+
 def particle_density(text: str) -> float:
-    """Markers per 100 characters.
+    """Markers per 100 characters of speech.
 
     **This is the cheap half of the whole exercise, and on Taiwanese-heavy material
     it is the useful half.** Measured on a 10-minute Taiwanese talk-show slice:
@@ -135,9 +165,38 @@ def particle_density(text: str) -> float:
     and the robust signal is the ordering between two transcripts of the SAME audio.
     Comparing densities across different clips says more about the speakers than
     about the engine.
+
+    The 0.90/1.46 pair above was measured with raw string length as the denominator,
+    before `_speech_chars` existed. That confound deflates whichever side carries
+    more punctuation — the Whisper side, which is the lower of the two — so the real
+    gap is if anything wider than 0.56 points, not narrower. The ordering stands;
+    the digits are stale. `scripts/measure_particle_density.py` replaces them with
+    clean ones the day those libraries are mounted again.
+    """
+    n = _speech_chars(text)
+    return 100.0 * particle_count(text) / n if n else 0.0
+
+
+def particle_reading(text: str) -> Optional[Dict]:
+    """One transcript's texture reading — `{"count", "density"}` — or None.
+
+    **None entirely when the text carries no CJK.** Every marker is a CJK character,
+    so an English transcript scores a structural zero. Rendering "0.0%" there looks
+    like a measurement and is a category error: the honest answer is that this
+    instrument does not apply, and None is how you say that.
+
+    **`density` is None below `DENSITY_MIN_CHARS`**, and the count is returned
+    alone. A count is honest at any length; a percentage needs a denominator. This
+    is the shape the UI renders, so the decision not to answer lives here, next to
+    the reasons for it, rather than in a component that would have to re-derive it.
     """
     text = text or ""
-    return 100.0 * particle_count(text) / len(text) if text else 0.0
+    if not any("\u4e00" <= ch <= "\u9fff" for ch in text):
+        return None
+    count = particle_count(text)
+    n = _speech_chars(text)
+    return {"count": count,
+            "density": round(100.0 * count / n, 2) if n >= DENSITY_MIN_CHARS else None}
 
 
 def _particles_only(text: str) -> bool:
