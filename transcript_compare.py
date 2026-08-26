@@ -34,12 +34,25 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-# Characters that are written Taiwanese and effectively do not appear in written
-# Mandarin. Deliberately conservative: 伊 / 講 / 較 / 欲 are common in both and are
-# NOT here, because a marker that fires on Mandarin makes the whole category
-# meaningless. Missing a few Taiwanese lines is recoverable; a category that cries
-# wolf gets ignored, and then so does the real one.
-TAIGI_MARKERS = "毋袂佇阮恁遮遐蹛媠囡爸母囝孫兜箍焦鬧熱歹勢多謝按怎啥物"
+# Characters that only appear in written Taiwanese.
+#
+# **Measured 2026-08-26 and the result matters more than the list:** across 541
+# real transcripts (22,799 characters) not one of 毋 袂 佇 阮 恁 遮 遐 蹛 媠 囡
+# appeared — **zero**. Nineteen of the original twenty-four markers never fired at
+# all, and the five that did (怎 焦 物 啥 按) are ordinary Mandarin characters, so
+# what the category was actually reporting was noise.
+#
+# The reason is structural, not a tuning problem: **neither engine writes Taiwanese
+# orthography.** Whisper flattens Taiwanese into Mandarin by design, and
+# Qwen3-ASR has no Taiwanese in its supported-language list at all — it transcribes
+# Taiwanese speech AS Chinese. The two differ by writing different Mandarin
+# characters for the same sound, not by one of them writing 台語漢字.
+#
+# So the list is now only the unambiguous characters. It will almost never fire on
+# these two engines, and that is the correct behaviour: a category that names a
+# specific failure must stay silent when it cannot see that failure. It becomes
+# useful the day an engine that actually writes Taiwanese is added.
+TAIGI_MARKERS = "毋袂佇阮恁遮遐蹛媠囡"
 
 # Below this, a length ratio says nothing: short diff runs are word swaps, not
 # missing speech.

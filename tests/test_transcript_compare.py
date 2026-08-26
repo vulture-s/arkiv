@@ -279,3 +279,36 @@ def test_distant_disagreements_stay_separate():
         {"start": 40.0, "end": 41.0, "kind": tc.OTHER, "a": "丙", "b": "丁"},
     ])
     assert len(merged) == 2
+
+
+# ── the marker set, after measuring it ───────────────────────────────────────
+
+def test_only_unambiguous_characters_are_markers():
+    """Measured across 541 real transcripts (22,799 chars): 19 of the original 24
+    markers never appeared, and the 5 that did are ordinary Mandarin. The category
+    was labelling noise.
+
+    Anything that also occurs in written Mandarin must stay out — a marker that
+    fires on Mandarin does not make the category noisy, it makes it wrong."""
+    for ch in "怎焦物啥按爸母孫熱歹勢多謝鬧囝兜箍伊講較欲":
+        assert ch not in tc.TAIGI_MARKERS, "{0} occurs in ordinary Mandarin".format(ch)
+
+
+def test_the_markers_that_remain_are_the_ones_that_only_exist_in_taiwanese():
+    for ch in "毋袂佇阮恁遮遐蹛媠囡":
+        assert ch in tc.TAIGI_MARKERS
+
+
+def test_ordinary_mandarin_never_looks_like_taiwanese():
+    """The regression the measurement exposed: two plain Mandarin readings that
+    happen to differ must not come back labelled `taigi`."""
+    out = tc.compare([seg(0, 3, "他說這個怎麼按下去物件就不見了")],
+                     [seg(0, 3, "他說這個怎麼按下去東西就不見了")])
+    assert tc.TAIGI not in out["by_kind"], out
+
+
+def test_real_written_taiwanese_still_registers():
+    """Narrowing must not silence the category entirely — when an engine does write
+    Taiwanese, this is what has to fire."""
+    out = tc.compare([seg(0, 3, "我們不會在這裡")], [seg(0, 3, "阮袂佇遮")])
+    assert tc.TAIGI in out["by_kind"], out
