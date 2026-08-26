@@ -283,6 +283,47 @@ def test_distant_disagreements_stay_separate():
 
 # ── the marker set, after measuring it ───────────────────────────────────────
 
+def test_particles_are_what_actually_carries_the_signal():
+    """Two measurements got us here. Written-Taiwanese characters fired **zero**
+    times across 541 real transcripts, because neither engine writes Taiwanese
+    orthography. The 3-way bench measured the same property successfully because its
+    set is mostly sentence-final PARTICLES — re-measured on the same 22,799
+    characters: **134 hits against zero**."""
+    for ch in "啦齁嘛蛤欸咧吼唷呴":
+        assert ch in tc.PARTICLE_MARKERS
+
+
+def test_a_particle_smoothed_away_is_not_reported_as_a_missing_sentence():
+    """`做` vs `做啦` is one engine tidying the speech away. With the empty-side rule
+    checked first it came back as `coverage` — "the other engine missed something" —
+    which is the opposite of what happened."""
+    out = tc.compare([seg(0, 3, "那我們就這樣做")], [seg(0, 3, "那我們就這樣做啦")])
+    assert out["by_kind"] == {tc.TAIGI: 1}, out
+
+
+def test_a_genuinely_missing_sentence_is_still_a_hole():
+    """The rule above must not swallow real coverage: a hole contains real words,
+    not just particles."""
+    out = tc.compare([seg(0, 5, "這一整句話都有被聽到而且很長")], [seg(0, 5, "")])
+    assert out["by_kind"] == {tc.COVERAGE: 1}, out
+
+
+def test_particles_on_both_sides_is_not_a_texture_finding():
+    """Both engines kept the texture — whatever they disagree about, it is not
+    that."""
+    out = tc.compare([seg(0, 3, "這樣做啦")], [seg(0, 3, "這樣用啦")])
+    assert tc.TAIGI not in out["by_kind"], out
+
+
+def test_ambiguous_members_of_the_bench_set_are_excluded():
+    """敢 (dare) and 乎 (classical particle) are ordinary Mandarin. Harmless in a
+    density metric where they add the same background to both sides; not harmless
+    when classifying one window, which is where the first version of this category
+    went wrong."""
+    assert "敢" not in tc.PARTICLE_MARKERS and "敢" not in tc.TAIGI_MARKERS
+    assert "乎" not in tc.PARTICLE_MARKERS and "乎" not in tc.TAIGI_MARKERS
+
+
 def test_only_unambiguous_characters_are_markers():
     """Measured across 541 real transcripts (22,799 chars): 19 of the original 24
     markers never appeared, and the 5 that did are ordinary Mandarin. The category
@@ -292,6 +333,7 @@ def test_only_unambiguous_characters_are_markers():
     fires on Mandarin does not make the category noisy, it makes it wrong."""
     for ch in "怎焦物啥按爸母孫熱歹勢多謝鬧囝兜箍伊講較欲":
         assert ch not in tc.TAIGI_MARKERS, "{0} occurs in ordinary Mandarin".format(ch)
+        assert ch not in tc.PARTICLE_MARKERS, "{0} occurs in ordinary Mandarin".format(ch)
 
 
 def test_the_markers_that_remain_are_the_ones_that_only_exist_in_taiwanese():
@@ -312,3 +354,11 @@ def test_real_written_taiwanese_still_registers():
     Taiwanese, this is what has to fire."""
     out = tc.compare([seg(0, 3, "我們不會在這裡")], [seg(0, 3, "阮袂佇遮")])
     assert tc.TAIGI in out["by_kind"], out
+
+
+def test_a_particle_buried_in_real_words_still_counts():
+    """The other branch: both sides carry real content, so `particles_only` does not
+    apply — the finding has to come from the marker COUNT. Without particles in that
+    count, "one engine kept the 啦 and the other didn't" is invisible."""
+    assert tc.classify({"text": "甲啦乙丙"}, {"text": "甲乙丙丁"}) == tc.TAIGI
+    assert tc.classify({"text": "甲乙丙戊"}, {"text": "甲乙丙丁"}) == tc.OTHER

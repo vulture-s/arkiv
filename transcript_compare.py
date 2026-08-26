@@ -34,25 +34,38 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-# Characters that only appear in written Taiwanese.
+# What actually distinguishes these two engines is **spoken texture**, not
+# orthography — and that took two measurements to establish.
 #
-# **Measured 2026-08-26 and the result matters more than the list:** across 541
-# real transcripts (22,799 characters) not one of 毋 袂 佇 阮 恁 遮 遐 蹛 媠 囡
-# appeared — **zero**. Nineteen of the original twenty-four markers never fired at
-# all, and the five that did (怎 焦 物 啥 按) are ordinary Mandarin characters, so
-# what the category was actually reporting was noise.
+# First attempt used written-Taiwanese characters (毋 袂 佇 阮 恁 遮 遐 蹛 媠 囡).
+# Across 541 real transcripts (22,799 characters) they fired **zero** times, because
+# neither engine writes Taiwanese orthography: Whisper flattens Taiwanese into
+# Mandarin by design, and Qwen3-ASR has no Taiwanese in its supported languages at
+# all — it transcribes Taiwanese speech AS Chinese. Both write Mandarin characters;
+# they differ in WHICH ones.
 #
-# The reason is structural, not a tuning problem: **neither engine writes Taiwanese
-# orthography.** Whisper flattens Taiwanese into Mandarin by design, and
-# Qwen3-ASR has no Taiwanese in its supported-language list at all — it transcribes
-# Taiwanese speech AS Chinese. The two differ by writing different Mandarin
-# characters for the same sound, not by one of them writing 台語漢字.
+# The 3-way meeting bench (2026-07-16) measured the same thing successfully, and
+# looking at its definition explains why: its set is mostly sentence-final
+# PARTICLES — 啦 齁 乎 嘛 蛤 欸 咧 吼 唷 呴 — plus a few Taiwanese words. Those are
+# what survives when someone speaks Mandarin with Taiwanese speech habits, and an
+# engine either keeps them or smooths them into tidy prose. Re-measured on the same
+# 22,799 characters: **134 hits (0.59%) against zero** for the orthographic set.
 #
-# So the list is now only the unambiguous characters. It will almost never fire on
-# these two engines, and that is the correct behaviour: a category that names a
-# specific failure must stay silent when it cannot see that failure. It becomes
-# useful the day an engine that actually writes Taiwanese is added.
-TAIGI_MARKERS = "毋袂佇阮恁遮遐蹛媠囡"
+# So the category detects "one engine kept the spoken texture, the other tidied it
+# away". It is a PROXY for Taiwanese fidelity — the bench used it as one and said so
+# — not a detector of Taiwanese, and the bench's own note applies here too: the
+# robust signal is the ordering between engines, not the absolute count.
+#
+# 敢 and 乎 are in the bench's set but NOT here: both are ordinary Mandarin (敢 =
+# dare, 乎 = classical particle). They are harmless in a density metric, where they
+# add the same background to both sides, but this classifies individual windows —
+# and there an ambiguous member produces exactly the false label that the first
+# version of this category was producing.
+PARTICLE_MARKERS = "啦齁嘛蛤欸咧吼唷呴"
+# Written Taiwanese proper. Effectively never fires on these two engines, and that
+# is correct — it becomes meaningful the day an engine that writes 台語漢字 is added.
+TAIGI_MARKERS = "毋袂佇阮恁遮遐蹛媠囡攏矣"
+TAIGI_WORDS = ("按呢", "這馬")
 
 # Below this, a length ratio says nothing: short diff runs are word swaps, not
 # missing speech.
@@ -60,7 +73,7 @@ _COVERAGE_MIN_CHARS = 8
 
 AGREE = "agree"
 COVERAGE = "coverage"   # one side has text the other simply doesn't
-TAIGI = "taigi"         # one side kept Taiwanese, the other flattened it
+TAIGI = "taigi"         # one side kept the spoken texture, the other tidied it
 OTHER = "other"         # different wording — needs a human ear
 
 
@@ -78,8 +91,20 @@ def _norm(text: str) -> str:
     return "".join(ch for ch in (text or "") if ch not in drop)
 
 
+def _particles_only(text: str) -> bool:
+    """Every character present is a spoken-texture marker (and there is at least
+    one). An empty side is not "particles only" — that is a hole."""
+    stripped = "".join((text or "").split())
+    if not stripped:
+        return False
+    return all(ch in PARTICLE_MARKERS or ch in TAIGI_MARKERS for ch in stripped)
+
+
 def _taigi_count(text: str) -> int:
-    return sum(1 for ch in (text or "") if ch in TAIGI_MARKERS)
+    """Spoken-texture markers: particles, plus written Taiwanese if it ever shows up."""
+    text = text or ""
+    n = sum(1 for ch in text if ch in PARTICLE_MARKERS or ch in TAIGI_MARKERS)
+    return n + sum(text.count(w) for w in TAIGI_WORDS)
 
 
 def align(a_segments: List[Dict], b_segments: List[Dict],
@@ -116,6 +141,12 @@ def classify(a: Optional[Dict], b: Optional[Dict]) -> str:
     ta, tb = _norm((a or {}).get("text", "")), _norm((b or {}).get("text", ""))
     if ta == tb:
         return AGREE
+    # BEFORE the coverage check: a difference that is nothing but particles is the
+    # smoothing case, not a hole. `做` vs `做啦` is one engine tidying the speech
+    # away — and with the empty-side rule first it came back as "the other engine
+    # missed something", which is the opposite of what happened.
+    if _particles_only(ta) or _particles_only(tb):
+        return TAIGI
     if not ta or not tb:
         return COVERAGE
     # A large length gap is a coverage hole too: one engine heard a sentence, the
