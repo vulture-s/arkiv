@@ -413,3 +413,88 @@ def test_a_small_difference_names_no_winner():
 def test_two_transcripts_with_no_texture_name_no_winner():
     out = tc.compare([seg(0, 5, "完全沒有語氣詞")], [seg(0, 5, "完全沒有語氣字")])
     assert out["texture"]["kept_more"] is None
+
+
+# ── the audit round: what the first pass of the marker rule missed ────────────
+
+def test_the_bench_members_that_are_also_mandarin_stay_out():
+    """攏 and 矣 came in with the bench's set and were never held to the rule that
+    threw out 敢 and 乎 — 攏 is 靠攏/拉攏/合攏, 矣 is 足矣. Measured cost before this
+    was fixed: a plain-Mandarin sentence scoring 18.75% density."""
+    for ch in "敢乎攏矣":
+        assert ch not in tc.TAIGI_MARKERS and ch not in tc.PARTICLE_MARKERS
+
+
+def test_plain_mandarin_does_not_register_as_texture():
+    assert tc.particle_count("他拉攏了對手也靠攏了盟友最後合攏") == 0
+    assert tc.compare([seg(0, 3, "如此足矣")], [seg(0, 3, "如此足够")])["by_kind"] == {tc.OTHER: 1}
+
+
+def test_a_particle_against_a_whole_sentence_is_still_a_hole():
+    """The particles-only rule exists for `做` vs `做啦`. It must not reach the case
+    where the other side is a sentence — labelling that `taigi` says "one engine
+    tidied the texture away" about fourteen characters of missing speech, and sends
+    nobody to listen to it."""
+    out = tc.compare([seg(0, 3, "齁")], [seg(0, 3, "我們今天討論的重點是預算分配")])
+
+    assert out["by_kind"] == {tc.COVERAGE: 1}
+
+
+def test_smoothing_of_a_short_run_is_still_texture():
+    """The other side of that guard: the case it was written for still works.
+
+    Written against the shape `compare` actually produces — a diff run, not two
+    whole segments. `做` vs `做啦` reaches `classify` as `""` vs `"啦"`, and it is
+    only the particles-only branch that stops the empty side reading as a hole. The
+    first version of this test passed `做啦`/`做` in whole and was green with the
+    branch disabled, because the later marker rule caught it anyway: a test that
+    could not fail.
+    """
+    out = tc.compare([seg(0, 3, "做")], [seg(0, 3, "做啦")])
+
+    assert out["by_kind"] == {tc.TAIGI: 1}
+
+
+def test_layout_characters_are_not_differences():
+    """A CJK engine emits U+3000, not a space, and the drop-list spelled out only
+    ASCII whitespace — so identical speech came back as a coverage hole."""
+    assert tc.compare([seg(0, 3, "你好　嗎")], [seg(0, 3, "你好嗎")])["review"] == []
+    assert tc.compare([seg(0, 3, "是的…")], [seg(0, 3, "是的")])["review"] == []
+
+
+def test_a_segment_with_neither_text_nor_timing_still_sorts():
+    """`p[0] or p[1]` reads `{}` as absent and dereferences None."""
+    assert tc.align([{}], []) == [({}, None)]
+
+
+# ── wiring and thresholds that no test was holding ───────────────────────────
+
+def test_compare_merges_its_own_review_list():
+    """`_merge_nearby` had unit tests, but nothing asserted `compare` calls it —
+    the line could be deleted and the whole suite stayed green."""
+    a = [seg(0, 2, "甲乙丙丁戊己庚辛")]
+    b = [seg(0, 2, "甲子丙丁戊丑庚辛")]
+
+    out = tc.compare(a, b)
+
+    assert len(out["review"]) == 1, out["review"]
+    assert out["review"][0]["a"] == "乙 己"
+    assert out["review"][0]["b"] == "子 丑"
+
+
+def test_the_fifth_is_the_actual_threshold():
+    """Both sides of it, because the two texture tests sat at ratio 0 and ratio 1
+    — everything in between was free to move."""
+    hundred = "啦" + "甲" * 99          # 1.000%
+    assert tc._kept_more(hundred, "啦" + "甲" * 132) == "a"   # 0.752% — 25% apart
+    assert tc._kept_more(hundred, "啦" + "甲" * 109) is None  # 0.909% —  9% apart
+
+
+def test_the_denominator_is_the_longer_transcript():
+    """`agreed / total` has to be readable as "how much is left to listen to". With
+    the shorter side as the denominator, an engine that dropped half the clip scores
+    100% agreement."""
+    out = tc.compare([seg(0, 3, "甲乙丙")], [seg(0, 3, "甲乙丙丁戊己庚辛")])
+
+    assert out["agreed_chars"] == 3
+    assert out["total_chars"] == 8

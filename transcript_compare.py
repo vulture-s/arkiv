@@ -22,10 +22,16 @@ manufacture a confident-looking category out of nothing, so a difference that
 isn't demonstrably one of the known kinds is returned as `other`, meaning
 "a person has to listen".
 
-Alignment is by TIME, so segments without usable timestamps cannot be aligned and
-are reported as needing review. Pairing them by position instead would be a guess,
-and a guess that comes out as "these agree" is the one failure this module must not
-have — it would mark unverified text as shippable.
+Alignment is by TEXT: `difflib` over the two normalised character streams. Segment
+boundaries are an artefact of the engine, not of the speech, and the two engines cut
+differently — pairing segment-to-segment marries the same sentence to the wrong
+neighbour, which on a real clip produced 1 agreement and 68 mostly-phantom review
+items. Timestamps are used only to point a difference back at the audio, never to
+decide what pairs with what.
+
+(`align()` is the earlier time-overlap pairing. `compare()` does not use it, and
+nothing else in the repo does either — it survives as a public helper for callers
+that genuinely want segment pairs, and its tests pin it.)
 
 Pure functions, stdlib only. No I/O, no model, no engine assumptions — it takes
 two segment lists in arkiv's usual `{"start", "end", "text"}` shape.
@@ -45,8 +51,9 @@ from typing import Dict, List, Optional, Tuple
 # they differ in WHICH ones.
 #
 # The 3-way meeting bench (2026-07-16) measured the same thing successfully, and
-# looking at its definition explains why: its set is mostly sentence-final
-# PARTICLES — 啦 齁 乎 嘛 蛤 欸 咧 吼 唷 呴 — plus a few Taiwanese words. Those are
+# looking at its definition explains why. Its set in full is
+#   啦 齁 乎 嘛 蛤 欸 咧 吼 唷 呴 · 按呢 這馬 · 袂 毋 敢 攏 矣
+# — mostly sentence-final PARTICLES, plus a few Taiwanese words. Those are
 # what survives when someone speaks Mandarin with Taiwanese speech habits, and an
 # engine either keeps them or smooths them into tidy prose. Re-measured on the same
 # 22,799 characters: **134 hits (0.59%) against zero** for the orthographic set.
@@ -56,15 +63,22 @@ from typing import Dict, List, Optional, Tuple
 # — not a detector of Taiwanese, and the bench's own note applies here too: the
 # robust signal is the ordering between engines, not the absolute count.
 #
-# 敢 and 乎 are in the bench's set but NOT here: both are ordinary Mandarin (敢 =
-# dare, 乎 = classical particle). They are harmless in a density metric, where they
-# add the same background to both sides, but this classifies individual windows —
-# and there an ambiguous member produces exactly the false label that the first
-# version of this category was producing.
+# **Four of the bench's members are dropped here: 敢 乎 攏 矣.** All four are also
+# ordinary Mandarin — 敢 = dare, 乎 = classical particle, 攏 = gather (靠攏/拉攏/
+# 合攏), 矣 = classical final particle (足矣). They are harmless in a density metric
+# over a whole corpus, where they add the same background to both sides, but this
+# module also classifies individual windows — and there an ambiguous member produces
+# exactly the false label the first version of this category was producing.
+#
+# 攏 and 矣 shipped anyway in the first pass of this rule, because they came in with
+# the bench's set while only 敢 and 乎 were tested against the rule. The cost was
+# measured afterwards: `他拉攏了對手也靠攏了盟友最後合攏` — plain Mandarin, no
+# Taiwanese in it — scored 18.75%, and `如此足矣` vs `如此足够` came back `taigi`.
+# The rule was right; it just was not applied to everything it was written for.
 PARTICLE_MARKERS = "啦齁嘛蛤欸咧吼唷呴"
 # Written Taiwanese proper. Effectively never fires on these two engines, and that
 # is correct — it becomes meaningful the day an engine that writes 台語漢字 is added.
-TAIGI_MARKERS = "毋袂佇阮恁遮遐蹛媠囡攏矣"
+TAIGI_MARKERS = "毋袂佇阮恁遮遐蹛媠囡"
 TAIGI_WORDS = ("按呢", "這馬")
 
 # Below this, a length ratio says nothing: short diff runs are word swaps, not
@@ -86,9 +100,14 @@ def _overlap(a: Dict, b: Dict) -> float:
 
 def _norm(text: str) -> str:
     """Compare content, not layout: whitespace and the punctuation the two engines
-    disagree about anyway are not differences worth a human's time."""
-    drop = " \t\n，。、！？；：「」『』（）,.!?;:\"'"
-    return "".join(ch for ch in (text or "") if ch not in drop)
+    disagree about anyway are not differences worth a human's time.
+
+    `str.isspace` rather than a list of space characters — the ideographic space
+    U+3000 is what a CJK engine actually emits, and spelling out `" \t\n"` missed
+    it, so `你好　嗎` and `你好嗎` came back as a coverage hole on identical speech.
+    """
+    drop = "，。、！？；：「」『』（）…,.!?;:\"'"
+    return "".join(ch for ch in (text or "") if not ch.isspace() and ch not in drop)
 
 
 def particle_count(text: str) -> int:
@@ -162,7 +181,10 @@ def align(a_segments: List[Dict], b_segments: List[Dict],
     for i, b in enumerate(b_segments):
         if i not in used_b:
             pairs.append((None, b))
-    pairs.sort(key=lambda p: float((p[0] or p[1]).get("start") or 0.0))
+    # `p[0] or p[1]` reads an empty dict as absent and then dereferences None —
+    # a segment can legitimately be `{}` (no text, no timing) and must still sort.
+    pairs.sort(key=lambda p: float(
+        (p[0] if p[0] is not None else p[1]).get("start") or 0.0))
     return pairs
 
 
@@ -175,7 +197,12 @@ def classify(a: Optional[Dict], b: Optional[Dict]) -> str:
     # smoothing case, not a hole. `做` vs `做啦` is one engine tidying the speech
     # away — and with the empty-side rule first it came back as "the other engine
     # missed something", which is the opposite of what happened.
-    if _particles_only(ta) or _particles_only(tb):
+    longer, shorter = max(len(ta), len(tb)), min(len(ta), len(tb))
+    _lopsided = longer >= _COVERAGE_MIN_CHARS and shorter * 2 <= longer
+    if (_particles_only(ta) or _particles_only(tb)) and not _lopsided:
+        # ...but only when the particle IS the difference. A lone 齁 against a full
+        # sentence is a hole with a particle sitting in it, and calling that
+        # "smoothed texture" hides the one thing a person needed to be sent to.
         return TAIGI
     if not ta or not tb:
         return COVERAGE
@@ -183,8 +210,7 @@ def classify(a: Optional[Dict], b: Optional[Dict]) -> str:
     # other caught two words of it. Only for runs long enough for "a sentence vs a
     # fragment" to mean anything — on a two-character difference the ratio fires on
     # everything (`我們` vs `阮` is 2:1) and swallows the categories that matter.
-    longer, shorter = max(len(ta), len(tb)), min(len(ta), len(tb))
-    if longer >= _COVERAGE_MIN_CHARS and shorter * 2 <= longer:
+    if _lopsided:
         return COVERAGE
     if (_taigi_count(ta) > 0) != (_taigi_count(tb) > 0):
         return TAIGI
