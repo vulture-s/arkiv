@@ -18,12 +18,48 @@ that has no downstream effect.
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import config
 import db
 
 GLOBAL_SCOPE = "global"
+
+
+def canonical_scope(scope: Optional[str]) -> Optional[str]:
+    """One spelling per project, so that a row written is a row found.
+
+    A scope key is a filesystem path, and a path has more than one spelling:
+    `~/lib`, `/Users/me/lib`, a symlink pointing at it, and a trailing slash are
+    four strings for one project. Measured: with `ARKIV_PROJECT_ROOT` set to a
+    symlink, `str(config.PROJECT_ROOT)` and its resolved form differ —
+    `_validate_writable_path` computes the canonical form only to check it against
+    the system-directory denylist and then returns the path it was given. Meanwhile
+    `routers/settings.py` accepts either that string or the registry's own
+    spelling. So a row written under one and read under the other simply misses,
+    and misses in silence.
+
+    `normcase` rather than a bare `resolve`: on Windows `C:\\x` and `c:\\x` are the
+    same directory and would otherwise be two rows. It is a no-op on POSIX, which
+    is where two paths differing only in case really are two directories.
+
+    `GLOBAL_SCOPE` and None are not paths and pass through untouched.
+    """
+    if not scope or scope == GLOBAL_SCOPE:
+        return scope
+    return os.path.normcase(str(Path(scope).expanduser().resolve(strict=False)))
+
+
+def current_scope() -> str:
+    """The scope key for the library this process is serving.
+
+    Read at call time, not at import: `config.PROJECT_ROOT` is what a test rebinds
+    to point at a temp library, and a value frozen at import would make every such
+    test read the developer's own project.
+    """
+    return canonical_scope(str(config.PROJECT_ROOT))
 
 
 class SettingError(ValueError):
@@ -149,6 +185,7 @@ def _typed_to_stored(value: Any) -> str:
 
 
 def _rows_for(scope: str) -> Dict[str, str]:
+    scope = canonical_scope(scope)
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT key, value FROM settings WHERE scope = ?", (scope,)
@@ -228,6 +265,7 @@ def put(values: Dict[str, Any], scope: str = GLOBAL_SCOPE) -> List[str]:
     """
     if not isinstance(values, dict) or not values:
         raise SettingError("values must be a non-empty object")
+    scope = canonical_scope(scope)
     coerced = {k: _coerce(k, v) for k, v in values.items()}  # validates all first
     with db.get_conn() as conn:
         for key, val in coerced.items():
@@ -246,6 +284,7 @@ def reset(key: str, scope: str = GLOBAL_SCOPE) -> None:
     """Drop an override so the key falls back to the next layer down."""
     if key not in SETTINGS_SCHEMA:
         raise SettingError(f"unknown setting key: {key}")
+    scope = canonical_scope(scope)
     with db.get_conn() as conn:
         conn.execute("DELETE FROM settings WHERE scope = ? AND key = ?", (scope, key))
         conn.commit()

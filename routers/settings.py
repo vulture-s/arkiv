@@ -18,20 +18,31 @@ router = APIRouter()
 
 
 def _resolve_settings_scope(scope: str) -> str:
-    """Validate the scope param. 'global' is the library-wide default; any other
-    value must be a known project root (registry or the current PROJECT_ROOT) —
-    we never let an arbitrary string become a scope row, so the table can't be
-    used as free-form key/value storage."""
+    """Validate the scope param, and return it in the one spelling the store uses.
+
+    'global' is the library-wide default; any other value must be a known project
+    root (registry or the current PROJECT_ROOT) — we never let an arbitrary string
+    become a scope row, so the table can't be used as free-form key/value storage.
+
+    Both sides of the comparison are canonicalised, because the two sources
+    genuinely disagree about spelling: `config.PROJECT_ROOT` is whatever the env
+    var said (unresolved), while the registry stores its own. A caller passing the
+    registry's path for the very project this process is serving used to be
+    rejected outright, or — worse — accepted and written to a second row that
+    nothing would ever read back.
+    """
     if not scope or scope == settings_store.GLOBAL_SCOPE:
         return settings_store.GLOBAL_SCOPE
-    known = {str(config.PROJECT_ROOT)}
+    resolved = settings_store.canonical_scope(scope)
+    known = {settings_store.current_scope()}
     try:
-        known.update(p.path for p in project_registry.list_registry_projects())
+        known.update(settings_store.canonical_scope(str(p.path))
+                     for p in project_registry.list_registry_projects())
     except project_registry.RegistryError:
         pass
-    if scope not in known:
+    if resolved not in known:
         raise HTTPException(status_code=400, detail="unknown settings scope: {0}".format(scope))
-    return scope
+    return resolved
 
 
 @router.get("/api/settings")
