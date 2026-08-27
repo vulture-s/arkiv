@@ -97,7 +97,7 @@ def test_config_accepts_localhost_and_tailscale_ollama():
     code, stderr = _check_config_loads({})
     assert code == 0, f"baseline import broken: {stderr}"
     # Tailscale CGNAT (Ollama on NAS)
-    code, stderr = _check_config_loads({"ARKIV_OLLAMA_URL": "http://100.64.154.6:11434"})
+    code, stderr = _check_config_loads({"ARKIV_OLLAMA_URL": "http://100.64.0.10:11434"})
     assert code == 0, f"unexpected failure: {stderr}"
 
 

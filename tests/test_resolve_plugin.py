@@ -52,6 +52,6 @@ def test_resolve_plugin_accepts_localhost_and_tailscale():
     assert code == 0, f"unexpected failure: {stderr}"
     assert "http://localhost:8501" in stdout
 
-    code, stdout, stderr = _import_plugin({"ARKIV_API": "http://100.64.154.6:8501"})
+    code, stdout, stderr = _import_plugin({"ARKIV_API": "http://100.64.0.10:8501"})
     assert code == 0, f"unexpected failure: {stderr}"
-    assert "100.64.154.6" in stdout
+    assert "100.64.0.10" in stdout

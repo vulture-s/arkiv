@@ -575,5 +575,5 @@ ARKIV_PG_DSN = os.getenv("ARKIV_PG_DSN", "").strip()
 if VECTOR_BACKEND == "pg" and not ARKIV_PG_DSN:
     raise ValueError(
         "ARKIV_VECTOR_BACKEND=pg requires ARKIV_PG_DSN "
-        "(e.g. postgresql://rag:PASSWORD@100.64.154.6:5433/rag)"
+        "(e.g. postgresql://rag:PASSWORD@100.64.0.10:5433/rag)"
     )
