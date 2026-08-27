@@ -171,18 +171,33 @@ def make_handler(transcribe, token):
 
             Small bodies are drained so the connection survives; anything larger
             (or a length we cannot read) closes it instead.
+
+            **The answer goes out BEFORE the drain**, which is not the obvious
+            order. Draining first looks tidier and reintroduces the very symptom
+            this method exists to remove: a client that declares 1000 bytes, sends
+            10, and stalls makes the drain block until the socket timeout, and the
+            refusal is never sent — measured, and indistinguishable from the server
+            being down. The response is the part the client is owed; reusing the
+            connection is the part it can live without.
             """
             length = self._content_length()
-            if length is None or length > DRAIN_LIMIT_BYTES:
+            drainable = length is not None and 0 < length <= DRAIN_LIMIT_BYTES
+            if not drainable and length:
                 self.close_connection = True
-            else:
-                remaining = length
+            self._send(code, payload)
+            if not drainable:
+                return
+            remaining = length
+            try:
                 while remaining > 0:
                     chunk = self.rfile.read(min(remaining, 65536))
                     if not chunk:
                         break
                     remaining -= len(chunk)
-            return self._send(code, payload)
+            except OSError:  # stalled or reset mid-drain
+                remaining = -1
+            if remaining != 0:
+                self.close_connection = True
 
         def _authorised(self):
             got = self.headers.get("Authorization", "")

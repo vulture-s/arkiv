@@ -432,3 +432,24 @@ def test_the_token_can_come_from_the_environment_instead_of_argv(monkeypatch, ca
     srv.main(["--model-dir", "/nowhere", "--token", "from-argv"])
 
     assert "token=from-the-env" in capsys.readouterr().out
+
+
+def test_a_client_that_stalls_mid_body_still_gets_its_refusal(server):
+    """The first version of the drain reintroduced the bug it was written to fix.
+
+    Draining before answering looks tidier, but a client that declares 1000 bytes,
+    sends 10, and stops makes the read block until the socket timeout — and the
+    401 is never sent. From the client's side that is indistinguishable from the
+    server being down, which is exactly the symptom of the `Content-Length` crash
+    fixed in the same change. So the answer goes out first.
+    """
+    import socket
+    url = server(_FakeEngine())
+    s = socket.create_connection(("127.0.0.1", _port(url)), timeout=5)
+    try:
+        s.sendall(b"POST /audio/transcriptions HTTP/1.1\r\nHost: x\r\n"
+                  b"Content-Type: multipart/form-data; boundary=B\r\n"
+                  b"Content-Length: 1000\r\n\r\n0123456789")
+        assert _statuses(s.recv(4096).decode("utf-8", "replace")) == ["401"]
+    finally:
+        s.close()
