@@ -373,3 +373,62 @@ def test_a_connection_that_never_finishes_its_request_does_not_hold_a_thread():
     assert srv.REQUEST_TIMEOUT_S > 0
     handler = srv.make_handler(_FakeEngine(), "tok")
     assert handler.timeout == srv.REQUEST_TIMEOUT_S
+
+
+def test_the_server_runs_in_the_calling_thread_and_shuts_down(monkeypatch):
+    """`main` used to start a non-daemon thread and return, so it was finished
+    before the first request arrived: there was no shutdown path at all, and a
+    Ctrl-C was delivered to a thread that had already exited.
+
+    Asserted on the thread identity rather than on "does it block", because a test
+    that hangs proves nothing about why.
+    """
+    seen = {}
+
+    class _FakeServer:
+        def __init__(self, addr, handler):
+            seen["addr"] = addr
+
+        def serve_forever(self):
+            seen["thread"] = threading.get_ident()
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            seen["shutdown"] = True
+
+        def server_close(self):
+            seen["closed"] = True
+
+    monkeypatch.setattr(srv, "ThreadingHTTPServer", _FakeServer)
+    monkeypatch.setitem(srv.ENGINES, "qwen", lambda model_dir: _FakeEngine())
+
+    rc = srv.main(["--model-dir", "/nowhere", "--port", "0", "--token", "t"])
+
+    assert rc == 0
+    assert seen["thread"] == threading.get_ident(), "serve_forever ran off the main thread"
+    assert seen.get("shutdown") and seen.get("closed"), "no shutdown path"
+    assert seen["addr"] == ("127.0.0.1", 0)
+
+
+def test_the_token_can_come_from_the_environment_instead_of_argv(monkeypatch, capsys):
+    """`--token` is visible in `ps` to anyone on the box."""
+    class _FakeServer:
+        def __init__(self, addr, handler):
+            pass
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(srv, "ThreadingHTTPServer", _FakeServer)
+    monkeypatch.setitem(srv.ENGINES, "qwen", lambda model_dir: _FakeEngine())
+    monkeypatch.setenv("ARKIV_ASR_SERVE_TOKEN", "from-the-env")
+
+    srv.main(["--model-dir", "/nowhere", "--token", "from-argv"])
+
+    assert "token=from-the-env" in capsys.readouterr().out
