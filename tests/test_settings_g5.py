@@ -271,3 +271,92 @@ def test_case_only_differences_are_two_projects_on_posix(tmp_db):
     instead of assuming."""
     settings = importlib.reload(importlib.import_module("settings"))
     assert settings.canonical_scope("/srv/Media") != settings.canonical_scope("/srv/media")
+
+
+# ── every key is read at project scope ───────────────────────────────────────
+#
+# The defect this pins: the project layer was writable through the API and shown
+# by `describe()` as `source: "project"`, and not one production read passed a
+# project — so an override could be set, could look set, and changed nothing.
+# Measured: a project row of 30 for `export.subtitle_max_cjk` while the exporter
+# went on using 14.
+
+def _accessors(settings):
+    """key → (a value to write, the accessor production actually calls).
+
+    One row per schema key. The coverage assertion below turns "someone added a
+    key and never wired it to project scope" into a red test rather than into
+    another control that quietly does nothing.
+    """
+    return {
+        "transcription.default_mode": (2, settings.transcription_default_mode),
+        "transcription.default_language": ("ja", settings.transcription_default_language),
+        "vision.model": ("some-vision:7b", settings.vision_model),
+        "vision.num_ctx": (8192, settings.vision_num_ctx),
+        "export.default_dir": ("/tmp/arkiv-out", settings.export_default_dir),
+        "export.subtitle_max_cjk": (30, settings.subtitle_max_cjk),
+        "ingest.recursive": (False, settings.ingest_recursive),
+    }
+
+
+def test_every_setting_has_an_accessor(tmp_db):
+    """The coverage half. Without it the table below silently stops covering the
+    schema the moment a key is added."""
+    settings = importlib.reload(importlib.import_module("settings"))
+    assert set(_accessors(settings)) == set(settings.SETTINGS_SCHEMA)
+
+
+@pytest.mark.parametrize("key", sorted(_accessors(importlib.import_module("settings"))))
+def test_a_project_override_reaches_the_accessor(tmp_db, tmp_path, monkeypatch, key):
+    settings = importlib.reload(importlib.import_module("settings"))
+    config = importlib.import_module("config")
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    monkeypatch.setattr(config, "PROJECT_ROOT", lib)
+    value, read = _accessors(settings)[key]
+
+    settings.put({key: value}, scope=settings.current_scope())
+
+    assert read() == value, "{0} is still read at global scope".format(key)
+
+
+@pytest.mark.parametrize("key", sorted(_accessors(importlib.import_module("settings"))))
+def test_another_projects_override_is_not_this_projects(tmp_db, tmp_path, monkeypatch, key):
+    """The other half: reading at project scope must not mean reading ANY project
+    row. A single shared row would pass the test above and be worse than global."""
+    settings = importlib.reload(importlib.import_module("settings"))
+    config = importlib.import_module("config")
+    mine, theirs = tmp_path / "mine", tmp_path / "theirs"
+    mine.mkdir()
+    theirs.mkdir()
+    monkeypatch.setattr(config, "PROJECT_ROOT", mine)
+    value, read = _accessors(settings)[key]
+
+    settings.put({key: value}, scope=str(theirs))
+
+    assert read() == settings.SETTINGS_SCHEMA[key]["default"]()
+
+
+def test_the_global_layer_still_answers_the_settings_ui(tmp_db, tmp_path, monkeypatch):
+    """`describe(project=None)` is the one view that must NOT fall through to the
+    current project — it is what the UI shows as the library-wide default.
+
+    Honest note on what this pins: the global view is guarded twice, by
+    `p = {} if not project` AND by `if project and key in p`. Removing either one
+    alone changes nothing and no test goes red — measured. This test only fails
+    when both go. So it holds the BEHAVIOUR, not either guard individually, and
+    the redundancy is not claimed as tested.
+    """
+    settings = importlib.reload(importlib.import_module("settings"))
+    config = importlib.import_module("config")
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    monkeypatch.setattr(config, "PROJECT_ROOT", lib)
+    settings.put({"vision.num_ctx": 8192})                       # global
+    settings.put({"vision.num_ctx": 4096}, scope=settings.current_scope())
+
+    rows = {r["key"]: r for r in settings.describe(project=None)}
+
+    assert rows["vision.num_ctx"]["value"] == 8192
+    assert rows["vision.num_ctx"]["source"] == "global"
+    assert settings.vision_num_ctx() == 4096  # ...while the pipeline sees the project

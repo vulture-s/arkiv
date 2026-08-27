@@ -115,22 +115,25 @@ def ingest_engines(
     # effective model so the active selection shows even if detection missed it
     # (or Ollama is down).
     import vision as _vision
-    cur_vision = settings_store.effective("vision.model")
+    cur_vision = settings_store.vision_model()
     vision_models = _vision.list_vision_models()
     if cur_vision and cur_vision not in vision_models:
         vision_models = sorted(set(vision_models) | {cur_vision})
     # Phase 9.7 G5③: the dialog's defaults come from the persisted settings
     # (library default), falling back to config. These are genuinely consumed —
     # IngestSetup pre-fills its pickers from them, and the vision model/num_ctx
-    # are what an ingest run actually uses (ingest.py reads settings.effective).
+    # are what an ingest run actually uses (ingest.py reads the same accessors).
+    # Read at PROJECT scope: these are the defaults for THIS library, and a
+    # bare effective() answered with the global layer no matter what the
+    # project row said.
     return {
         "whisper_modes": modes,
-        "default_mode": settings_store.effective("transcription.default_mode"),
-        "default_language": settings_store.effective("transcription.default_language"),
-        "default_recursive": settings_store.effective("ingest.recursive"),
+        "default_mode": settings_store.transcription_default_mode(),
+        "default_language": settings_store.transcription_default_language(),
+        "default_recursive": settings_store.ingest_recursive(),
         "vision_model": cur_vision,
         "vision_models": vision_models,
-        "vision_num_ctx": settings_store.effective("vision.num_ctx"),
+        "vision_num_ctx": settings_store.vision_num_ctx(),
         "languages": _INGEST_LANGUAGES,
     }
 

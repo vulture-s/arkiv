@@ -11,9 +11,12 @@ that PUT coerces + validates against; an out-of-range / wrong-type value is
 rejected (422) rather than silently stored.
 
 Discipline note (no-fake): a setting only belongs here if something actually
-consumes it. The pipeline / export paths read these via effective(); the
-frontend pre-fills its pickers from the same values. We do NOT add a control
-that has no downstream effect.
+consumes it, AT THE SCOPE IT IS OFFERED AT. The pipeline / export paths read
+these through `for_project()` or a typed accessor, so a project override reaches
+them; the frontend pre-fills its pickers from the same values. We do NOT add a
+control that has no downstream effect — and "writable, displayed, never read" is
+that same non-effect wearing a source label, which is what the project layer was
+until 2026-08-27.
 """
 from __future__ import annotations
 
@@ -208,21 +211,69 @@ def effective(key: str, project: Optional[str] = None) -> Any:
     return value
 
 
+def for_project(key: str, project: Optional[str] = None) -> Any:
+    """The effective value for the library this process is serving.
+
+    `effective(key)` with no project answers "the library-wide default", which is
+    the right answer for the settings UI and the wrong one for the pipeline. That
+    difference was not theoretical: the project layer was writable through the API
+    and displayed by `describe()`, and **not one production read passed a project**
+    — so a project override could be set, could be shown as `source: "project"`,
+    and would never change anything. Measured before this: a project row of 30 for
+    `export.subtitle_max_cjk` while the exporter kept using 14.
+
+    Every production read goes through this or a typed helper below, so a new call
+    site cannot quietly get the global-only answer by forgetting an argument —
+    `effective()` now has exactly one caller outside the tests, and it is this
+    function. (The settings UI does not use it either: `describe()` reads the two
+    layers directly so it can report which one won.)
+
+    `project` names a DIFFERENT library; None means this one, not "no project".
+    """
+    return effective(key, project=current_scope() if project is None else project)
+
+
 def subtitle_max_cjk(project: Optional[str] = None) -> int:
     """Effective caption line width. Equals config.SUBTITLE_MAX_CJK when unset, so
     every subtitle export is unchanged until an operator actually moves it."""
-    return effective("export.subtitle_max_cjk", project=project)
+    return for_project("export.subtitle_max_cjk", project)
 
 
 def vision_model(project: Optional[str] = None) -> str:
     """Effective vision model for an ingest run. Equals config.VISION_MODEL when
     unset, so wiring this in is behavior-preserving until an operator overrides."""
-    return effective("vision.model", project=project)
+    return for_project("vision.model", project)
 
 
 def vision_num_ctx(project: Optional[str] = None) -> int:
     """Effective vision num_ctx. Equals config.OLLAMA_VISION_NUM_CTX when unset."""
-    return effective("vision.num_ctx", project=project)
+    return for_project("vision.num_ctx", project)
+
+
+# The remaining four keys had no typed accessor and were read with a bare
+# `effective()` at their call sites — which is exactly how they ended up
+# global-only. Giving every key one accessor is what makes "production never
+# reads at the wrong scope" a property of the module rather than of whoever
+# writes the next call site.
+
+def transcription_default_mode(project: Optional[str] = None) -> int:
+    """Effective whisper-guard mode for an ingest run."""
+    return for_project("transcription.default_mode", project)
+
+
+def transcription_default_language(project: Optional[str] = None) -> str:
+    """Effective forced language; "" means auto-detect."""
+    return for_project("transcription.default_language", project)
+
+
+def ingest_recursive(project: Optional[str] = None) -> bool:
+    """Effective "recurse into sub-folders" default for the ingest dialog."""
+    return for_project("ingest.recursive", project)
+
+
+def export_default_dir(project: Optional[str] = None) -> str:
+    """Effective export destination; "" means "ask the browser to download"."""
+    return for_project("export.default_dir", project)
 
 
 def describe(project: Optional[str] = None) -> List[Dict[str, Any]]:

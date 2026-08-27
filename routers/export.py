@@ -96,7 +96,7 @@ def export_metadata_csv_to(
     # gets the default filename appended.
     raw_dest = (body.dest or "").strip()
     if not raw_dest:
-        default_dir = settings_store.effective("export.default_dir")
+        default_dir = settings_store.export_default_dir()
         if not default_dir:
             raise HTTPException(400, "no dest provided and export.default_dir is unset")
         raw_dest = str(Path(default_dir) / "arkiv-metadata.csv")
