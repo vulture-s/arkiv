@@ -205,11 +205,171 @@ def test_a_token_is_always_required():
     """Not "generated if you ask" — generated if omitted, and compared on every
     request. There is no unauthenticated path."""
     src = (_ROOT / "scripts" / "asr_serve.py").read_text(encoding="utf-8")
-    assert "args.token or secrets.token_urlsafe" in src
+    assert "secrets.token_urlsafe" in src
     assert "compare_digest" in src, "token compared with ==, not constant-time"
 
 
-def test_uploads_are_capped():
-    src = (_ROOT / "scripts" / "asr_serve.py").read_text(encoding="utf-8")
-    assert "MAX_UPLOAD_BYTES" in src
-    assert "length > MAX_UPLOAD_BYTES" in src
+def test_an_oversized_upload_is_refused_without_being_read(server, monkeypatch):
+    """This replaces a test that grepped the source for `length > MAX_UPLOAD_BYTES`.
+
+    That one passed with the cap multiplied by 1024² — 512 TB — because the string
+    it looked for was still there. The cap could have regressed to nothing and the
+    suite would have stayed green, which is the same as having no test.
+
+    The cap is lowered rather than sending half a gigabyte: what is under test is
+    the comparison, not the number.
+    """
+    monkeypatch.setattr(srv, "MAX_UPLOAD_BYTES", 64)
+    engine = _FakeEngine()
+    url = server(engine)
+
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _post(url, token="tok", parts=[("file", "a.wav", b"R" * 200)])
+
+    assert e.value.code == 413
+    assert engine.calls == [], "the engine must not see a body we refused"
+
+
+def test_an_upload_under_the_cap_still_goes_through(server, monkeypatch):
+    """The other half — a cap that refuses everything would also pass the test
+    above."""
+    monkeypatch.setattr(srv, "MAX_UPLOAD_BYTES", 4096)
+    engine = _FakeEngine()
+    url = server(engine)
+
+    assert _post(url, token="tok").status == 200
+    assert len(engine.calls) == 1
+
+
+# ── the HTTP layer, which is where a thin server gets its bugs ───────────────
+
+def _port(url):
+    return int(url.rsplit(":", 1)[1])
+
+
+def _statuses(raw):
+    """Status codes in the order they came back.
+
+    By regex over the whole stream, not `splitlines()`: a JSON body carries no
+    trailing newline, so the next response's status line is glued to the end of
+    the previous body (`{"error": "unauthorised"}HTTP/1.1 200 OK`) and a
+    line-oriented reader sees one response where there are two.
+    """
+    import re as _re
+    return _re.findall(r"HTTP/1\.[01] (\d{3})", raw)
+
+
+def _raw(url, payload, want=1, timeout=5):
+    """Speak HTTP by hand — `requests`/`urllib` open a fresh connection per call,
+    which is exactly what hides a keep-alive bug."""
+    import socket
+    s = socket.create_connection(("127.0.0.1", _port(url)), timeout=timeout)
+    try:
+        s.sendall(payload)
+        out = b""
+        while out.count(b"HTTP/1.") < want and len(out) < 65536:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            out += chunk
+        return out.decode("utf-8", "replace")
+    finally:
+        s.close()
+
+
+def _raw_post(body=None, token=None, length=None, ctype="multipart/form-data; boundary=B"):
+    body = _body([("file", "a.wav", b"RIFF")]) if body is None else body
+    head = ("POST /audio/transcriptions HTTP/1.1\r\nHost: x\r\n"
+            "Content-Type: {0}\r\nContent-Length: {1}\r\n".format(
+                ctype, len(body) if length is None else length))
+    if token:
+        head += "Authorization: Bearer {0}\r\n".format(token)
+    return head.encode() + b"\r\n" + body
+
+
+def test_a_refused_request_does_not_desync_the_connection(server):
+    """The bug: an early return that never reads the body leaves those bytes in
+    the stream. The server then reads `--B` as the next request line, so the
+    client's NEXT request is answered with a 400 it did not cause — and the one
+    after that is never answered at all.
+
+    arkiv's own client escapes it only because `requests.post` opens a fresh
+    connection every time. Any `requests.Session` or curl keep-alive hits it.
+    """
+    url = server(_FakeEngine())
+
+    out = _raw(url, _raw_post() + _raw_post(token="tok"), want=2)
+
+    assert _statuses(out) == ["401", "200"], out[:400]
+
+
+def test_a_body_too_large_to_drain_closes_the_connection_instead(server):
+    """Draining is a courtesy. Reading half a gigabyte we already refused is not,
+    so the other honest answer is to tell the client the connection is over."""
+    url = server(_FakeEngine())
+    huge = srv.DRAIN_LIMIT_BYTES + 1
+
+    out = _raw(url, _raw_post(token="wrong", length=huge))
+
+    assert _statuses(out) == ["401"]
+    assert "connection: close" in out.lower()
+
+
+def test_a_non_numeric_content_length_is_a_400_not_a_dropped_connection(server):
+    """`int("abc")` raised inside the handler: no response at all, one traceback
+    per request. A client cannot tell that apart from the server being down."""
+    url = server(_FakeEngine())
+
+    out = _raw(url, _raw_post(token="tok", length="abc"))
+
+    assert _statuses(out) == ["400"], out[:200]
+
+
+def test_the_engine_is_never_called_by_two_requests_at_once(server):
+    """`ThreadingHTTPServer` handles requests concurrently and there is one engine
+    object holding one GPU. Overlapping `process_file()` calls on a single CUDA
+    engine produce a garbled transcript rather than an error, which is the worst
+    way for this to fail."""
+    import time
+
+    state = {"now": 0, "peak": 0}
+    guard = threading.Lock()
+
+    def engine(wav_path, language):
+        with guard:
+            state["now"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+        time.sleep(0.15)
+        with guard:
+            state["now"] -= 1
+        return [{"start": 0.0, "end": 1.0, "text": "x"}]
+
+    url = server(engine)
+    threads = [threading.Thread(target=lambda: _post(url, token="tok")) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+
+    assert state["peak"] == 1, "engine saw {0} concurrent calls".format(state["peak"])
+
+
+def test_a_failed_transcription_does_not_send_its_exception_text_to_the_client(server):
+    """The exception carries local paths and model internals, and the client can
+    do nothing with either. The operator's log gets the detail."""
+    url = server(_FakeEngine(raises=RuntimeError("/Users/someone/models/secret.bin missing")))
+
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _post(url, token="tok")
+
+    body = e.value.read().decode("utf-8")
+    assert e.value.code == 500
+    assert "secret.bin" not in body and "/Users/" not in body, body
+
+
+def test_a_connection_that_never_finishes_its_request_does_not_hold_a_thread():
+    """Pre-auth, so it costs an attacker nothing. Without a socket timeout each
+    half-open connection holds a worker thread until the process dies."""
+    assert srv.REQUEST_TIMEOUT_S > 0
+    handler = srv.make_handler(_FakeEngine(), "tok")
+    assert handler.timeout == srv.REQUEST_TIMEOUT_S

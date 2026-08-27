@@ -17,6 +17,7 @@ engine actually works and converts the result itself.
 **Binds to 127.0.0.1 unless told otherwise, and always requires a token.** This
 runs a model over whatever it is sent; an unauthenticated one on 0.0.0.0 is a
 GPU someone else can drive. `--host 0.0.0.0` is deliberate and explicit.
+Prefer `ARKIV_ASR_SERVE_TOKEN` over `--token`: argv shows up in `ps`.
 """
 from __future__ import annotations
 
@@ -34,6 +35,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # an hour of 16k mono wav is ~115 MB
+
+# How much of a body we will read purely to keep a connection usable after
+# refusing the request. Draining is a courtesy; reading half a gigabyte we have
+# already said no to is not.
+DRAIN_LIMIT_BYTES = 1024 * 1024
+
+# Per-connection socket timeout. Without one, a client that opens a connection and
+# sends a byte an hour holds a thread forever, and it does so BEFORE authenticating.
+REQUEST_TIMEOUT_S = 60
 
 
 # ── multipart (stdlib `cgi` is deprecated; this is the slice we need) ─────────
@@ -117,8 +127,16 @@ ENGINES = {"qwen": load_qwen}
 # ── server ───────────────────────────────────────────────────────────────────
 
 def make_handler(transcribe, token):
+    # One engine, one GPU. `ThreadingHTTPServer` runs `do_POST` concurrently, so
+    # without this two uploads call `process_file()` on the same engine object at
+    # the same time. Serialising is not a compromise here — it is what a single
+    # card wants — and the alternative is a class of failure that shows up as a
+    # garbled transcript rather than an error.
+    engine_lock = threading.Lock()
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        timeout = REQUEST_TIMEOUT_S
 
         def _send(self, code, payload, content_type="application/json"):
             body = (json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -126,8 +144,45 @@ def make_handler(transcribe, token):
             self.send_response(code)
             self.send_header("Content-Type", content_type + "; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            if self.close_connection:
+                self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
+
+        def _content_length(self):
+            """The declared body size, or None if the header is not a number."""
+            raw = self.headers.get("Content-Length")
+            if raw is None:
+                return 0
+            try:
+                return int(raw)
+            except ValueError:
+                return None
+
+        def _refuse(self, code, payload):
+            """Answer a request whose body we never read.
+
+            HTTP/1.1 keep-alive means the next request comes off the same socket,
+            so an early return that leaves the body in the stream desyncs it: the
+            server parses `--B` as a request line and answers the client's NEXT
+            request with a 400 it did not cause, then stops answering entirely.
+            Reproduced with a raw socket — arkiv's own client escapes it only
+            because `requests.post` opens a fresh connection every call.
+
+            Small bodies are drained so the connection survives; anything larger
+            (or a length we cannot read) closes it instead.
+            """
+            length = self._content_length()
+            if length is None or length > DRAIN_LIMIT_BYTES:
+                self.close_connection = True
+            else:
+                remaining = length
+                while remaining > 0:
+                    chunk = self.rfile.read(min(remaining, 65536))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            return self._send(code, payload)
 
         def _authorised(self):
             got = self.headers.get("Authorization", "")
@@ -138,24 +193,28 @@ def make_handler(transcribe, token):
 
         def do_GET(self):
             if self.path.split("?")[0] != "/health":
-                return self._send(404, {"error": "not found"})
+                return self._refuse(404, {"error": "not found"})
             if not self._authorised():
-                return self._send(401, {"error": "unauthorised"})
+                return self._refuse(401, {"error": "unauthorised"})
             self._send(200, {"status": "ok", "model_ready": True})
 
         def do_POST(self):
             if self.path.split("?")[0] not in ("/audio/transcriptions",
                                                "/v1/audio/transcriptions"):
-                return self._send(404, {"error": "not found"})
+                return self._refuse(404, {"error": "not found"})
             if not self._authorised():
-                return self._send(401, {"error": "unauthorised"})
-            length = int(self.headers.get("Content-Length") or 0)
+                return self._refuse(401, {"error": "unauthorised"})
+            length = self._content_length()
+            if length is None:
+                # `int("abc")` used to raise here, unhandled: the connection was
+                # dropped with no response at all and a traceback per request.
+                return self._refuse(400, {"error": "bad Content-Length"})
             if length <= 0 or length > MAX_UPLOAD_BYTES:
-                return self._send(413, {"error": "bad or oversized upload"})
+                return self._refuse(413, {"error": "bad or oversized upload"})
             ctype = self.headers.get("Content-Type", "")
             m = re.search(r"boundary=([^;]+)", ctype)
             if not m:
-                return self._send(400, {"error": "expected multipart/form-data"})
+                return self._refuse(400, {"error": "expected multipart/form-data"})
             fields, files = parse_multipart(self.rfile.read(length),
                                             m.group(1).strip('"').encode())
             if "file" not in files:
@@ -165,11 +224,14 @@ def make_handler(transcribe, token):
             os.close(fd)
             try:
                 Path(tmp).write_bytes(blob)
-                segments = transcribe(tmp, fields.get("language"))
+                with engine_lock:
+                    segments = transcribe(tmp, fields.get("language"))
             except Exception as exc:  # a bad clip must not take the server down
+                # The detail goes to the operator's log, not down the wire: the
+                # exception text carries local paths and model internals, and the
+                # client can do nothing with either.
                 self.log_message("transcribe failed: %s: %s", type(exc).__name__, exc)
-                return self._send(500, {"error": {"message": "{0}: {1}".format(
-                    type(exc).__name__, exc)}})
+                return self._send(500, {"error": {"message": "transcription failed"}})
             finally:
                 Path(tmp).unlink(missing_ok=True)
             text = " ".join(s["text"] for s in segments)
@@ -189,15 +251,30 @@ def main(argv=None):
     ap.add_argument("--host", default="127.0.0.1",
                     help="0.0.0.0 exposes a GPU to your network — be deliberate")
     ap.add_argument("--port", type=int, default=11435)
-    ap.add_argument("--token", default=None, help="generated and printed if omitted")
+    ap.add_argument("--token", default=None,
+                    help="generated and printed if omitted; ARKIV_ASR_SERVE_TOKEN "
+                         "is read first and keeps it out of `ps`")
     args = ap.parse_args(argv)
 
-    token = args.token or secrets.token_urlsafe(12)
+    # argv is world-readable in `ps` on every machine this is likely to run on.
+    # The env var is the way to supply a token that a colleague on the same box
+    # cannot simply read; `--token` stays for convenience on a private machine.
+    token = os.getenv("ARKIV_ASR_SERVE_TOKEN") or args.token or secrets.token_urlsafe(12)
     transcribe = ENGINES[args.engine](args.model_dir)
     httpd = ThreadingHTTPServer((args.host, args.port), make_handler(transcribe, token))
     print("[asr-serve] listening on http://{0}:{1}  token={2}".format(
         args.host, args.port, token), flush=True)
-    threading.Thread(target=httpd.serve_forever, daemon=False).start()
+    # In the MAIN thread, not a spawned one. The previous version started a
+    # non-daemon thread and returned, so `main` was finished before the first
+    # request arrived: there was no shutdown path at all, and Ctrl-C was
+    # delivered to a thread that had already exited.
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("[asr-serve] stopping", flush=True)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
     return 0
 
 
