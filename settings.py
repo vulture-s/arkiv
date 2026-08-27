@@ -10,6 +10,23 @@ malicious/garbage PUT can't poison arbitrary state. Each key carries a type
 that PUT coerces + validates against; an out-of-range / wrong-type value is
 rejected (422) rather than silently stored.
 
+**"global" is already per-library, and that is the thing to know before reaching
+for the project layer.** The `settings` table lives in the library's own database
+(`PROJECT_ROOT/.arkiv/project.db`), and one server process serves one library — so
+a `global` row is already scoped to this library and nothing else. The project
+layer means something DIFFERENT only when several `ARKIV_PROJECT_ROOT`s are
+pointed at one `ARKIV_DB_PATH`, which the env vars allow and which nobody was
+found doing: on 2026-08-27, all thirteen libraries across four machines kept their
+settings in their own `.arkiv/project.db`, and no two shared a file.
+
+Consequence, written down because two of us have now walked up to it from the
+other side: **a per-project SETTING does not need the project scope.** Put it in
+the schema, set it in the library, done — the library IS the project. The scope
+layer is for the shared-database configuration, not for "this library's value".
+`test_the_default_database_lives_inside_the_project_root` holds the premise, so if
+the default ever moves the DB out of the library this paragraph goes red instead of
+quietly becoming false.
+
 Discipline note (no-fake): a setting only belongs here if something actually
 consumes it, AT THE SCOPE IT IS OFFERED AT. The pipeline / export paths read
 these through `for_project()` or a typed accessor, so a project override reaches

@@ -1,6 +1,7 @@
 """Phase 9.7 G5② — persisted settings overrides (module + API)."""
 import importlib
 import os
+from pathlib import Path
 
 import pytest
 
@@ -360,3 +361,27 @@ def test_the_global_layer_still_answers_the_settings_ui(tmp_db, tmp_path, monkey
     assert rows["vision.num_ctx"]["value"] == 8192
     assert rows["vision.num_ctx"]["source"] == "global"
     assert settings.vision_num_ctx() == 4096  # ...while the pipeline sees the project
+
+
+def test_the_default_database_lives_inside_the_project_root():
+    """The premise the module docstring rests on: `global` is already per-library.
+
+    It holds because the settings table is in the library's own database. If the
+    default ever moves that database somewhere shared, `global` silently becomes
+    machine-wide, every library starts reading every other library's overrides,
+    and the paragraph in settings.py becomes a lie. This turns that into a red
+    test.
+
+    Skipped when `ARKIV_DB_PATH` is set, because that IS the shared-database
+    configuration and pointing the DB outside the root is the whole point of it.
+    """
+    if os.getenv("ARKIV_DB_PATH"):
+        pytest.skip("an explicit ARKIV_DB_PATH is the shared-database case")
+    config = importlib.import_module("config")
+    db_path = Path(config.DB_PATH).expanduser().resolve(strict=False)
+    root = Path(config.PROJECT_ROOT).expanduser().resolve(strict=False)
+
+    assert db_path.is_relative_to(root), (
+        "the settings table moved out of the library: 'global' is no longer "
+        "per-library, and settings.py's module docstring now says something false"
+    )
