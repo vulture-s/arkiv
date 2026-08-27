@@ -212,7 +212,11 @@ def test_current_scope_follows_the_live_project_root(tmp_db, tmp_path, monkeypat
     lib.mkdir()
     monkeypatch.setattr(config, "PROJECT_ROOT", lib)
 
-    assert settings.current_scope() == str(lib.resolve())
+    # Expressed with stdlib `normcase`, not with `canonical_scope` itself — the
+    # latter would compare the function under test to itself. Windows CI caught
+    # the first version, which hard-coded `str(lib.resolve())` and so asserted a
+    # POSIX-shaped answer: there the canonical key is lower-cased.
+    assert settings.current_scope() == os.path.normcase(str(lib.resolve()))
 
 
 @pytest.mark.parametrize("root_is_link", [True, False])
@@ -239,7 +243,7 @@ def test_the_api_accepts_either_spelling_of_the_current_project(
         "/api/settings", json={"scope": asked, "values": {"vision.num_ctx": 2048}})
 
     assert r.status_code == 200, r.text
-    assert r.json()["scope"] == str(real.resolve())
+    assert r.json()["scope"] == os.path.normcase(str(real.resolve()))
 
 
 def test_an_unknown_path_is_still_refused(fastapi_client, tmp_path):
