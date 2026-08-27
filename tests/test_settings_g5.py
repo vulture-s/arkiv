@@ -125,7 +125,21 @@ def test_delete_setting_resets(fastapi_client):
 # this, a row written under one and read under another simply missed — silently,
 # which is the same shape as the project rows that were never read at all.
 
-def test_a_symlinked_root_is_the_same_project(tmp_db, tmp_path):
+@pytest.fixture
+def symlinkable(tmp_path):
+    """Creating a symlink needs SeCreateSymbolicLinkPrivilege on Windows, which a
+    runner may not have. Skip rather than fail: the thing under test is path
+    canonicalisation, not the OS's symlink policy."""
+    target = tmp_path / "_probe_target"
+    target.mkdir()
+    try:
+        (tmp_path / "_probe").symlink_to(target)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip("symlinks unavailable here: {0}".format(exc))
+    (tmp_path / "_probe").unlink()
+
+
+def test_a_symlinked_root_is_the_same_project(tmp_db, tmp_path, symlinkable):
     """The measured case. `config.PROJECT_ROOT` keeps whatever the env var said,
     while the registry stores its own resolved spelling — so the same library
     reaches the store as two different keys."""
@@ -146,7 +160,11 @@ def test_the_same_directory_written_four_ways_is_one_row(tmp_db, tmp_path, monke
     settings = importlib.reload(importlib.import_module("settings"))
     lib = tmp_path / "lib"
     lib.mkdir()
+    # POSIX reads HOME; ntpath.expanduser reads USERPROFILE first and never HOME.
+    # Setting only HOME made the `~/lib` spelling resolve somewhere else entirely
+    # on Windows — a second row, which is the exact failure this test exists for.
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     spellings = [str(lib), str(lib) + "/", str(tmp_path / "." / "lib"), "~/lib"]
     for i, spelling in enumerate(spellings):
@@ -160,7 +178,7 @@ def test_the_same_directory_written_four_ways_is_one_row(tmp_db, tmp_path, monke
     assert rows == 1, "four spellings produced {0} rows".format(rows)
 
 
-def test_reset_finds_the_row_whatever_spelling_it_is_given(tmp_db, tmp_path):
+def test_reset_finds_the_row_whatever_spelling_it_is_given(tmp_db, tmp_path, symlinkable):
     """`reset` deleted by raw string, so resetting through a different spelling
     reported success and left the override in place."""
     settings = importlib.reload(importlib.import_module("settings"))
@@ -199,7 +217,7 @@ def test_current_scope_follows_the_live_project_root(tmp_db, tmp_path, monkeypat
 
 @pytest.mark.parametrize("root_is_link", [True, False])
 def test_the_api_accepts_either_spelling_of_the_current_project(
-        fastapi_client, tmp_path, monkeypatch, root_is_link):
+        fastapi_client, tmp_path, monkeypatch, root_is_link, symlinkable):
     """A caller holding the registry's path for the very library this process is
     serving used to be told the scope was unknown.
 
