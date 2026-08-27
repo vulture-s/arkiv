@@ -181,9 +181,18 @@ def make_handler(transcribe, token):
             connection is the part it can live without.
             """
             length = self._content_length()
-            drainable = length is not None and 0 < length <= DRAIN_LIMIT_BYTES
-            if not drainable and length:
+            if length is None:
+                # An unreadable Content-Length means we cannot know where this
+                # body ends, so the stream can never be resynced — the only safe
+                # answer is to end the connection. `if not drainable and length:`
+                # missed this, because None is falsy: the desync this method
+                # exists to prevent, through a different door.
                 self.close_connection = True
+                drainable = False
+            else:
+                drainable = 0 < length <= DRAIN_LIMIT_BYTES
+                if length > DRAIN_LIMIT_BYTES:
+                    self.close_connection = True
             self._send(code, payload)
             if not drainable:
                 return

@@ -323,6 +323,11 @@ def test_a_non_numeric_content_length_is_a_400_not_a_dropped_connection(server):
     out = _raw(url, _raw_post(token="tok", length="abc"))
 
     assert _statuses(out) == ["400"], out[:200]
+    # ...and the connection must end there: without a readable length we cannot
+    # know where the body stops, so the stream can never be resynced. Found by
+    # reading the diff — `if not drainable and length:` skipped this case because
+    # None is falsy, leaving the very desync this method exists to prevent.
+    assert "connection: close" in out.lower(), out[:300]
 
 
 def test_the_engine_is_never_called_by_two_requests_at_once(server):
