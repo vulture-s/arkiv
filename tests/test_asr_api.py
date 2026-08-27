@@ -201,3 +201,99 @@ def test_configured_reflects_the_env(monkeypatch):
     assert asr_api.configured() is False
     monkeypatch.setattr(asr_api, "ASR_API_BASE", "http://x")
     assert asr_api.configured() is True
+
+
+# ── a 200 is not a promise that the body is readable ─────────────────────────
+
+def test_a_subtitle_body_that_will_not_parse_is_an_error_not_a_transcript():
+    """The worst outcome this module can have. A failed SRT parse used to fall
+    through and return the raw body — index numbers and `-->` lines and all — as
+    the spoken words. Nothing about that looks wrong downstream."""
+    body = "1\n00:00:0X,000 --> 呃\n你好\n"
+
+    with pytest.raises(ValueError, match="subtitle"):
+        asr_api._segments_from_payload(body, "text/plain")
+
+
+def test_a_single_digit_hour_is_still_a_timestamp():
+    """`0:00:01,000` is what several emitters write, and the hour field was
+    `\\d{2}` — so the whole file failed to parse and came back as transcript text."""
+    segs = asr_api.parse_srt("1\n0:00:01,000 --> 0:00:02,000\n甲\n")
+
+    assert segs == [{"start": 1.0, "end": 2.0, "text": "甲"}]
+
+
+def test_the_timing_line_is_searched_for_not_assumed():
+    """A cue index is optional, so the timing is not always the second line."""
+    assert asr_api.parse_srt("00:00:01,000 --> 00:00:02,000\n甲\n")[0]["text"] == "甲"
+
+
+def test_plain_text_is_still_plain_text():
+    """The subtitle guard must not swallow the shape it sits next to."""
+    assert asr_api._segments_from_payload("就是一段話", "text/plain") == ("就是一段話", [])
+
+
+# ── malformed JSON that still arrives with a 200 ─────────────────────────────
+
+def test_a_segment_that_is_not_an_object_does_not_take_down_the_caller():
+    text, segs = asr_api._segments_from_payload(
+        json.dumps({"text": "完整逐字稿", "segments": ["not a dict"]}), "application/json")
+
+    assert text == "完整逐字稿" and segs == []
+
+
+def test_a_segments_field_that_is_not_a_list_does_not_take_down_the_caller():
+    """Written with a NUMBER, not a dict. The first version used `{"a": 1}` and
+    could not fail: iterating a dict yields its keys, which are strings, which the
+    per-segment guard already drops — so the list check it claimed to pin could be
+    deleted with the test still green. A non-iterable is what that check is for."""
+    text, segs = asr_api._segments_from_payload(
+        json.dumps({"text": "甲", "segments": 5}), "application/json")
+
+    assert text == "甲" and segs == []
+    # and the shapes that merely iterate to nothing still come back clean
+    assert asr_api._segments_from_payload(
+        json.dumps({"text": "乙", "segments": {"a": 1}}), "application/json") == ("乙", [])
+
+
+def test_a_non_string_transcript_falls_back_to_the_segments():
+    """`{"text": 5}` used to raise on `.strip()`. The words are in the segments
+    either way, so there is no reason for the caller to see an exception."""
+    text, segs = asr_api._segments_from_payload(
+        json.dumps({"text": 5, "segments": [{"start": 0, "end": 1, "text": "甲"}]}),
+        "application/json")
+
+    assert text == "甲" and len(segs) == 1
+
+
+def test_an_unusable_timing_costs_the_placement_not_the_words():
+    """`float("abc")` used to raise. Dropping the line instead would lose speech,
+    and keeping it at 0.0 would be the invented-timestamp bug — so the segment
+    leaves the timed list while its words stay in the transcript."""
+    text, segs = asr_api._segments_from_payload(json.dumps({"segments": [
+        {"start": "abc", "end": 1, "text": "甲"},
+        {"start": 1, "end": 2, "text": "乙"},
+    ]}), "application/json")
+
+    assert text == "甲 乙"
+    assert [s["text"] for s in segs] == ["乙"]
+
+
+def test_a_null_start_is_not_the_head_of_the_clip():
+    """`s.get("start") or 0.0` read a missing timing as "zero seconds in" — a
+    silent, confident, wrong placement."""
+    _text, segs = asr_api._segments_from_payload(
+        json.dumps({"segments": [{"start": None, "end": 1, "text": "甲"}]}),
+        "application/json")
+
+    assert segs == []
+
+
+def test_a_boolean_is_not_a_timestamp():
+    """`isinstance(True, int)` is True, so a bare numeric check lets `start: true`
+    through as 1.0 second."""
+    _text, segs = asr_api._segments_from_payload(
+        json.dumps({"segments": [{"start": True, "end": 2, "text": "甲"}]}),
+        "application/json")
+
+    assert segs == []
