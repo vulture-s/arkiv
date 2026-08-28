@@ -917,11 +917,18 @@ def _to_wav(media_path: str):
     _fd, out = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
     filters = []
     if AUDIO_NORMALISE:
+        # OFF by default since 2026-08-28 — see the measurement in config.py. The
+        # gate below is still here and still right in shape; what the numbers say
+        # is that passing it does not help. Kept because 13 clips from two
+        # libraries is not every kind of audio, and someone whose material this
+        # sample does not resemble can turn it back on with ARKIV_AUDIO_NORMALISE.
+        #
         # Gated, not unconditional. A quiet track loses whole passages before
-        # whisper sees them — VAD reads low level as silence and drops it, and the
-        # holes land disproportionately on relaxed, quietly-spoken passages. But
-        # normalising an already healthy track raises its noise floor in exactly
-        # the quiet stretches where hallucinations start, so measure first.
+        # whisper sees them — VAD reads low level as silence and drops it. But
+        # normalising raises the noise floor in exactly the quiet stretches where
+        # hallucinations start, and on this material that is what actually
+        # happened: VAD went from keeping 7% to keeping 22%, and whisper filled
+        # the extra with invention.
         mean_db = _mean_volume_db(media_path)
         if mean_db is not None and mean_db < AUDIO_NORMALISE_BELOW_DB:
             print("  [audio] mean {0:.1f} dB < {1:.0f} dB — normalising".format(

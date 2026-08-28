@@ -203,14 +203,34 @@ SUBTITLE_MAX_CJK = _read_subtitle_max_cjk()
 
 
 # Quiet recordings lose whole passages before whisper ever sees them: VAD reads a
-# low-level track as silence and drops it. Normalising fixes that — but only for
-# tracks that need it. Running dynaudnorm over already well-levelled audio pulls
-# the noise floor up in the quiet passages, which is where hallucinations come
-# from, so this is GATED on a measured level rather than applied to everything.
+# low-level track as silence and drops it. Normalising was supposed to fix that,
+# gated on a measured level so healthy audio is left alone.
 #
-# -30 dB mean is well below normal dialogue (a healthy mix sits around -20 to
-# -26) and comfortably above the level at which VAD starts eating speech.
-AUDIO_NORMALISE = os.getenv("ARKIV_AUDIO_NORMALISE", "1").strip().lower() not in ("0", "false", "no", "off")
+# **Measured 2026-08-28 on 13 clips that all sit below the gate — and it does not
+# do that. Default is now OFF.**
+#
+#   8 identical with and without · 5 WORSE with it · 0 better
+#
+# The three quietest clips in the sample (-55.0, -39.9, -39.7 dB) — precisely
+# where recovering lost speech was the whole point — produced nothing either way.
+# Where it changed the answer it added text rather than recovering it: one clip
+# went from 3 segments to 10 by repeating the same sentence three times, another
+# grew a segment sitting at 0.04 of the clip's peak, and one produced a DIFFERENT
+# transcript on two runs of the same input (`謝謝大家` then `感謝觀看` — the model
+# generating, not transcribing) while the un-normalised run was identical both
+# times. One clip lost a real line to it.
+#
+# The mechanism is the one the old comment already named as the risk: dynaudnorm
+# lifts the noise floor, VAD then keeps far more audio (measured 7% → 22% on one
+# clip), and whisper hallucinates over the extra. The -30 dB gate does not prevent
+# that, because the material this fires on IS mostly noise floor — in one library
+# 42 of 51 clips sit below the gate, so it was the common path, not a rescue.
+#
+# The code stays and the env var turns it back on: 13 clips from two libraries is
+# not every kind of audio, and the premise may hold for material this sample does
+# not contain. What is not defensible is shipping it ON by default on evidence
+# that never showed a single recovery.
+AUDIO_NORMALISE = os.getenv("ARKIV_AUDIO_NORMALISE", "0").strip().lower() not in ("0", "false", "no", "off")
 AUDIO_NORMALISE_BELOW_DB = float(os.getenv("ARKIV_AUDIO_NORMALISE_BELOW_DB", "-30"))
 
 def _detect_exiftool() -> str:
