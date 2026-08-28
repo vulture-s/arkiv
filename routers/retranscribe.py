@@ -11,6 +11,7 @@ in state.py so this module imports the ONE shared instance, never a copy. Import
 auth + db + corrections + webguard + pathres + state — no server import, no cycle.
 """
 import json
+import logging as _logging
 import re as _re
 from pathlib import Path
 from typing import Optional
@@ -26,6 +27,7 @@ from pydantic import BaseModel, field_validator
 
 import corrections
 import db
+import mediaprobe
 from auth import require_scopes
 from pathres import _resolve_media_path
 from state import (
@@ -77,6 +79,27 @@ def retranscribe_all(
     targets = [(r["id"], r["path"]) for r in rows]
     if not targets:
         return {"queued": 0, "message": "沒有含音訊的素材可重轉錄"}
+    # Preflight, because this batch's characteristic failure is silent. On
+    # 2026-08-25 a full run over three NAS libraries produced 19 empty results;
+    # the H1 guard correctly refused to blank the existing transcripts, so
+    # nothing errored, the run reported success, and the clips kept their wrong
+    # timecodes for three days. Retested on 2026-08-28 the same clips transcribe
+    # fine — the failure was the ENVIRONMENT, and a probe is how you see that
+    # before spending four hours rather than after.
+    #
+    # Only a total failure refuses. One unreadable codec among working ones still
+    # leaves real work to do, and a gate that stops the job over a title card is
+    # a gate people learn to route around.
+    probe_result = mediaprobe.probe([p for _id, p in targets], resolve=db.resolve_path)
+    problems = mediaprobe.blocking(probe_result)
+    usable = sum(1 for f in probe_result["files"] if f["verdict"] == mediaprobe.OK)
+    if problems and usable == 0:
+        raise HTTPException(422, "這台機器讀不了這個庫的素材，批次不會有結果：\n"
+                                 + mediaprobe.format_report(probe_result))
+    if problems:
+        _logging.getLogger(__name__).warning(
+            "[retranscribe-all] 部分素材這台機器處理不了:\n%s",
+            mediaprobe.format_report(probe_result))
     if not _retranscribe_guard.acquire():  # refuse concurrent batch runs (mirrors embed M8)
         raise HTTPException(409, "批次重轉錄已在進行中，請稍候")
     # fable-audit 2026-07-12 (#11): this batch runs whisper IN-PROCESS over the
