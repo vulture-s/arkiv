@@ -116,6 +116,30 @@ chore: update requirements.txt
 Run the suite with `pytest -q`. CI runs it on macOS (Python 3.9 + 3.12) plus a scoped
 Windows correctness leg — those are the blocking correctness gates.
 
+### Structural invariants (the tests most likely to surprise you)
+
+Some tests do not test behaviour — they assert that a **registry stays in sync with the
+code**. They exist because the thing they guard has silently drifted before, and each one
+fails loudly rather than letting the drift ship. If you add a route, a setting, a version
+string, or a media extension, one of these will go red, and the fix is to register your
+addition, not to loosen the assertion:
+
+| If you add… | This goes red | Fix |
+| --- | --- | --- |
+| an endpoint to a router | `tests/test_r5_25_router_<name>.py` — each of the 17 routers has a route-ownership test pinning the exact `(path, method)` set it owns | add your `(path, method)` pair to that test's expected set |
+| a settings key | `tests/test_settings_g5.py` — asserts `set(accessors) == set(SETTINGS_SCHEMA)` | add a typed accessor for the key; production code must never call bare `effective()` |
+| a place the version number appears | `tests/test_version_sync.py` — `VERSION_SOURCES` | add the new location to `VERSION_SOURCES` |
+| a media extension | `routers/ingest.py` asserts `VIDEO_EXTS \| AUDIO_EXTS \| IMAGE_EXTS == MEDIA_EXTS` | put the extension in exactly one of the three sets in `mediatypes.py` |
+
+The route-ownership tests are the ones outside contributors hit most often: they came out of
+the R5-25 router split (`server.py` 4531 → 487 lines across 15 routers), and their whole job
+is to stop a route quietly migrating to the wrong module. A red one means your route landed
+somewhere the split did not expect — usually that is fine and the test just needs your pair,
+but it is worth a second look at whether the route belongs in that router.
+
+`pytest -q` locally catches every one of these before CI does. If you cannot run the suite,
+say so in the PR — that is a perfectly good answer, and we will run it for you.
+
 **Coverage is a non-blocking regression ratchet, not a quality bar.** The `coverage` CI
 job is `continue-on-error` on purpose:
 
