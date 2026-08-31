@@ -39,6 +39,8 @@
   let moreParams = null
   let loadingMore = false
   let stats = null
+  let registryProjects = null // /api/projects rows; null = not loaded / unreachable
+  let entitlement = null // /api/entitlements; null = not loaded (section then says nothing)
   // First-run readiness gate: 'checking' until /api/health answers, then
   // 'ready' | 'notready' (deps missing, 503) | 'unreachable' (backend down).
   let health = null
@@ -292,16 +294,22 @@
     readyState = ready
     if (readyState === 'unreachable') { state = 'ok'; return } // panel renders via readyState
     try {
-      const [s, m, t, c, si, f] = await Promise.all([
+      const [s, m, t, c, si, f, pr, ent] = await Promise.all([
         api.getStats(),
         api.getMedia(mediaParams({ limit: PAGE, ...shotArgs() })),
         api.getTags(), api.getCollections(),
         api.sampleStatus().catch(() => null), // non-fatal: chip just stays hidden
         api.getShootDateFacets().catch((e) => ({ _error: e.message })),
+        // Both non-fatal on purpose: the sidebar falls back to naming just the
+        // open library, which is strictly what it showed before this existed.
+        api.getProjects().catch(() => null),
+        api.getEntitlements().catch(() => null),
       ])
       viewGen.apply(gen, () => {
         stats = s
         sampleInfo = si
+        registryProjects = pr?.projects ?? null
+        entitlement = ent
         deepLinkSubset = false
         applyShotYearFacets(f)
         items = (m.items || []).map(toCard)
@@ -479,7 +487,30 @@
       ]
     : null
   $: projectName = (stats && stats.project) || '素材庫'
-  $: liveProjects = stats ? [{ id: 'proj', name: projectName, count: stats.total, active: true }] : null
+  // The sidebar's Projects list is the REGISTRY (~/.arkiv-projects.json), not the
+  // open library. It used to be a single hardcoded row naming whatever library was
+  // open, which meant a project you added in Settings never appeared here and the
+  // header read "Projects · 1" no matter how many you had.
+  //
+  // The open library still gets a row, because it is what every other number on
+  // this page describes — but it is only synthesised when no registry entry claims
+  // to be it. `is_current` comes from the backend: it holds `config.PROJECT_ROOT`
+  // and the frontend does not, so the frontend must not try to guess the match.
+  //
+  // Counts: only the open library has one here. A registry entry's item count would
+  // need a query per project, and a wrong number is worse than no number.
+  $: liveProjects = (() => {
+    if (!stats) return null
+    const open = { id: 'cur', name: projectName, count: stats.total, active: true }
+    if (!registryProjects || !registryProjects.length) return [open]
+    const rows = registryProjects.map((p) => ({
+      id: `reg:${p.name}`,
+      name: p.name,
+      count: p.is_current ? stats.total : null,
+      active: !!p.is_current,
+    }))
+    return rows.some((r) => r.active) ? rows : [open, ...rows]
+  })()
   // real disk usage for the sidebar Storage footer (replaces the mock placeholder)
   $: liveStorage = stats?.disk ?? null
   // The header used to always read stats.total, so picking "2025 · 54" left the only
@@ -955,7 +986,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
+    <PoolSidebar {liveProjects} {entitlement} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
 
     <main class="center">
       <div class="toolrow">

@@ -89,6 +89,12 @@ const qs = (params = {}) => {
 export const getStats = (opts) => req('/api/stats', opts)
 export const getProjects = (opts) => req('/api/projects', opts)
 export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
+// GET /api/entitlements -> {armed, pro, grandfathered, free_project_limit,
+// projects_used, can_add_project, add_project_reason, cross_project, ...}.
+// Read from the code that ENFORCES the tier - a second copy of the rules in
+// the frontend drifts, and the drift shows up as a user promised one thing
+// and refused another.
+export const getEntitlements = (opts) => req('/api/entitlements', opts)
 // ---- first-run: version / sample seed / log tail ----
 export const getVersion = (opts) => req('/api/version', opts)
 export const seedSample = (opts) => req('/api/sample/seed', { method: 'POST', ...opts })
