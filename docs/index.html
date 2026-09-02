@@ -72,7 +72,7 @@ a{color:var(--cyan)}
 .dl-note{margin-top:14px;font-size:13px;color:var(--quiet)}
 
 /* product shot */
-.shot-sec{padding:56px 0}
+.shot-sec{padding:72px 0}
 .shot{margin:0}
 .shot img{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:12px}
 .shot figcaption{margin-top:14px;font-size:13.5px;color:var(--quiet);line-height:1.65;max-width:72ch}
@@ -181,8 +181,9 @@ footer a:hover{color:var(--cyan)}
       <!-- 版號跑時向 GitHub 取。寫死過一次就過期一次（曾停在 v1.0.0 而實際已
            v1.1.1，同頁的定價表卻寫著「1.1.0（本版）」自相矛盾）。抓不到就整段
            不顯示 —— 沒有版號好過錯的版號。 -->
-      <span id="relver" hidden>最新版 <span class="mono" id="relver-tag"></span>　·　</span>安裝前請先看下方
-      <a href="#real">系統需求</a>　·　English: <a href="https://github.com/vulture-s/arkiv#readme">README</a>
+      安裝前請先看下方 <a href="#real">系統需求</a>　·　English:
+      <a href="https://github.com/vulture-s/arkiv#readme">README</a><span id="relver" hidden>　·　最新版
+      <span class="mono" id="relver-tag"></span></span>
     </p>
   </div>
 </header>
@@ -190,8 +191,10 @@ footer a:hover{color:var(--cyan)}
 <section class="shot-sec">
   <div class="wrap">
     <figure class="shot">
-      <img src="img/arkiv-ui.jpg" width="1600" height="1000" loading="lazy" decoding="async"
-           alt="arkiv 主畫面：左側為專案與自動標籤，中央為素材格狀檢視，右側 Inspector 顯示播放器、波形、逐格 IN／OUT、逐字稿與場景時間軸。">
+      <!-- 刻意不加 loading="lazy"：這張緊接首屏，lazy 只會延後它。
+           alt 保持簡短——細節在 figcaption，兩邊都寫會被螢幕閱讀器唸兩次。 -->
+      <img src="img/arkiv-ui.jpg" width="1600" height="1000" decoding="async"
+           alt="arkiv 軟體操作介面">
       <figcaption>
         右欄由上而下：播放器、波形與<b>逐格 IN／OUT</b>、逐字稿、<b>場景時間軸</b>。
         最下方那幾行中文是視覺模型自己寫的 —— 這支素材沒有任何對白。
@@ -252,17 +255,17 @@ footer a:hover{color:var(--cyan)}
         <span class="n">02</span>
         <div>
           <h3>多數 AI 剪輯工具僅能處理有對白的素材</h3>
-          <p>arkiv 對每一支素材同時執行視覺分析<b style="color:var(--ink)">與</b>語音轉錄，因此 B-roll 與無對白空景同樣可檢索、可管理。靜態圖片（PNG／JPG／WebP）亦為一等公民，與影片同庫共管。</p>
+          <p>arkiv 對每一支素材同時執行視覺分析<b style="color:var(--ink)">與</b>語音轉錄，因此 B-roll 與無對白空景同樣可檢索、可管理。靜態圖片（PNG／JPG／WebP）也能一起管，與影片放同一個素材庫、同樣搜得到。</p>
         </div>
       </div>
       <div class="row">
         <span class="n">03</span>
         <div>
-          <h3>逐字稿的時間碼要真的對得上畫面</h3>
-          <p>轉錄前的靜音裁切會讓時間碼落在「無空隙語音時間」，誤差沿著片子累積 ——
-            長片後半段整個歪掉。arkiv 把裁切的位移映射回媒體時間，
-            <b style="color:var(--ink)">點一句逐字稿就跳到那一句真正的位置</b>。
-            匯出 SRT／VTT 走同一套 CJK 排版；也可輸出<b style="color:var(--ink)">去掉時間碼的純文字</b>。</p>
+          <h3>點一句逐字稿，就跳到那一句真正的位置</h3>
+          <p>逐字稿的時間碼常有「越後面越對不上」的問題 ——
+            前幾句還準，片子越長偏得越多。arkiv 修掉了這個累積誤差，
+            <b style="color:var(--ink)">點哪一句就跳到哪一句</b>，訪談找話特別有感。
+            匯出 SRT／VTT 依中文排版斷行；也可以輸出<b style="color:var(--ink)">不含時間碼的純文字</b>。</p>
         </div>
       </div>
       <div class="row">
@@ -400,14 +403,29 @@ footer a:hover{color:var(--cyan)}
     var box = document.getElementById("relver");
     var tag = document.getElementById("relver-tag");
     if (!box || !tag) return;
+    function show(v) { tag.textContent = v; box.hidden = false; }
+
+    // 同一個分頁只打一次。GitHub 未帶 token 的速率限制是每 IP 每小時 60 次，
+    // 而辦公室／學校共用一個對外 IP —— 每次瀏覽都打會很快把額度用完，
+    // 然後所有人都看不到版號。
+    try {
+      var hit = sessionStorage.getItem("arkiv-relver");
+      if (hit) { show(hit); return; }
+    } catch (e) {}                          // 無痕模式存取 storage 會丟例外
+
+    // 連線掛住時不要無限等，版號不值得拖著一個開著的請求。
+    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    if (ctl) setTimeout(function () { ctl.abort(); }, 4000);
+
     fetch("https://api.github.com/repos/vulture-s/arkiv/releases/latest", {
       headers: { Accept: "application/vnd.github+json" },
+      signal: ctl ? ctl.signal : undefined,
     })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         if (!d || !d.tag_name) return;      // 速率限制／離線 → 靜默不顯示
-        tag.textContent = d.tag_name;
-        box.hidden = false;
+        show(d.tag_name);
+        try { sessionStorage.setItem("arkiv-relver", d.tag_name); } catch (e) {}
       })
       .catch(function () {});               // 版號不是必要資訊，失敗不吵使用者
   })();
