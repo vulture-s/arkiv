@@ -2,7 +2,79 @@
 
 ## Unreleased
 
-## v1.1.2 - 2026-08-24
+## v1.2.0 - 2026-09-02
+
+**每一份在 Mac 上產生的逐字稿，時間碼都是錯的 —— 而且錯得沿著片子越走越大。**
+這一版修好它。如果你用 arkiv 做過訪談或字幕，這是你要的那一版。
+
+缺陷由一位外部使用者回報：點逐字稿的時間碼跳轉，會對不上、或跑回 00:00。
+那不是她的環境問題 —— 而且她連修法都一起寄來了，設計與本版採用的相同。
+致謝見 `ACKNOWLEDGEMENTS.md`（具名方式待她本人回覆，本專案先問過再寫）。轉錄前 arkiv 會跑 VAD 把靜音切掉、把語音接成一段沒有空隙的
+音檔再送進 whisper —— 而那個函式算完「每一段語音原本在哪裡」之後只回傳了檔案路徑，
+對照表就此遺失，裁切檔幾行後被刪除。於是 whisper 報回來的每一個時間都是
+「無空隙語音時間」，而 arkiv 裡其他每一個時鐘（畫格、波形、播放器、EDL 來源 TC）
+都是媒體時間。誤差等於那句話之前被移除的靜音總和，**所以它沿著片子累積遞增**。
+
+影響 `_transcribe_mlx`（**所有 Mac**）與 `_transcribe_faster_whisper`（非 Mac 預設）；
+`_transcribe_whisperx` 讀原始 wav 不受影響 —— 三個後端對「3.5 秒」的定義並不一致。
+
+🔴 **既有素材庫必須重新轉錄才會拿到正確時間碼。** 沒有「只補 offset」的捷徑：
+stamps 被消費即丟，來源 wav 是當場刪除的暫存檔，只能整支重跑。重跑請帶 `backup=True`。
+
+### Fixed
+
+- **VAD 時間碼偏移**（上述）。`_vad_filter()` 現在回傳 `(path, offset_map)`，
+  以 `bisect` 將 segment 與逐字時間碼在下游看到之前就映射回媒體時間。
+- **使用者從 UI 下載的每一份 SRT/VTT，從來沒經過排版引擎。** `subtitle.py`（CJK 行寬、
+  斷點規則、雙語 cue）全樹只有 CLI 與它自己的測試在 import；UI 那三條路各自走手寫的
+  cue emitter。三條路現在共用同一個 seam。
+- **mlx 後端向 whisper 要了逐字時間碼，然後把它丟掉** —— 每一支在 Mac 上 ingest 的素材，
+  `words_json` 都是 NULL。
+- **潤稿在長逐字稿上靜默逾時**，然後把未標點的原文當成結果回傳，零 log。現在切塊處理、
+  每塊逾時、並有整體預算；到點就把剩下的原樣回傳並記錄。
+- **單支重轉錄完全不拿 ingest 鎖** —— 批次跑到一半點單支重轉，等於兩個 whisper 同時解碼。
+- 畫一條波形要去解 4K 原檔；剪接室既有的 proxy 現在會被優先採用。
+- `.mts` 探測出來是 h264 但瀏覽器播不了；ProRes 原檔配 ProRes proxy 不能算「能播」。
+- 舊 library 的「在 Finder 顯示」永遠回 403。
+- 視覺標籤與結構化欄位仍會把簡體字漏進索引。
+- ⌘Q 離開時，backend 與我們啟動的 ollama 都沒有被收掉。
+- **側欄那份「Projects」清單其實從來不是專案清單**，是你當下開著的那個庫的資料夾名，
+  而且從未呼叫 `/api/projects`。現在讀 registry，並顯示這個安裝的免費額度用量。
+
+### Added
+
+- **靜態圖片成為一等公民**（PNG／JPG／WebP／GIF／SVG）：與影片同庫、同樣可搜尋與篩選。
+- **回收桶**：刪除改為移入 `.arkiv/trash` 而非 unlink，可還原；刪除時同步從跨庫精選集
+  移除該筆，精選集計數不再指向已消失的素材。
+- **第二條 ASR 引擎**，走 OpenAI 相容的 `/audio/transcriptions` 介面（QwenASR、Groq、
+  Cloudflare、whisper.cpp 皆同協定，一個轉接層通到全部）。同一段聲音跑兩次、把兩份稿的
+  差異變成產出：對齊按字元流而非 segment 邊界。
+  **台語濃的素材上兩個引擎是系統性分歧**（一致率 49%），對系統性差異用 diff 是拿錯工具 ——
+  改以句尾語氣詞密度判斷哪一份稿保留了較多口語質地，一份稿一個數字，不需對齊也不需人耳。
+  這是**引擎選擇的輔助訊號，不是台語轉錄功能**。
+- **媒體能力探針**：批次開始前先問「這台機器解得開這個庫嗎」（存在／讀得到／有音軌／
+  解得開四道閘），而不是只問「ffmpeg 裝了嗎」。只有全部不可用才拒絕。
+- 手動與正規化 tag、以及視覺 tag 全部進向量索引；改 tag 會被新鮮度檢查視為 stale 而自動重嵌。
+- 匯出**不含時間碼的純文字稿**（server 早就支援，UI 從來沒提供入口）。
+- 轉錄階段的進度回報（只有階段，沒有假百分比）。
+- per-project 設定真的會被讀到 —— 解析鏈早就完整，但 production 八個消費點沒有一個帶 `project=`。
+- `docker compose` 現在會持久化跨庫精選集與專案 registry；先前 `down` 或重建映像會靜默清空。
+
+### Changed
+
+- **低電平素材的正規化預設關閉。** 13 支實測：8 支結果相同、5 支變差、**0 支變好**。
+  正規化會把底噪抬起來，VAD 因此多留三倍音訊，whisper 就在噪音上產生幻覺。
+- 字幕只保留 `，！？`，停頓交給 cue 時間；標點政策只在算繪時套用，不動儲存 ——
+  `.txt` 仍完整，既有素材庫不必重新轉錄。
+- 字幕行寬收進 `export.subtitle_max_cjk`，先前硬編在四處。
+- 打包的 app 現在會啟動 Ollama 並找得到 ffmpeg。
+
+### 本版同時包含先前標為 1.1.2 但從未發佈的內容
+
+`v1.1.2` 有 CHANGELOG 段落與版號，但**從未打過 tag、也沒有 release**。
+其內容（出貨守衛改清單驅動、tauri-cli 快取、Pro add-on 介面合約測試）併入本版。
+
+## v1.1.2 - 2026-08-24（已備妥，未發佈）
 
 **Nothing in this release changes what arkiv does.** It exists so that three changes to the
 build and packaging path get exercised by a real release instead of waiting for the next one
