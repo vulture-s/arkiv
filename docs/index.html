@@ -152,11 +152,12 @@ footer a:hover{color:var(--cyan)}
   <div class="wrap">
     <div class="eyebrow">Media Asset Manager · 本機優先</div>
     <div class="wordmark">arkiv<span class="dot">.</span></div>
-    <p class="lede">拍過的東西，找得回來。</p>
+    <p class="lede">每一支素材，它都看過，也聽過。</p>
     <p class="sub">
-      arkiv 為每一支素材自動產生逐字稿、視覺描述，並標記氛圍與剪輯位置，
-      使你得以一句中文找到所需鏡頭 ——「五月所有黃昏空景」。
-      全程於本機執行，不依賴雲端服務，不對外傳送資料。
+      arkiv 對每一支素材同時做<b>視覺分析</b>與<b>語音轉錄</b>，所以你可以用一句中文
+      找到任何一顆鏡頭 —— <b>包括沒有人說話的那些</b>。「五月所有黃昏空景」找得到，
+      因為它真的看過那些畫面，不是在比對檔名。
+      全程在你自己的機器上跑，不依賴雲端服務，素材不外傳。
     </p>
 
     <div class="badges">
@@ -207,6 +208,48 @@ footer a:hover{color:var(--cyan)}
 
 <section>
   <div class="wrap">
+    <h2>解決的問題</h2>
+    <div class="why">
+      <div class="row">
+        <span class="n">01</span>
+        <div>
+          <h3>素材太多，找不到那顆鏡頭</h3>
+          <p>以自然語言檢索，支援中、日、英 —— 比對的是<b style="color:var(--ink)">畫面內容與逐字稿</b>，而非檔名。</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">02</span>
+        <div>
+          <h3>多數 AI 剪輯工具只吃有對白的素材</h3>
+          <p>它們的入口是逐字稿，所以沒有人說話的東西就進不去 ——
+            而那通常是素材庫裡最多的那一半。arkiv 兩條路一起跑，
+            <b style="color:var(--ink)">B-roll 與空景是一等公民不是例外</b>。
+            靜態圖片（PNG／JPG／WebP）也放同一個庫、同樣搜得到。</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">03</span>
+        <div>
+          <h3>點一句逐字稿，就跳到那一句真正的位置</h3>
+          <p>逐字稿的時間碼常有「越後面越對不上」的問題 ——
+            前幾句還準，片子越長偏得越多。arkiv 修掉了這個累積誤差，
+            <b style="color:var(--ink)">點哪一句就跳到哪一句</b>，訪談找話特別有感。
+            匯出 SRT／VTT 依中文排版斷行；也可以輸出<b style="color:var(--ink)">不含時間碼的純文字</b>。
+            <span class="q">（v1.2.0 起。先前建立的素材庫需重新轉錄一次才會套用。）</span></p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">04</span>
+        <div>
+          <h3>素材庫要能餵給下游任何剪法</h3>
+          <p>無論手動剪輯、自動化流程或腳本驅動皆可銜接：Resolve 原生外掛、EDL / FCPXML 匯出、REST API 與 MCP 介面。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<section>
+  <div class="wrap">
     <h2>授權條款</h2>
     <div class="lic">
       <ul>
@@ -237,46 +280,6 @@ footer a:hover{color:var(--cyan)}
         購買 arkiv 的功能本身（無論以產品、服務、函式庫或外掛形式提供），則構成競爭。
         條文為 <a href="https://github.com/vulture-s/arkiv/blob/main/LICENSE">PolyForm Perimeter 1.0.1</a>。
       </p>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="wrap">
-    <h2>解決的問題</h2>
-    <div class="why">
-      <div class="row">
-        <span class="n">01</span>
-        <div>
-          <h3>素材太多，找不到那顆鏡頭</h3>
-          <p>以自然語言檢索，支援中、日、英 —— 比對的是<b style="color:var(--ink)">畫面內容與逐字稿</b>，而非檔名。</p>
-        </div>
-      </div>
-      <div class="row">
-        <span class="n">02</span>
-        <div>
-          <h3>多數 AI 剪輯工具僅能處理有對白的素材</h3>
-          <p>arkiv 對每一支素材同時執行視覺分析<b style="color:var(--ink)">與</b>語音轉錄，因此 B-roll 與無對白空景同樣可檢索、可管理。靜態圖片（PNG／JPG／WebP）也能一起管，與影片放同一個素材庫、同樣搜得到。</p>
-        </div>
-      </div>
-      <div class="row">
-        <span class="n">03</span>
-        <div>
-          <h3>點一句逐字稿，就跳到那一句真正的位置</h3>
-          <p>逐字稿的時間碼常有「越後面越對不上」的問題 ——
-            前幾句還準，片子越長偏得越多。arkiv 修掉了這個累積誤差，
-            <b style="color:var(--ink)">點哪一句就跳到哪一句</b>，訪談找話特別有感。
-            匯出 SRT／VTT 依中文排版斷行；也可以輸出<b style="color:var(--ink)">不含時間碼的純文字</b>。
-            <span class="q">（v1.2.0 起。先前建立的素材庫需重新轉錄一次才會套用。）</span></p>
-        </div>
-      </div>
-      <div class="row">
-        <span class="n">04</span>
-        <div>
-          <h3>素材庫要能餵給下游任何剪法</h3>
-          <p>無論手動剪輯、自動化流程或腳本驅動皆可銜接：Resolve 原生外掛、EDL / FCPXML 匯出、REST API 與 MCP 介面。</p>
-        </div>
-      </div>
     </div>
   </div>
 </section>
