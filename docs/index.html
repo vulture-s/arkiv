@@ -71,6 +71,12 @@ a{color:var(--cyan)}
 .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--rule-hi)}
 .dl-note{margin-top:14px;font-size:13px;color:var(--quiet)}
 
+/* product shot */
+.shot-sec{padding:56px 0}
+.shot{margin:0}
+.shot img{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:12px}
+.shot figcaption{margin-top:14px;font-size:13.5px;color:var(--quiet);line-height:1.65;max-width:72ch}
+.shot figcaption b{color:var(--ink-2);font-weight:500}
 /* license — the wedge */
 .lic{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:32px}
 .lic ul{list-style:none;display:grid;gap:20px}
@@ -157,7 +163,7 @@ footer a:hover{color:var(--cyan)}
       <span class="badge"><b>商用不受限</b>　含客戶委製</span>
       <span class="badge"><b>原始碼公開</b>　source-available</span>
       <span class="badge">DaVinci Resolve 原生</span>
-      <span class="badge">中／日／英 語意搜尋</span>
+      <span class="badge">中／日／英／<b>台語</b> 轉錄</span>
     </div>
 
     <div class="dl">
@@ -172,11 +178,28 @@ footer a:hover{color:var(--cyan)}
       </a>
     </div>
     <p class="dl-note">
-      最新版 <span class="mono">v1.0.0</span>　·　安裝前請先看下方
+      <!-- 版號跑時向 GitHub 取。寫死過一次就過期一次（曾停在 v1.0.0 而實際已
+           v1.1.1，同頁的定價表卻寫著「1.1.0（本版）」自相矛盾）。抓不到就整段
+           不顯示 —— 沒有版號好過錯的版號。 -->
+      <span id="relver" hidden>最新版 <span class="mono" id="relver-tag"></span>　·　</span>安裝前請先看下方
       <a href="#real">系統需求</a>　·　English: <a href="https://github.com/vulture-s/arkiv#readme">README</a>
     </p>
   </div>
 </header>
+
+<section class="shot-sec">
+  <div class="wrap">
+    <figure class="shot">
+      <img src="img/arkiv-ui.jpg" width="1600" height="1000" loading="lazy" decoding="async"
+           alt="arkiv 主畫面：左側為專案與自動標籤，中央為素材格狀檢視，右側 Inspector 顯示播放器、波形、逐格 IN／OUT、逐字稿與場景時間軸。">
+      <figcaption>
+        右欄由上而下：播放器、波形與<b>逐格 IN／OUT</b>、逐字稿、<b>場景時間軸</b>。
+        最下方那幾行中文是視覺模型自己寫的 —— 這支素材沒有任何對白。
+        畫面為初次啟動時內建的 4 支 CC-BY 範例片。
+      </figcaption>
+    </figure>
+  </div>
+</section>
 
 <section>
   <div class="wrap">
@@ -222,18 +245,28 @@ footer a:hover{color:var(--cyan)}
         <span class="n">01</span>
         <div>
           <h3>素材太多，找不到那顆鏡頭</h3>
-          <p>以自然語言檢索，支援中、日、英 —— 比對的是<b style="color:var(--ink)">畫面內容與逐字稿</b>，而非檔名。</p>
+          <p>以自然語言檢索，支援中、日、英（轉錄另支援台語）—— 比對的是<b style="color:var(--ink)">畫面內容與逐字稿</b>，而非檔名。</p>
         </div>
       </div>
       <div class="row">
         <span class="n">02</span>
         <div>
           <h3>多數 AI 剪輯工具僅能處理有對白的素材</h3>
-          <p>arkiv 對每一支素材同時執行視覺分析<b style="color:var(--ink)">與</b>語音轉錄，因此 B-roll 與無對白空景同樣可檢索、可管理。</p>
+          <p>arkiv 對每一支素材同時執行視覺分析<b style="color:var(--ink)">與</b>語音轉錄，因此 B-roll 與無對白空景同樣可檢索、可管理。靜態圖片（PNG／JPG／WebP）亦為一等公民，與影片同庫共管。</p>
         </div>
       </div>
       <div class="row">
         <span class="n">03</span>
+        <div>
+          <h3>逐字稿的時間碼要真的對得上畫面</h3>
+          <p>轉錄前的靜音裁切會讓時間碼落在「無空隙語音時間」，誤差沿著片子累積 ——
+            長片後半段整個歪掉。arkiv 把裁切的位移映射回媒體時間，
+            <b style="color:var(--ink)">點一句逐字稿就跳到那一句真正的位置</b>。
+            匯出 SRT／VTT 走同一套 CJK 排版；也可輸出<b style="color:var(--ink)">去掉時間碼的純文字</b>。</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">04</span>
         <div>
           <h3>素材庫要能餵給下游任何剪法</h3>
           <p>無論手動剪輯、自動化流程或腳本驅動皆可銜接：Resolve 原生外掛、EDL / FCPXML 匯出、REST API 與 MCP 介面。</p>
@@ -362,6 +395,23 @@ footer a:hover{color:var(--cyan)}
 </footer>
 
 <script>
+  // 版號跑時取，取不到就不顯示。理由見 .dl-note 的註解。
+  (function () {
+    var box = document.getElementById("relver");
+    var tag = document.getElementById("relver-tag");
+    if (!box || !tag) return;
+    fetch("https://api.github.com/repos/vulture-s/arkiv/releases/latest", {
+      headers: { Accept: "application/vnd.github+json" },
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.tag_name) return;      // 速率限制／離線 → 靜默不顯示
+        tag.textContent = d.tag_name;
+        box.hidden = false;
+      })
+      .catch(function () {});               // 版號不是必要資訊，失敗不吵使用者
+  })();
+
   // ── 填這裡就會上線。各家的 endpoint / emailField 見上方 signup 區塊的註解。
   const SIGNUP = {
     endpoint: "https://app.kit.com/forms/9819208/subscriptions",
