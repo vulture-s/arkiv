@@ -12,9 +12,9 @@
   gtag('js', new Date());
   gtag('config', 'GT-WB2F3LB8');
 </script>
-<title>arkiv — 沒有人說話的那些，它一樣看得懂</title>
-<meta name="description" content="本機優先的 AI 素材索引層。自動轉錄、看懂畫面，用中文問句找到那顆鏡頭。Resolve 原生、零雲端、免費且商用不受限。">
-<meta property="og:title" content="arkiv — 沒有人說話的那些，它一樣看得懂">
+<title>arkiv — 一個真的查得動的素材庫</title>
+<meta name="description" content="本機優先的素材索引層：每一支素材看過、聽過、時間碼對得上，索引算一次，Resolve／EDL／REST API／MCP 都吃得到。零雲端、免費且商用不受限。">
+<meta property="og:title" content="arkiv — 一個真的查得動的素材庫">
 <meta property="og:description" content="本機優先的 AI 素材索引層。免費、商用不受限、原始碼公開。">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2712%27 fill=%27%230a0a0c%27/%3E%3Ctext x=%2732%27 y=%2744%27 font-family=%27Helvetica,Arial,sans-serif%27 font-size=%2740%27 font-weight=%27900%27 fill=%27%23f3f2ee%27 text-anchor=%27middle%27%3Ea%3C/text%3E%3Ccircle cx=%2750%27 cy=%2744%27 r=%274%27 fill=%27%2318b6dc%27/%3E%3C/svg%3E">
@@ -152,12 +152,12 @@ footer a:hover{color:var(--cyan)}
   <div class="wrap">
     <div class="eyebrow">Media Asset Manager · 本機優先</div>
     <div class="wordmark">arkiv<span class="dot">.</span></div>
-    <p class="lede">沒有人說話的那些，它一樣看得懂。</p>
+    <p class="lede">一個真的查得動的素材庫。</p>
     <p class="sub">
-      arkiv 對每一支有畫面的素材做<b>視覺分析</b>，有聲音的再加上<b>語音轉錄</b>。
-      所以 B-roll 和空景不是次等素材 —— 它們跟訪談走<b>同一套索引</b>，一樣搜得到。
-      「五月所有黃昏空景」找得到，是因為它<b>真的看過那些畫面</b>。
-      全程在你自己的機器上跑，不依賴雲端服務，素材不外傳。
+      arkiv 為每一支素材建立索引：有畫面的<b>看過</b>，有聲音的<b>聽過</b>，
+      時間碼<b>對得上</b>。索引只算一次，就留在你自己的機器上 ——
+      之後不管是你用一句中文去問、Resolve 來拿、還是腳本或 agent 來讀，
+      吃的都是同一份。不依賴雲端服務，素材不外傳。
     </p>
 
     <div class="badges">
@@ -220,11 +220,11 @@ footer a:hover{color:var(--cyan)}
       <div class="row">
         <span class="n">02</span>
         <div>
-          <h3>多數 AI 剪輯工具只吃有對白的素材</h3>
-          <p>它們的入口是逐字稿，所以沒有人說話的素材就進不去，
+          <h3>沒有對白的素材，多數工具索引不了</h3>
+          <p>以逐字稿為入口的工具，遇到沒有人說話的素材就沒有東西可以索引 ——
             而那往往佔了大宗（我們自己那個 1,506 支的庫，有 1,161 支沒有對白）。
-            arkiv <b style="color:var(--ink)">不必靠對白</b>認素材，它看得懂畫面本身 ——
-            <b style="color:var(--ink)">B-roll 與空景是一等公民，不是例外</b>。
+            arkiv <b style="color:var(--ink)">不必靠對白</b>就認得出素材，它看得懂畫面本身，
+            所以<b style="color:var(--ink)">整個庫是完整的，不是只有會說話的那部分</b>。
             靜態圖片（PNG／JPG／WebP）也放同一個庫，同樣搜得到。</p>
         </div>
       </div>
@@ -242,8 +242,10 @@ footer a:hover{color:var(--cyan)}
       <div class="row">
         <span class="n">04</span>
         <div>
-          <h3>素材庫要能餵給下游任何剪法</h3>
-          <p>無論手動剪輯、自動化流程或腳本驅動皆可銜接：Resolve 原生外掛、EDL / FCPXML 匯出、REST API 與 MCP 介面。</p>
+          <h3>索引算一次，之後誰來拿都吃得到</h3>
+          <p>剪輯工具會換，AI 工具換得更快。arkiv 把分析結果留在<b style="color:var(--ink)">你自己的資料庫裡</b>，
+            不綁在任何一個下游：Resolve 原生外掛、EDL / FCPXML 匯出、REST API、MCP 介面 ——
+            手剪、自動化流程或 agent 都從同一份索引讀。</p>
         </div>
       </div>
     </div>
