@@ -12,9 +12,9 @@
   gtag('js', new Date());
   gtag('config', 'GT-WB2F3LB8');
 </script>
-<title>arkiv — 拍過的東西，找得回來</title>
+<title>arkiv — 沒有人說話的那些，它一樣看得懂</title>
 <meta name="description" content="本機優先的 AI 素材索引層。自動轉錄、看懂畫面，用中文問句找到那顆鏡頭。Resolve 原生、零雲端、免費且商用不受限。">
-<meta property="og:title" content="arkiv — 拍過的東西，找得回來">
+<meta property="og:title" content="arkiv — 沒有人說話的那些，它一樣看得懂">
 <meta property="og:description" content="本機優先的 AI 素材索引層。免費、商用不受限、原始碼公開。">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2712%27 fill=%27%230a0a0c%27/%3E%3Ctext x=%2732%27 y=%2744%27 font-family=%27Helvetica,Arial,sans-serif%27 font-size=%2740%27 font-weight=%27900%27 fill=%27%23f3f2ee%27 text-anchor=%27middle%27%3Ea%3C/text%3E%3Ccircle cx=%2750%27 cy=%2744%27 r=%274%27 fill=%27%2318b6dc%27/%3E%3C/svg%3E">
@@ -152,11 +152,11 @@ footer a:hover{color:var(--cyan)}
   <div class="wrap">
     <div class="eyebrow">Media Asset Manager · 本機優先</div>
     <div class="wordmark">arkiv<span class="dot">.</span></div>
-    <p class="lede">每一支素材，它都看過，也聽過。</p>
+    <p class="lede">沒有人說話的那些，它一樣看得懂。</p>
     <p class="sub">
-      arkiv 對每一支素材同時做<b>視覺分析</b>與<b>語音轉錄</b>，所以你可以用一句中文
-      找到任何一顆鏡頭 —— <b>包括沒有人說話的那些</b>。「五月所有黃昏空景」找得到，
-      因為它真的看過那些畫面，不是在比對檔名。
+      arkiv 對每一支有畫面的素材做<b>視覺分析</b>，有聲音的再加上<b>語音轉錄</b>。
+      所以 B-roll、空景、訪談以外的一切，都能用一句中文找回來 ——
+      「五月所有黃昏空景」找得到，是因為它<b>真的看過那些畫面</b>。
       全程在你自己的機器上跑，不依賴雲端服務，素材不外傳。
     </p>
 
@@ -222,9 +222,10 @@ footer a:hover{color:var(--cyan)}
         <div>
           <h3>多數 AI 剪輯工具只吃有對白的素材</h3>
           <p>它們的入口是逐字稿，所以沒有人說話的東西就進不去 ——
-            而那通常是素材庫裡最多的那一半。arkiv 兩條路一起跑，
-            <b style="color:var(--ink)">B-roll 與空景是一等公民不是例外</b>。
-            靜態圖片（PNG／JPG／WebP）也放同一個庫、同樣搜得到。</p>
+            而那往往是庫裡的大宗 —— 下面那個 1,506 支的庫，有 1,161 支沒有對白。
+            arkiv 不靠對白認素材，靠<b style="color:var(--ink)">看畫面</b>——
+            <b style="color:var(--ink)">B-roll 與空景是一等公民，不是例外</b>。
+            靜態圖片（PNG／JPG／WebP）也放同一個庫，同樣搜得到。</p>
         </div>
       </div>
       <div class="row">
@@ -248,6 +249,20 @@ footer a:hover{color:var(--cyan)}
     </div>
   </div>
 </section>
+
+<section>
+  <div class="wrap">
+    <h2>實際運作規模</h2>
+    <div class="proof">
+      <div class="big">1,506 支</div>
+      <p>
+        真實商業案件素材已完成完整索引，其中 <b style="color:var(--ink-2)">1,161 支為無對白 B-roll</b>。
+        單張 RTX 4070，索引覆蓋率 100%。
+      </p>
+    </div>
+  </div>
+</section>
+
 <section>
   <div class="wrap">
     <h2>授權條款</h2>
@@ -286,19 +301,6 @@ footer a:hover{color:var(--cyan)}
 
 <section>
   <div class="wrap">
-    <h2>實際運作規模</h2>
-    <div class="proof">
-      <div class="big">1,506 支</div>
-      <p>
-        真實商業案件素材已完成完整索引，其中 <b style="color:var(--ink-2)">1,161 支為無對白 B-roll</b>。
-        單張 RTX 4070，索引覆蓋率 100%。
-      </p>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="wrap">
     <h2>免費版與 Pro</h2>
     <table>
       <thead>
@@ -329,7 +331,7 @@ footer a:hover{color:var(--cyan)}
   <div class="wrap">
     <h2>系統需求與注意事項</h2>
     <div class="real">
-      <div><span class="m">01</span><span>安裝檔<b style="color:var(--ink)">已內含 Python 後端與 ML 套件</b>，惟<b style="color:var(--ink)">仍需自行安裝 FFmpeg 與 Ollama</b>，供抽幀、向量運算與視覺分析使用。</span></div>
+      <div><span class="m">01</span><span>安裝檔<b style="color:var(--ink)">已內含 Python 後端與 ML 套件</b>，但<b style="color:var(--ink)">仍需自行安裝 FFmpeg 與 Ollama</b>，供抽幀、向量運算與視覺分析使用。</span></div>
       <div><span class="m">02</span><span>macOS 版<b style="color:var(--ink)">僅支援 Apple Silicon</b>，未提供 Intel 版本。</span></div>
       <div><span class="m">03</span><span>安裝檔<b style="color:var(--ink)">尚未經數位簽章</b>。macOS 首次開啟請使用「右鍵 → 打開」，Windows 會顯示一次 SmartScreen 提示，後續開啟不再出現。</span></div>
       <div><span class="m">04</span><span>視覺分析仰賴 GPU 加速。<b>Windows 無 NVIDIA 顯示卡時，轉錄預設走 CUDA 會直接失敗</b>，需將環境變數 <span class="mono">ARKIV_WHISPER_DEVICE</span> 設為 <span class="mono">cpu</span>；設定後可運作，但處理時間以數倍計。Apple Silicon 走 MLX，不受此限。</span></div>
