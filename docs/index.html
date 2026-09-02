@@ -71,6 +71,7 @@ a{color:var(--cyan)}
 .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--rule-hi)}
 .dl-note{margin-top:14px;font-size:13px;color:var(--quiet)}
 
+.why .q{color:var(--quiet);font-size:13.5px}
 /* product shot */
 .shot-sec{padding:72px 0}
 .shot{margin:0}
@@ -255,11 +256,22 @@ footer a:hover{color:var(--cyan)}
         <span class="n">02</span>
         <div>
           <h3>多數 AI 剪輯工具僅能處理有對白的素材</h3>
-          <p>arkiv 對每一支素材同時執行視覺分析<b style="color:var(--ink)">與</b>語音轉錄，因此 B-roll 與無對白空景同樣可檢索、可管理。</p>
+          <p>arkiv 對每一支素材同時執行視覺分析<b style="color:var(--ink)">與</b>語音轉錄，因此 B-roll 與無對白空景同樣可檢索、可管理。靜態圖片（PNG／JPG／WebP）也能一起管，與影片放同一個素材庫、同樣搜得到。</p>
         </div>
       </div>
       <div class="row">
         <span class="n">03</span>
+        <div>
+          <h3>點一句逐字稿，就跳到那一句真正的位置</h3>
+          <p>逐字稿的時間碼常有「越後面越對不上」的問題 ——
+            前幾句還準，片子越長偏得越多。arkiv 修掉了這個累積誤差，
+            <b style="color:var(--ink)">點哪一句就跳到哪一句</b>，訪談找話特別有感。
+            匯出 SRT／VTT 依中文排版斷行；也可以輸出<b style="color:var(--ink)">不含時間碼的純文字</b>。
+            <span class="q">（v1.2.0 起。先前建立的素材庫需重新轉錄一次才會套用。）</span></p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">04</span>
         <div>
           <h3>素材庫要能餵給下游任何剪法</h3>
           <p>無論手動剪輯、自動化流程或腳本驅動皆可銜接：Resolve 原生外掛、EDL / FCPXML 匯出、REST API 與 MCP 介面。</p>
