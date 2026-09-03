@@ -111,6 +111,9 @@
       rating: ratingToUi(it.rating),
       dur: fmtDur(it.duration_s),
       size: fmtSize(it.size_mb),
+      // 拍攝日，不是入庫日。null 就讓它是 null —— 卡片上不顯示，好過顯示
+      // 一個沒人驗證過的日期。/api/media 一直有回這個欄位，只是沒人用。
+      shot: it.shot_date || null,
       thumb: api.thumbUrlFromPath(it.thumbnail_path),
       _raw: it,
     };

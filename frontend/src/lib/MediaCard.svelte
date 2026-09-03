@@ -44,7 +44,12 @@
     <div class="name" class:ng={m.rating === 'ng'}>{m.name}</div>
     <div class="row">
       <Rating value={m.rating} />
-      <Mono dim style="font-size:10px;">{m.size}</Mono>
+      <span class="tail">
+        <!-- 拍攝日：讀不到就整個不顯示。列一個 fallback 到入庫時間的日期，
+             會讓整格看起來很權威而且是錯的。 -->
+        {#if m.shot}<Mono dim style="font-size:10px;">{m.shot}</Mono>{/if}
+        <Mono dim style="font-size:10px;">{m.size}</Mono>
+      </span>
     </div>
   </div>
 </div>
@@ -74,5 +79,6 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .name.ng { text-decoration: line-through; opacity: 0.5; }
-  .row { display: flex; justify-content: space-between; align-items: center; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .tail { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 </style>
