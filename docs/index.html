@@ -12,10 +12,10 @@
   gtag('js', new Date());
   gtag('config', 'GT-WB2F3LB8');
 </script>
-<title>arkiv — 一個真的查得動的素材庫</title>
-<meta name="description" content="本機優先的素材索引層：每一支素材看過、聽過、時間碼對得上，索引算一次，Resolve／EDL／REST API／MCP 都吃得到。零雲端、免費且商用不受限。">
-<meta property="og:title" content="arkiv — 一個真的查得動的素材庫">
-<meta property="og:description" content="本機優先的 AI 素材索引層。免費、商用不受限、原始碼公開。">
+<title>arkiv · 用 AI 建立你的本地影音素材庫</title>
+<meta name="description" content="以本地 AI 模型建立的影音素材庫，為小型影視團隊與個人創作者而做。收工後的過片、挑選毛片、分類場景、轉錄字幕批量處理：有畫面的分析畫面，有聲音的轉錄成逐字稿。不依賴雲端服務，免費且商用不受限。">
+<meta property="og:title" content="arkiv · 用 AI 建立你的本地影音素材庫">
+<meta property="og:description" content="本地 AI 影音素材庫。過片、挑毛片、分類場景、轉錄字幕批量處理。免費、商用不受限、原始碼公開。">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2712%27 fill=%27%230a0a0c%27/%3E%3Ctext x=%2732%27 y=%2744%27 font-family=%27Helvetica,Arial,sans-serif%27 font-size=%2740%27 font-weight=%27900%27 fill=%27%23f3f2ee%27 text-anchor=%27middle%27%3Ea%3C/text%3E%3Ccircle cx=%2750%27 cy=%2744%27 r=%274%27 fill=%27%2318b6dc%27/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -54,6 +54,9 @@ a{color:var(--cyan)}
 .wordmark .dot{color:var(--cyan)}
 .lede{font-size:clamp(22px,4vw,34px);font-weight:600;letter-spacing:-.02em;color:var(--ink);margin:28px 0 16px;line-height:1.3}
 .sub{font-size:clamp(15px,2.2vw,17px);max-width:62ch}
+/* 兩段以上時才需要間距。.sub 的 margin 是 0，hero 從一段變兩段後，痛點那句
+   會緊貼上一段、讀起來像同一段（實測 p1.bottom === p2.top）。 */
+.sub + .sub{margin-top:18px}
 .badges{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}
 .badge{font-family:var(--ak-mono);font-size:12px;color:var(--ink-2);border:1px solid var(--rule-hi);border-radius:999px;padding:5px 13px}
 .badge b{color:var(--cyan);font-weight:500}
@@ -152,12 +155,16 @@ footer a:hover{color:var(--cyan)}
   <div class="wrap">
     <div class="eyebrow">Media Asset Manager · 本機優先</div>
     <div class="wordmark">arkiv<span class="dot">.</span></div>
-    <p class="lede">一個真的查得動的素材庫。</p>
+    <!-- 🔴 底下的中文段落刻意寫成單行，不要為了好讀而折行。HTML 把原始碼的換行
+         算成一個空白：在英文無所謂，在中文會於句號、頓號後面多出一個半形空隙。
+         2026-09-03 量到 17 處，全部來自折行。要斷行只能斷在中英交界（那裡本來
+         就該有空格），或改用 <br>。 -->
+    <p class="lede">用 AI 建立你的本地影音素材庫。</p>
     <p class="sub">
-      arkiv 為每一支素材建立索引：有畫面的<b>看過</b>，有聲音的<b>聽過</b>，
-      時間碼<b>對得上</b>。索引只算一次，就留在你自己的機器上 ——
-      之後不管是你用一句中文去問、Resolve 來拿、還是腳本或 agent 來讀，
-      吃的都是同一份。不依賴雲端服務，素材不外傳。
+      arkiv 是一個以本地 AI 模型為架構、提供小型影視團隊、個人創作者的影音素材庫。主要任務是解決影像工作者在拍攝工作結束之後需要人工大量過片、挑選毛片、分類場景、轉錄字幕等大量重複性的工作。核心的架構以影視工業的 <b>DIT 工作流程</b>靠攏，也就是收檔、編號、校驗、建索引。
+    </p>
+    <p class="sub">
+      <b style="color:var(--ink)">大型劇組團隊設有 DIT 崗位專門做這些任務，但在小型團隊裡，收工後的過檔才是噩夢的開始。</b> arkiv 在技術上利用本地的 AI 模型以及固化的流程，可以批量地索引素材，不依賴雲端服務，安全、無衍生費用。
     </p>
 
     <div class="badges">
@@ -195,57 +202,64 @@ footer a:hover{color:var(--cyan)}
     <figure class="shot">
       <!-- 刻意不加 loading="lazy"：這張緊接首屏，lazy 只會延後它。
            alt 保持簡短——細節在 figcaption，兩邊都寫會被螢幕閱讀器唸兩次。 -->
-      <img src="img/arkiv-ui.jpg" width="1600" height="1000" decoding="async"
+      <!-- WebP，3200px（2x）。同尺寸的 JPEG 要 460 KB，這張 203 KB。畫面裡
+           20 張實拍縮圖遠比先前那 4 張卡通耗位元，1x 會在 retina 上糊掉。 -->
+      <img src="img/arkiv-ui.webp" width="1600" height="890" decoding="async"
            alt="arkiv 軟體操作介面">
       <figcaption>
-        右欄由上而下：播放器、波形與<b>逐格 IN／OUT</b>、逐字稿、<b>場景時間軸</b>。
-        最下方那幾行中文是視覺模型自己寫的 —— 這支素材沒有任何對白。
-        畫面為初次啟動時內建的 4 支 CC-BY 範例片。
-      </figcaption>
+      左欄拍攝日已下鑽到 <b>08-17</b>，標題列顯示 20 / 24 支篩選中。右欄由上而下：自動標籤、波形與<b>逐格 IN／OUT</b>（59.94p）、逐字稿、<b>場景時間軸</b>。逐字稿那格寫著「無語音」，而最下方那幾行中文是視覺模型自己寫的。
+    </figcaption>
     </figure>
   </div>
 </section>
 
 <section>
   <div class="wrap">
-    <h2>解決的問題</h2>
+    <h2>收工之後</h2>
     <div class="why">
       <div class="row">
         <span class="n">01</span>
         <div>
-          <h3>素材太多，找不到那顆鏡頭</h3>
-          <p>以自然語言檢索，支援中、日、英 —— 比對的是<b style="color:var(--ink)">畫面內容與逐字稿</b>，而非檔名。</p>
+          <h3>過片：不用全部看過一遍</h3>
+          <p>
+      有畫面的分析畫面，有聲音的轉錄成逐字稿，兩邊都寫進索引。資料庫比對的是<b style="color:var(--ink)">畫面內容與逐字稿</b>。內建本地 AI 助手，想找某顆畫面就用口語問，例如「訪談畫面」或是「產品特寫」。
+    </p>
         </div>
       </div>
       <div class="row">
         <span class="n">02</span>
         <div>
-          <h3>沒有對白的素材，多數工具索引不了</h3>
-          <p>以逐字稿為入口的工具，遇到沒有人說話的素材就沒有東西可以索引 ——
-            而那往往佔了大宗（我們自己那個 1,506 支的庫，有 1,161 支沒有對白）。
-            arkiv <b style="color:var(--ink)">不必靠對白</b>就認得出素材，它看得懂畫面本身，
-            所以<b style="color:var(--ink)">整個庫是完整的，不是只有會說話的那部分</b>。
-            靜態圖片（PNG／JPG／WebP）也放同一個庫，同樣搜得到。</p>
+          <h3>挑毛片：評等留在素材上，不在你腦子裡</h3>
+          <p>
+      標好的 Good／N·G 直接掛在素材上。Smart Pool 自動分成待審、可用、不用。<b style="color:var(--ink)">逐格標 IN／OUT</b>，播放器貼齊真正的格邊界，59.94p 也對得準。 DaVinci Resolve 另有外掛，搜尋結果一鍵匯入當前專案的 Media Pool；也可以輸出 EDL、FCPXML、SRT，交給剪輯軟體接手。
+    </p>
         </div>
       </div>
       <div class="row">
         <span class="n">03</span>
         <div>
-          <h3>點一句逐字稿，就跳到那一句真正的位置</h3>
-          <p>逐字稿的時間碼常有「越後面越對不上」的問題 ——
-            前幾句還準，片子越長偏得越多。arkiv 修掉了這個累積誤差，
-            <b style="color:var(--ink)">點哪一句就跳到哪一句</b>，訪談找話特別有感。
-            匯出 SRT／VTT 依中文排版斷行；也可以輸出<b style="color:var(--ink)">不含時間碼的純文字</b>。
-            <span class="q">（v1.2.0 起。先前建立的素材庫需重新轉錄一次才會套用。）</span></p>
+          <h3>分類場景：視覺模型自己寫描述</h3>
+          <p>
+      沒有對白的素材同樣有內容可搜。場景描述與標籤是<b style="color:var(--ink)">看畫面產生的</b>。也可以照拍攝日或機型分組，多機拍攝時各機的素材各自成組。素材庫裡多半是空景與 B-roll，那正是最難用檔名找的一半。
+    </p>
         </div>
       </div>
       <div class="row">
         <span class="n">04</span>
         <div>
-          <h3>索引算一次，之後誰來拿都吃得到</h3>
-          <p>剪輯工具會換，AI 工具換得更快。arkiv 把分析結果留在<b style="color:var(--ink)">你自己的資料庫裡</b>，
-            不綁在任何一個下游：Resolve 原生外掛、EDL / FCPXML 匯出、REST API、MCP 介面 ——
-            手剪、自動化流程或 agent 都從同一份索引讀。</p>
+          <h3>轉錄字幕：時間碼對得上畫面</h3>
+          <p>
+      點一句逐字稿就<b style="color:var(--ink)">跳到那一句真正的位置</b>。可匯出 SRT／VTT，中文依字幕行寬斷行，也可以輸出不含時間碼的純文字。<span class="q">（v1.2.0 起。先前建立的素材庫需重新轉錄一次才會套用。）</span>
+    </p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">05</span>
+        <div>
+          <h3>360 素材</h3>
+          <p>
+      360 挑片的苦我們懂。arkiv 在 Inspector 裡把那一格攤平成全景，可以拖曳環視，挑完再進 360 剪輯軟體 reframe。同時 Insta360 的 <span class="mono">.insv</span> 與 GoPro Max 的 <span class="mono">.360</span> 都能進同一個資料庫。
+    </p>
         </div>
       </div>
     </div>
@@ -258,9 +272,8 @@ footer a:hover{color:var(--cyan)}
     <div class="proof">
       <div class="big">1,506 支</div>
       <p>
-        真實商業案件素材已完成完整索引，其中 <b style="color:var(--ink-2)">1,161 支為無對白 B-roll</b>。
-        單張 RTX 4070，索引覆蓋率 100%。
-      </p>
+      真實商業案件素材已完成完整索引，其中 <b style="color:var(--ink-2)">1,161 支為無對白 B-roll</b>。單張 RTX 4070，索引覆蓋率 100%。
+    </p>
     </div>
   </div>
 </section>
@@ -273,7 +286,7 @@ footer a:hover{color:var(--cyan)}
         <li>
           <span class="mk yes">✓</span>
           <div>
-            <b>免費使用，任何用途 —— 包含商業用途。</b>
+            <b>免費使用，任何用途，包含商業用途。</b>
             <p>客戶委製、工作室日常作業、受補助之製作，均在授權範圍內。無需另行取得授權，亦無需事前通知。</p>
           </div>
         </li>
@@ -288,7 +301,7 @@ footer a:hover{color:var(--cyan)}
           <span class="mk no">✕</span>
           <div>
             <b>唯一的限制：不得用於開發與 arkiv 競爭的產品。</b>
-            <p>將其衍生為競爭性素材管理工具、以索引服務形式提供予第三方，或重新實作為替代產品 —— 即使免費提供亦同。</p>
+            <p>將其衍生為競爭性素材管理工具、以索引服務形式提供予第三方，或重新實作為替代產品。即使免費提供亦同。</p>
           </div>
         </li>
       </ul>
@@ -318,12 +331,11 @@ footer a:hover{color:var(--cyan)}
     </table>
     <p class="tier-note">
       免費額度自 <b style="color:var(--ink)">1.1.0</b> 起生效，<b style="color:var(--ink)">只對新安裝</b>。
-      <b style="color:var(--ink)">在 1.1.0 之前已在使用的安裝，永久保留兩項功能 —— 無限專案數與跨專案聚合</b>，
+      <b style="color:var(--ink)">在 1.1.0 之前已在使用的安裝，永久保留無限專案數與跨專案聚合兩項功能</b>，
       這項承諾已寫入軟體：素材庫在初次使用時就記錄了版本，判定依該紀錄而非事後推測。
       1.0.0 及更早的版本完全不執行此額度。
-      <br>Pro 尚未開放購買 ——
-      <a href="https://github.com/vulture-s/arkiv/blob/main/docs/pro-addon-license.md">條款先公開</a>，
-      供事前查閱。紀錄片、非營利、檔案保存與公共教育類製作，
+      <br>Pro 尚未開放購買，
+      <a href="https://github.com/vulture-s/arkiv/blob/main/docs/pro-addon-license.md">條款先公開</a>供事前查閱。紀錄片、非營利、檔案保存與公共教育類製作，
       可循<a href="https://github.com/vulture-s/arkiv/blob/main/PUBLIC-INTEREST.md">公益方案</a>免費申請。
     </p>
   </div>
@@ -400,8 +412,7 @@ footer a:hover{color:var(--cyan)}
       <a href="https://www.instagram.com/vulture.s/">@vulture.s</a>
     </div>
     <p>
-      PolyForm Perimeter 1.0.1 · source-available（非 OSI 認證之開源授權）<br>
-      本機優先 · 不依賴雲端服務 · 軟體不會外傳你的素材與逐字稿（本頁使用 Google Analytics）
+      PolyForm Perimeter 1.0.1 · source-available（非 OSI 認證之開源授權）<br> 本機優先 · 不依賴雲端服務 · 軟體不會外傳你的素材與逐字稿（本頁使用 Google Analytics）
     </p>
   </div>
 </footer>
