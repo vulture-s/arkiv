@@ -38,7 +38,9 @@ IMAGE_EXT = mediatypes.IMAGE_EXT
 # Raster stills (png/jpg/webp/gif) have a pixel stream ffprobe can read and we can
 # sample a frame from — they get a thumbnail + one frame like video. .svg is
 # vector: no pixel stream, so it records filename/ext only, no pixel assets.
-RASTER_IMAGE_EXTS = IMAGE_EXT - {".svg"}
+# Alias kept for readability at the call sites below; the set itself lives in
+# mediatypes so frames.py answers "is this a still?" from the same source.
+RASTER_IMAGE_EXTS = mediatypes.STILL_RASTER_EXT
 # Codecs needing browser-playable proxy — single source of truth in codec.py.
 PROXY_CODECS = codec.PROXY_CODECS
 logger = logging.getLogger(__name__)

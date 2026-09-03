@@ -67,6 +67,18 @@ def _frame_vf_args(video_path: str) -> List[str]:
     return ["-vf", _NORMAL_SCALE]
 
 
+def _is_still_raster(video_path: str) -> bool:
+    """True for a single-frame raster still (png/jpg/jpeg/webp/gif), which must be
+    read whole rather than seeked into.
+
+    Deliberately keyed on the extension, NOT on the probed duration: ffprobe hands
+    back `duration=0.040000` for a `.jpg` (mjpeg, one frame at an assumed 25fps)
+    and `N/A` → 0.0 for `.png` / `.webp`, so the old `duration_s <= 0` test called
+    every JPEG a video.
+    """
+    return Path(video_path).suffix.lower() in mediatypes.STILL_RASTER_EXT
+
+
 def _safe_stem(video_path: str) -> str:
     """Thumbnail filename stem scoped by a hash of the absolute source path.
 
@@ -140,8 +152,16 @@ def _extract_frame_to(video_path: str, t: float, out: Path) -> bool:
     # ("Unable to choose an output format"). The <pid> keeps concurrent refreshes of
     # the same output from clobbering each other's temp.
     tmp = out.with_name("{0}.tmp.{1}{2}".format(out.stem, os.getpid(), out.suffix))
+    # A still has exactly one frame, so there is nothing to seek to. The seek is
+    # not merely redundant, it is destructive: `-ss` before `-i` on a single-frame
+    # mjpeg makes ffmpeg exit 0 having encoded nothing ("Output file is empty"),
+    # which _run_ffmpeg then correctly rejects as a 0-byte result. It happens even
+    # at `-ss 0`, so no choice of `t` rescues it. That is why every .jpg big enough
+    # to be a real photo used to land with no thumbnail and no frames while
+    # .png / .webp came through fine. Omit the seek entirely for stills.
+    seek = [] if _is_still_raster(video_path) else ["-ss", str(t)]
     cmd = (
-        [config.FFMPEG_PATH, "-ss", str(t), "-i", video_path]
+        [config.FFMPEG_PATH] + seek + ["-i", video_path]
         + _frame_vf_args(video_path)
         + ["-frames:v", "1", str(tmp), "-y"]
     )
@@ -167,9 +187,10 @@ def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -
     if not force and out.exists() and out.stat().st_size > 0:
         return str(out)
 
-    # A still image has duration 0 → sample the single frame at t=0. Videos get
-    # the mid-point (clamped to >=1s so very short clips don't all hit t=0).
-    t = 0.0 if duration_s <= 0 else max(duration_s * 0.5, 1.0)
+    # Stills sample their only frame; videos get the mid-point (clamped to >=1s so
+    # very short clips don't all hit t=0). The still test is by extension, not by
+    # duration — see _is_still_raster for why a .jpg reports 0.04s.
+    t = 0.0 if (_is_still_raster(video_path) or duration_s <= 0) else max(duration_s * 0.5, 1.0)
     return str(out) if _extract_frame_to(video_path, t, out) else None
 
 
@@ -221,7 +242,13 @@ def _extract_fixed_persistent(
     n_frames: int = 3,
     force: bool = False,
 ) -> List[Dict]:
-    positions = [float(i) / float(n_frames + 1) for i in range(1, n_frames + 1)]
+    # One frame at t=0 for a still: sampling "50% of 0.04s" would both record a
+    # meaningless timestamp and, before the seek fix in _extract_frame_to, extract
+    # nothing at all.
+    if _is_still_raster(video_path):
+        positions = [0.0]
+    else:
+        positions = [float(i) / float(n_frames + 1) for i in range(1, n_frames + 1)]
     results = []
     for i, pct in enumerate(positions):
         t = duration_s * pct
