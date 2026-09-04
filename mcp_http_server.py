@@ -30,12 +30,15 @@ Env:
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from fastapi import HTTPException
 
 import auth
 import mcp_server
+
+_LOGGER = logging.getLogger(__name__)
 
 # 127.0.0.1, not 0.0.0.0. Running this file directly is the "I am on the box"
 # case and should not silently publish an MCP endpoint to the network. The
@@ -119,29 +122,61 @@ def _extract_token(scope) -> str:
     return ""
 
 
+# The scope every tool on this transport needs. All seven read media rows,
+# transcripts, frames or the vector index — the same thing `routers/media.py`
+# guards with `require_scopes("videos_read")`.
+REQUIRED_SCOPE = "videos_read"
+
+
 async def token_gate(app, scope, receive, send):
-    """ASGI middleware: reject anything without a valid arkiv token.
+    """ASGI middleware: reject anything without a valid, SUFFICIENTLY SCOPED token.
 
     Reuses `auth.resolve_raw_token`, so this endpoint inherits the same token
     store, IP allow-list and expiry as the HTTP API — an existing token works
     here unchanged, and revoking one revokes it everywhere.
+
+    🔴 Resolving the token is not the same as authorising it. The first version
+    of this file called `resolve_raw_token` and threw the result away, so ANY
+    valid token reached every tool: a `chat_read`-only token, an ingest bot's
+    token, even a zero-scope one, all read the whole library over the LAN, while
+    the REST API refused those same tokens with 403. Every narrow token ever
+    minted was a full read key the moment this transport shipped.
     """
     if scope["type"] in ("http", "websocket"):
         client_ip = (scope.get("client") or ("", 0))[0]
         try:
-            auth.resolve_raw_token(_extract_token(scope), client_ip)
+            tok = auth.resolve_raw_token(_extract_token(scope), client_ip)
         except HTTPException as exc:
-            await _refuse(send, getattr(exc, "status_code", 401), str(exc.detail))
+            await _refuse(send, scope, getattr(exc, "status_code", 401), str(exc.detail))
             return
         except Exception:
-            # Never leak the internals of an auth failure to an unauthenticated
-            # caller; the server log already has the traceback.
-            await _refuse(send, 401, "unauthorized")
+            # Never hand an unauthenticated caller the internals of an auth
+            # failure — but do log it, or a fleet-wide 401 (missing table, locked
+            # DB, unreadable token store) is undebuggable from the outside.
+            _LOGGER.exception("MCP token resolution failed")
+            await _refuse(send, scope, 401, "unauthorized")
+            return
+        if REQUIRED_SCOPE not in (tok or {}).get("scopes", ()):
+            await _refuse(
+                send, scope, 403,
+                "Insufficient scope: MCP needs {0}".format(REQUIRED_SCOPE),
+            )
             return
     await app(scope, receive, send)
 
 
-async def _refuse(send, status: int, detail: str) -> None:
+async def _refuse(send, scope, status: int, detail: str) -> None:
+    """Refuse in the protocol the caller is actually speaking.
+
+    A websocket scope cannot be answered with `http.response.start`: uvicorn
+    raises RuntimeError and turns a clean rejection into a 500 plus a traceback
+    per attempt. There are no websocket routes here, so the only thing that
+    reaches this branch is someone probing — and letting them fill the log is
+    the one thing an unauthenticated neighbour could otherwise do.
+    """
+    if scope.get("type") == "websocket":
+        await send({"type": "websocket.close", "code": 1008})
+        return
     body = json.dumps({"error": detail}).encode("utf-8")
     await send({
         "type": "http.response.start",
@@ -173,7 +208,16 @@ def build_app():
 def main() -> None:
     mcp_server._prewarm_vectordb()
     import uvicorn
-    uvicorn.run(build_app(), host=BIND, port=PORT)
+
+    # 🔴 proxy_headers defaults to True, and with no `forwarded_allow_ips` uvicorn
+    # trusts 127.0.0.1. BIND also defaults to 127.0.0.1, so in host-run mode EVERY
+    # peer is loopback and therefore trusted: a token whose IP allow-list says
+    # 10.0.0.0/8 is refused from localhost, then accepted by adding
+    # `X-Forwarded-For: 10.1.1.1` — and the audit trail records the spoofed IP.
+    # The same hole is open behind any tunnel that does not set XFF itself
+    # (`ssh -L`, socat). arkiv terminates its own connections; nothing here sits
+    # behind a reverse proxy, so the header has no legitimate reading.
+    uvicorn.run(build_app(), host=BIND, port=PORT, proxy_headers=False)
 
 
 if __name__ == "__main__":
