@@ -207,19 +207,79 @@ def _assert_collection_compatible(col) -> None:
 _CHROMA_LOCK = threading.Lock()
 
 
+def _drop_chroma_system_cache() -> bool:
+    """Drop chromadb's process-global System cache. Returns whether it happened.
+
+    Named rather than inlined at the two call sites for two reasons. It is the
+    seam the tests monkeypatch — `tests/conftest.py` installs a stub `chromadb`
+    module with no `chromadb.api` submodule, so a test that patches
+    `SharedSystemClient` never runs against anything and passes vacuously. And
+    the boolean lets the caller distinguish "cache dropped" from "this chromadb
+    has no such API", which the staleness tracker below depends on.
+
+    Best-effort by design: a chromadb version without this API just means the
+    pre-existing restart-to-see-it behaviour, never a crash.
+
+    Acquires no lock — both callers already hold `_CHROMA_LOCK`, which is a
+    plain non-reentrant `threading.Lock`.
+    """
+    try:
+        from chromadb.api.shared_system_client import SharedSystemClient
+        SharedSystemClient.clear_system_cache()
+        return True
+    except Exception:
+        return False
+
+
 def clear_client_cache():
     """Drop chromadb's process-global System cache so the NEXT PersistentClient(path)
     rebuilds from the on-disk dir. After rmtree'ing CHROMA_PATH, the cached System
     still serves the DELETED index in-process until the server restarts — so a
     rebuild is invisible and search returns the old deleted index all session
-    (fable-audit round-5 #15). Best-effort: a chromadb version without this API just
-    means the pre-existing restart-to-see-it behaviour, never a crash."""
+    (fable-audit round-5 #15)."""
     with _CHROMA_LOCK:
-        try:
-            from chromadb.api.shared_system_client import SharedSystemClient
-            SharedSystemClient.clear_system_cache()
-        except Exception:
-            pass
+        _drop_chroma_system_cache()
+
+
+# ── Cross-process HNSW staleness ──────────────────────────────────────────────
+# chromadb caches the PersistentClient per OS process. When `embed.py`, the MCP
+# server or an ingest subprocess writes through a SEPARATE process, this one's
+# in-memory HNSW index keeps serving the vectors it loaded at warm-up.
+#
+# 🔴 The failure is quiet in the worst way: `count()` reads SQLite and is
+# correct, while `query()` reads the stale in-memory index and silently misses
+# the new rows. Measured on chromadb 1.5.5 — parent writes 1, a child process
+# writes 3, parent then reports `count()==4` but `query()` returns 1 of 4. The
+# UI says "4 indexed" and the user cannot find three of them, which reads as
+# "search is bad", not "search is broken".
+#
+# Reported as issue #408 by pixb, who also published the mtime-tracking
+# approach used here (pixb/arkiv#18).
+_CHROMA_DB_MTIME: float = 0.0
+
+
+def _check_chroma_staleness() -> None:
+    """Detect an external write to chroma.sqlite3 and drop the stale client cache.
+
+    Caller must hold `_CHROMA_LOCK` (see `_drop_chroma_system_cache`).
+
+    🔴 The mtime advances ONLY after the cache was actually dropped. Recording it
+    first and then attempting the drop — the obvious ordering — means a failed
+    drop still marks that mtime as handled, so the next call compares equal and
+    that particular staleness is never retried: one silent failure and the index
+    stays stale until the process restarts.
+    """
+    global _CHROMA_DB_MTIME
+    try:
+        current = (CHROMA_PATH / "chroma.sqlite3").stat().st_mtime
+    except OSError:
+        # No DB on disk yet (fresh install, or a pg backend that never writes
+        # one). Nothing to be stale against.
+        return
+    if current == _CHROMA_DB_MTIME:
+        return
+    if _drop_chroma_system_cache():
+        _CHROMA_DB_MTIME = current
 
 
 def get_collection(reset: bool = False):
@@ -236,6 +296,7 @@ def get_collection(reset: bool = False):
         return col
 
     with _CHROMA_LOCK:  # audit M11
+        _check_chroma_staleness()
         client = chromadb.PersistentClient(path=str(CHROMA_PATH))
         if reset:
             try:

@@ -104,6 +104,13 @@ def _rebuild_embeddings():
     except Exception as e:
         print(f"[embed] rebuild failed: {e}")
     finally:
+        # embed.py just rewrote the vector store from a SEPARATE OS process, so
+        # this process's cached chroma client is now serving a stale HNSW index
+        # (#408). get_collection() would catch it on the next call via the
+        # mtime check, but dropping it here closes the window immediately and
+        # covers the case where the rebuild leaves mtime unchanged.
+        import vectordb as _vectordb
+        _vectordb.clear_client_cache()
         embed_rebuild.release()  # audit M8: always free the single-flight slot
 
 # ── Ingest single-flight guard ────────────────────────────────────────────────
