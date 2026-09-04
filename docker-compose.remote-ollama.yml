@@ -77,3 +77,30 @@ services:
     # the first model call surfaces an unreachable Ollama as a real error
     # instead of compose hanging on a condition it cannot observe.
     restart: unless-stopped
+
+  # LAN MCP (#417). Split-host deployments want this more than single-host ones
+  # do — the whole premise here is that the machines are already separate.
+  arkiv-mcp:
+    build: .
+    command: ["python", "mcp_http_server.py"]
+    ports:
+      - "8502:8502"
+    volumes:
+      # Read-only: MCP exposes queries, never ingest or delete.
+      - ./media.db:/app/media.db:ro
+      - ./chroma_db:/app/chroma_db:ro
+      - ./thumbnails:/app/thumbnails:ro
+      - ${ARKIV_MEDIA_DIR:-./media}:/media:ro
+    environment:
+      - ARKIV_DB_PATH=/app/media.db
+      - ARKIV_CHROMA_PATH=/app/chroma_db
+      - ARKIV_THUMBNAILS_DIR=/app/thumbnails
+      - ARKIV_OLLAMA_URL=${ARKIV_OLLAMA_URL:?set ARKIV_OLLAMA_URL to the LAN Ollama, e.g. http://192.168.1.50:11434}
+      - ARKIV_EMBED_MODEL=bge-m3
+      - ARKIV_MCP_BIND=0.0.0.0
+      - ARKIV_MCP_PORT=8502
+      # 🔴 Required in practice here: if the clients were on this machine they
+      # would not need an HTTP transport. See docker-compose.yml for why an
+      # unset value means 421 rather than a connection error.
+      - ARKIV_MCP_ALLOWED_HOSTS=${ARKIV_MCP_ALLOWED_HOSTS:-}
+    restart: unless-stopped
