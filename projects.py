@@ -462,6 +462,45 @@ def _format_table(projects: List[ProjectMeta]) -> str:
     return "\n".join(lines)
 
 
+def current_registry_name() -> Optional[str]:
+    """The REGISTRY name of the project this process has loaded, or None.
+
+    Not the directory basename: a library registered as 「婚禮案素材庫」 can live
+    in a folder called `wedding`, and the two are not interchangeable. A
+    cross-library 精選集 keys its items by the registry name, so anything that
+    has to find or remove those items has to ask for the same one — matching on
+    the basename silently matches nothing.
+
+    None when the loaded project is not registered. Callers treat that as "this
+    project cannot participate in bins" rather than as an error; the UI already
+    disables the add button on the same signal.
+
+    Lives here rather than in the analytics router because it answers a registry
+    question, and `media_delete` needs it too. `routers.analytics` keeps its
+    `_current_project_registry_name` name — the R5-25 route-ownership tests
+    assert that attribute exists on that module.
+    """
+    # config is imported lazily throughout this module (see resolve_project_db),
+    # so it is not a module-level name here either.
+    import config as _config
+
+    try:
+        root_key = _normalize_key(_config.PROJECT_ROOT)
+    except Exception:
+        return None
+    try:
+        for p in discover_projects():
+            if p.key() == root_key:
+                return p.name
+    except Exception:
+        # A registry that cannot be read means "not registered" for this
+        # purpose. Deliberately narrow in scope: the key computation above gets
+        # its own guard so a typo in THIS function surfaces as a NameError at
+        # import rather than as a silent None that looks like "unregistered".
+        return None
+    return None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Manage arkiv project registry")
     subparsers = parser.add_subparsers(dest="command", required=True)

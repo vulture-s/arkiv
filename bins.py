@@ -339,6 +339,38 @@ def remove_item(bin_id: str, project_name: str, media_id: Any) -> Bin:
         return target
 
 
+def remove_media_everywhere(project_name: str, media_id: Any) -> int:
+    """Drop one clip from EVERY bin. Returns how many bins were touched.
+
+    Deleting a clip used to leave its reference behind in every 精選集 that held
+    it, and that reference can never come good again: `delete_media_full` removes
+    the row, so the id is gone, and restoring from the recycle bin re-ingests the
+    file — which mints a NEW id. The old entry stays `ROW_MISSING` forever while
+    still counting toward the bin's size.
+
+    (The reference-integrity gate showing it as broken rather than silently wrong
+    is why this was a papercut and not data loss. It also meant nobody had to fix
+    it, which is how it survived.)
+
+    One pass over the whole file under a single lock, rather than calling
+    `remove_item` per bin: that would re-read, re-write and re-lock once per bin
+    holding the clip, and a delete is not a good moment to be doing N writes.
+    """
+    drop = _item_key(project_name, media_id)
+    with _BINS_LOCK:
+        bins = _load_bin_objects()
+        touched = 0
+        for b in bins:
+            kept = [item for item in b.items if item.key() != drop]
+            if len(kept) != len(b.items):
+                b.items = kept
+                b.updated_at = _now_iso()
+                touched += 1
+        if touched:
+            _persist(bins)
+        return touched
+
+
 def bin_item_status(project_name: str, media_id: Any) -> str:
     """Reference-integrity gate for one bin item. Composes the primitives that
     already exist but that nothing wires together for a cross-project item:

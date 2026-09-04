@@ -145,6 +145,25 @@ def delete_media_full(media_id, allow_file_delete=True, token_info=None):
     except Exception:
         pass
 
+    # Cross-library 精選集 hold clips by (registry name, media_id). That pair is
+    # gone the moment the row is: restoring from the recycle bin re-INGESTS the
+    # file and mints a new id, so the old entry can never resolve again — it
+    # just sits at ROW_MISSING forever, still counted in the bin's size.
+    #
+    # Best-effort on purpose. The clip's row, files and vectors are already gone
+    # by this point; failing the delete because a JSON file could not be rewritten
+    # would report failure for work that actually happened. A stale entry is the
+    # exact papercut this removes, which is a fair trade against that.
+    try:
+        import bins as bins_store
+        import projects as project_registry
+
+        registry_name = project_registry.current_registry_name()
+        if registry_name:
+            bins_store.remove_media_everywhere(registry_name, media_id)
+    except Exception:
+        pass
+
     # Only record a recycle-bin entry when an actual file was moved (it is the
     # only thing recoverable). Metadata-only deletes are still captured by the
     # audit log below.
