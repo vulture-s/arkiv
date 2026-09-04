@@ -146,6 +146,30 @@ def test_split_host_does_not_depend_on_a_service_it_cannot_see():
 
 
 # ── the two files must not drift apart ───────────────────────────────────────
+def test_the_two_files_differ_only_in_the_ollama_url():
+    """The strong form of the drift check.
+
+    The split-host file is the single-host file with one line changed. Asserting
+    that directly is worth more than listing the keys we happened to think of:
+    anything added to one file and forgotten in the other fails here, including
+    keys that do not exist yet.
+    """
+    single, split = _env(_arkiv(SINGLE_HOST)), _env(_arkiv(SPLIT_HOST))
+    assert set(single) == set(split), (
+        "env keys diverged: only in single={0}, only in split={1}".format(
+            sorted(set(single) - set(split)), sorted(set(split) - set(single))
+        )
+    )
+    differing = {k for k in single if single[k] != split[k]}
+    assert differing == {"ARKIV_OLLAMA_URL"}, (
+        "the two compose files should differ in ARKIV_OLLAMA_URL and nothing "
+        "else; also differing: {0}".format(sorted(differing - {"ARKIV_OLLAMA_URL"}))
+    )
+    assert _targets(_arkiv(SINGLE_HOST)) == _targets(_arkiv(SPLIT_HOST)), (
+        "the two files mount different sets of paths"
+    )
+
+
 def test_model_pins_agree_across_both_files():
     """These already drifted from config.py once ('it did, for months' — the
     comment in docker-compose.yml). Two files means two chances to drift."""
