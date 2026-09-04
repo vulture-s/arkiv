@@ -19,6 +19,51 @@ from typing import Dict, List, Optional, Tuple
 # One laid-out cue: start seconds, end seconds, the lines to show.
 Cue = Tuple[float, float, List[str]]
 
+
+class TimingPolicy(object):
+    """How long a cue stays up, and how it relates to its neighbours.
+
+    Until this existed the layout engine had only a SPATIAL dimension — line
+    width in units, two lines per cue — and inherited every timing decision
+    from Whisper unchanged. Measured on 34 real zh clips (312 segments → 315
+    cues) before this was added:
+
+        cue 短於 0.8s   28 (8.9%)   shortest 0.24s — "真的" on screen for a
+                                    quarter second, read as a flicker
+        gap == 0        256 (91.1%) Whisper segments abut exactly, so one cue
+                                    is replaced by the next with no visual break
+        split imbalance up to 28x   a segment split across cues divided its span
+                                    EQUALLY while the text divided unequally:
+                                    9.5 cps on the first cue, 0.3 on the second
+
+    CPS deliberately is not the headline. The same measurement put the median at
+    4.7 and only 1.3% above the zh-Hant guideline of 9 — the repo's own todo
+    assumed reading speed was the gap, and on real material it is not. The
+    target is kept as a soft pull (extend into slack when there is room) rather
+    than a hard constraint that would fight the three real defects above.
+
+    Every adjustment moves a cue's END, never its START: text may linger after
+    the words, but must never appear before them.
+    """
+
+    __slots__ = ("min_dur", "max_dur", "min_gap", "target_cps", "enabled")
+
+    def __init__(self, min_dur=0.8, max_dur=7.0, min_gap=0.08,
+                 target_cps=9.0, enabled=True):
+        self.min_dur = float(min_dur)
+        self.max_dur = float(max_dur)
+        # ~2 frames at 24fps: below this the eye reads a change as a flicker
+        # rather than as one cue ending and another starting.
+        self.min_gap = float(min_gap)
+        self.target_cps = float(target_cps)
+        self.enabled = bool(enabled)
+
+
+# Applied unless a caller passes its own. `TimingPolicy(enabled=False)` restores
+# the pre-timing behaviour exactly, which is what the regression tests compare
+# against.
+DEFAULT_TIMING = TimingPolicy()
+
 # Punctuation that a line should prefer to break AFTER (kept on the upper line).
 _BREAK_AFTER = "。，、！？；：…—)）」』】》”’"
 # Latin width relative to one CJK unit (≈ Netflix 42 Latin ≈ 14 CJK).
@@ -208,6 +253,7 @@ def layout_cues(
     max_units: float = 14.0,
     max_lines: int = 2,
     translate_key: Optional[str] = None,
+    timing: Optional[TimingPolicy] = None,
 ) -> List[Cue]:
     """Lay Whisper segments out as cues: `[(start, end, lines), ...]`.
 
@@ -223,6 +269,7 @@ def layout_cues(
     reached any of this. A renderer-independent seam is what lets every path
     (SRT, VTT, timeline, batch) share one layout.
     """
+    policy = timing if timing is not None else DEFAULT_TIMING
     cues: List[Cue] = []
     for seg in segments:
         text = (seg.get("text") or "").strip()
@@ -241,11 +288,106 @@ def layout_cues(
             continue
         cap = max(1, max_lines)
         chunks = [lines[i:i + cap] for i in range(0, len(lines), cap)]
-        n = len(chunks)
         span = max(0.0, end - start)
-        for ci, chunk in enumerate(chunks):
-            cues.append((start + span * ci / n, start + span * (ci + 1) / n, chunk))
-    return cues
+        cues.extend(_split_span(start, span, chunks, policy.enabled))
+    return _apply_timing(cues, policy)
+
+
+def _split_span(start: float, span: float, chunks: List[List[str]],
+                proportional: bool = True) -> List[Cue]:
+    """Divide one segment's span across its chunks IN PROPORTION TO TEXT.
+
+    The old code gave every chunk `span / n` regardless of how much text it
+    held. Measured on real material that produced a 28x reading-speed swing
+    inside a single sentence — 9.5 cps on a chunk carrying most of the words,
+    0.3 cps on the short tail that inherited an equal slice of time.
+
+    Falls back to equal division when the weights are unusable (all-empty text,
+    or a zero-length span), which keeps a degenerate segment behaving exactly as
+    before rather than dividing by zero.
+    """
+    n = len(chunks)
+    if n == 1:
+        return [(start, start + span, chunks[0])]
+
+    weights = [sum(display_units(ln) for ln in ch) for ch in chunks]
+    total = sum(weights)
+    # `proportional=False` is the pre-timing behaviour, kept whole so that
+    # `TimingPolicy(enabled=False)` reproduces the old output byte for byte —
+    # which is what the layout-extraction regression guard asserts.
+    if not proportional or total <= 0 or span <= 0:
+        return [(start + span * i / n, start + span * (i + 1) / n, ch)
+                for i, ch in enumerate(chunks)]
+
+    out: List[Cue] = []
+    at = start
+    for i, ch in enumerate(chunks):
+        # Last chunk closes on the segment end exactly, so accumulated float
+        # error cannot leave a sliver of time unassigned or overshoot the audio.
+        end_i = start + span if i == n - 1 else at + span * weights[i] / total
+        out.append((at, end_i, ch))
+        at = end_i
+    return out
+
+
+def _apply_timing(cues: List[Cue], policy: TimingPolicy) -> List[Cue]:
+    """Adjust cue ENDS so short cues linger and neighbours do not butt together.
+
+    Three passes, in this order because each one's room depends on the previous:
+
+    1. extend — pull each end toward `min_dur`, then toward `target_cps`, but
+       never past the next cue's start minus `min_gap`.
+    2. gap — where two cues still abut (Whisper hands us `end[i] == start[i+1]`
+       for 91% of adjacent pairs), shave the earlier one's end. Shaving the
+       outgoing cue is the only safe direction: moving the later cue's start
+       would put its text on screen before the words are spoken.
+    3. merge — a cue still under `min_dur` had no slack to grow into. Fold it
+       into the next one when the combined lines still fit, so "真的" stops
+       being a 0.24s flash and rides along with the sentence it belongs to.
+
+    `max_dur` only ever shortens, and only a cue that has room to spare.
+    """
+    if not policy.enabled or not cues:
+        return cues
+
+    out = [(s, e, list(ln)) for s, e, ln in cues]
+
+    # ── 1. extend into available slack ───────────────────────────────────────
+    for i, (s, e, lines) in enumerate(out):
+        limit = (out[i + 1][0] - policy.min_gap) if i + 1 < len(out) else float("inf")
+        want = s + policy.min_dur
+        units = sum(display_units(ln) for ln in lines)
+        if policy.target_cps > 0:
+            want = max(want, s + units / policy.target_cps)
+        want = min(want, s + policy.max_dur)
+        if want > e:
+            out[i] = (s, max(e, min(want, limit)), lines)
+
+    # ── 2. carve the gap out of the earlier cue ──────────────────────────────
+    for i in range(len(out) - 1):
+        s, e, lines = out[i]
+        nxt = out[i + 1][0]
+        if e > nxt - policy.min_gap:
+            # Never shave a cue out of existence: a tiny cue with no room keeps
+            # its original end and is dealt with by the merge pass below.
+            shaved = nxt - policy.min_gap
+            if shaved > s:
+                out[i] = (s, shaved, lines)
+
+    # ── 3. merge what is still too short ─────────────────────────────────────
+    merged: List[Cue] = []
+    i = 0
+    while i < len(out):
+        s, e, lines = out[i]
+        if (e - s) < policy.min_dur and i + 1 < len(out):
+            ns, ne, nlines = out[i + 1]
+            if len(lines) + len(nlines) <= 2 and (ne - s) <= policy.max_dur:
+                merged.append((s, ne, lines + nlines))
+                i += 2
+                continue
+        merged.append((s, e, lines))
+        i += 1
+    return merged
 
 
 def _render_lines(lines: List[str], restrict_punct: bool) -> List[str]:
@@ -268,9 +410,10 @@ def segments_to_srt(
     max_lines: int = 2,
     translate_key: Optional[str] = None,
     restrict_punct: bool = True,
+    timing: Optional[TimingPolicy] = None,
 ) -> str:
     """Render Whisper segments to laid-out SRT. Layout lives in `layout_cues`."""
-    cues = layout_cues(segments, max_units, max_lines, translate_key)
+    cues = layout_cues(segments, max_units, max_lines, translate_key, timing)
     return "\n".join(format_cue(i, start, end, _render_lines(lines, restrict_punct))
                      for i, (start, end, lines) in enumerate(cues, 1))
 
@@ -281,11 +424,12 @@ def segments_to_vtt(
     max_lines: int = 2,
     translate_key: Optional[str] = None,
     restrict_punct: bool = True,
+    timing: Optional[TimingPolicy] = None,
 ) -> str:
     """Same layout, WebVTT syntax: `.` for the millisecond separator, no cue
     numbers (they are optional in WebVTT, and the exports users already have
     don't carry them)."""
-    cues = layout_cues(segments, max_units, max_lines, translate_key)
+    cues = layout_cues(segments, max_units, max_lines, translate_key, timing)
     body = "\n".join("{0} --> {1}\n{2}\n".format(_ts(start, "."), _ts(end, "."),
                                                 "\n".join(_render_lines(lines, restrict_punct)))
                      for start, end, lines in cues)

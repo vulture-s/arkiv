@@ -170,6 +170,52 @@ def test_the_two_files_differ_only_in_the_ollama_url():
     )
 
 
+# ── the LAN MCP service (#417) ───────────────────────────────────────────────
+def _mcp(path):
+    return _load(path)["services"]["arkiv-mcp"]
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_mcp_service_exists_and_runs_the_http_server(compose):
+    svc = _mcp(compose)
+    assert svc["command"] == ["python", "mcp_http_server.py"]
+    assert "8502:8502" in svc["ports"]
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_mcp_mounts_are_read_only(compose):
+    """MCP exposes queries, never ingest or delete. `:ro` is a second lock behind
+    the tool surface, not a substitute for it — a bug that let a write through
+    would still hit a read-only filesystem."""
+    for entry in _mcp(compose)["volumes"]:
+        assert entry.endswith(":ro"), "writable mount on the MCP service: " + entry
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_mcp_allowed_hosts_is_wired_through(compose):
+    """🔴 Without this the transport exists and every LAN client still gets 421:
+    the MCP SDK's rebinding allow-list is loopback-only. Measured on mcp 1.28.0,
+    `Host: 192.168.1.50:8502` is refused while `127.0.0.1:8502` passes."""
+    env = _env(_mcp(compose))
+    assert "ARKIV_MCP_ALLOWED_HOSTS" in env
+    assert "ARKIV_MCP_ALLOWED_HOSTS" in env["ARKIV_MCP_ALLOWED_HOSTS"], (
+        "must be overridable from the environment, not baked in"
+    )
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_mcp_binds_wide_only_inside_the_container(compose):
+    """0.0.0.0 here is fenced by the port mapping, exactly like ARKIV_HOST on the
+    arkiv service. The module default is 127.0.0.1 so a bare `python
+    mcp_http_server.py` never publishes to the network by surprise."""
+    assert _env(_mcp(compose))["ARKIV_MCP_BIND"] == "0.0.0.0"
+
+
+def test_mcp_service_is_absent_from_neither_file():
+    for compose in (SINGLE_HOST, SPLIT_HOST):
+        assert "arkiv-mcp" in _load(compose)["services"], compose.name
+
+
 def test_model_pins_agree_across_both_files():
     """These already drifted from config.py once ('it did, for months' — the
     comment in docker-compose.yml). Two files means two chances to drift."""
