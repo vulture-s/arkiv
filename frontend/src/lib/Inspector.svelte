@@ -256,6 +256,10 @@
   export let languages = null // [{code,label}] for the retranscribe picker
   export let mediaLang = null // current clip language → default selection
   let imgFailed = false
+  // Reset per clip: a failure that stuck would make the NEXT clip look broken
+  // too, which is worse than the black pane it replaces.
+  let videoFailed = false
+  $: if (media) { videoFailed = false }
   let showMore = false // reveal the ancillary (成品輔助) export group
   let tagInput = ''
   function submitTag() {
@@ -363,9 +367,22 @@
       {#if Pano360}<svelte:component this={Pano360} src={thumbUrl} />{:else}<div class="panoload"><Mono dim style="font-size:11px;">360 · loading…</Mono></div>{/if}
     {:else if useImage}
       <img class="previmg" src={videoSrc} alt={media.name} on:error={() => (imgFailed = true)} />
+    {:else if useVideo && videoFailed}
+      <!-- The stream endpoint answers 409 {need_proxy} for a codec no browser
+           decodes, but a <video> has no way to show a JSON body: it just fails
+           to load and leaves a black pane. Without this the 409 is invisible
+           and the clip reads as broken rather than as needing one click (#420). -->
+      <div class="playfail">
+        <Mono dim style="font-size:11px;">此編碼瀏覽器播不了</Mono>
+        {#if onReprocess}
+          <button class="ak-btn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
+            {reBusy === 'proxy' ? '排入中…' : '建立 proxy 後可播放'}
+          </button>
+        {/if}
+      </div>
     {:else if useVideo}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} on:error={() => (videoFailed = true)} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
     {:else if useAudio}
       {#if thumbUrl && !imgFailed}
         <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
@@ -667,7 +684,15 @@
   .previmg { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* the real player: contain (don't crop footage) on black; audio sits at the bottom */
   video.previmg { object-fit: contain; background: #000; }
-  .prevaudio { position: absolute; left: 12px; right: 12px; bottom: 12px; width: auto; }
+  /* The native control bar renders light-on-white by default, which in this
+     dark inspector reads as a broken white box rather than a play control
+     (#420). `color-scheme` is what tells the engine to draw its own widgets
+     dark — restyling the bar by hand would mean rebuilding play/scrub/time. */
+  .prevaudio { position: absolute; left: 12px; right: 12px; bottom: 12px; width: auto; color-scheme: dark; }
+  .playfail {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; background: #000;
+  }
   .panoload { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--surface-2); }
   .scrim {
     position: absolute; left: 0; right: 0; bottom: 0; height: 40%;
