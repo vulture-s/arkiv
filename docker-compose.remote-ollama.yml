@@ -1,0 +1,79 @@
+# arkiv — split-host deployment (#423)
+#
+# The default docker-compose.yml runs arkiv and Ollama together on one machine.
+# That is the right shape for a laptop, and the wrong shape for the setup most
+# small teams actually end up with: the editor works on a Mac, and the machine
+# with the GPU and the already-pulled models is a different box on the LAN.
+#
+#     Machine A (editor's Mac)      →  this file: arkiv only
+#     Machine B (GPU PC / NAS)      →  Ollama, reachable over the LAN
+#
+# Use it INSTEAD OF the default file, not alongside it — a compose override
+# cannot delete the `ollama` service, so a standalone file is the honest form:
+#
+#     ARKIV_OLLAMA_URL=http://192.168.1.50:11434 \
+#     ARKIV_MEDIA_DIR=/Volumes/footage \
+#     docker compose -f docker-compose.remote-ollama.yml up -d
+#
+# ── On machine B, before starting this ────────────────────────────────────────
+#   1. Ollama must listen on more than loopback, or arkiv cannot reach it:
+#        OLLAMA_HOST=0.0.0.0 ollama serve
+#      (systemd: `Environment="OLLAMA_HOST=0.0.0.0"`; the Mac app: launchctl
+#      setenv OLLAMA_HOST 0.0.0.0, then restart it.)
+#   2. Pull the models arkiv expects — it does not pull them for you:
+#        ollama pull bge-m3
+#        ollama pull qwen2.5vl:7b
+#   3. Verify from machine A before bringing arkiv up, so a failure here is not
+#      mistaken for an arkiv bug:
+#        curl http://<machine-B>:11434/api/tags
+#
+# ⚠️ This puts model traffic on your LAN in the clear. Ollama has no auth of its
+# own, so anything that can reach port 11434 can use that GPU. Keep it on a
+# trusted network (or a tailnet), not a coffee-shop Wi-Fi.
+
+services:
+  arkiv:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      # Identical to docker-compose.yml — see that file for why each one exists.
+      - ./media.db:/app/media.db
+      - ./chroma_db:/app/chroma_db
+      - ./thumbnails:/app/thumbnails
+      - ./arkiv_data/bins:/root/.arkiv-bins
+      - ./arkiv_data/projects:/root/.arkiv-projects
+      - ./media-in:/app/media-in
+      - ${ARKIV_MEDIA_DIR:-./media}:/media
+    environment:
+      - ARKIV_DB_PATH=/app/media.db
+      - ARKIV_CHROMA_PATH=/app/chroma_db
+      - ARKIV_THUMBNAILS_DIR=/app/thumbnails
+      # The one line this file exists for. No default: an unset value would
+      # silently fall back to localhost inside the container, where nothing is
+      # listening, and every embed/vision call would fail with a connection
+      # error that looks like a model problem rather than a config one.
+      # config.py rejects 0.0.0.0 and link-local addresses here, so use the
+      # LAN address of machine B.
+      - ARKIV_OLLAMA_URL=${ARKIV_OLLAMA_URL:?set ARKIV_OLLAMA_URL to the LAN Ollama, e.g. http://192.168.1.50:11434}
+      # Must track config.py's defaults, same as the single-host file.
+      - ARKIV_EMBED_MODEL=bge-m3
+      - ARKIV_VISION_MODEL=qwen2.5vl:7b
+      - ARKIV_WHISPER_MODEL=large-v3-turbo
+      # 0.0.0.0 is correct INSIDE the container; reachability is fenced by the
+      # port mapping above. ⚠️ Do NOT add `--network host` — see the note in
+      # docker-compose.yml about ARKIV_TRUST_LOOPBACK handing LAN callers admin.
+      - ARKIV_HOST=0.0.0.0
+      - ARKIV_PORT=8501
+      - ARKIV_BINS_PATH=/root/.arkiv-bins/bins.json
+      - ARKIV_PROJECTS_REGISTRY=/root/.arkiv-projects/projects.json
+      # REPLACES the default root list rather than extending it — keep /app.
+      - ARKIV_INGEST_ROOTS=/app:/media
+      - ARKIV_UPLOAD_MAX_MB=4096
+      - ARKIV_UPLOAD_MAX_CONCURRENT=3
+      - ARKIV_UPLOAD_MAX_QUEUE_SEC=300
+    # No `depends_on` — Ollama is on another host and outside compose's view.
+    # There is deliberately no healthcheck gate on it either: arkiv starts, and
+    # the first model call surfaces an unreachable Ollama as a real error
+    # instead of compose hanging on a condition it cannot observe.
+    restart: unless-stopped

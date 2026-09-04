@@ -24,6 +24,11 @@ chroma_db/
 thumbnails/
 proxies/
 waveforms/
+# Docker bind-mount defaults (docker-compose.yml): the library and the upload
+# landing zone. Both hold the user's own footage — a `git add -A` in a checkout
+# that has been `docker compose up`'d would otherwise stage it.
+media/
+media-in/
 
 # Local project runtime data (SQLite + WAL/SHM, vector store, thumbnails, scratch)
 .arkiv/

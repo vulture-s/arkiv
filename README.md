@@ -232,11 +232,33 @@ $env:PYTHONUTF8=1; python health.py
 ```bash
 git clone https://github.com/vulture-s/arkiv.git
 cd arkiv
-docker compose up -d
+
+# Point ARKIV_MEDIA_DIR at your footage — a NAS share, an external drive,
+# anything. It is mounted at /media inside the container, which is the path
+# you give arkiv when you add a library. Defaults to ./media.
+ARKIV_MEDIA_DIR=/path/to/your/footage docker compose up -d
 # Open http://localhost:8501
 ```
 
 > Models are pulled automatically inside the Ollama container on first run (may take a few minutes).
+
+Uploads through the web UI land in `./media-in` on the host. Both that and your
+library are bind-mounted, so nothing you add survives only inside the container.
+
+#### Split-host: arkiv here, Ollama on the GPU box
+
+The default file runs arkiv and Ollama together. If the machine with the GPU is a
+different one on your LAN, use the sibling file instead — Ollama on that machine
+needs `OLLAMA_HOST=0.0.0.0` and the models pulled first:
+
+```bash
+ARKIV_OLLAMA_URL=http://192.168.1.50:11434 \
+ARKIV_MEDIA_DIR=/Volumes/footage \
+docker compose -f docker-compose.remote-ollama.yml up -d
+```
+
+Full notes, including why this is a separate file rather than an override, are at
+the top of [`docker-compose.remote-ollama.yml`](docker-compose.remote-ollama.yml).
 
 <details>
 <summary>Upgrading from an old version (v0.3.0 → v0.3.1 storage layout migration)</summary>

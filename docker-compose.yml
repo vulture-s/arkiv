@@ -28,6 +28,26 @@ services:
       # ARKIV_PROJECTS_REGISTRY pins the file inside the mount; projects.py already
       # honours it.
       - ./arkiv_data/projects:/root/.arkiv-projects
+      # Upload landing zone (#422). `POST /api/ingest/upload` writes to
+      # config.PROJECT_ROOT/"media-in" = /app/media-in and then queues a
+      # background ingest of that directory. Without this mount the endpoint
+      # fails two different ways depending on who the container runs as, and
+      # BOTH were shipping:
+      #   - as root (this image declares no USER): the write SUCCEEDS into the
+      #     container's ephemeral layer, so every uploaded file is silently lost
+      #     on `docker compose down` / rebuild and never appears on the host.
+      #   - under a remapped non-root uid (Synology/QNAP default, and anyone
+      #     setting `user:`): `PermissionError: [Errno 13] ... '/app/media-in'`,
+      #     a 500 on an advertised feature in the canonical install path.
+      # Measured 2026-09-05 on both uid 0 and uid 1000.
+      - ./media-in:/app/media-in
+      # The media library itself. Until now compose mounted arkiv's *derived*
+      # data (db, vectors, thumbnails, bins, projects) but never the media it is
+      # supposed to index — a containerised install had nothing to point at.
+      # Override the host side with ARKIV_MEDIA_DIR (a NAS share, an external
+      # drive) without editing this file:
+      #     ARKIV_MEDIA_DIR=/volume1/video docker compose up -d
+      - ${ARKIV_MEDIA_DIR:-./media}:/media
     environment:
       - ARKIV_DB_PATH=/app/media.db
       - ARKIV_CHROMA_PATH=/app/chroma_db
@@ -53,6 +73,24 @@ services:
       - ARKIV_BINS_PATH=/root/.arkiv-bins/bins.json
       # See the ./arkiv_data/projects volume mount above; keep the path in sync.
       - ARKIV_PROJECTS_REGISTRY=/root/.arkiv-projects/projects.json
+      # Roots /api/ingest/scan and /api/ingest are allowed to walk (webguard
+      # `_allowed_ingest_roots`, Codex J1 — without a bound, any caller could
+      # inventory the whole filesystem). The defaults are PROJECT_ROOT plus
+      # ~/Desktop, ~/Documents, ~/Movies, ~/Pictures and /Volumes/*, none of
+      # which exist in this image, so /app was effectively the only root and a
+      # library mounted anywhere else got rejected.
+      #
+      # 🔴 This variable REPLACES the default list, it does not extend it
+      # (webguard returns early when it is set). /app must stay in it or the
+      # upload flow above breaks: files land in /app/media-in and the follow-up
+      # ingest of that directory would then be refused.
+      - ARKIV_INGEST_ROOTS=/app:/media
+      # Upload limits, surfaced here because they are otherwise invisible: the
+      # values below are the code defaults (routers/ingest.py), repeated so a
+      # deployer can see the knobs exist without reading the source.
+      - ARKIV_UPLOAD_MAX_MB=4096
+      - ARKIV_UPLOAD_MAX_CONCURRENT=3
+      - ARKIV_UPLOAD_MAX_QUEUE_SEC=300
     depends_on:
       ollama:
         condition: service_healthy   # F6: wait for ollama READY, not just container-start

@@ -2,3 +2,9 @@ pytest>=7.4
 pytest-asyncio>=0.21
 pytest-cov>=7.1.0
 httpx>=0.28.1
+# tests/test_compose_deploy.py parses the compose files. PyYAML is already
+# present transitively (chromadb pulls it), and that is exactly why it is
+# declared here: #407 shipped a 3.9 CI failure because python-multipart was
+# only ever a transitive dep of mcp — it worked until it met an environment
+# that resolved differently.
+pyyaml>=6.0
