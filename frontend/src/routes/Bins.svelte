@@ -32,6 +32,9 @@
     path_not_found: { label: '庫不存在', sev: 'bad' },
     timeout: { label: '逾時', sev: 'warn' },
     row_missing: { label: '已從庫刪除', sev: 'bad' },
+    // 這個 id 現在是另一支素材了（SQLite 會把刪掉的 id 發給下一次匯入）。
+    // 是壞的一種，不是「找不到」——標成 bad，並在 title 說清楚。
+    id_reused: { label: '已換成別支', sev: 'bad' },
     file_missing: { label: '檔案不在', sev: 'bad' },
     error: { label: '錯誤', sev: 'warn' },
   }
@@ -332,7 +335,10 @@
                       <Mono style="font-size:11.5px;font-weight:500;color:var(--ink);">{it.filename || ('#' + it.media_id)}</Mono>
                     </div>
                     <div class="rbadge">
-                      <span class="badge {bd.sev}" title={it.status}>{bd.label}</span>
+                      <span class="badge {bd.sev}"
+                            title={it.status === 'id_reused'
+                              ? `這個編號現在指到另一支素材（當初加入的是 ${it.filename || '?'}）`
+                              : it.status}>{bd.label}</span>
                     </div>
                     <div class="raction">
                       <button class="ak-btn xbtn" title="從精選集移除（不動原檔）" on:click={() => removeItem(it)}>×</button>
