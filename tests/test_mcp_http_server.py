@@ -172,6 +172,75 @@ def test_no_token_is_refused(monkeypatch):
     assert sent[0]["status"] == 401
 
 
+# ── scope, not just identity ─────────────────────────────────────────────────
+@pytest.mark.parametrize("scopes", [[], ["chat_read"], ["ingest_write"], ["admin"]])
+def test_a_valid_token_without_videos_read_is_refused(monkeypatch, scopes):
+    """🔴 The audit finding. The first version resolved the token and discarded
+    the result, so ANY valid token — a chat widget's, an ingest bot's, a
+    zero-scope one — read the entire library over the LAN, while REST answered
+    403 to those same tokens. Note `admin` is in this list on purpose: arkiv's
+    scopes are a flat set, not a hierarchy, and REST does not treat admin as a
+    superset either."""
+    reached, sent = _run_gate(
+        monkeypatch,
+        _scope([(b"authorization", b"Bearer tok")]),
+        lambda raw, ip: {"scopes": scopes},
+    )
+    assert reached is False
+    assert sent[0]["status"] == 403
+
+
+def test_videos_read_gets_through(monkeypatch):
+    reached, _ = _run_gate(
+        monkeypatch,
+        _scope([(b"authorization", b"Bearer tok")]),
+        lambda raw, ip: {"scopes": ["chat_read", "videos_read"]},
+    )
+    assert reached is True
+
+
+def test_a_resolver_returning_none_is_refused(monkeypatch):
+    """Defensive: a token store that answers None must not be read as
+    "unrestricted"."""
+    reached, sent = _run_gate(
+        monkeypatch, _scope([(b"authorization", b"Bearer tok")]), lambda raw, ip: None)
+    assert reached is False
+    assert sent[0]["status"] == 403
+
+
+def test_the_required_scope_matches_what_rest_asks_for():
+    """If REST's media routes ever move off videos_read, this transport must
+    move with them rather than quietly becoming the looser door."""
+    rest = (ROOT_MEDIA_ROUTER := importlib.import_module("routers.media"))
+    src = open(rest.__file__, encoding="utf-8").read()
+    assert 'require_scopes("{0}")'.format(mcp_http_server.REQUIRED_SCOPE) in src
+
+
+# ── refusing in the right protocol ───────────────────────────────────────────
+def test_a_websocket_is_closed_not_answered_with_http(monkeypatch):
+    """🔴 `http.response.start` on a websocket scope makes uvicorn raise
+    RuntimeError — a clean rejection becomes a 500 and a traceback per attempt.
+    There are no ws routes here, so the only caller is someone probing, and
+    filling the log is the one thing an unauthenticated neighbour could do."""
+    scope = dict(_scope(), type="websocket")
+    reached, sent = _run_gate(monkeypatch, scope, lambda raw, ip: (_ for _ in ()).throw(Exception()))
+    assert reached is False
+    assert sent[0]["type"] == "websocket.close"
+    assert not any(m["type"].startswith("http.") for m in sent)
+
+
+def test_auth_failure_is_logged(monkeypatch, caplog):
+    """The comment used to claim "the server log already has the traceback".
+    Nothing logged. A fleet-wide 401 (missing table, locked DB) was then
+    undebuggable from outside."""
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        _run_gate(monkeypatch, _scope(),
+                  lambda raw, ip: (_ for _ in ()).throw(RuntimeError("token store locked")))
+    assert any("token" in r.message.lower() for r in caplog.records)
+
+
 def test_valid_token_reaches_the_app(monkeypatch):
     seen = {}
 
