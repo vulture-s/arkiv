@@ -30,12 +30,30 @@ PROXY_CODECS = frozenset({
 #
 # PROXY_CODECS stays as it is: it names the codecs the proxy BUILDER knows how
 # to transcode, which is a different question from what a browser can show.
+#
+# 🔴 Measured, not remembered. Two entries sat here on the strength of what
+# browsers used to do, and a real Chrome 152 disagrees with both:
+#
+#     canPlayType('video/mp4; codecs="avc1.42E01E"')   → "probably"
+#     canPlayType('video/webm; codecs="vp9"')          → "probably"
+#     canPlayType('video/mp4; codecs="av01.0.05M.08"') → "probably"
+#     canPlayType('video/ogg; codecs="theora"')        → ""   ← cannot
+#     canPlayType('video/mp4; codecs="mp4v.20.8"')     → ""   ← cannot
+#
+# Theora decoding was dropped from Chrome; MPEG-4 Part 2 (DivX/Xvid) was never
+# in it. Listing them was worse than omitting them: this gate exists to send an
+# unplayable codec down the proxy path, so a wrong "playable" hands the raw bytes
+# to a player that shows a black pane and no error — the exact symptom issue #420
+# was opened about, arrived at by the code meant to prevent it.
+#
+# ⚠️ `video/ogg` with no codec string answers "maybe", but that is the CONTAINER
+# — Chrome plays Ogg *audio* (Vorbis/Opus). It is not evidence for Theora video,
+# and asking the bare-container question is how this gets believed again. Ask
+# with the codec.
 BROWSER_PLAYABLE_VIDEO = frozenset({
     "h264", "avc1",          # the overwhelming majority of everything
     "vp8", "vp9",
     "av1", "av01",
-    "theora",                # Firefox-era, still decoded
-    "mpeg4",                 # Simple Profile in MP4 — Safari and Chrome do play it
 })
 
 
