@@ -149,7 +149,9 @@
     const refs = picked.map((id) => ({
       project_name: projectRegName,
       media_id: String(id),
-      filename: (byId.get(id) || {}).name || `#${id}`,
+      // 名字拿不到就送空字串，不要送 `#id`：它永遠不會等於真檔名，
+      // 會讓後端的 id-reuse 比對每一支都誤判。顯示端本來就有 #id fallback。
+      filename: (byId.get(id) || {}).name || '',
     }))
     let binId = targetBinId
     try {

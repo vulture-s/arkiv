@@ -3,12 +3,14 @@
 A bin references clips by `(registry name, media_id)`. Deleting one used to leave
 that reference behind in every bin, permanently: `delete_media_full` removes the
 row, so the id is gone, and restoring from the recycle bin RE-INGESTS the file —
-which mints a new id. The old entry can never resolve again. It sits at
-`ROW_MISSING` forever and still counts toward the bin's size.
+which mints a new id. The old entry can never resolve to the right clip again.
 
-That the reference-integrity gate shows it as broken rather than silently wrong is
-why this was a papercut rather than data loss — and also why nobody had to fix it,
-which is how it survived.
+🔴 It does not merely sit there counting toward the bin's size. `media.id` is
+`INTEGER PRIMARY KEY` with no AUTOINCREMENT, so the next ingest is handed that
+very id and the stale entry starts resolving — cleanly, status `ok` — to
+different footage. The reference-integrity gate could not see it: nothing in it
+could tell one clip from another under the same id. `tests/test_bins_id_reuse.py`
+covers that half; this file covers keeping the reference from going stale at all.
 
 🔴 The name has to be the REGISTRY name, not the directory basename. A library
 registered as 「婚禮案素材庫」 can live in a folder called `wedding`; matching on the
@@ -176,7 +178,11 @@ def test_delete_clears_the_clip_out_of_bins(monkeypatch, tmp_path):
 def test_delete_still_succeeds_when_bins_are_unusable(monkeypatch, tmp_path):
     """The row, files and vectors are already gone by this point. Failing the
     delete because a JSON file could not be rewritten would report failure for
-    work that actually happened."""
+    work that actually happened.
+
+    But it must not be SILENT. The entry left behind is the one that will start
+    resolving to a different clip on the next ingest, so the one thing the user
+    needs is to be told it is there."""
     import media_delete
 
     def boom(*_a, **_k):
@@ -188,7 +194,53 @@ def test_delete_still_succeeds_when_bins_are_unusable(monkeypatch, tmp_path):
     monkeypatch.setattr(media_delete.db, "delete_media", lambda mid: [])
     monkeypatch.setattr(media_delete.db, "trash_media", lambda *a, **k: None)
 
-    assert media_delete.delete_media_full(42, allow_file_delete=False)["ok"] is True
+    got = media_delete.delete_media_full(42, allow_file_delete=False)
+
+    assert got["ok"] is True
+    assert got["warning"], "a swallowed failure here is the whole bug"
+    assert "精選集" in got["warning"] and "OSError" in got["warning"]
+
+
+def test_two_failures_in_one_delete_both_survive(monkeypatch, tmp_path):
+    """`warning` is a single slot and two independent things can go wrong. The
+    later one must not quietly erase the earlier one."""
+    import media_delete
+
+    assert media_delete._join_warning(None, "b") == "b"
+    assert media_delete._join_warning("a", None) == "a"
+    assert media_delete._join_warning("a", "b") == "a; b"
+
+
+def test_a_bug_in_the_registry_lookup_is_not_reported_as_unregistered(monkeypatch):
+    """`current_registry_name` used to wrap its path computation in a bare
+    `except Exception: return None`, and every caller reads None as the ordinary
+    "this project is not registered". A real NameError in there therefore looked
+    like a supported state, and the bins cleanup became a silent no-op.
+
+    `_normalize_key` is `expanduser().resolve(strict=False)` — pure path math
+    with no legitimate failure — so anything it raises is a bug and has to be
+    loud."""
+    def boom(_path):
+        raise NameError("name '_config' is not defined")
+
+    monkeypatch.setattr(projects, "_normalize_key", boom)
+
+    with pytest.raises(NameError):
+        projects.current_registry_name()
+
+
+def test_an_unreadable_registry_is_still_just_unregistered(tmp_path, monkeypatch):
+    """The other side of that narrowing: a registry that cannot be read IS a
+    runtime condition, and must stay a quiet None rather than an exception."""
+    monkeypatch.setenv("ARKIV_PROJECTS_REGISTRY", str(tmp_path / "reg.json"))
+    monkeypatch.delenv("ARKIV_PROJECT_ROOTS", raising=False)
+
+    def boom():
+        raise OSError("registry is unreadable")
+
+    monkeypatch.setattr(projects, "discover_projects", boom)
+
+    assert projects.current_registry_name() is None
 
 
 def test_delete_skips_the_cleanup_when_the_project_is_unregistered(monkeypatch, tmp_path):

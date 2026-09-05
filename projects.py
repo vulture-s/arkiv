@@ -484,19 +484,21 @@ def current_registry_name() -> Optional[str]:
     # so it is not a module-level name here either.
     import config as _config
 
-    try:
-        root_key = _normalize_key(_config.PROJECT_ROOT)
-    except Exception:
-        return None
+    # NOT guarded. `_normalize_key` is `expanduser().resolve(strict=False)` on a
+    # module attribute — pure path math with no filesystem requirement and no
+    # legitimate failure. Wrapping it swallowed a real `_config.PROJECT_ROOT`
+    # NameError during development and returned None, which every caller reads
+    # as the perfectly ordinary "this project is not registered". The bug looked
+    # like a supported state for as long as the guard was there.
+    root_key = _normalize_key(_config.PROJECT_ROOT)
     try:
         for p in discover_projects():
             if p.key() == root_key:
                 return p.name
     except Exception:
-        # A registry that cannot be read means "not registered" for this
-        # purpose. Deliberately narrow in scope: the key computation above gets
-        # its own guard so a typo in THIS function surfaces as a NameError at
-        # import rather than as a silent None that looks like "unregistered".
+        # A registry that cannot be read (missing, unreadable, malformed JSON)
+        # genuinely does mean "not registered" for this purpose, and that one IS
+        # a runtime condition rather than a bug.
         return None
     return None
 

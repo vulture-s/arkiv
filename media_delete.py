@@ -55,6 +55,17 @@ def _unlink_rel(stored_path: str) -> None:
         pass
 
 
+def _join_warning(existing, extra):
+    """Two things can go wrong in one delete (the file move AND the bins cleanup)
+    and `warning` is a single slot. Keep both rather than letting the later one
+    overwrite the earlier."""
+    if not existing:
+        return extra
+    if not extra:
+        return existing
+    return "{0}; {1}".format(existing, extra)
+
+
 def _audit(media_id, filename, file_deleted, warning, token_info):
     try:
         actor = "unknown"
@@ -147,22 +158,35 @@ def delete_media_full(media_id, allow_file_delete=True, token_info=None):
 
     # Cross-library 精選集 hold clips by (registry name, media_id). That pair is
     # gone the moment the row is: restoring from the recycle bin re-INGESTS the
-    # file and mints a new id, so the old entry can never resolve again — it
-    # just sits at ROW_MISSING forever, still counted in the bin's size.
+    # file and mints a new id, so the old entry can never resolve again.
     #
-    # Best-effort on purpose. The clip's row, files and vectors are already gone
-    # by this point; failing the delete because a JSON file could not be rewritten
-    # would report failure for work that actually happened. A stale entry is the
-    # exact papercut this removes, which is a fair trade against that.
-    try:
-        import bins as bins_store
-        import projects as project_registry
+    # 🔴 And it does not merely sit there. `media.id` is INTEGER PRIMARY KEY with
+    # no AUTOINCREMENT, so SQLite hands this id to the next clip ingested. The
+    # stale entry then resolves — with status ok — to footage the user never put
+    # in that bin, and 精選集 feeds the cross-project copy. So this cleanup is
+    # not cosmetic, and a silent failure here is not a papercut.
+    #
+    # Still best-effort on the delete's own outcome: the row, files and vectors
+    # are already gone, and reporting failure for work that actually happened
+    # helps nobody. But the failure has to be VISIBLE — it goes into `warning`,
+    # which reaches both the API response and the audit log.
+    #
+    # Narrow on purpose: only the bins call is guarded. An import error or a
+    # broken registry lookup is a bug in arkiv, not a runtime condition, and the
+    # previous blanket try/except turned exactly that into a silent no-op.
+    import bins as bins_store
+    import projects as project_registry
 
-        registry_name = project_registry.current_registry_name()
-        if registry_name:
+    registry_name = project_registry.current_registry_name()
+    if registry_name:
+        try:
             bins_store.remove_media_everywhere(registry_name, media_id)
-    except Exception:
-        pass
+        except Exception as exc:
+            warning = _join_warning(
+                warning,
+                "精選集未能清除此素材（{0}）：該編號會被下一支匯入的素材重用".format(
+                    type(exc).__name__),
+            )
 
     # Only record a recycle-bin entry when an actual file was moved (it is the
     # only thing recoverable). Metadata-only deletes are still captured by the
