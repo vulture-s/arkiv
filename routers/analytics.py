@@ -25,14 +25,11 @@ router = APIRouter()
 
 
 def _current_project_registry_name():
-    try:
-        root_key = str(config.PROJECT_ROOT.expanduser().resolve(strict=False)).casefold()
-        for p in project_registry.discover_projects():
-            if p.key() == root_key:
-                return p.name
-    except Exception:
-        pass
-    return None
+    """Kept as a name on this module — the R5-25 route-ownership tests assert it
+    exists here — but the implementation moved to `projects`, because it answers
+    a registry question and `media_delete` needs the same answer when it clears a
+    deleted clip out of every 精選集."""
+    return project_registry.current_registry_name()
 
 
 def _thumb_url(thumbnail_path):

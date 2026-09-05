@@ -119,7 +119,7 @@ def _bin_detail_payload(b) -> dict:
     (Phase 16.2 — no absolute path ever leaves the backend)."""
     # fable-audit round-5 #23: one batched status probe (grouped by project) instead
     # of a per-item registry read + health probe + sqlite open.
-    statuses = bins_store.bin_item_statuses(b.items)
+    statuses = bins_store.bin_item_statuses(b.items)  # items carry filename → id-reuse checked
     items = []
     for item in b.items:
         status = statuses.get((item.project_name, str(item.media_id)), bins_store.STATUS_ERROR)
@@ -255,7 +255,7 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
         reachable = []  # (project_name, media_id, absolute_path)
         # ── gate: re-resolve every item server-side; skip unreachable (fail-loud) ──
         for item in b.items:
-            info = bins_store.resolve_source(item.project_name, item.media_id)
+            info = bins_store.resolve_source(item.project_name, item.media_id, item.filename)
             status = (info or {}).get("status") or bins_store.STATUS_PROJECT_UNREGISTERED
             if status != bins_store.STATUS_OK or not (info or {}).get("absolute_path"):
                 skipped.append({"project_name": item.project_name, "media_id": item.media_id, "status": status})
