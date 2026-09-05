@@ -36,8 +36,28 @@ def test_playable_codecs(name):
 
 
 @pytest.mark.parametrize("name", ["mjpeg", "qtrle", "dnxhd", "cinepak", "rawvideo",
-                                  "hevc", "prores"])
+                                  "hevc", "prores", "theora", "mpeg4"])
 def test_unplayable_codecs(name):
+    assert codec.is_browser_playable_video(name) is False
+
+
+@pytest.mark.parametrize("name", ["theora", "mpeg4"])
+def test_the_two_that_were_wrong(name):
+    """Measured in a real Chrome 152, 2026-09-05:
+
+        canPlayType('video/ogg; codecs="theora"')    → ""
+        canPlayType('video/mp4; codecs="mp4v.20.8"') → ""
+
+    Both shipped in the allow-list on the strength of what browsers used to do.
+    Theora decoding was dropped from Chrome; MPEG-4 Part 2 (DivX/Xvid) was never
+    in it. A wrong 'playable' is the worse direction of error — it hands raw
+    bytes to a player that shows a black pane and no error, which is the exact
+    symptom this gate was built to stop.
+
+    Kept separate from the list above so the reason survives: if a future Chrome
+    brings either back, this is the test whose docstring says what to re-measure
+    rather than a name silently deleted from a parametrize list."""
+    assert name not in codec.BROWSER_PLAYABLE_VIDEO
     assert codec.is_browser_playable_video(name) is False
 
 
