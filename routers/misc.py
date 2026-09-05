@@ -144,17 +144,35 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
                         conn.execute("UPDATE media SET codec=? WHERE id=?", (stored_codec, media_id))
                 except Exception:
                     pass  # backfill is best-effort; playback must not fail on it
-    if stored_codec and stored_codec in codec.PROXY_CODECS:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "need_proxy": True,
-                "media_id": media_id,
-                "filename": rec.get("filename"),
-                "reason": "browser-incompatible codec (HEVC/ProRes); proxy required for playback",
-                "hint": "POST /api/proxy/build to queue proxy generation",
-            },
-        )
+    # 🔴 Only video files get the codec gate (issue #420). The question "can a
+    # browser play this codec" is meaningless for the other two kinds and
+    # actively harmful to ask:
+    #   a JPEG still probes as `mjpeg`  → a 409 would break every image preview
+    #   an MP3 probes as `mp3`          → a 409 would break every audio preview
+    # Gating on VIDEO_EXT rather than on "not an image" covers both; the audio
+    # half is easy to miss because images are the case people remember.
+    if file_path.suffix.lower() in mediatypes.VIDEO_EXT and stored_codec:
+        playable = codec.is_browser_playable_video(stored_codec)
+        # None = ffprobe could not tell us. Fall through and let the browser try,
+        # exactly as before — a 409 there would blame the codec for a probe that
+        # never ran.
+        if playable is False:
+            in_proxy_set = stored_codec in codec.PROXY_CODECS
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "need_proxy": True,
+                    "media_id": media_id,
+                    "filename": rec.get("filename"),
+                    "reason": (
+                        "browser-incompatible codec (HEVC/ProRes); proxy required for playback"
+                        if in_proxy_set else
+                        "browser cannot decode this codec ({0}); proxy required for playback".format(
+                            stored_codec)
+                    ),
+                    "hint": "POST /api/proxy/build to queue proxy generation",
+                },
+            )
 
     mime, _ = mimetypes.guess_type(str(file_path))
     if not mime:

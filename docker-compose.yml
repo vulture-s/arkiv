@@ -124,5 +124,49 @@ services:
     # macOS: GPU passthrough not needed (Ollama uses Metal natively on host)
     restart: unless-stopped
 
+  # HTTP/SSE MCP for clients on other machines (#417). stdio MCP needs a local
+  # process and a local DB, neither of which crosses a LAN, so an editor on
+  # another Mac cannot reach the library at all without this.
+  #
+  # Same image, same read-only tools, different transport — it imports the tool
+  # definitions from mcp_server rather than re-declaring them, so the two
+  # transports cannot drift apart.
+  arkiv-mcp:
+    build: .
+    command: ["python", "mcp_http_server.py"]
+    ports:
+      - "8502:8502"
+    volumes:
+      # Read-only: MCP exposes queries, never ingest or delete. The mount being
+      # ro is a second lock behind that, not a substitute for it.
+      - ./media.db:/app/media.db:ro
+      - ./chroma_db:/app/chroma_db:ro
+      - ./thumbnails:/app/thumbnails:ro
+      - ${ARKIV_MEDIA_DIR:-./media}:/media:ro
+    environment:
+      - ARKIV_DB_PATH=/app/media.db
+      - ARKIV_CHROMA_PATH=/app/chroma_db
+      - ARKIV_THUMBNAILS_DIR=/app/thumbnails
+      - ARKIV_OLLAMA_URL=http://ollama:11434
+      - ARKIV_EMBED_MODEL=bge-m3
+      # 0.0.0.0 INSIDE the container, fenced by the port mapping above — the same
+      # split as ARKIV_HOST on the arkiv service. Running mcp_http_server.py
+      # directly defaults to 127.0.0.1 instead, so publishing it stays a decision.
+      - ARKIV_MCP_BIND=0.0.0.0
+      - ARKIV_MCP_PORT=8502
+      # 🔴 Set this to the address your MCP clients actually dial, or every LAN
+      # request dies with 421 before arkiv sees it. The MCP SDK ships DNS
+      # rebinding protection ON with a loopback-only allow-list; measured on
+      # mcp 1.28.0, `Host: 192.168.1.50:8502` is refused while `127.0.0.1:8502`
+      # passes. Values here are ADDED to the loopback defaults, never swapped
+      # for them, so localhost keeps working while you debug. `*` turns the
+      # host check off entirely — spelled out, so it cannot happen by accident.
+      #   ARKIV_MCP_ALLOWED_HOSTS=192.168.1.50:8502,arkiv.local:8502
+      - ARKIV_MCP_ALLOWED_HOSTS=${ARKIV_MCP_ALLOWED_HOSTS:-}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   ollama_data:

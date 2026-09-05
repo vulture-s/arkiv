@@ -20,6 +20,46 @@ PROXY_CODECS = frozenset({
     "prores", "ap4h", "ap4x", "apch", "apcn", "apcs", "apco",
 })
 
+# What a browser will actually decode. An ALLOW-list, deliberately: the codecs
+# browsers play are a short, slow-moving set, while the ones they refuse are
+# unbounded — mjpeg, qtrle, dnxhd, cinepak, rawvideo, whatever the next screen
+# recorder emits. PROXY_CODECS was that unbounded list, so it only ever named
+# the two formats someone had already been bitten by (issue #420: an mjpeg or
+# qtrle clip is handed over raw and the player shows a black pane with no error
+# and no way to ask for a proxy).
+#
+# PROXY_CODECS stays as it is: it names the codecs the proxy BUILDER knows how
+# to transcode, which is a different question from what a browser can show.
+BROWSER_PLAYABLE_VIDEO = frozenset({
+    "h264", "avc1",          # the overwhelming majority of everything
+    "vp8", "vp9",
+    "av1", "av01",
+    "theora",                # Firefox-era, still decoded
+    "mpeg4",                 # Simple Profile in MP4 — Safari and Chrome do play it
+})
+
+
+def is_browser_playable_video(codec_name: Optional[str]) -> Optional[bool]:
+    """True / False / None for "can a browser show this video codec?".
+
+    None means *unknown*, not *no*: ffprobe failing, the binary missing, or a
+    NAS being unreachable must keep the pre-existing fall-through (hand over the
+    original bytes and let the browser try) rather than turning into a 409 that
+    tells the user to build a proxy for a file we could not even read.
+
+    🔴 Only ask this about a VIDEO file. A JPEG still probes as `mjpeg` and an
+    MP3 as `mp3`; both would answer False here and neither wants a proxy. The
+    caller gates on the extension — see `routers/misc.py::stream_media`.
+    """
+    name = (codec_name or "").strip().lower()
+    # Strip FIRST, then test for emptiness: a whitespace-only value is truthy,
+    # so an `if not codec_name` guard lets "   " through and the set lookup
+    # answers False — "the browser cannot play this", from a probe that returned
+    # nothing at all.
+    if not name:
+        return None
+    return name in BROWSER_PLAYABLE_VIDEO
+
 # Containers a browser cannot demux, whatever is inside them. AVCHD camcorder
 # footage (.mts/.m2ts) is almost always plain H.264 — so the codec check says
 # "playable", we hand over the original bytes labelled video/mp4, and the
