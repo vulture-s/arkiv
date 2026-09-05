@@ -39,11 +39,19 @@ def durs(cues):
     [seg(1.5, 9.0, "一段很長的旁白" * 6)],
 ])
 def test_no_cue_starts_before_its_words(segments):
-    """Every emitted start must be one of the segment starts we were given."""
-    allowed = {s["start"] for s in segments}
+    """Every emitted start is a segment start, or lies strictly inside one.
+
+    The first version of this asserted `any(start == a or start > a for a in
+    allowed)`, which is true for ANY value past the earliest segment start — 0.15
+    and 3.0 both "passed" for allowed={0.0, 0.3}. It was checking almost nothing.
+    A split chunk legitimately starts mid-segment, so that is the shape to state:
+    inside SOME segment's own span.
+    """
+    spans = [(s["start"], s["end"]) for s in segments]
     for start, _end, _lines in sub.layout_cues(segments):
-        assert any(abs(start - a) < 1e-6 or start > a for a in allowed)
-        assert start >= min(allowed) - 1e-9
+        assert any(a - 1e-9 <= start <= b + 1e-9 for a, b in spans), (
+            "cue starts at {0}, outside every segment span {1}".format(start, spans)
+        )
 
 
 @pytest.mark.parametrize("segments", [
@@ -215,3 +223,80 @@ def test_srt_output_has_a_real_gap_at_millisecond_precision():
     srt = sub.segments_to_srt([seg(0.0, 2.0, "第一句"), seg(2.0, 4.0, "第二句")])
     assert "00:00:00,000 --> 00:00:01,920" in srt
     assert "00:00:02,000 --> 00:00:04,000" in srt
+
+
+# ── the float flip (audit round 2) ───────────────────────────────────────────
+def test_a_cue_that_reached_min_dur_is_not_merged_away():
+    """🔴 The bug every earlier test missed by starting cues at 0.0.
+
+    `(37.259 + 0.8) - 37.259` is `0.7999999999999972`. The extend pass lifts a
+    short cue to exactly `min_dur`, the merge pass measures it back as SHORT, and
+    absorbs it — putting the next sentence on screen early.
+
+    The next cue starts at exactly `min_dur + min_gap`, which is the only place
+    the two guards separate: any closer and the cue genuinely cannot reach
+    `min_dur` (so merging is right), any further and the lead check refuses the
+    merge for its own reasons. Here the epsilon is the sole thing deciding, which
+    is what makes this a test OF the epsilon rather than of the pair.
+    """
+    P = sub.DEFAULT_TIMING
+    start = 37.259                                  # a start where the flip fires
+    nxt = start + P.min_dur + P.min_gap
+    assert (start + P.min_dur) - start < P.min_dur, "premise: this start flips"
+
+    cues = sub.layout_cues([seg(start, start + 0.265, "講感開們到節"),
+                            seg(nxt, nxt + 2.0, "每")])
+
+    assert len(cues) == 2, "it reached min_dur; only the float said otherwise"
+    assert cues[0][1] == pytest.approx(start + P.min_dur)
+
+
+@pytest.mark.parametrize("start", [0.001, 12.345, 99.999, 601.237, 37.259])
+def test_the_boundary_holds_at_many_starts(start):
+    """The same construction across starts that flip and starts that do not."""
+    P = sub.DEFAULT_TIMING
+    nxt = start + P.min_dur + P.min_gap
+    cues = sub.layout_cues([seg(start, start + 0.265, "真的"),
+                            seg(nxt, nxt + 2.0, "然後我們就去了")])
+    assert len(cues) == 2, "start={0} merged a cue that had room".format(start)
+
+
+def test_the_lead_a_merge_introduces_stays_within_the_bound():
+    """A merge shows the absorbed text from the earlier start — before those
+    words are spoken. That is tolerable only because a cue reaching the merge
+    pass had no room to grow, which bounds the lead at min_dur + min_gap.
+
+    ⚠️ The `lead_ok` guard in the merge cannot fire under any self-consistent
+    policy, and this test does not pretend to make it. A cue is still short after
+    the extend pass only when the next one starts within min_dur + min_gap, so
+    the lead is inside the bound by construction; raising max_dur to let a wider
+    merge through also lets the extend reach min_dur, and lowering it makes
+    `(ne - s) <= max_dur` refuse the merge first. A mutation removing `lead_ok`
+    survives the suite, and that is correct rather than a gap.
+
+    It is kept because it was NOT unreachable while the float flip was live: a
+    cue that had reached min_dur measured as short, and the lead was then bounded
+    by max_dur alone. The guard is what turns a repeat of that into a refused
+    merge rather than 5.7 seconds of early text.
+
+    What this test does is check the bound empirically across the space, which is
+    what would catch a future change that makes merging reachable from further
+    away.
+    """
+    P = sub.DEFAULT_TIMING
+    bound = P.min_dur + P.min_gap + 1e-9
+    starts = [0.0, 0.001, 12.345, 37.259, 99.999, 601.237]
+    gaps = [0.0, 0.01, 0.05, 0.2, 0.5, 0.8, 0.87, 0.88, 0.9, 1.604, 5.741]
+    merges = 0
+    for s0 in starts:
+        for gap in gaps:
+            cues = sub.layout_cues([seg(s0, s0 + 0.265, "真的"),
+                                    seg(s0 + gap, s0 + gap + 2.0, "然後我們就去了")])
+            if len(cues) == 1:
+                merges += 1
+                lead = (s0 + gap) - cues[0][0]
+                assert lead <= bound, (
+                    "start={0} gap={1}: merged text leads its words by "
+                    "{2:.4f}s, bound {3:.4f}".format(s0, gap, lead, bound)
+                )
+    assert merges, "the sweep must actually produce merges or it proves nothing"
