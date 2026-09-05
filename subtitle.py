@@ -379,15 +379,39 @@ def _apply_timing(cues: List[Cue], policy: TimingPolicy) -> List[Cue]:
     i = 0
     while i < len(out):
         s, e, lines = out[i]
-        if (e - s) < policy.min_dur and i + 1 < len(out):
+        if _is_too_short(s, e, policy) and i + 1 < len(out):
             ns, ne, nlines = out[i + 1]
-            if len(lines) + len(nlines) <= 2 and (ne - s) <= policy.max_dur:
+            # 🔴 A merge shows the absorbed cue's text from the EARLIER cue's
+            # start, i.e. before those words are spoken. That is tolerable only
+            # because a cue reaching this point had no room to grow, which bounds
+            # the lead at min_dur + min_gap. Assert the bound rather than trust
+            # it: a float slip upstream once let a cue that HAD room merge here,
+            # and the lead was then capped by nothing but max_dur — 5.7 seconds
+            # of the next sentence on screen early, in a pass whose whole promise
+            # is that text never precedes its words.
+            lead_ok = (ns - s) <= policy.min_dur + policy.min_gap + 1e-9
+            if (lead_ok
+                    and len(lines) + len(nlines) <= 2
+                    and (ne - s) <= policy.max_dur):
                 merged.append((s, ne, lines + nlines))
                 i += 2
                 continue
         merged.append((s, e, lines))
         i += 1
     return merged
+
+
+def _is_too_short(start: float, end: float, policy: TimingPolicy) -> bool:
+    """Is this cue still under `min_dur` after the extend pass had its go?
+
+    🔴 The epsilon is the whole point. `(37.259 + 0.8) - 37.259` is
+    `0.7999999999999972`, so a cue the extend pass had just lifted to exactly
+    `min_dur` measured as *short* and got merged into its neighbour — showing
+    that neighbour's text up to 5.7 s early. It held for 31.6% of three-decimal
+    start times and 102 of the 312 starts in the reference library; every test
+    started a cue at 0.0, where `0.0 + 0.8` is exact, so nothing caught it.
+    """
+    return (end - start) < policy.min_dur - 1e-9
 
 
 def _render_lines(lines: List[str], restrict_punct: bool) -> List[str]:
