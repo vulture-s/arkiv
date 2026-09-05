@@ -86,9 +86,25 @@ services:
     ports:
       - "8502:8502"
     volumes:
-      # Read-only: MCP exposes queries, never ingest or delete.
+      # 🔴 chroma_db is NOT :ro. chromadb 1.5.5 cannot open a read-only persist
+      # dir — it raises `attempt to write a readonly database` — and
+      # mcp_server's search falls through a blanket `except Exception` to a SQL
+      # LIKE scan with NO search_degraded flag (only a dimension mismatch sets
+      # that). Semantic search over MCP would be dead on arrival and look
+      # perfectly healthy. Measured 2026-09-05. The read-only guarantee comes
+      # from the tool surface — all seven tools only read — not from the mount.
+      - ./chroma_db:/app/chroma_db
+      # ⚠️ Single-FILE bind mount hides the host's WAL. SQLite keeps `-wal` /
+      # `-shm` as siblings of the db file; mounting only the file gives this
+      # container its own, so it reads the last CHECKPOINT rather than what
+      # arkiv has committed. Measured with the writer connection held open:
+      #     single-file mount → 1 of 2 rows      directory mount → 2 of 2
+      # The arkiv service has always mounted it this way; with one container it
+      # did not matter, because that container owned the only WAL. A second
+      # container makes it live. Fixing it properly means moving media.db under
+      # a mounted DIRECTORY, which relocates existing users' data — a breaking
+      # change, not a 3am one. Until then: MCP may serve a slightly stale view.
       - ./media.db:/app/media.db:ro
-      - ./chroma_db:/app/chroma_db:ro
       - ./thumbnails:/app/thumbnails:ro
       - ${ARKIV_MEDIA_DIR:-./media}:/media:ro
     environment:

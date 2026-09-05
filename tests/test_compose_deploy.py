@@ -183,12 +183,34 @@ def test_mcp_service_exists_and_runs_the_http_server(compose):
 
 
 @pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
-def test_mcp_mounts_are_read_only(compose):
-    """MCP exposes queries, never ingest or delete. `:ro` is a second lock behind
-    the tool surface, not a substitute for it — a bug that let a write through
-    would still hit a read-only filesystem."""
+def test_mcp_mounts_are_read_only_except_the_one_that_cannot_be(compose):
+    """`:ro` was meant as a second lock behind a tool surface that only reads.
+
+    🔴 On `chroma_db` it is not a lock, it is a break. chromadb 1.5.5 cannot open
+    a read-only persist dir (`attempt to write a readonly database`), and
+    `mcp_server`'s search swallows that in a blanket `except Exception` and
+    degrades to a SQL LIKE scan — with no `search_degraded` flag, because only a
+    dimension mismatch sets one. Semantic search over MCP would be dead and look
+    healthy. Measured 2026-09-05.
+
+    The read-only guarantee has to come from the tools, which is where it
+    actually lives; the mount was belt-and-braces that strangled the wearer.
+    """
+    writable = [v for v in _mcp(compose)["volumes"] if not v.endswith(":ro")]
+    assert writable == ["./chroma_db:/app/chroma_db"], (
+        "only chroma_db may be writable on the MCP service, got: {0}".format(writable)
+    )
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_chroma_is_not_mounted_read_only(compose):
+    """Stated on its own so a future tidy-up that "fixes the inconsistency" by
+    adding `:ro` back fails here instead of silently killing semantic search."""
     for entry in _mcp(compose)["volumes"]:
-        assert entry.endswith(":ro"), "writable mount on the MCP service: " + entry
+        if "/app/chroma_db" in entry:
+            assert not entry.endswith(":ro"), (
+                "chromadb cannot open a read-only dir; see the compose comment"
+            )
 
 
 @pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])

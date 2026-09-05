@@ -270,15 +270,47 @@ def _check_chroma_staleness() -> None:
     stays stale until the process restarts.
     """
     global _CHROMA_DB_MTIME
-    try:
-        current = (CHROMA_PATH / "chroma.sqlite3").stat().st_mtime
-    except OSError:
+    current = _chroma_db_mtime()
+    if current is None:
         # No DB on disk yet (fresh install, or a pg backend that never writes
         # one). Nothing to be stale against.
         return
     if current == _CHROMA_DB_MTIME:
         return
     if _drop_chroma_system_cache():
+        _CHROMA_DB_MTIME = current
+
+
+def _chroma_db_mtime():
+    """`chroma.sqlite3`'s mtime, or None when it is not there yet."""
+    try:
+        return (CHROMA_PATH / "chroma.sqlite3").stat().st_mtime
+    except OSError:
+        return None
+
+
+def _record_chroma_mtime() -> None:
+    """Re-read the mtime AFTER the client has been rebuilt, and treat that as the
+    high-water mark.
+
+    🔴 Without this the staleness check feeds itself. Dropping the System cache
+    forces the next `PersistentClient(path)` to rebuild from disk, and that
+    rebuild WRITES to chroma.sqlite3 — after `_check_chroma_staleness` recorded
+    the old mtime. So the next call sees a newer file, drops again, rebuilds
+    again, writes again. Measured: six `get_collection()` calls with no external
+    write at all produced six cache drops, each one reloading the whole HNSW
+    index; with this, six calls produce one.
+
+    The check was written to catch someone ELSE's write. It could not tell that
+    write apart from the one it had just caused.
+
+    A genuine external write landing between the check and this re-read is
+    recorded here as already-seen — a one-call window, closed by that writer's
+    next write. That is the trade for not thrashing on every single search.
+    """
+    global _CHROMA_DB_MTIME
+    current = _chroma_db_mtime()
+    if current is not None:
         _CHROMA_DB_MTIME = current
 
 
@@ -311,6 +343,10 @@ def get_collection(reset: bool = False):
             # on 1.5.x), so the stamp only lands when the collection is created/reset.
             metadata={"hnsw:space": "cosine", "embed_model": EMBED_MODEL, "embed_dim": EMBED_DIM},
         )
+        # Still inside the lock: the rebuild above may have written to
+        # chroma.sqlite3, and if that write is not folded into the high-water
+        # mark now, the next call reads it as somebody else's change.
+        _record_chroma_mtime()
     _assert_collection_compatible(col)
     return col
 
