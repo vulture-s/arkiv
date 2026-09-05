@@ -194,3 +194,125 @@ def test_jpeg_really_does_report_a_nonzero_duration(tmp_path):
     """Pin the premise. If this ever fails, the fix's rationale changed, not the fix."""
     assert _probed_duration(_synth(tmp_path, "still.jpg")) > 0
     assert _probed_duration(_synth(tmp_path, "still.png")) == 0.0
+
+
+# ── the carve-out: .gif is the one extension that does not decide ───────────
+#
+# 🔴 A regression this file's own fix introduced. `.gif` came along with the
+# raster set, so an ANIMATED gif was read as a still: one frame at t=0, one
+# visual-tag pass, and a 30-frame clip indexed as though it were its own first
+# frame. Measured 2026-09-05 — before the carve-out, a 30-frame gif yielded
+# exactly 1 frame; `-ss` at 0 / 1.5 / 2.8 on that same file yields three
+# genuinely different images, so nothing about gif ever needed the still path.
+# The original defect was mjpeg-specific; gif was swept in with it.
+
+
+def _synth_gif(tmp_path, name, n_frames):
+    """A gif written the ordinary way, by Pillow.
+
+    Colour changes per frame so "did we get more than one frame" and "are they
+    different pictures" are separate questions — a fix that returns three copies
+    of frame 0 would pass the first and fail the second.
+    """
+    from PIL import Image
+
+    imgs = [Image.new("RGB", (640, 360), ((10 + i * 60) % 240, 40, (200 - i * 50) % 180))
+            for i in range(n_frames)]
+    out = tmp_path / name
+    if n_frames == 1:
+        imgs[0].save(out)
+    else:
+        imgs[0].save(out, save_all=True, append_images=imgs[1:], duration=100, loop=0)
+    return out
+
+
+@_needs_ffmpeg
+def test_seeking_an_animated_gif_works_at_all(tmp_path):
+    """Pin the premise, like the JPEG duration test above does for the other half.
+
+    The still path exists because a seek on single-frame mjpeg encodes nothing.
+    If that were also true of gif, the carve-out would be wrong rather than
+    merely unnecessary. It is not: three seeks, three different frames."""
+    src = _synth_gif(tmp_path, "motion.gif", 30)
+    digests = set()
+    for i, t in enumerate((0.0, 1.5, 2.8)):
+        out = tmp_path / "s{0}.png".format(i)
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(t), "-i", str(src),
+                        "-frames:v", "1", str(out)], capture_output=True)
+        assert out.exists() and out.stat().st_size > 0, \
+            "seek to {0}s produced nothing".format(t)
+        digests.add(out.read_bytes())
+    assert len(digests) == 3, "the seeks all landed on the same frame"
+
+
+@_needs_ffmpeg
+def test_a_single_frame_gif_is_still_a_still(tmp_path):
+    assert frames._is_still_raster(str(_synth_gif(tmp_path, "one.gif", 1))) is True
+
+
+@_needs_ffmpeg
+def test_an_animated_gif_is_not_a_still(tmp_path):
+    assert frames._is_still_raster(str(_synth_gif(tmp_path, "motion.gif", 30))) is False
+
+
+def test_a_gif_that_cannot_be_probed_falls_back_to_still():
+    """`a.gif` in the parametrized set above passes through this path — the file
+    does not exist, os.stat raises, and we choose the old behaviour. Asserted
+    here so that it is a decision rather than an accident: an unreadable file
+    must not be sent down a path that assumes seeking works."""
+    assert frames._is_animated_gif("/nope/missing.gif") is False
+    assert frames._is_still_raster("/nope/missing.gif") is True
+
+
+@_needs_ffmpeg
+def test_probe_failure_does_not_poison_the_cache(tmp_path, monkeypatch):
+    """A transient ffprobe failure must not pin the answer for the life of the
+    process — same rule as _is_360_dualfisheye."""
+    src = _synth_gif(tmp_path, "motion.gif", 30)
+    frames._animated_gif_cache.clear()
+
+    monkeypatch.setattr(frames.config, "FFPROBE_PATH", "/definitely/not/ffprobe")
+    assert frames._is_animated_gif(str(src)) is False
+    assert not frames._animated_gif_cache, "a failed probe must not be cached"
+
+    monkeypatch.undo()
+    assert frames._is_animated_gif(str(src)) is True
+
+
+@_needs_ffmpeg
+def test_replacing_the_file_re_probes(tmp_path):
+    """Cache key is (path, mtime, size): overwrite a still gif with an animated
+    one at the same path and the answer has to change."""
+    frames._animated_gif_cache.clear()
+    src = _synth_gif(tmp_path, "same-name.gif", 1)
+    assert frames._is_animated_gif(str(src)) is False
+
+    animated = _synth_gif(tmp_path, "other.gif", 30)
+    src.write_bytes(animated.read_bytes())
+    assert frames._is_animated_gif(str(src)) is True
+
+
+@_needs_ffmpeg
+def test_real_ffmpeg_frames_across_an_animated_gif(tmp_path, monkeypatch):
+    """The end-to-end shape of the regression: more than one frame, and more than
+    one PICTURE."""
+    monkeypatch.setattr(frames, "THUMBNAILS_DIR", tmp_path / "thumbs")
+    src = _synth_gif(tmp_path, "motion.gif", 30)
+    res = frames.extract_frames(str(src), 3.0, 10.0, force=True)
+
+    assert len(res) > 1, "an animated gif collapsed to a single frame"
+    assert [r["timestamp_s"] for r in res] != [0.0] * len(res)
+    pictures = {pathlib.Path(r["thumbnail_path"]).read_bytes() for r in res}
+    assert len(pictures) == len(res), "the frames are all the same picture"
+
+
+@_needs_ffmpeg
+def test_a_static_gif_still_collapses_to_one_frame(tmp_path, monkeypatch):
+    """The other side: the carve-out must not drag ordinary stills back onto the
+    seek path."""
+    monkeypatch.setattr(frames, "THUMBNAILS_DIR", tmp_path / "thumbs")
+    src = _synth_gif(tmp_path, "one.gif", 1)
+    res = frames.extract_frames(str(src), _probed_duration(src), 25.0, force=True)
+
+    assert len(res) == 1
+    assert res[0]["timestamp_s"] == 0.0

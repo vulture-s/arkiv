@@ -67,6 +67,46 @@ def _frame_vf_args(video_path: str) -> List[str]:
     return ["-vf", _NORMAL_SCALE]
 
 
+_animated_gif_cache: dict = {}
+
+
+def _is_animated_gif(video_path: str) -> bool:
+    """True for a `.gif` carrying more than one frame.
+
+    `.gif` is the one extension in STILL_RASTER_EXT that does not decide the
+    question. png/jpg/webp are stills; a gif is a still or a short silent movie
+    and only the file knows which. Same shape as `_is_360_dualfisheye`: ext gate,
+    then ffprobe, cached by (path, mtime, size) so a replaced file re-probes and a
+    failed probe is not cached.
+
+    Falls back to "not animated" on any probe failure — that is the old
+    behaviour, so a broken ffprobe degrades to the single-frame path instead of
+    seeking into something that might not support it.
+    """
+    if Path(video_path).suffix.lower() != ".gif":
+        return False
+    try:
+        st = os.stat(video_path)
+        key = (os.path.abspath(video_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return False
+    if key in _animated_gif_cache:
+        return _animated_gif_cache[key]
+    try:
+        out = subprocess.run(
+            [config.FFPROBE_PATH, "-v", "error", "-select_streams", "v:0",
+             "-count_frames", "-show_entries", "stream=nb_read_frames",
+             "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        if out.returncode != 0:
+            return False  # transient/failed probe — don't cache, retry next time
+        animated = int((out.stdout.strip() or "0").splitlines()[0]) > 1
+    except Exception:
+        return False  # don't cache transient failure
+    _animated_gif_cache[key] = animated
+    return animated
+
+
 def _is_still_raster(video_path: str) -> bool:
     """True for a single-frame raster still (png/jpg/jpeg/webp/gif), which must be
     read whole rather than seeked into.
@@ -75,8 +115,18 @@ def _is_still_raster(video_path: str) -> bool:
     back `duration=0.040000` for a `.jpg` (mjpeg, one frame at an assumed 25fps)
     and `N/A` → 0.0 for `.png` / `.webp`, so the old `duration_s <= 0` test called
     every JPEG a video.
+
+    🔴 With one carve-out. The extension answers the question for every member of
+    the set except `.gif`, and treating an ANIMATED gif as a still collapsed it to
+    a single frame at t=0 — one thumbnail, one visual-tag pass, and a 30-frame
+    clip indexed as though it were its own first frame. Measured: `-ss` works
+    perfectly well on an animated gif (three seek positions, three different
+    frames), so nothing about gif ever needed this path. The original defect was
+    mjpeg-specific; `.gif` was swept in with it.
     """
-    return Path(video_path).suffix.lower() in mediatypes.STILL_RASTER_EXT
+    if Path(video_path).suffix.lower() not in mediatypes.STILL_RASTER_EXT:
+        return False
+    return not _is_animated_gif(video_path)
 
 
 def _safe_stem(video_path: str) -> str:
