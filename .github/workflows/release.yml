@@ -207,7 +207,7 @@ jobs:
 
       - name: Upload dry-run artifact (workflow_dispatch)
         if: ${{ github.ref_type != 'tag' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: arkiv-dryrun-dmg
           path: src-tauri/target/release/bundle/dmg/*.dmg
@@ -417,7 +417,7 @@ jobs:
 
       - name: Upload dry-run artifact (workflow_dispatch)
         if: ${{ github.ref_type != 'tag' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: arkiv-dryrun-windows
           path: |
