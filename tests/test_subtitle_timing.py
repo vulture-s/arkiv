@@ -300,3 +300,67 @@ def test_the_lead_a_merge_introduces_stays_within_the_bound():
                     "{2:.4f}s, bound {3:.4f}".format(s0, gap, lead, bound)
                 )
     assert merges, "the sweep must actually produce merges or it proves nothing"
+
+
+def test_merge_never_creates_a_boundary_the_gap_pass_did_not_see():
+    """The merge pass cannot introduce a gap violation, and here is why.
+
+    The worry was reasonable: the three passes run once, in order (extend → gap
+    → merge), so anything merging invents afterwards is never gap-checked. If
+    merge could fabricate a new adjacency, that adjacency would go out unchecked.
+
+    It cannot. A merge replaces cues `i` and `i+1` with `(out[i].start,
+    out[i+1].end)` — it takes the *earlier* cue's start and the *later* cue's
+    end. Both of those numbers were already one side of a boundary the gap pass
+    examined: `out[i].start` faced `i-1`, and `out[i+1].end` faced `i+2`. So
+    merging only ever *deletes* boundaries from the list. It never mints one.
+
+    Asserted rather than argued, because the argument is about the shape of the
+    code and the code will be edited again. The sweep runs the pipeline twice —
+    once whole, once with pass 3 neutered by making every cue look long enough —
+    and requires the boundaries of the merged run to be a subset of the
+    unmerged run's. A merge that invented an adjacency would put a pair in the
+    first set that is absent from the second.
+
+    A 200k-trial random search over the same space found zero counterexamples
+    before this test was written. It did find that the *pipeline* can still emit
+    a sub-`min_gap` boundary — but that comes from the gap pass declining to
+    shave a cue out of existence, which is `_apply_timing`'s own documented
+    exemption and has nothing to do with merging.
+    """
+    import random
+
+    def boundaries(cues):
+        return {(round(cues[i][1], 9), round(cues[i + 1][0], 9))
+                for i in range(len(cues) - 1)}
+
+    rng = random.Random(20260917)
+    merges_seen = 0
+    for _ in range(600):
+        segments, t = [], round(rng.uniform(0.0, 40.0), 3)
+        for _ in range(rng.randint(2, 7)):
+            start = t + rng.choice([0.0, 0.0, 0.0, round(rng.uniform(0.0, 0.3), 3)])
+            end = start + round(rng.choice([rng.uniform(0.05, 0.5),
+                                            rng.uniform(0.5, 2.0),
+                                            rng.uniform(2.0, 9.0)]), 3)
+            segments.append(seg(start, end, "字" * rng.randint(1, 16)))
+            t = end
+
+        merged = sub.layout_cues(segments)
+
+        real_is_too_short = sub._is_too_short
+        sub._is_too_short = lambda *a, **k: False
+        try:
+            unmerged = sub.layout_cues(segments)
+        finally:
+            sub._is_too_short = real_is_too_short
+
+        if len(merged) < len(unmerged):
+            merges_seen += 1
+        invented = boundaries(merged) - boundaries(unmerged)
+        assert not invented, (
+            "merge invented {0} boundary/boundaries the gap pass never saw: "
+            "{1}".format(len(invented), sorted(invented)[:3])
+        )
+
+    assert merges_seen, "the sweep must actually produce merges or it proves nothing"
