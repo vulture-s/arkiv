@@ -2722,6 +2722,7 @@ def detect_gpu() -> str:
             r = subprocess.run(
                 ["system_profiler", "SPDisplaysDataType"],
                 capture_output=True, text=True, timeout=5,
+                encoding="utf-8", errors="replace",
             )
             chipset = metal = None
             for line in r.stdout.splitlines():
@@ -2739,6 +2740,7 @@ def detect_gpu() -> str:
         r = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True, text=True, timeout=5,
+            encoding="utf-8", errors="replace",
         )
         if r.returncode == 0:
             lines = r.stdout.strip().splitlines()

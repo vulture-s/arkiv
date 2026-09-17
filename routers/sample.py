@@ -45,6 +45,7 @@ def _run_sample_seed():
         r = subprocess.run(
             [sys.executable, str(config.BASE_DIR / "scripts" / "seed_sample.py")],
             check=False, capture_output=True, text=True, timeout=1800,
+            encoding="utf-8", errors="replace",
         )
         prog["returncode"] = r.returncode
         prog["ok"] = r.returncode == 0
