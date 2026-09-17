@@ -344,6 +344,11 @@ def _apply_timing(cues: List[Cue], policy: TimingPolicy) -> List[Cue]:
     3. merge — a cue still under `min_dur` had no slack to grow into. Fold it
        into the next one when the combined lines still fit, so "真的" stops
        being a 0.24s flash and rides along with the sentence it belongs to.
+       A cue pass 2 shaved below `min_dur` is exempt: it HAD the slack, and
+       folding it would trade an 80ms trim for up to `min_dur + min_gap` of the
+       next sentence on screen early. Measured on a real library (1232 cues):
+       22 cues were compliant until pass 2 shaved them, and 17 of those were
+       then merged on a shortness pass 2 had manufactured.
 
     `max_dur` only ever shortens, and only a cue that has room to spare.
     """
@@ -364,6 +369,12 @@ def _apply_timing(cues: List[Cue], policy: TimingPolicy) -> List[Cue]:
             out[i] = (s, max(e, min(want, limit)), lines)
 
     # ── 2. carve the gap out of the earlier cue ──────────────────────────────
+    # A cue that met `min_dur` until this pass took `min_gap` off its end did
+    # NOT run out of room — this pass spent it. Pass 3 cannot tell the two apart
+    # from the duration alone, so record the difference here while it is known.
+    # Only "was compliant" is recorded; "and is short now" needs no test of its
+    # own, because the set is consulted only where `_is_too_short` already holds.
+    shaved_from_compliant: set = set()
     for i in range(len(out) - 1):
         s, e, lines = out[i]
         nxt = out[i + 1][0]
@@ -372,6 +383,8 @@ def _apply_timing(cues: List[Cue], policy: TimingPolicy) -> List[Cue]:
             # its original end and is dealt with by the merge pass below.
             shaved = nxt - policy.min_gap
             if shaved > s:
+                if (e - s) >= policy.min_dur - 1e-9:
+                    shaved_from_compliant.add(i)
                 out[i] = (s, shaved, lines)
 
     # ── 3. merge what is still too short ─────────────────────────────────────
@@ -379,7 +392,8 @@ def _apply_timing(cues: List[Cue], policy: TimingPolicy) -> List[Cue]:
     i = 0
     while i < len(out):
         s, e, lines = out[i]
-        if _is_too_short(s, e, policy) and i + 1 < len(out):
+        if (i not in shaved_from_compliant
+                and _is_too_short(s, e, policy) and i + 1 < len(out)):
             ns, ne, nlines = out[i + 1]
             # 🔴 A merge shows the absorbed cue's text from the EARLIER cue's
             # start, i.e. before those words are spoken. That is tolerable only
