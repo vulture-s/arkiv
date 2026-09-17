@@ -4,6 +4,7 @@
   import Mono from './Mono.svelte'
   import Thumb from './Thumb.svelte'
   import Waveform from './Waveform.svelte'
+  import { diagnosePlaybackFailure, playbackFailureMessage } from './streamDiag.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -259,7 +260,21 @@
   // Reset per clip: a failure that stuck would make the NEXT clip look broken
   // too, which is worse than the black pane it replaces.
   let videoFailed = false
-  $: if (media) { videoFailed = false }
+  // What actually went wrong, asked of the endpoint. `null` = not known yet, and
+  // the panel says nothing specific until it is — claiming "此編碼播不了" before
+  // we have the status is exactly the guess this replaces.
+  let videoDiag = null
+  $: if (media) { videoFailed = false; videoDiag = null }
+
+  async function onVideoError() {
+    videoFailed = true
+    videoDiag = null
+    if (!videoSrc) return
+    const asked = videoSrc
+    const d = await diagnosePlaybackFailure(videoSrc)
+    // A slow probe must not relabel a clip the user has already moved past.
+    if (asked === videoSrc) videoDiag = d
+  }
   let showMore = false // reveal the ancillary (成品輔助) export group
   let tagInput = ''
   function submitTag() {
@@ -371,10 +386,14 @@
       <!-- The stream endpoint answers 409 {need_proxy} for a codec no browser
            decodes, but a <video> has no way to show a JSON body: it just fails
            to load and leaves a black pane. Without this the 409 is invisible
-           and the clip reads as broken rather than as needing one click (#420). -->
+           and the clip reads as broken rather than as needing one click (#420).
+           🔴 `on:error` fires for EVERY load failure though — 401, 404, backend
+           down — so this panel used to send those users to build a proxy for a
+           file they cannot read. The status is asked for now, and the button
+           appears only when the endpoint itself says a proxy is the fix. -->
       <div class="playfail">
-        <Mono dim style="font-size:11px;">此編碼瀏覽器播不了</Mono>
-        {#if onReprocess}
+        <Mono dim style="font-size:11px;">{playbackFailureMessage(videoDiag)}</Mono>
+        {#if onReprocess && videoDiag && videoDiag.canProxy}
           <button class="ak-btn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
             {reBusy === 'proxy' ? '排入中…' : '建立 proxy 後可播放'}
           </button>
@@ -382,7 +401,7 @@
       </div>
     {:else if useVideo}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} on:error={() => (videoFailed = true)} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} on:error={onVideoError} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
     {:else if useAudio}
       {#if thumbUrl && !imgFailed}
         <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
