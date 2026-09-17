@@ -28,8 +28,11 @@ PROXY_CODECS = frozenset({
 # qtrle clip is handed over raw and the player shows a black pane with no error
 # and no way to ask for a proxy).
 #
-# PROXY_CODECS stays as it is: it names the codecs the proxy BUILDER knows how
-# to transcode, which is a different question from what a browser can show.
+# PROXY_CODECS stays as it is, but ONLY as the wording of the 409 body: it names
+# the two formats a user is likely to recognise, so the refusal can say "ProRes"
+# rather than a codec string. It is NOT the proxy decision — `needs_proxy()` asks
+# this allow-list, because the endpoint that refuses and the builder that clears
+# the refusal have to answer the same question.
 #
 # 🔴 Measured, not remembered. Two entries sat here on the strength of what
 # browsers used to do, and a real Chrome 152 disagrees with both:
@@ -159,7 +162,17 @@ def needs_proxy(path: str, timeout: float = 10.0) -> str:
     codec = probe_codec(path, timeout=timeout)
     if codec is None:
         return UNKNOWN
-    return NEEDED if codec in PROXY_CODECS else NOT_NEEDED
+    # Ask the SAME question the stream gate asks. This used to test membership of
+    # PROXY_CODECS, which answers "will the builder transcode this?" — and that
+    # list names two formats, while `/api/stream` refuses everything outside the
+    # allow-list. A dnxhd or qtrle clip was therefore refused by the endpoint with
+    # "build a proxy" and then skipped here, so the 409 never cleared. The builder
+    # itself was never the limit: `_build_proxy_cmd` is `ffmpeg -i … -c:v libx264`,
+    # which re-encodes anything ffmpeg can decode.
+    playable = is_browser_playable_video(codec)
+    if playable is None:
+        return UNKNOWN
+    return NOT_NEEDED if playable else NEEDED
 
 
 def clear_cache() -> None:

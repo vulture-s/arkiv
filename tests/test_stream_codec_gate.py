@@ -69,11 +69,57 @@ def test_unknown_is_none_not_false(name):
 
 
 def test_proxy_codecs_are_a_subset_of_the_unplayable_ones():
-    """The two lists answer different questions — what the builder can transcode
-    vs what a browser can show — but every codec we build a proxy FOR must be one
-    a browser cannot show, or we would be transcoding for no reason."""
+    """Every codec we build a proxy FOR must be one a browser cannot show, or we
+    would be transcoding for no reason."""
     for c in codec.PROXY_CODECS:
         assert codec.is_browser_playable_video(c) is False, c
+
+
+# ── the other direction, which is where the user got stranded ────────────────
+@pytest.mark.parametrize("bad", ["mjpeg", "qtrle", "dnxhd", "cinepak",
+                                 "rawvideo", "theora", "mpeg4"])
+def test_everything_the_endpoint_refuses_is_something_the_builder_will_build(
+        bad, monkeypatch):
+    """A 409 is an instruction. The half that carries it out has to agree.
+
+    The subset test above only says we never transcode without reason. It says
+    nothing about the reverse, and the reverse is the one with a user on the end
+    of it: `/api/stream` answers 409 "build a proxy" from the allow-list, while
+    the decision in `build_proxies()` used to test membership of `PROXY_CODECS`
+    — two formats. So a dnxhd clip was refused by the endpoint and then skipped
+    by the builder, and **the 409 never cleared**. The user is told to do one
+    thing, does it, and nothing happens — which reads as the button being broken.
+
+    `build_proxies()`'s own docstring already stated this pairing ("if the two
+    halves disagree the user is told to do something that then silently does
+    nothing"); #428 closed the container half of it and left the codec half open.
+
+    The builder was never the constraint: `_build_proxy_cmd` is
+    `ffmpeg -i … -c:v libx264`, which re-encodes anything ffmpeg can decode.
+    """
+    assert codec.is_browser_playable_video(bad) is False, "precondition"
+    codec.clear_cache()
+    monkeypatch.setattr(codec, "probe_codec", lambda p, timeout=10.0: bad)
+    assert codec.needs_proxy("/tmp/x.mov") == codec.NEEDED, bad
+
+
+@pytest.mark.parametrize("good", ["h264", "avc1", "vp8", "vp9", "av1", "av01"])
+def test_a_codec_the_browser_plays_is_still_not_transcoded(good, monkeypatch):
+    """The paired invariant must not collapse into "build a proxy for everything"
+    — that would burn hours of CPU and a second copy of every library."""
+    codec.clear_cache()
+    monkeypatch.setattr(codec, "probe_codec", lambda p, timeout=10.0: good)
+    assert codec.needs_proxy("/tmp/x.mp4") == codec.NOT_NEEDED, good
+
+
+def test_a_codec_we_cannot_judge_is_unknown_not_needed(monkeypatch):
+    """`None` from the allow-list means "the probe told us nothing", and the
+    endpoint falls through rather than refusing. The builder must match that:
+    transcoding on an unreadable answer would hand every junk codec column a
+    proxy it never needed."""
+    codec.clear_cache()
+    monkeypatch.setattr(codec, "probe_codec", lambda p, timeout=10.0: "   ")
+    assert codec.needs_proxy("/tmp/x.mov") == codec.UNKNOWN
 
 
 # ── through the endpoint ─────────────────────────────────────────────────────
@@ -203,3 +249,77 @@ def test_an_audio_file_is_not_refused_for_not_being_video(
     r = fastapi_client.get("/api/stream/%d" % mid)
 
     assert r.status_code == 200, "audio preview must not be gated on video codecs"
+
+
+# ── and the builder half, end to end ─────────────────────────────────────────
+@pytest.mark.parametrize("bad", ["mjpeg", "qtrle", "dnxhd"])
+def test_the_builder_builds_the_proxy_the_endpoint_just_demanded(
+    fastapi_client, server_module, sample_record, clip, monkeypatch, bad
+):
+    """Same clip, both halves, in one test — because the bug lives between them.
+
+    `test_a_browser_incompatible_video_gets_409` above proves the refusal, and
+    each half passed its own tests while the pair was broken: the endpoint said
+    409, `build_proxies()` tested `PROXY_CODECS` and skipped the file, and the
+    user's next click did nothing at all.
+
+    The batch builder decides from the STORED codec, never re-probing, so it
+    needs its own assertion — the tri-state `needs_proxy()` path does not cover
+    this branch.
+    """
+    db = importlib.import_module("db")
+    mid = _seed(db, sample_record, clip, codec=bad)
+    monkeypatch.setattr(pathres, "_probe_duration", lambda path: 12.0)
+
+    assert fastapi_client.get("/api/stream/%d" % mid).status_code == 409
+
+    ingest = importlib.import_module("ingest")
+    built = []
+    fake_out = clip.parent / "proxy.mp4"
+    fake_out.write_bytes(b"\x00" * 8)  # the reporter stats it for the size delta
+    monkeypatch.setattr(ingest, "generate_proxy",
+                        lambda media_id, path, **k: built.append(path) or str(fake_out))
+
+    ingest.build_proxies()
+
+    assert built == [str(clip)], "the 409 was issued and never cleared"
+
+
+def test_the_builder_still_skips_what_the_endpoint_streams(
+    fastapi_client, server_module, sample_record, clip, monkeypatch
+):
+    """The pairing runs both ways: no 409, no proxy. Without this the fix could
+    be "build a proxy for everything", which passes every test above."""
+    db = importlib.import_module("db")
+    _seed(db, sample_record, clip, codec="h264")
+    ingest = importlib.import_module("ingest")
+
+    built = []
+    monkeypatch.setattr(ingest, "generate_proxy",
+                        lambda media_id, path, **k: built.append(path) or "/fake/p.mp4")
+
+    ingest.build_proxies()
+
+    assert built == []
+
+
+def test_a_row_whose_stored_codec_says_nothing_is_left_alone(
+    fastapi_client, server_module, sample_record, clip, monkeypatch
+):
+    """A blank-ish codec column must not be read as "the browser cannot play it".
+
+    `is_browser_playable_video` answers None there, and `not None` is True — so a
+    guard written the obvious way would hand a proxy to every legacy row with a
+    junk codec value, on a library where nothing is wrong.
+    """
+    db = importlib.import_module("db")
+    _seed(db, sample_record, clip, codec="   ")
+    ingest = importlib.import_module("ingest")
+
+    built = []
+    monkeypatch.setattr(ingest, "generate_proxy",
+                        lambda media_id, path, **k: built.append(path) or "/fake/p.mp4")
+
+    ingest.build_proxies()
+
+    assert built == []

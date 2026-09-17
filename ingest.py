@@ -650,7 +650,10 @@ def build_proxies() -> tuple:
             # stored as "h264", so this branch used to skip it — and the stream
             # endpoint now tells the user to build a proxy for exactly those
             # files. Without this the two halves disagree and the 409 never clears.
-            want_proxy = (stored_codec.lower() in codec.PROXY_CODECS
+            # `is False`, not `not playable`: None means the stored value told us
+            # nothing, and that must keep the old "leave it alone" behaviour rather
+            # than transcoding every row whose codec column is junk.
+            want_proxy = (codec.is_browser_playable_video(stored_codec) is False
                           or codec.container_needs_remux(resolved_path))
         else:
             verdict = codec.needs_proxy(resolved_path)
