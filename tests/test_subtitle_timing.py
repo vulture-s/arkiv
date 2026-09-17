@@ -364,3 +364,72 @@ def test_merge_never_creates_a_boundary_the_gap_pass_did_not_see():
         )
 
     assert merges_seen, "the sweep must actually produce merges or it proves nothing"
+
+
+# ── the gap pass must not manufacture a reason to merge ──────────────────────
+def test_a_cue_the_gap_pass_shaved_is_not_merged_away():
+    """Being shaved below `min_dur` is not the same as having had no room.
+
+    Pass 3 folds a cue forward when it is still under `min_dur`, and its licence
+    to show the absorbed text early rests entirely on *that cue had no slack to
+    grow into*. A cue that measured 0.84s until pass 2 took `min_gap` off its
+    end had slack — pass 2 spent it. Reading the duration alone, pass 3 cannot
+    tell the two apart, so it used to treat the second as the first and merge.
+
+    The trade it made was bad in both directions: it gave up an 80ms trim and
+    took on up to `min_dur + min_gap` of the next sentence on screen before
+    those words are spoken, which is the one thing this module promises never
+    to do.
+
+    Measured on a real 43-transcript library (1232 cues): 22 cues were
+    compliant until pass 2 shaved them, and 17 were then merged on a shortness
+    pass 2 had manufactured. End to end, through `layout_cues`, the exemption
+    removes 15 cues carrying early text (95 → 80) and leaves 18 more cues
+    sitting at 0.72–0.78s. That is the trade, chosen deliberately.
+    """
+    P = sub.DEFAULT_TIMING
+    # 0.84s long — comfortably over min_dur, and the next cue abuts it, so the
+    # gap pass must take min_gap out of its end and land it at 0.76.
+    cues = sub.layout_cues([seg(0.0, 0.84, "有啦"), seg(0.84, 3.2, "我下午再過去")])
+
+    assert len(cues) == 2, "the shaved cue was merged away: {0}".format(cues)
+    assert cues[0][2] == ["有啦"], "cue 0 absorbed its neighbour's text"
+    assert cues[0][1] == pytest.approx(0.84 - P.min_gap), durs(cues)
+    assert cues[1][0] == pytest.approx(0.84), "the later cue's start moved"
+
+
+def test_the_exemption_does_not_save_a_cue_that_really_had_no_room():
+    """The narrow half of the same rule, or it would just disable merging.
+
+    A cue that was already under `min_dur` before pass 2 touched it is exactly
+    what pass 3 exists for, and it must still merge. Without this the exemption
+    could be written as "never merge a shaved cue" and every 0.24s flash would
+    go back to being a flash.
+    """
+    cues = sub.layout_cues([seg(0.0, 0.26, "真的"), seg(0.26, 2.6, "就是這樣")])
+    assert len(cues) == 1, "a genuinely short cue stopped merging: {0}".format(cues)
+
+
+def test_the_exemption_is_keyed_on_the_shave_not_on_the_duration():
+    """A compliant cue with room to spare is untouched by either rule.
+
+    Guards against an exemption written as "any cue near min_dur" — the
+    distinguishing fact is that pass 2 moved this end, not where the end landed.
+    """
+    cues = sub.layout_cues([seg(0.0, 2.0, "這句話夠長"), seg(2.5, 4.0, "下一句")])
+    assert len(cues) == 2
+    assert cues[0][1] == pytest.approx(2.0), "an untouched cue was adjusted"
+
+
+def test_a_cue_sitting_exactly_on_min_dur_counts_as_compliant():
+    """`min_dur` itself is inside the exemption, and real material lands there.
+
+    Of the 22 cues the measurement found, three measured exactly 0.800s before
+    pass 2 shaved them — Whisper hands out round boundaries often enough that
+    the edge is not hypothetical. An exemption written `> min_dur` would merge
+    those three and read as correct in every other respect.
+    """
+    P = sub.DEFAULT_TIMING
+    cues = sub.layout_cues([seg(0.0, P.min_dur, "是喔"), seg(P.min_dur, 3.0, "那就這樣")])
+    assert len(cues) == 2, "a cue exactly at min_dur was merged away: {0}".format(cues)
+    assert cues[0][1] == pytest.approx(P.min_dur - P.min_gap), durs(cues)
