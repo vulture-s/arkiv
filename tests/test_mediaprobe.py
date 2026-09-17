@@ -13,27 +13,69 @@ from __future__ import annotations
 
 import os
 import stat
-import textwrap
+import subprocess
+import sys
 
 import pytest
 
 import mediaprobe as mp
 
 
+_FAKE_BODY = """\
+import sys
+
+LOG = {log!r}
+ERR = {err!r}
+
+with open(LOG, "a", encoding="utf-8") as fh:
+    fh.write(" ".join(sys.argv[1:]) + "\\n")
+# Binary, not text: Windows text mode rewrites every \\n as \\r\\n, and the whole
+# point of this fake is to replay the EXACT bytes the real failures produced.
+sys.stderr.buffer.write(ERR.encode("utf-8"))
+sys.exit(0)
+"""
+
+
 def _fake_ffmpeg(tmp_path, stderr_text, name="ffmpeg-fake"):
-    """A stand-in that prints canned stderr and exits 0, plus records its argv."""
+    """A stand-in that replays canned stderr, exits 0, and records its argv.
+
+    The body is Python and the launcher is per-platform. A `#!/bin/sh` script made
+    executable with `chmod` -- the obvious fixture, and what this was -- cannot be
+    spawned on Windows at all: there is no shebang handling, and the mode bits are
+    a no-op on NTFS.
+
+    The cost was not "some tests fail on Windows". `probe_one` answers
+    `probe_failed` when the binary will not start, and `probe_failed` is a real
+    verdict of this module -- so eleven broken fixtures read exactly like eleven
+    findings about the machine, in the one module whose entire job is to tell
+    those two apart. Measured 2026-09-17 on `main`.
+
+    `%*` in the shim and `sys.argv[1:]` in the body reproduce `"$*"`: the log line
+    is the same space-joined, unquoted argv on both platforms, which is what the
+    assertions below read.
+    """
     argv_log = tmp_path / (name + ".argv")
-    script = tmp_path / name
-    script.write_text(textwrap.dedent("""\
-        #!/bin/sh
-        printf '%s\\n' "$*" >> "{log}"
-        cat >&2 <<'FFEOF'
-        {body}
-        FFEOF
-        exit 0
-        """).format(log=argv_log, body=stderr_text), encoding="utf-8")
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return str(script), argv_log
+    body = tmp_path / (name + ".py")
+    body.write_text(
+        _FAKE_BODY.format(log=str(argv_log), err=stderr_text + "\n"),
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        launcher = tmp_path / (name + ".cmd")
+        launcher.write_text(
+            '@echo off\r\n"{0}" "{1}" %*\r\n'.format(sys.executable, body),
+            encoding="utf-8",
+        )
+    else:
+        launcher = tmp_path / name
+        launcher.write_text(
+            '#!/bin/sh\nexec "{0}" "{1}" "$@"\n'.format(sys.executable, body),
+            encoding="utf-8",
+        )
+        launcher.chmod(
+            launcher.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
+        )
+    return str(launcher), argv_log
 
 
 # The real thing, captured from Synology's ffmpeg 4.1.9 on an iPhone .mov.
@@ -65,6 +107,26 @@ def clip(tmp_path):
 
 
 # ── the gates, in the order they fail ────────────────────────────────────────
+
+def test_the_fake_replays_the_bytes_it_was_given(tmp_path, clip):
+    """The fixture's one promise: the stderr the parser sees is what ffmpeg said.
+
+    Writing it through `sys.stderr` in text mode instead of `.buffer` rewrites
+    every \n as \r\n on Windows, so the fixture would feed the parser bytes no
+    ffmpeg ever emitted. The parser's regexes happen not to care today, which is
+    exactly why nothing would catch it — so assert the fidelity claim instead of
+    leaving it as a comment on a line a future edit can quietly undo.
+    """
+    fake, _log = _fake_ffmpeg(tmp_path, NAS_NO_AAC)
+
+    proc = subprocess.run([fake, '-i', str(clip)],
+                          capture_output=True, timeout=30)
+
+    assert proc.returncode == 0, proc.stderr[:200]
+    assert proc.stderr.decode('utf-8') == NAS_NO_AAC + '\n', (
+        "the fake rewrote the canned stderr: {0!r}".format(proc.stderr[:120])
+    )
+
 
 def test_a_missing_file_is_named_as_such(tmp_path):
     r = mp.probe_one(str(tmp_path / "gone.MP4"))
