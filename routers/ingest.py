@@ -195,7 +195,8 @@ def _probe_durations(paths, max_probe: int = 500):
             r = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=nw=1:nk=1", str(path)],
-                capture_output=True, text=True, timeout=15)
+                capture_output=True, text=True, timeout=15,
+                encoding="utf-8", errors="replace")
             val = float((r.stdout or "").strip())
         except Exception:
             return None  # not cached: a failure can be transient (NAS asleep)

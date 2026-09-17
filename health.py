@@ -114,7 +114,8 @@ def spa_freshness(root: Path):
     try:
         r = subprocess.run(
             ["git", "-C", str(root), "log", "-1", "--format=%ct", "--", "frontend/src"],
-            capture_output=True, text=True, timeout=15)
+            capture_output=True, text=True, timeout=15,
+            encoding="utf-8", errors="replace")
         src_commit = int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
     except Exception:
         src_commit = None
@@ -421,7 +422,8 @@ def main():
         # Windows/Linux PC: NVIDIA
         try:
             result = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                                    capture_output=True, text=True, timeout=5)
+                                    capture_output=True, text=True, timeout=5,
+                                    encoding="utf-8", errors="replace")
             if result.returncode == 0:
                 gpu = result.stdout.strip().split("\n")[0]
                 check("NVIDIA GPU", True, f"({gpu})")

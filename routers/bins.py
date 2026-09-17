@@ -329,7 +329,8 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
                     ingest_env = dict(os.environ)
                     ingest_env["ARKIV_PROJECT_ROOT"] = str(dest_root)
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                            text=True, bufsize=1, env=ingest_env,
+                                            text=True, encoding="utf-8", errors="replace",
+                                            bufsize=1, env=ingest_env,
                                             cwd=str(dest_root / ".arkiv"))
                     try:
                         for line in proc.stdout:
