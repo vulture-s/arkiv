@@ -25,7 +25,7 @@ GIT = ["git", "-c", "safe.directory={0}".format(ROOT), "-C", str(ROOT)]
 
 def _bootstrap_mhl(tmp_path, monkeypatch):
     mhl_src = subprocess.run(
-        GIT + ["show", "HEAD:mhl.py"], check=True, capture_output=True, text=True
+        GIT + ["show", "HEAD:mhl.py"], check=True, capture_output=True, text=True, encoding="utf-8"
     ).stdout
     module_dir = tmp_path / "bootstrap"
     module_dir.mkdir(parents=True, exist_ok=True)

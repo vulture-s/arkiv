@@ -20,7 +20,7 @@ def _bootstrap_mhl(tmp_path, monkeypatch):
         GIT + ["show", "HEAD:mhl.py"],
         check=True,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     ).stdout
     module_dir = tmp_path / "bootstrap"
     module_dir.mkdir(parents=True, exist_ok=True)

@@ -160,7 +160,7 @@ def _probed_duration(path):
             "-of", "default=nw=1:nk=1", str(path),
         ],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     ).stdout.strip()
     try:
         return float(out)

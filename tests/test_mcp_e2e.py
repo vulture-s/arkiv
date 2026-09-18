@@ -113,7 +113,8 @@ def seeded_project(tmp_path):
     env.pop("ARKIV_DB_PATH", None)
     proc = subprocess.run(
         [sys.executable, "-c", _SEED],
-        cwd=str(_REPO), env=env, capture_output=True, text=True, timeout=120,
+        cwd=str(_REPO), env=dict(env, PYTHONIOENCODING="utf-8"),
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     assert proc.returncode == 0, "seed failed:\n{0}\n{1}".format(proc.stdout, proc.stderr)
     return env
@@ -210,7 +211,8 @@ db.upsert_frame(media_id=1, frame_index=0, timestamp_s=0.0,
 """
     proc = subprocess.run(
         [sys.executable, "-c", seed],
-        cwd=str(_REPO), env=env, capture_output=True, text=True, timeout=120,
+        cwd=str(_REPO), env=dict(env, PYTHONIOENCODING="utf-8"),
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
 
@@ -264,7 +266,8 @@ def test_mcp_boots_and_degrades_without_chromadb(seeded_project):
     )
     proc = subprocess.run(
         [sys.executable, "-c", script],
-        cwd=str(_REPO), env=seeded_project, capture_output=True, text=True, timeout=120,
+        cwd=str(_REPO), env=dict(seeded_project, PYTHONIOENCODING="utf-8"),
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     assert proc.returncode == 0, "boot-without-chromadb failed:\n{0}\n{1}".format(
         proc.stdout, proc.stderr

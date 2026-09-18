@@ -97,9 +97,9 @@ def _run_cli(tmp_db, *args):
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "arkiv_token.py")] + list(args),
         cwd=str(REPO_ROOT),
-        env=_cli_env(tmp_db),
+        env=dict(_cli_env(tmp_db), PYTHONIOENCODING="utf-8"),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
 
 
