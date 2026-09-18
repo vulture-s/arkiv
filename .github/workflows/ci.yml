@@ -301,11 +301,60 @@ jobs:
           # the same id-switch reason as above.
           # NOTE: this only gates MERGES if `dependency-audit` (and `test-windows`)
           # are set as REQUIRED checks in branch protection — verify in repo settings.
+          #
+          # 2026-09-18: four torch advisories published between the last green run
+          # on main (09-17 10:44) and the next PR. Nothing in this repo changed —
+          # `requirements.txt` has no torch line at all. It arrives transitively:
+          #   silero-vad >=6.2.1  →  torch >=1.12.0
+          # and arkiv's entire use of it is ONE call, `transcribe.py`:
+          #   tensor = torch.from_numpy(audio)      # hand the VAD its input
+          # No torch.load, no jit.script, no lstm_cell, no weights_only, no .pt2
+          # anywhere in the tree (verified by grep over all non-test .py).
+          #
+          # Each advisory needs the caller to feed a specific API attacker-controlled
+          # input, and arkiv calls none of them:
+          #   CVE-2026-4538   pt2 Loading Handler — loading a crafted .pt2 archive
+          #   PYSEC-2026-139  (same advisory, PYSEC spelling)
+          #   CVE-2025-3000   torch.jit.script — memory corruption on crafted input
+          #   PYSEC-2025-194  (same advisory, PYSEC spelling)
+          #   CVE-2025-3001   torch.lstm_cell — same shape, different entry point
+          #   PYSEC-2025-195  (same advisory, PYSEC spelling)
+          #   CVE-2026-24747  the `weights_only` unpickler inside torch.load
+          #   PYSEC-2026-2286 (same advisory, PYSEC spelling)
+          #   PYSEC-2026-1856 (same advisory, superseded PYSEC id)
+          #
+          # Every id above gets its OWN comment line on purpose. The guard test
+          # `test_every_ignored_advisory_carries_a_reason` captures at most one id
+          # per `#`, so two ids sharing a line leaves the second one looking like a
+          # bare skip — which is precisely what that test is for.
+          # ⚠️ Its other half reads the flag name followed by a word, so prose here
+          # must never spell that flag with a space after it: a sentence explaining
+          # the rule would be parsed as an advisory id and fail the rule.
+          # Fixed versions: only CVE-2026-24747 has one (2.10.0); OSV reports none
+          # for the other three. So a version bump cannot clear this gate, and torch
+          # is deliberately unpinned here (CUDA builds pick their own; macOS uses MLX
+          # and never installs it) — pinning it to satisfy one of four would be a
+          # real constraint bought for no reduction in reachable surface.
+          #
+          # Same treatment as the chromadb block above and for the same reason: the
+          # dependency is present, the vulnerable surface is not reachable, and the
+          # ids are listed EXPLICITLY (PYSEC + CVE + GHSA alias where one exists) so
+          # a pip-audit id switch cannot red the gate on the very advisory it means
+          # to skip. Revisit when torch ships fixes, or if arkiv ever calls
+          # torch.load / jit.script directly — the guard for that is the grep above,
+          # which is why the call sites are named here rather than summarised.
           pip-audit -r requirements.txt -r requirements-dev.txt \
             --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c \
             --ignore-vuln CVE-2026-45830 --ignore-vuln GHSA-2wm9-hf6c-p5cr \
             --ignore-vuln CVE-2026-45831 --ignore-vuln GHSA-xph7-9rjv-w5fr \
-            --ignore-vuln CVE-2026-45833 --ignore-vuln GHSA-36p7-vc44-83pf
+            --ignore-vuln CVE-2026-45833 --ignore-vuln GHSA-36p7-vc44-83pf \
+            --ignore-vuln PYSEC-2026-139 --ignore-vuln CVE-2026-4538 \
+            --ignore-vuln PYSEC-2025-194 --ignore-vuln CVE-2025-3000 \
+            --ignore-vuln GHSA-rrmf-rvhw-rf47 \
+            --ignore-vuln PYSEC-2025-195 --ignore-vuln CVE-2025-3001 \
+            --ignore-vuln GHSA-qfhq-4f3w-5fph \
+            --ignore-vuln PYSEC-2026-2286 --ignore-vuln PYSEC-2026-1856 \
+            --ignore-vuln CVE-2026-24747 --ignore-vuln GHSA-63cw-57p8-fm3p
       - uses: actions/setup-node@v7
         with:
           node-version: "20"
