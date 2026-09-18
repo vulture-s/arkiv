@@ -225,6 +225,21 @@ def _extract_frame_to(video_path: str, t: float, out: Path) -> bool:
     return False
 
 
+_EOF_MARGIN_S = 0.05
+
+
+def _thumbnail_seek(duration_s: float) -> float:
+    """Seek position for the poster frame. Pure function, so it is testable
+    without ffmpeg or a real file.
+
+    Mid-point, floored at 1s (so short clips don't all show frame 0) and then
+    capped just short of EOF (so the floor can't push the seek past the end).
+    EOF_MARGIN keeps us off the exact last timestamp, which some containers
+    refuse to decode.
+    """
+    return min(max(duration_s * 0.5, 1.0), max(duration_s - _EOF_MARGIN_S, 0.0))
+
+
 def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -> Optional[str]:
     """
     Extract one representative frame (50% position) and save permanently
@@ -243,7 +258,19 @@ def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -
     # Stills sample their only frame; videos get the mid-point (clamped to >=1s so
     # very short clips don't all hit t=0). The still test is by extension, not by
     # duration — see _is_still_raster for why a .jpg reports 0.04s.
-    t = 0.0 if (_is_still_raster(video_path) or duration_s <= 0) else max(duration_s * 0.5, 1.0)
+    #
+    # The >=1s floor needs an upper clamp too, or it seeks past EOF on sub-second
+    # clips: a 0.5s file computes 0.25s, gets raised to 1.0s, and ffmpeg returns
+    # "Nothing was written into output file" — so every clip shorter than ~1s had
+    # no thumbnail at all. Measured on A7520260906_0116.MP4 (0.5s): seek 1.0s →
+    # zero bytes, seek 0.25s → a normal 239 KB JPEG.
+    #
+    # Note this only ever bit the thumbnail path: _adaptive_frame_count already
+    # special-cases duration_s < 2 (returns 1 frame), so visual tags looked fine
+    # while the poster was silently missing. Two code paths, two different
+    # assumptions about very short media.
+    t = 0.0 if (_is_still_raster(video_path) or duration_s <= 0) \
+        else _thumbnail_seek(duration_s)
     return str(out) if _extract_frame_to(video_path, t, out) else None
 
 
