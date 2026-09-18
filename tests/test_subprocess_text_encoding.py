@@ -24,12 +24,12 @@ message and docstring — plus every library name on this user's disk (`恬馨`,
 
 `codec.py` already carried the fix and the reason ("Windows cp950 default can
 choke on ffprobe output bytes (headless ingest crash), so decode explicitly") —
-in one file, while twelve other call sites had the same bug. A fix that has to be
-remembered at every new call site is not a fix, so this is a ratchet:
-
-  * production is at zero and must stay there;
-  * the remaining test-side callers are listed with their counts, and a count may
-    only go DOWN. Adding one anywhere fails.
+in one file, while twenty-five other call sites had the same bug. A fix that has
+to be remembered at every new call site is not a fix, so this is a flat
+prohibition: **no spawn anywhere in the tree may decode without naming its
+encoding.** It landed as a ratchet with production at zero and fourteen test-side
+callers still listed; that list is empty and gone, and the assertion below is the
+whole tree.
 
 ⚠️ This checks the *call*, not the runtime. A caller that passes `encoding=` from
 a variable holding "cp950" would satisfy it. That is not the mistake anyone makes
@@ -39,28 +39,13 @@ checks is worse than one that says what it is.
 from __future__ import annotations
 
 import ast
+import os
 import pathlib
-
-import pytest
+import subprocess
+import sys
 
 _REPO = pathlib.Path(__file__).resolve().parent.parent
 _SKIP_DIRS = {"node_modules", ".venv", "venv", ".git", "build", "dist", "__pycache__"}
-
-# Callers still decoding with the platform default. Every one is test-side, and
-# the list may only shrink — see the module docstring.
-KNOWN_BARE = {
-    "tests/test_auth.py": 1,
-    "tests/test_chroma_staleness.py": 1,
-    "tests/test_config.py": 1,
-    "tests/test_grok_consult.py": 2,
-    "tests/test_mcp_e2e.py": 3,
-    "tests/test_mhl.py": 1,
-    "tests/test_offload.py": 1,
-    "tests/test_offload_mhl_phase.py": 1,
-    "tests/test_repair_timecodes_script.py": 1,
-    "tests/test_resolve_plugin.py": 1,
-    "tests/test_still_raster_frames.py": 1,
-}
 
 _SPAWNERS = {"run", "Popen", "check_output", "check_call", "call"}
 
@@ -124,37 +109,72 @@ def test_the_scanner_finds_the_thing_it_is_looking_for():
     assert list(_bare_calls(tree)) == [2, 4]
 
 
-def test_no_production_file_decodes_with_the_platform_default():
-    """The half that reaches a user's library. Everything outside `tests/`."""
-    offenders = {f: ls for f, ls in _scan().items() if not f.startswith("tests/")}
+def test_no_file_anywhere_decodes_with_the_platform_default():
+    """Whole tree, not just production — the allowance list is empty now.
+
+    It was `production only` for one commit, while fourteen test-side callers were
+    still bare. Keeping that narrower assertion afterwards would leave a guard
+    that reads as total and is not.
+    """
+    offenders = _scan()
     assert not offenders, (
-        "text=True without encoding= in production: {0}".format(offenders)
+        "text=True without encoding=: {0}".format(offenders)
     )
 
 
-def test_the_remaining_test_side_callers_only_ever_decrease():
-    found = _scan()
-    counts = {f: len(ls) for f, ls in found.items()}
-    for path, allowed in KNOWN_BARE.items():
-        assert counts.get(path, 0) <= allowed, (
-            "{0} gained a bare text=True: {1} > {2} (lines {3})".format(
-                path, counts.get(path, 0), allowed, found.get(path)
-            )
-        )
-    new = sorted(set(counts) - set(KNOWN_BARE))
-    assert not new, "new files decoding with the platform default: {0}".format(new)
+# ── naming the encoding is only half the contract ────────────────────────────
+#
+# A Python child writes its stdio in `locale.getpreferredencoding()` unless told
+# otherwise — cp950 on this machine. So `encoding="utf-8"` on the PARENT alone
+# turns a call that worked into one that does not, and it fails in the direction
+# that hides: `returncode` is 0 and `stdout` is None.
+#
+# That is not hypothetical. Adding `encoding="utf-8"` to the test-side callers
+# broke `test_config.py` and `test_resolve_plugin.py` exactly this way, and the
+# full-suite count went 22 red to 28 before these two tests existed.
+
+UTF8_CHILD = dict(os.environ, PYTHONIOENCODING="utf-8")
+SAMPLE = "\u6058\u99a8 \u2014 \u660e\u71d2\u8089"  # library names + the em dash
 
 
-@pytest.mark.parametrize("path", sorted(KNOWN_BARE))
-def test_the_allowance_list_has_no_stale_entries(path):
-    """A ratchet whose list outlives the problem stops being a ratchet.
+def _spawn(code, env):
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, encoding="utf-8", env=env, timeout=60,
+    )
 
-    Once a file is fixed its entry must go, or the allowance quietly re-opens the
-    door for the next bare call added to that same file.
+
+def test_a_python_child_round_trips_non_ascii_when_both_ends_agree():
+    """The convention this repo uses: child forced to utf-8, parent decodes utf-8."""
+    r = _spawn("import sys; sys.stdout.write({0!r})".format(SAMPLE), UTF8_CHILD)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == SAMPLE, repr(r.stdout)
+
+
+def test_a_mismatch_loses_the_output_without_failing():
+    """The shape that makes this class invisible, pinned deterministically.
+
+    The child is forced to cp1252 — a codec Python ships everywhere, so this does
+    not depend on the machine's locale the way the real bug did. It can encode the
+    em dash (0x97), and 0x97 on its own is not valid UTF-8, so the parent's decode
+    cannot succeed.
+
+    Python then fails two different ways by platform: Windows decodes in
+    subprocess's reader thread, which dies and leaves `stdout` None with
+    `returncode` 0; POSIX decodes in `communicate()` and raises. Either is
+    accepted here — what is asserted is that **you never get the text back**, and
+    on one of those paths nothing looks wrong at all.
     """
-    counts = {f: len(ls) for f, ls in _scan().items()}
-    assert counts.get(path, 0) == KNOWN_BARE[path], (
-        "{0} now has {1} bare call(s), not {2} — update KNOWN_BARE".format(
-            path, counts.get(path, 0), KNOWN_BARE[path]
+    mismatched = dict(os.environ, PYTHONIOENCODING="cp1252")
+    try:
+        r = _spawn("import sys; sys.stdout.write('\u2014')", mismatched)
+    except UnicodeDecodeError:
+        return  # POSIX path: loud, and that is fine
+    assert r.stdout != "\u2014", (
+        "cp1252 output decoded as utf-8 — the premise of this test no longer holds"
+    )
+    assert r.returncode == 0 and r.stdout is None, (
+        "expected the silent shape (rc 0, stdout None), got rc={0} stdout={1!r}".format(
+            r.returncode, r.stdout
         )
     )

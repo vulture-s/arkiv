@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -24,8 +25,10 @@ def run_cli(args, cwd):
     result = subprocess.run(
         [sys.executable, str(SCRIPT)] + list(args),
         cwd=str(cwd),
+        # Parent decodes utf-8 below; the child must write it (locale default).
+        env=dict(os.environ, PYTHONIOENCODING="utf-8"),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     return result
 

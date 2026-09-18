@@ -20,12 +20,15 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent / "resolve_plugin"
 def _import_plugin(env_overrides):
     env = os.environ.copy()
     env.update(env_overrides)
+    # Both ends, not one: the parent decodes utf-8 and a Python child writes
+    # the locale encoding unless told otherwise.
+    env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         [sys.executable, "-c", "import arkiv_resolve; print(arkiv_resolve.ARKIV_API)"],
         cwd=str(PLUGIN_DIR),
         env=env,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=15,
     )
     return result.returncode, result.stdout, result.stderr

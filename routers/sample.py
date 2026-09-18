@@ -11,6 +11,7 @@ no-op when the clips are already indexed.
 Imports the ONE shared guard from state.py (never a copy) — no server import, no cycle.
 """
 import subprocess
+import os
 import sys
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -45,6 +46,11 @@ def _run_sample_seed():
         r = subprocess.run(
             [sys.executable, str(config.BASE_DIR / "scripts" / "seed_sample.py")],
             check=False, capture_output=True, text=True, timeout=1800,
+            # Both ends, not one. Naming utf-8 here only fixes the reader: a
+            # Python child writes its stdio in the locale encoding (cp950 on a
+            # zh-TW Windows), so without PYTHONIOENCODING the seed log comes back
+            # as replacement characters — quieter than a crash and just as wrong.
+            env=dict(os.environ, PYTHONIOENCODING="utf-8"),
             encoding="utf-8", errors="replace",
         )
         prog["returncode"] = r.returncode
