@@ -19,8 +19,8 @@ asleep)": ffprobe echoes the file path on stderr, the path has Chinese in it, an
 the clip's duration silently became `None`.
 
 And the character that breaks it is the em dash this repo puts in every commit
-message and docstring — plus every library name on this user's disk (`恬馨`,
-`明燒肉`, `寶礦力`).
+message and docstring — plus any CJK in a library or clip name, which is the
+common case for this tool's users (`專案甲`, `素材庫`, `外景`).
 
 `codec.py` already carried the fix and the reason ("Windows cp950 default can
 choke on ffprobe output bytes (headless ingest crash), so decode explicitly") —
