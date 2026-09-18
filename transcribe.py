@@ -333,13 +333,55 @@ def warm_up():
         print("  [whisper model loaded]", flush=True)
 
 
+def _vad_or_full(wav_path: str):
+    """`_vad_filter`, but "no speech" is never the terminal answer.
+
+    🔴 Silero's no-speech verdict is wrong most of the time on location audio.
+    Measured 2026-09-07 on a 200-clip shoot (PA system + crowd): 85 clips came
+    back with an empty transcript, and re-running them with VAD bypassed
+    recovered speech in **54 of them** — a 64% false-negative rate. One 50s clip
+    yielded 180 characters of continuous presenter dialogue.
+
+    It is not a sensitivity problem, so don't "fix" it by lowering the threshold:
+    a sweep at 0.5 / 0.35 / 0.2 / 0.1 kept 0% / 0% / 3% / 8% of the failing
+    files. Nor is it low level — that audio is hot (RMS 0.133, mean -17.5 dBFS),
+    which is why the PR #376→#394 normalisation path does nothing for it (13
+    clips tested, 0 improved; that path ships disabled). The working hypothesis
+    is simply that a live PA plus crowd noise sits outside Silero's training
+    distribution.
+
+    The old behaviour returned `("", "", [], [])` right here — **the same value a
+    genuinely silent file produces**. A wrong verdict and a right one were
+    byte-identical downstream, so nobody could ever tell which clips had been
+    dropped. That indistinguishability is the actual defect; the false-negative
+    rate only sets its size.
+
+    So: fall back to decoding the whole file and let hallucination guards 1-4
+    make the call. They already exist to reject "whisper invented text from
+    silence", which is exactly the risk this reintroduces. Cost is one extra
+    decode on files that really are silent (~4s each, measured); the thing it
+    buys is that no clip is ever silently skipped.
+    """
+    vad_wav, offset_map = _vad_filter(wav_path)
+    if vad_wav is not None:
+        return vad_wav, offset_map
+    # Loud on purpose: the old failure was invisible, so the fallback must not be.
+    print("  [vad] no speech detected — decoding the full file anyway "
+          "(Silero false-negatives on location audio; guards 1-4 decide)",
+          flush=True)
+    return wav_path, None
+
+
 def transcribe(media_path: str, language=None) -> tuple:
     """
     Transcribe audio from a media file.
     Returns (transcript_text, language, segments_list, words_list).
     segments_list: [{"start": float, "end": float, "text": str}, ...]
     words_list: [{"word": str, "start": float, "end": float, "score": float}, ...]
-    Returns ("", "", [], []) if no speech detected.
+    Returns ("", "", [], []) when nothing survives — either the wav could not
+    be extracted, or the decode produced no text that the hallucination guards
+    accepted. VAD reporting "no speech" is NOT one of those cases; see
+    `_vad_or_full` for why that verdict is not trusted on its own.
     """
     if language is None:
         language = WHISPER_LANGUAGE_HINT or DEFAULT_LANGUAGE
@@ -357,9 +399,7 @@ def transcribe(media_path: str, language=None) -> tuple:
     try:
         if _USE_MLX:
             progress.report(stage="vad")
-            vad_wav, offset_map = _vad_filter(wav)
-            if vad_wav is None:
-                return "", "", [], []
+            vad_wav, offset_map = _vad_or_full(wav)
             try:
                 progress.report(stage="decoding")
                 result = _transcribe_mlx(vad_wav, language)
@@ -371,9 +411,7 @@ def transcribe(media_path: str, language=None) -> tuple:
             result = _transcribe_whisperx(wav, language)
         else:
             progress.report(stage="vad")
-            vad_wav, offset_map = _vad_filter(wav)
-            if vad_wav is None:
-                return "", "", [], []
+            vad_wav, offset_map = _vad_or_full(wav)
             try:
                 progress.report(stage="decoding")
                 result = _transcribe_faster_whisper(vad_wav, language)
