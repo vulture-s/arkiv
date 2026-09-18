@@ -178,6 +178,30 @@ def resolve_path(rel_path: str) -> str:
     # path — normalize so such legacy rows still resolve cross-OS. New writes are
     # already forward-slash (to_relative.as_posix). Skip if it's a real absolute
     # Windows path (drive-letter), which Path handles natively.
+    # The mirror of the line below, and it was missing. `Path.is_absolute()` is
+    # PLATFORM-dependent: on Windows a path needs a drive letter, so a row holding
+    # a macOS absolute (`/Volumes/NAS/clip.mp4`, `/Users/...`) answers False there,
+    # gets joined to PROJECT_ROOT as if it were relative, lands at
+    # `C:\Volumes\NAS\clip.mp4`, escapes the root, and raises.
+    #
+    # 🔴 That turns the docstring's "absolute paths are passed through as-is" into
+    # a promise that only holds on the platform the row was written on. Measured
+    # 2026-09-18: all three of `/etc/x.mp4`, `/Volumes/NAS/proj/clip.mp4` and
+    # `/Users/hevinyeh/media/a.mov` raise on Windows and pass through on POSIX.
+    # It is not hypothetical — one library in this fleet still stores 427/427
+    # absolute paths, written on a Mac.
+    #
+    # And the way it fails is the quiet one: `media_delete` catches the ValueError
+    # into `resolved = ""`, so a delete silently degrades to metadata-only with
+    # `warning` left at None. The user is told nothing.
+    #
+    # Returned verbatim rather than through `Path`, because `str(Path("/Volumes/x"))`
+    # on Windows is `\Volumes\x` — rooted on whatever the current drive happens to
+    # be, which is a different file. Passing the row through unchanged is what
+    # "as-is" means, and it also keeps POSIX behaviour byte-identical (`Path` does
+    # not normalise `..` here either, so nothing was being canonicalised anyway).
+    if rel_path.startswith("/"):
+        return rel_path
     path_obj = Path(rel_path)
     if not path_obj.is_absolute() and "\\" in rel_path:
         path_obj = Path(rel_path.replace("\\", "/"))
