@@ -50,13 +50,15 @@ here.
 
 pen's own Git identity is on the patches they sent. It is deliberately not
 reproduced here: per this project's practice, a contributor is asked before being
-named, and that question is outstanding. If pen tells us how they would like to be
-credited — a GitHub account, a different name, or not at all — this page and the
-project's public credits will follow it.
+named. pen was asked, and chose to be credited as `pen` (2026-10-02) — no account,
+no address. This page is the canonical credit, and it supersedes the five
+`Co-authored-by: Penny` trailers above.
 
 ---
 
 *Attribution rule that came out of this: never construct a
 `<something>@users.noreply.github.com` address. Those resolve to whoever holds
 that account. Use the contributor's own Git author line, or credit them by name
-here.*
+here. Future work
+building on pen's patches is credited to `pen` on this page — not with a
+`Co-authored-by` trailer, since pen chose not to attach an address.*
