@@ -1,0 +1,64 @@
+# Builds the Astro site in site/ (docs pages are read from ../docs and
+# ../CHANGELOG.md). Every PR that touches them gets a build check.
+#
+# Deploy is manual (workflow_dispatch) until the cutover: Pages is still served
+# from main:/docs by the legacy Jekyll build, and an Actions deploy only takes
+# effect once Settings → Pages → Source is switched to "GitHub Actions".
+# After that switch, add `push: branches: [main]` to the deploy trigger.
+name: site
+
+on:
+  pull_request:
+    paths: ["site/**", "docs/**", "CHANGELOG.md", ".github/workflows/site.yml"]
+  push:
+    branches: [main]
+    paths: ["site/**", "docs/**", "CHANGELOG.md", ".github/workflows/site.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: npx astro build
+      # The old site's links (and outside posts) point at these exact files.
+      # A route-shape change would 404 them silently, so assert they exist.
+      - name: legacy URLs still resolve
+        run: |
+          for f in index.html quickstart.html faq.html img/arkiv-ui.webp; do
+            test -f "dist/$f" || { echo "missing dist/$f"; exit 1; }
+          done
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          path: site/dist
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,34 @@
+/* Shared chrome added for the multi-page site. Tokens come from home.css. */
+.topnav{border-bottom:1px solid var(--rule);background:var(--bg);position:sticky;top:0;z-index:10}
+.topnav-in{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:56px;flex-wrap:wrap}
+.topnav-mark{font-family:var(--ak-display);font-size:20px;color:var(--ink);text-decoration:none;letter-spacing:-.02em}
+.topnav-mark .dot{color:var(--cyan)}
+.topnav ul{list-style:none;display:flex;flex-wrap:wrap;gap:4px 18px}
+.topnav ul a{color:var(--ink-2);text-decoration:none;font-size:14px}
+.topnav ul a:hover,.topnav ul a[aria-current="page"]{color:var(--ink)}
+.topnav ul a[aria-current="page"]{box-shadow:inset 0 -2px 0 var(--cyan)}
+
+/* Read pages: docs, changelog. */
+.doc{padding:56px 0 72px}
+.doc .wrap{max-width:760px}
+.prose{color:var(--ink-2);font-size:16px;overflow-wrap:anywhere}
+.prose h1{font-size:clamp(26px,4vw,34px);color:var(--ink);letter-spacing:-.02em;line-height:1.25;margin-bottom:24px}
+.prose h2{font-size:22px;color:var(--ink);margin:48px 0 16px}
+.prose h3{font-size:17px;color:var(--ink);margin:32px 0 10px}
+.prose p,.prose ul,.prose ol,.prose pre,.prose table,.prose blockquote{margin-bottom:16px}
+.prose ul,.prose ol{padding-left:1.4em}
+.prose li{margin-bottom:6px}
+.prose strong{color:var(--ink)}
+.prose code{font-family:var(--ak-mono);font-size:.88em;background:var(--surface-2);border:1px solid var(--rule);border-radius:5px;padding:1px 5px}
+.prose pre{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:16px;overflow-x:auto}
+.prose pre code{background:none;border:0;padding:0;font-size:13.5px}
+.prose blockquote{border-left:2px solid var(--cyan);padding:4px 0 4px 16px;color:var(--ink-2)}
+.prose table{display:block;overflow-x:auto;font-size:14px}
+.prose hr{border:0;border-top:1px solid var(--rule);margin:40px 0}
+.prose img{max-width:100%;height:auto}
+.doc-src{margin-top:48px;font-size:13px;color:var(--quiet)}
+
+.doc-index{display:grid;gap:12px;list-style:none;margin-top:8px}
+.doc-index a{display:block;padding:16px 18px;border:1px solid var(--rule);border-radius:10px;text-decoration:none;color:var(--ink)}
+.doc-index a:hover{border-color:var(--rule-hi)}
+.doc-index small{display:block;color:var(--quiet);font-family:var(--ak-mono);font-size:12px;margin-top:2px}
