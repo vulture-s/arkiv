@@ -1,11 +1,7 @@
 # arkiv Pro Add-on — License Terms
 
-> ⚠️ **DRAFT — not yet reviewed by a lawyer.** This document states the intended
-> commercial terms for the Pro add-on. Items marked `[LEGAL REVIEW]` below must
-> be settled with counsel before the add-on is offered for sale. The licensing
-> entity and the refund contact address are settled and stated in full below;
-> what remains is the core/add-on relationship and the choice of venue. Until
-> then this file is a specification, not an offer.
+> These are the terms under which the Pro add-on is sold (effective 2026-10-03).
+> They have not been reviewed by a lawyer.
 >
 > Statutory citations were checked against the Ministry of Justice database
 > (`law.moj.gov.tw`) on 2026-08-18. Citing a statute is not the same as having
@@ -79,34 +75,24 @@ than enforced in software. Specifically:
 
 ## Refunds
 
-**7 days from delivery, no questions asked.** Email **better@wafflehouse.com.tw**
-— the same address shown on the receipt.
-
-This matches the statutory period for a distance sale in Taiwan (Consumer
-Protection Act art. 19 para. 1), **provided in full and not contracted away**.
+**No refunds after delivery.** The add-on is non-tangible digital content.
 Under the Standards for Reasonable Exceptions to the Right of Withdrawal in
-Distance Sales, art. 2 subparas. 4–5, non-tangible digital content is an
-enumerated exception and the add-on could carry no withdrawal right at all;
-we do not rely on that exception.
+Distance Sales, art. 2 subpara. 5, it is excluded from the 7-day withdrawal
+right of the Consumer Protection Act art. 19 para. 1. The exclusion is stated
+on the product page before purchase, and completing the purchase constitutes
+agreement to it.
 
-No discretionary window is offered beyond the statutory one. **arkiv itself is
-already free for commercial use**, so nothing here restricts access to the
-product — the add-on provides additional capacity, and the decision can be made
-on the free core across three real projects before any payment.
+The reason this is reasonable here: **arkiv itself is free for any use,
+including commercial work**, so the purchase decision is made on working
+software rather than on a description — run the free core across three real
+projects first, then decide.
 
-`[LEGAL REVIEW]` — this policy sits *exactly on* the statutory floor rather
-than above it, so two mechanics become load-bearing and the purchase flow must
-satisfy both:
+If the licence file you receive does not enable Pro, email
+**better@wafflehouse.com.tw**. That is a delivery problem, not a refund, and we
+will resolve it.
 
-- **art. 19 para. 3** — the 7 days do not start until the withdrawal
-  information required by art. 18 para. 1 subpara. 3 is supplied at delivery.
-  Omit it and the right stays open for up to four months.
-- **art. 19 para. 5** — any term conflicting with the article is void, so
-  nothing in checkout may shorten or condition these 7 days.
-
-Also confirm art. 3 of the same Standards: mandatory standard-contract terms
-(定型化契約應記載及不得記載事項) published for this product category would
-displace the above.
+*(Changed 2026-10-03. The earlier draft offered a 7-day refund and declined to
+rely on the exception; no sale was made under it.)*
 
 ## Free grants
 
@@ -142,25 +128,21 @@ That split is deliberate. The open, source-available core stays with the
 individual author; the commercial component sits with the company. Nothing you
 do with the core depends on this page.
 
-`[LEGAL REVIEW]` — how the add-on relates to the core (extent of dependency,
-whether it constitutes a derivative work, and what grant from the core's
-copyright holder the company therefore needs) must be settled before the add-on
-is sold. It does not affect free grants, which involve no consideration.
+The core's copyright holder has authorised the company to license the add-on
+under these terms.
 
 ## Governing law
 
-Proposed: the laws of the Republic of China (Taiwan), with a Taiwanese court of
-first instance as the venue — the licensor is registered in Taiwan and the
-statutory consumer protections cited above are Taiwanese.
-`[LEGAL REVIEW]` — confirm and name the specific court.
+These terms are governed by the laws of the Republic of China (Taiwan). The
+Taiwan Taipei District Court (臺灣臺北地方法院) is the court of first instance —
+the licensor is registered in Taipei, and the statutory consumer protections
+cited above are Taiwanese.
 
 ---
 
 # arkiv Pro 附加元件 — 授權條款（繁體中文）
 
-> ⚠️ **草稿 — 尚未經律師審閱。** 標 `[LEGAL REVIEW]` 的項目必須先與律師確認，
-> 才能對外販售。在那之前本檔是規格，不是要約。**授權主體與退款聯絡信箱均已定案
-> 並完整載明於下**，待解的是核心／add-on 的關係與管轄法院。
+> 本條款為 Pro 附加元件之銷售條款（2026-10-03 起適用），未經律師審閱。
 >
 > 條文引用已於 2026-08-18 對照法務部全國法規資料庫（`law.moj.gov.tw`）現行條文查核。
 > **引得出條文不等於有法律意見。**
@@ -218,27 +200,17 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 
 ## 退款
 
-**自交付起 7 天內，無條件退款。** 來信 **better@wafflehouse.com.tw**，
-與收據上所載信箱相同。
+**本附加元件交付後恕不退款。** 本附加元件屬非以有形媒介提供之數位內容，依通訊交易
+解除權合理例外情事適用準則第 2 條第 5 款，不適用消費者保護法第 19 條第 1 項之七日
+解除權。此項排除已於購買前在商品頁告知，完成購買即表示同意。
 
-此為台灣通訊交易之法定解除權期間（消費者保護法第 19 條第 1 項），本附加元件
-**完整提供，不予排除**。依通訊交易解除權合理例外情事適用準則第 2 條第 4、5 款，
-非以有形媒介提供之數位內容屬法定例外，本得不提供解除權；本方案選擇不援用該例外。
+這樣安排的理由：**arkiv 本體已經任何用途免費、包含商用**。你可以先在免費核心用滿
+三個真實專案再決定要不要付錢 —— 購買前看到的是能跑的軟體，而不是一段說明。
 
-法定期間之上不另外加碼，也不需要加碼：**arkiv 本體已經任何用途免費、包含商用**，
-這裡沒有任何東西擋著你使用產品。你買的是**額外容量**，加在一個你早就能跑、能拿來
-接案賺錢的軟體上 —— 而且你可以先在免費核心用滿三個真實專案，再決定要不要付錢。
+收到的授權檔無法啟用 Pro，請來信 **better@wafflehouse.com.tw**。那是交付問題，不是
+退款，我們會處理到可以正常使用。
 
-`[LEGAL REVIEW]` — 本政策**剛好落在法定門檻上**而非高於它，因此有兩個機制變成
-必須做對，購買流程要同時滿足：
-
-- **第 19 條第 3 項** —— 交付時未提供第 18 條第 1 項第 3 款所定之解除契約相關資訊，
-  **七日期間不起算**，解除權最長可存續四個月。
-- **第 19 條第 5 項** —— 違反本條所為之約定**無效**，故結帳流程中不得有任何縮短或
-  附條件於這 7 天的條款。
-
-另需確認同準則第 3 條：若中央主管機關已就本類商品公告**定型化契約應記載及不得記載
-事項**，則從其規定，會取代上述。
+*（2026-10-03 修訂。先前草稿提供 7 天退款並選擇不援用上述例外；該版本下未發生任何銷售。）*
 
 ## 免費 grant
 
@@ -270,15 +242,12 @@ PolyForm Perimeter 1.0.1 授權，`Copyright (c) 2026 Hevin Yeh`。
 這個分割是刻意的：source-available 的核心留在個人作者名下，商業元件歸公司。
 **你對核心做的任何事都不受本頁影響。**
 
-`[LEGAL REVIEW]` —— add-on 與核心的關係（依賴程度、是否構成衍生著作、若構成則
-公司需要核心著作權人的何種授權）必須在販售前釐清。**不影響免費 grant**，
-grant 不涉對價。
+核心著作權人已授權本公司依本條款授權本附加元件。
 
 ## 準據法
 
-提案：以**中華民國法律**為準據法，並以台灣之地方法院為第一審管轄法院 ——
-授權方登記於台灣，且本頁引用的消費者保護規定亦為台灣法。
-`[LEGAL REVIEW]` —— 確認並指定法院。
+本條款以**中華民國法律**為準據法，並以**臺灣臺北地方法院**為第一審管轄法院 ——
+授權方登記於臺北市，且本頁引用的消費者保護規定亦為台灣法。
 
 ---
 
