@@ -1,0 +1,74 @@
+---
+import '../styles/home.css';
+import '../styles/site.css';
+
+interface Props { title: string; description?: string; current?: string }
+const { title, description = '', current = '' } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+// Information architecture borrowed from impeccable.style's top nav.
+// FAQ and 隱私 live in the footer to keep the bar to one line on a laptop.
+const nav = [
+  { id: 'home', href: `${base}/`, label: '首頁' },
+  { id: 'how-it-works', href: `${base}/how-it-works.html`, label: '運作方式' },
+  { id: 'demo', href: `${base}/demo.html`, label: '實際畫面' },
+  { id: 'cases', href: `${base}/cases.html`, label: '案例' },
+  { id: 'limits', href: `${base}/limits.html`, label: '誠實清單' },
+  { id: 'quickstart', href: `${base}/quickstart.html`, label: '安裝' },
+  { id: 'docs', href: `${base}/docs.html`, label: '文件' },
+  { id: 'changelog', href: `${base}/changelog.html`, label: '更新紀錄' },
+  { id: 'feedback', href: `${base}/feedback.html`, label: '回饋' },
+];
+---
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Google tag (gtag.js) — 與 wafflehouse.com.tw 共用同一個 Google Tag，供跨站歸因比對 -->
+<script is:inline async src="https://www.googletagmanager.com/gtag/js?id=GT-WB2F3LB8"></script>
+<script is:inline>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'GT-WB2F3LB8');
+</script>
+<title>{title}</title>
+{description && <meta name="description" content={description}>}
+<slot name="head" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2712%27 fill=%27%230a0a0c%27/%3E%3Ctext x=%2732%27 y=%2744%27 font-family=%27Helvetica,Arial,sans-serif%27 font-size=%2740%27 font-weight=%27900%27 fill=%27%23f3f2ee%27 text-anchor=%27middle%27%3Ea%3C/text%3E%3Ccircle cx=%2750%27 cy=%2744%27 r=%274%27 fill=%27%2318b6dc%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav class="topnav" aria-label="主要導覽">
+  <div class="wrap topnav-in">
+    <a class="topnav-mark" href={`${base}/`}>arkiv<span class="dot">.</span></a>
+    <ul>
+      {nav.map((n) => <li><a href={n.href} aria-current={n.id === current ? 'page' : undefined}>{n.label}</a></li>)}
+      <li><a href="https://github.com/vulture-s/arkiv">GitHub</a></li>
+    </ul>
+  </div>
+</nav>
+<slot />
+<footer>
+  <div class="wrap">
+    <div class="foot-links">
+      <a href="https://github.com/vulture-s/arkiv">GitHub</a>
+      <a href={`${base}/quickstart.html`}>安裝說明</a>
+      <a href={`${base}/docs.html`}>文件</a>
+      <a href={`${base}/faq.html`}>FAQ</a>
+      <a href={`${base}/privacy.html`}>隱私</a>
+      <a href={`${base}/feedback.html`}>回饋</a>
+      <a href={`${base}/changelog.html`}>更新紀錄</a>
+      <a href="https://github.com/vulture-s/arkiv/blob/main/LICENSE">授權</a>
+      <a href="https://www.instagram.com/vulture.s/">@vulture.s</a>
+      <a href="mailto:better@wafflehouse.com.tw">聯絡：better@wafflehouse.com.tw</a>
+    </div>
+    <p>
+      PolyForm Perimeter 1.0.1 · source-available（非 OSI 認證之開源授權）<br> 本機優先 · 不依賴雲端服務 · 軟體不會外傳你的素材與逐字稿（本頁使用 Google Analytics）
+    </p>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,25 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../layouts/Base.astro';
+import { PUBLISHED_DOCS, REPO_BLOB } from '../lib/published-docs.mjs';
+
+export async function getStaticPaths() {
+  const docs = await getCollection('docs');
+  return docs.map((entry) => ({ params: { doc: entry.id }, props: { entry } }));
+}
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+const h1 = headings.find((h) => h.depth === 1)?.text ?? entry.id;
+const src = PUBLISHED_DOCS[entry.id];
+const current = entry.id === 'changelog' ? 'changelog'
+  : entry.id === 'faq' ? 'faq'
+  : entry.id.startsWith('quickstart') || entry.id === 'install' ? 'quickstart' : 'docs';
+---
+<Base title={`${h1} · arkiv`} current={current}>
+  <main class="doc">
+    <div class="wrap">
+      <article class="prose"><Content /></article>
+      <p class="doc-src">這一頁由 repo 裡的 <a href={`${REPO_BLOB}${src}`}>{src}</a> 產生 —— 要修正請改那個檔。</p>
+    </div>
+  </main>
+</Base>

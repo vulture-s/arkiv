@@ -1,0 +1,37 @@
+---
+import Ledger from '../layouts/Ledger.astro';
+import Row from '../components/Row.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const SRC = 'https://github.com/vulture-s/arkiv/blob/main/README.zh-TW.md';
+---
+<!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。
+     本頁只放能公開的事實：客戶與案場名一律不出現（arkiv #463）。
+     沒有使用者案例前，不放推薦語、不放假數字。 -->
+<Ledger id="cases" title="案例" checked="2026-10-04"
+  lede="目前公開的只有一個庫，但它是真的商業案件素材，不是測試用的範例資料夾。"
+  description="arkiv 實際跑過的素材庫規模：1,506 支真實商業案件素材完整索引，其中 1,161 支為無對白 B-roll，單張 RTX 4070。">
+
+  <Row id="scale" q="實際跑過多大的庫？"
+    ev={`出處：<a href="${SRC}">README「實戰驗證」</a>與首頁「實際運作規模」，兩處同一組數字。`}>
+    <p><b>1,506 支</b>真實商業案件素材，全部完成索引，索引覆蓋率 100%，沒有一支被跳過。</p>
+  </Row>
+
+  <Row id="broll-share" q="這個庫裡，有多少是沒對白的？"
+    ev="1,161 ÷ 1,506 ≈ 77%">
+    <p>將近八成。<b>1,161 支</b>是 B-roll，從頭到尾沒有一句對白。只靠逐字稿搜尋的工具，在這個庫裡只看得到兩成。arkiv 一開始就是為了這八成而做的。</p>
+  </Row>
+
+  <Row id="hardware" q="用什麼機器跑的？"
+    ev={`出處：<a href="${SRC}">README「實戰驗證」</a>。這台機器上的總處理時間沒有公開紀錄；其他機器的速度見<a href="${base}/limits.html#speed">誠實清單：速度</a>。`}>
+    <p>一張 RTX 4070，一般桌機等級的顯示卡，不是工作站，也沒有用雲端 GPU。</p>
+  </Row>
+
+  <Row id="names" q="為什麼|看不到客戶和片名？">
+    <p>這些是委製案件，素材與客戶名稱不屬於 arkiv 可以公開的範圍。這一頁只寫數字，不寫是誰的片。</p>
+  </Row>
+
+  <Row id="yours" q="想讓你的案例|出現在這裡？">
+    <p>如果你用 arkiv 跑過自己的素材庫，而且願意公開規模（支數、無對白比例、機器），寫信到 <a href="mailto:better@wafflehouse.com.tw">better@wafflehouse.com.tw</a>。我們只會放你同意公開的部分。</p>
+    <p>案例刊出後，我們會送你一份 <b>arkiv Pro 授權</b>：一次買斷、永久有效，專案數不限、可跨專案搜尋（定價 NT$3,000）。</p>
+  </Row>
+</Ledger>

@@ -1,0 +1,411 @@
+---
+import Base from '../layouts/Base.astro';
+// Ported verbatim from the single-page docs/index.html (2026-10-03).
+// Visual redesign is a separate pass; this file is the baseline.
+---
+<Base title="arkiv · 用 AI 建立你的本地影音素材庫" description="以本地 AI 模型建立的影音素材庫，為小型影視團隊與個人創作者而做。收工後的過片、挑選毛片、分類場景、轉錄字幕批量處理：有畫面的分析畫面，有聲音的轉錄成逐字稿。不依賴雲端服務，免費且商用不受限。" current="home">
+<meta slot="head" property="og:title" content="arkiv · 用 AI 建立你的本地影音素材庫">
+<meta slot="head" property="og:description" content="本地 AI 影音素材庫。過片、挑毛片、分類場景、轉錄字幕批量處理。免費、商用不受限、原始碼公開。">
+<meta slot="head" property="og:type" content="website">
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Media Asset Manager · 本機優先</div>
+    <div class="wordmark">arkiv<span class="dot">.</span></div>
+    <!-- 🔴 底下的中文段落刻意寫成單行，不要為了好讀而折行。HTML 把原始碼的換行
+         算成一個空白：在英文無所謂，在中文會於句號、頓號後面多出一個半形空隙。
+         2026-09-03 量到 17 處，全部來自折行。要斷行只能斷在中英交界（那裡本來
+         就該有空格），或改用 <br>。 -->
+    <p class="lede">用 AI 建立你的本地影音素材庫。</p>
+    <p class="sub">
+      arkiv 是一個以本地 AI 模型為架構、提供小型影視團隊、個人創作者的影音素材庫。主要任務是解決影像工作者在拍攝工作結束之後需要人工大量過片、挑選毛片、分類場景、轉錄字幕等大量重複性的工作。核心的架構以影視工業的 <b>DIT 工作流程</b>靠攏，也就是收檔、編號、校驗、建索引。
+    </p>
+    <p class="sub">
+      <b style="color:var(--ink)">大型劇組團隊設有 DIT 崗位專門做這些任務，但在小型團隊裡，收工後的過檔才是噩夢的開始。</b> arkiv 在技術上利用本地的 AI 模型以及固化的流程，可以批量地索引素材，不依賴雲端服務，安全、無衍生費用。
+    </p>
+
+    <div class="badges">
+      <span class="badge"><b>免費</b>　任何用途</span>
+      <span class="badge"><b>商用不受限</b>　含客戶委製</span>
+      <span class="badge"><b>原始碼公開</b>　source-available</span>
+      <span class="badge">DaVinci Resolve 原生</span>
+      <span class="badge">中／日／英 語意搜尋</span>
+    </div>
+
+    <div class="dl">
+      <a class="btn" href="https://github.com/vulture-s/arkiv/releases/latest">
+        下載 macOS 版<small>Apple Silicon · .dmg</small>
+      </a>
+      <a class="btn" href="https://github.com/vulture-s/arkiv/releases/latest">
+        下載 Windows 版<small>x64 · .exe / .msi</small>
+      </a>
+      <a class="btn ghost" href="https://github.com/vulture-s/arkiv">
+        看原始碼<small>GitHub</small>
+      </a>
+    </div>
+    <p class="dl-note">
+      <!-- 版號跑時向 GitHub 取。寫死過一次就過期一次（曾停在 v1.0.0 而實際已
+           v1.1.1，同頁的定價表卻寫著「1.1.0（本版）」自相矛盾）。抓不到就整段
+           不顯示 —— 沒有版號好過錯的版號。 -->
+      安裝前請先看下方 <a href="#real">系統需求</a>　·　English:
+      <a href="https://github.com/vulture-s/arkiv#readme">README</a><span id="relver" hidden>　·　最新版
+      <span class="mono" id="relver-tag"></span></span>
+    </p>
+  </div>
+</header>
+
+<section class="shot-sec">
+  <div class="wrap">
+    <figure class="shot">
+      <!-- 刻意不加 loading="lazy"：這張緊接首屏，lazy 只會延後它。
+           alt 保持簡短——細節在 figcaption，兩邊都寫會被螢幕閱讀器唸兩次。 -->
+      <!-- WebP，3200px（2x）。同尺寸的 JPEG 要 460 KB，這張 203 KB。畫面裡
+           20 張實拍縮圖遠比先前那 4 張卡通耗位元，1x 會在 retina 上糊掉。 -->
+      <img src="img/arkiv-ui.webp" width="1600" height="890" decoding="async"
+           alt="arkiv 軟體操作介面">
+      <figcaption>
+      左欄拍攝日已下鑽到 <b>08-17</b>，標題列顯示 20 / 24 支篩選中。右欄由上而下：自動標籤、波形與<b>逐格 IN／OUT</b>（59.94p）、逐字稿、<b>場景時間軸</b>。逐字稿那格寫著「無語音」，而最下方那幾行中文是視覺模型自己寫的。
+    </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>收工之後</h2>
+    <div class="why">
+      <div class="row">
+        <span class="n">01</span>
+        <div>
+          <h3>過片：不用全部看過一遍</h3>
+          <p>
+      有畫面的分析畫面，有聲音的轉錄成逐字稿，兩邊都寫進索引。資料庫比對的是<b style="color:var(--ink)">畫面內容與逐字稿</b>。內建本地 AI 助手，想找某顆畫面就用口語問，例如「訪談畫面」或是「產品特寫」。
+    </p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">02</span>
+        <div>
+          <h3>挑毛片：評等留在素材上，不在你腦子裡</h3>
+          <p>
+      標好的 Good／N·G 直接掛在素材上。Smart Pool 自動分成待審、可用、不用。<b style="color:var(--ink)">逐格標 IN／OUT</b>，播放器貼齊真正的格邊界，59.94p 也對得準。 DaVinci Resolve 另有外掛，搜尋結果一鍵匯入當前專案的 Media Pool；也可以輸出 EDL、FCPXML、SRT，交給剪輯軟體接手。
+    </p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">03</span>
+        <div>
+          <h3>分類場景：視覺模型自己寫描述</h3>
+          <p>
+      沒有對白的素材同樣有內容可搜。場景描述與標籤是<b style="color:var(--ink)">看畫面產生的</b>。也可以照拍攝日或機型分組，多機拍攝時各機的素材各自成組。素材庫裡多半是空景與 B-roll，那正是最難用檔名找的一半。
+    </p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">04</span>
+        <div>
+          <h3>轉錄字幕：時間碼對得上畫面</h3>
+          <p>
+      點一句逐字稿就<b style="color:var(--ink)">跳到那一句真正的位置</b>。可匯出 SRT／VTT，中文依字幕行寬斷行，也可以輸出不含時間碼的純文字。<span class="q">（v1.2.0 起。先前建立的素材庫需重新轉錄一次才會套用。）</span>
+    </p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="n">05</span>
+        <div>
+          <h3>360 素材</h3>
+          <p>
+      360 挑片的苦我們懂。arkiv 在 Inspector 裡把那一格攤平成全景，可以拖曳環視，挑完再進 360 剪輯軟體 reframe。同時 Insta360 的 <span class="mono">.insv</span> 與 GoPro Max 的 <span class="mono">.360</span> 都能進同一個資料庫。
+    </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>實際運作規模</h2>
+    <div class="proof">
+      <div class="big">1,506 支</div>
+      <p>
+      真實商業案件素材已完成完整索引，其中 <b style="color:var(--ink-2)">1,161 支為無對白 B-roll</b>。單張 RTX 4070，索引覆蓋率 100%。
+    </p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>授權條款</h2>
+    <div class="lic">
+      <ul>
+        <li>
+          <span class="mk yes">✓</span>
+          <div>
+            <b>免費使用，任何用途，包含商業用途。</b>
+            <p>客戶委製、工作室日常作業、受補助之製作，均在授權範圍內。無需另行取得授權，亦無需事前通知。</p>
+          </div>
+        </li>
+        <li>
+          <span class="mk yes">✓</span>
+          <div>
+            <b>產出物之權利完全歸你所有。</b>
+            <p>影片、時間軸、EDL / FCPXML 匯出檔與縮圖，本授權均不加以限制。</p>
+          </div>
+        </li>
+        <li>
+          <span class="mk no">✕</span>
+          <div>
+            <b>唯一的限制：不得用於開發與 arkiv 競爭的產品。</b>
+            <p>將其衍生為競爭性素材管理工具、以索引服務形式提供予第三方，或重新實作為替代產品。即使免費提供亦同。</p>
+          </div>
+        </li>
+      </ul>
+      <p class="fine">
+        判斷基準在於<b style="color:var(--ink-2)">客戶所購買的標的</b>：購買你以 arkiv 完成的成品，屬一般工具使用；
+        購買 arkiv 的功能本身（無論以產品、服務、函式庫或外掛形式提供），則構成競爭。
+        條文為 <a href="https://github.com/vulture-s/arkiv/blob/main/LICENSE">PolyForm Perimeter 1.0.1</a>。
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="tiers">
+  <div class="wrap">
+    <h2>免費版與 Pro</h2>
+    <table>
+      <thead>
+        <tr><th></th><th>免費</th><th>Pro</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>全部索引與搜尋功能</td><td><b>✓</b></td><td><b>✓</b></td></tr>
+        <tr><td>商業使用</td><td><b>✓</b></td><td><b>✓</b></td></tr>
+        <tr><td>專案數</td><td><b>3 個</b><br><span class="future">1.1.0 前已在使用的安裝：不限</span></td><td><b>無限</b></td></tr>
+        <tr><td>跨專案聚合搜尋</td><td><b>—</b><br><span class="future">1.1.0 前已在使用的安裝：保留</span></td><td><b>✓</b></td></tr>
+        <tr><td>價格</td><td><b>NT$0</b></td><td><b>NT$3,000</b> 一次買斷<br><a href="https://wafflehouse.com.tw/product/arkiv-pro/">購買 Pro →</a></td></tr>
+      </tbody>
+    </table>
+    <p class="tier-note">
+      免費額度自 <b style="color:var(--ink)">1.1.0</b> 起生效，<b style="color:var(--ink)">只對新安裝</b>。
+      <b style="color:var(--ink)">在 1.1.0 之前已在使用的安裝，永久保留無限專案數與跨專案聚合兩項功能</b>，
+      這項承諾已寫入軟體：素材庫在初次使用時就記錄了版本，判定依該紀錄而非事後推測。
+      1.0.0 及更早的版本完全不執行此額度。
+      <br><a href="https://wafflehouse.com.tw/product/arkiv-pro/">購買 Pro</a>（由立凡科技有限公司銷售，付款後 3 個工作天內寄送具名授權檔；數位內容交付後恕不退款，詳見<a href="https://github.com/vulture-s/arkiv/blob/main/docs/pro-addon-license.md">授權條款</a>）。紀錄片、非營利、檔案保存與公共教育類製作，
+      可循<a href="https://github.com/vulture-s/arkiv/blob/main/PUBLIC-INTEREST.md">公益方案</a>免費申請。
+    </p>
+  </div>
+</section>
+
+<section id="real">
+  <div class="wrap">
+    <h2>系統需求與注意事項</h2>
+    <div class="real">
+      <div><span class="m">01</span><span>安裝檔<b style="color:var(--ink)">已內含 Python 後端與 ML 套件</b>，但<b style="color:var(--ink)">仍需自行安裝 FFmpeg 與 Ollama</b>，供抽幀、向量運算與視覺分析使用。</span></div>
+      <div><span class="m">02</span><span>macOS 版<b style="color:var(--ink)">僅支援 Apple Silicon</b>，未提供 Intel 版本。</span></div>
+      <div><span class="m">03</span><span>安裝檔<b style="color:var(--ink)">尚未經數位簽章</b>。macOS 首次開啟請使用「右鍵 → 打開」，Windows 會顯示一次 SmartScreen 提示，後續開啟不再出現。</span></div>
+      <div><span class="m">04</span><span>視覺分析仰賴 GPU 加速。<b>Windows 無 NVIDIA 顯示卡時，轉錄預設走 CUDA 會直接失敗</b>，需將環境變數 <span class="mono">ARKIV_WHISPER_DEVICE</span> 設為 <span class="mono">cpu</span>；設定後可運作，但處理時間以數倍計。Apple Silicon 走 MLX，不受此限。</span></div>
+    </div>
+  </div>
+</section>
+
+<!--
+  ────────────────────────────────────────────────────────────────
+  EMAIL 名單 — 尚未接上，整段預設不顯示（不放壞掉的表單上線）。
+
+  接法：在頁尾 <script> 的 SIGNUP 物件填 endpoint 與 emailField 即可，
+  這一段會自動出現。各家的值：
+
+    Kit (ConvertKit)
+      endpoint   https://app.kit.com/forms/<FORM_ID>/subscriptions
+      emailField email_address        ← 不是 email，填錯會靜默收不到
+
+    Buttondown
+      endpoint   https://buttondown.com/api/emails/embed-subscribe/<USERNAME>
+      emailField email
+
+    Formspree
+      endpoint   https://formspree.io/f/<FORM_ID>
+      emailField email                ← 支援 CORS，能拿到真實成功／失敗
+
+    Mailchimp                          ← 需額外設 mode: "jsonp"
+      endpoint   https://<DC>.list-manage.com/subscribe/post-json?u=<U>&id=<ID>
+      emailField EMAIL                 ← 全大寫，是 merge tag 不是欄位名
+      · 取得方式：Mailchimp → Audience → Signup forms → Embedded form，
+        表單 action 內就含 <DC>（如 us21）、u=、id= 三個值。
+        把 /subscribe/post 改成 /subscribe/post-json 即可。
+      · list-manage.com **不支援 CORS**，所以走 JSONP；否則每次送出都會
+        被帶離本站。
+      · Mailchimp 會把「已訂閱過」當成 error 回，訊息含 HTML，故顯示前
+        去標籤並改寫成人話。
+
+  送出邏輯：先試 fetch（拿得到真答案就顯示真結果）；若因 CORS 或網路失敗，
+  退回原生 form submit（會離開本站，但由對方站台自己顯示確認）。
+  **永遠不在無法確認的情況下顯示「訂閱成功」。**
+  ────────────────────────────────────────────────────────────────
+-->
+<section id="signup">
+  <div class="wrap">
+    <h2>訂閱產品更新</h2>
+    <p>僅於重要版本更新時寄送，可隨時取消訂閱。</p>
+    <form id="signup-form" method="post">
+      <input id="signup-email" type="email" placeholder="your@email.com" required aria-label="Email">
+      <!-- 蜜罐：真人看不到也填不到；機器人會填，填了就不送 -->
+      <input id="signup-trap" type="text" name="_confirm" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <button id="signup-btn" type="submit">訂閱</button>
+    </form>
+    <p id="signup-status" class="signup-status" role="status" aria-live="polite"></p>
+  </div>
+</section>
+
+<script is:inline>
+  // Google tag 只在 Base.astro 設定一次。這裡原本也有一份（從單頁版逐字搬來），
+  // 兩份 gtag('config') 會讓首頁每次瀏覽記成兩筆 page_view。
+  // 版號跑時取，取不到就不顯示。理由見 .dl-note 的註解。
+  (function () {
+    var box = document.getElementById("relver");
+    var tag = document.getElementById("relver-tag");
+    if (!box || !tag) return;
+    function show(v) { tag.textContent = v; box.hidden = false; }
+
+    // 同一個分頁只打一次。GitHub 未帶 token 的速率限制是每 IP 每小時 60 次，
+    // 而辦公室／學校共用一個對外 IP —— 每次瀏覽都打會很快把額度用完，
+    // 然後所有人都看不到版號。
+    try {
+      var hit = sessionStorage.getItem("arkiv-relver");
+      if (hit) { show(hit); return; }
+    } catch (e) {}                          // 無痕模式存取 storage 會丟例外
+
+    // 連線掛住時不要無限等，版號不值得拖著一個開著的請求。
+    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    if (ctl) setTimeout(function () { ctl.abort(); }, 4000);
+
+    fetch("https://api.github.com/repos/vulture-s/arkiv/releases/latest", {
+      headers: { Accept: "application/vnd.github+json" },
+      signal: ctl ? ctl.signal : undefined,
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.tag_name) return;      // 速率限制／離線 → 靜默不顯示
+        show(d.tag_name);
+        try { sessionStorage.setItem("arkiv-relver", d.tag_name); } catch (e) {}
+      })
+      .catch(function () {});               // 版號不是必要資訊，失敗不吵使用者
+  })();
+
+  // ── 填這裡就會上線。各家的 endpoint / emailField 見上方 signup 區塊的註解。
+  const SIGNUP = {
+    endpoint: "https://app.kit.com/forms/9819208/subscriptions",
+    emailField: "email_address",   // Kit 的欄位名，不是 email
+    mode: "fetch",                 // Mailchimp 才要改成 "jsonp"
+  };
+
+  (function () {
+    if (!SIGNUP.endpoint) return;           // 沒設就整段不顯示，不放壞表單上線
+
+    const sec = document.getElementById("signup");
+    const form = document.getElementById("signup-form");
+    const email = document.getElementById("signup-email");
+    const trap = document.getElementById("signup-trap");
+    const btn = document.getElementById("signup-btn");
+    const status = document.getElementById("signup-status");
+
+    sec.style.display = "block";
+    form.action = SIGNUP.endpoint;
+    email.name = SIGNUP.emailField;         // Kit 要 email_address，寫死 email 會靜默收不到
+
+    function say(msg, cls) {
+      status.textContent = msg;
+      status.className = "signup-status" + (cls ? " " + cls : "");
+    }
+
+    form.addEventListener("submit", async function (e) {
+      if (trap.value) { e.preventDefault(); return; }   // 機器人填了蜜罐，安靜丟掉
+
+      e.preventDefault();
+      btn.disabled = true;
+      say("送出中…");
+
+      if (SIGNUP.mode === "jsonp") {
+        // Mailchimp：list-manage.com 無 CORS，fetch 一定失敗。JSONP 是唯一
+        // 能留在本站又拿到真實回應的方式。
+        const cb = "mcCallback" + Date.now();
+        const url = SIGNUP.endpoint
+          + (SIGNUP.endpoint.indexOf("?") === -1 ? "?" : "&")
+          + encodeURIComponent(SIGNUP.emailField) + "=" + encodeURIComponent(email.value)
+          + "&c=" + cb;
+        const tag = document.createElement("script");
+        let settled = false;
+
+        const done = function (ok, msg) {
+          if (settled) return;
+          settled = true;
+          try { delete window[cb]; } catch (e) { window[cb] = undefined; }
+          tag.remove();
+          if (ok) { say(msg, "ok"); form.reset(); }
+          else { say(msg, "bad"); btn.disabled = false; }
+        };
+
+        window[cb] = function (res) {
+          if (res && res.result === "success") return done(true, "訂閱成功，謝謝。");
+          // Mailchimp 的 msg 夾 HTML，且「已訂閱」也走 error
+          const raw = (res && res.msg ? String(res.msg) : "").replace(/<[^>]*>/g, "");
+          if (/already subscribed/i.test(raw)) return done(false, "這個信箱已經訂閱過了。");
+          done(false, raw ? "訂閱失敗：" + raw : "訂閱失敗，請稍後再試。");
+        };
+
+        // 對方沒回 = 拿不到答案，同樣不宣稱成功
+        tag.onerror = function () { done(false, "訂閱失敗，請稍後再試，或直接來信。"); };
+        setTimeout(function () { done(false, "訂閱逾時，請稍後再試。"); }, 10000);
+
+        tag.src = url;
+        document.body.appendChild(tag);
+        return;
+      }
+
+      const body = new FormData();
+      body.append(SIGNUP.emailField, email.value);
+
+      try {
+        const res = await fetch(SIGNUP.endpoint, {
+          method: "POST",
+          body: body,
+          headers: { Accept: "application/json" },
+        });
+        // ⚠️ HTTP 狀態碼不足以判斷成功。**Kit 對失敗也回 200**，真正的結果在
+        // body：成功 {status:"success"}、失敗 {status:"failed", errors:[…]}。
+        // 只看 res.ok 會讓空的、格式錯的、被拒絕的訂閱全部顯示「訂閱成功」——
+        // 名單一個都沒進，而沒有人會發現。實測 2026-08-19 對真實 endpoint 驗過。
+        // Formspree / Buttondown 則用正常狀態碼，所以兩種都要接。
+        let payload = null;
+        try { payload = JSON.parse(await res.text()); } catch (e) { /* 非 JSON */ }
+
+        const explicit = payload && typeof payload.status === "string"
+          ? payload.status === "success"     // Kit：以 body 為準
+          : null;
+        const ok = explicit === null ? res.ok : explicit;
+
+        if (ok) {
+          say("訂閱成功，謝謝。", "ok");
+          form.reset();
+        } else {
+          let why = "";
+          if (payload && Array.isArray(payload.errors) && payload.errors.length) {
+            why = String(payload.errors[0]).replace(/<[^>]*>/g, "");
+          } else if (!res.ok) {
+            why = "（" + res.status + "）";
+          }
+          say("訂閱失敗" + (why ? "：" + why : "，請稍後再試，或直接來信。"), "bad");
+          btn.disabled = false;
+        }
+      } catch (err) {
+        // 多半是 CORS 或離線：拿不到答案，所以不宣稱成功。
+        // 退回原生送出 —— 會離開本站，但由對方站台自己顯示確認，
+        // 比在這裡假裝成功誠實。
+        say("轉往訂閱確認頁…");
+        form.submit();
+      }
+    });
+  })();
+</script>
+</Base>

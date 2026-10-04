@@ -1,0 +1,128 @@
+:root{
+  --ak-display:'Archivo Black','Inter',sans-serif;
+  --ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;
+  --ak-mono:'JetBrains Mono',ui-monospace,monospace;
+  --bg:#0a0a0c; --surface:#111114; --surface-2:#17171a;
+  --rule:#26262a; --rule-hi:#3a3a3f;
+  --ink:#f3f2ee; --ink-2:#b6b5b0;
+  /* Small gray text. Was #6a6a6d (3.7:1 on --bg, fails WCAG AA); #8a8a8e is
+     5.8:1 on --bg and 5.4:1 on --surface. Every use of --quiet is text. */
+  --quiet:#8a8a8e;
+  --invert:#f3f2ee; --invert-ink:#0a0a0c; --cyan:#18b6dc;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:var(--ak-sans); font-feature-settings:'ss01','cv11','tnum';
+  line-height:1.7; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:960px;margin:0 auto;padding:0 24px}
+section{padding:72px 0;border-bottom:1px solid var(--rule)}
+section:last-of-type{border-bottom:0}
+h2{font-size:clamp(20px,3.2vw,26px);font-weight:600;letter-spacing:-.01em;margin-bottom:28px}
+h3{font-size:16px;font-weight:600;margin-bottom:8px}
+p{color:var(--ink-2)}
+a{color:var(--cyan)}
+.mono{font-family:var(--ak-mono)}
+
+/* hero */
+.hero{padding:96px 0 80px;border-bottom:1px solid var(--rule)}
+.eyebrow{font-family:var(--ak-mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--quiet);margin-bottom:20px}
+.wordmark{font-family:var(--ak-display);font-size:clamp(52px,11vw,92px);line-height:.92;letter-spacing:-.03em}
+.wordmark .dot{color:var(--cyan)}
+.lede{font-size:clamp(22px,4vw,34px);font-weight:600;letter-spacing:-.02em;color:var(--ink);margin:28px 0 16px;line-height:1.3}
+.sub{font-size:clamp(15px,2.2vw,17px);max-width:62ch}
+/* 兩段以上時才需要間距。.sub 的 margin 是 0，hero 從一段變兩段後，痛點那句
+   會緊貼上一段、讀起來像同一段（實測 p1.bottom === p2.top）。 */
+.sub + .sub{margin-top:18px}
+.badges{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}
+.badge{font-family:var(--ak-mono);font-size:12px;color:var(--ink-2);border:1px solid var(--rule-hi);border-radius:999px;padding:5px 13px}
+.badge b{color:var(--cyan);font-weight:500}
+
+/* buttons */
+.dl{display:flex;flex-wrap:wrap;gap:12px;margin-top:36px}
+.btn{
+  display:inline-flex;flex-direction:column;gap:2px;
+  background:var(--invert);color:var(--invert-ink);
+  text-decoration:none;border-radius:10px;padding:13px 22px;
+  font-weight:600;font-size:15px;transition:transform .12s ease,opacity .12s ease;
+}
+.btn:hover{transform:translateY(-1px);opacity:.9}
+.btn small{font-weight:400;font-size:11.5px;opacity:.62;font-family:var(--ak-mono)}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--rule-hi)}
+.dl-note{margin-top:14px;font-size:13px;color:var(--quiet)}
+
+.why .q{color:var(--quiet);font-size:13.5px}
+/* product shot */
+.shot-sec{padding:72px 0}
+.shot{margin:0}
+.shot img{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:12px}
+.shot figcaption{margin-top:14px;font-size:13.5px;color:var(--quiet);line-height:1.65;max-width:72ch}
+.shot figcaption b{color:var(--ink-2);font-weight:500}
+/* license — the wedge */
+.lic{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:32px}
+.lic ul{list-style:none;display:grid;gap:20px}
+.lic li{display:grid;grid-template-columns:26px 1fr;gap:14px;align-items:start}
+.lic .mk{font-family:var(--ak-mono);font-size:15px;line-height:1.5}
+.lic .yes{color:var(--cyan)}
+.lic .no{color:#e2686d}
+.lic b{color:var(--ink);font-weight:600}
+.lic .fine{margin-top:24px;padding-top:20px;border-top:1px solid var(--rule);font-size:13.5px;color:var(--quiet)}
+
+/* why */
+.why{display:grid;gap:26px}
+.why .row{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start}
+.why .n{font-family:var(--ak-mono);font-size:12px;color:var(--quiet);padding-top:4px}
+.why p{font-size:15px}
+
+/* proof */
+.proof{background:var(--surface-2);border-left:2px solid var(--cyan);padding:24px 26px;border-radius:0 10px 10px 0}
+.proof .big{font-family:var(--ak-mono);font-size:clamp(26px,5vw,34px);color:var(--ink);letter-spacing:-.02em}
+.proof p{font-size:14px;margin-top:8px}
+
+/* tiers */
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{text-align:left;padding:14px 12px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;font-family:var(--ak-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--quiet);font-weight:400}
+td:first-child{color:var(--ink-2)}
+td b{color:var(--ink)}
+.soon{display:inline-block;font-family:var(--ak-mono);font-size:11px;color:var(--invert-ink);background:var(--ink-2);border-radius:4px;padding:2px 7px;margin-left:8px;vertical-align:middle}
+.tier-note{margin-top:20px;font-size:14px;color:var(--quiet)}
+.future{font-size:12px;color:var(--quiet);font-family:var(--ak-mono)}
+
+/* honesty */
+.real{display:grid;gap:14px}
+.real div{display:grid;grid-template-columns:20px 1fr;gap:12px;font-size:14.5px;color:var(--ink-2)}
+.real .m{color:var(--quiet);font-family:var(--ak-mono);font-size:13px}
+
+/* email */
+#signup{display:none}
+#signup form{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+#signup input{
+  flex:1 1 260px;background:var(--surface-2);border:1px solid var(--rule-hi);
+  color:var(--ink);border-radius:10px;padding:13px 16px;font-size:15px;font-family:inherit;
+}
+#signup input:focus{outline:2px solid var(--cyan);outline-offset:1px}
+#signup-trap{position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
+.signup-status{margin-top:14px;font-size:14px;min-height:1.4em}
+.signup-status.ok{color:var(--cyan)}
+.signup-status.bad{color:#e2686d}
+#signup button[disabled]{opacity:.5;cursor:default}
+#signup button{
+  background:var(--invert);color:var(--invert-ink);border:0;border-radius:10px;
+  padding:13px 26px;font-weight:600;font-size:15px;cursor:pointer;font-family:inherit;
+}
+
+footer{padding:48px 0 72px;font-size:14px;color:var(--quiet)}
+footer a{color:var(--ink-2);text-decoration:none;margin-right:20px}
+footer a:hover{color:var(--cyan)}
+.foot-links{margin-bottom:20px}
+
+@media (max-width:600px){
+  section{padding:56px 0}
+  .hero{padding:64px 0 56px}
+  .lic{padding:24px 20px}
+  table{font-size:14px}
+  th,td{padding:12px 8px}
+}

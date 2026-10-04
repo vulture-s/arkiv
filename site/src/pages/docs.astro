@@ -1,0 +1,26 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../layouts/Base.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const order = ['quickstart', 'quickstart-mac', 'quickstart-windows', 'install', 'faq',
+  'pipeline', 'pipeline.zh-TW', 'api', 'api.zh-TW', 'architecture-anti-hallucination-guard', 'changelog'];
+const docs = await getCollection('docs');
+const items = await Promise.all(order
+  .map((id) => docs.find((d) => d.id === id))
+  .filter(Boolean)
+  .map(async (d) => {
+    const { headings } = await render(d!);
+    return { id: d!.id, title: headings.find((h) => h.depth === 1)?.text ?? d!.id };
+  }));
+---
+<Base title="文件 · arkiv" current="docs">
+  <main class="doc">
+    <div class="wrap">
+      <div class="prose"><h1>文件</h1></div>
+      <ul class="doc-index">
+        {items.map((it) => <li><a href={`${base}/${it.id}.html`}>{it.title}<small>{it.id}.html</small></a></li>)}
+      </ul>
+    </div>
+  </main>
+</Base>
