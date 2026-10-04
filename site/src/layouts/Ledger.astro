@@ -1,0 +1,40 @@
+---
+import Base from './Base.astro';
+import '../styles/ledger.css';
+
+// Shared shell for the read pages. Order here is the reading order the pager follows.
+const PAGES = [
+  { id: 'how-it-works', label: '運作方式' },
+  { id: 'demo', label: '實際畫面' },
+  { id: 'cases', label: '案例' },
+  { id: 'limits', label: '誠實清單' },
+  { id: 'privacy', label: '隱私' },
+];
+interface Props { id: string; title: string; lede: string; description: string; checked: string }
+const { id, title, lede, description, checked } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const i = PAGES.findIndex((p) => p.id === id);
+const prev = PAGES[i - 1];
+const next = PAGES[i + 1];
+---
+<Base title={`${title} · arkiv`} description={description} current={id}>
+  <main class="lg">
+    <div class="wrap">
+      <header class="lg-head">
+        <h1 class="lg-title">{title}<span class="dot">.</span></h1>
+        <p class="lg-checked">對照原始碼實查 <time datetime={checked}>{checked}</time></p>
+        <p class="lg-lede">{lede}</p>
+      </header>
+      <slot name="before" />
+      <div class="lg-rows">
+        <slot />
+      </div>
+      <nav class="lg-pager" aria-label="上一頁／下一頁">
+        {prev && <a href={`${base}/${prev.id}.html`}><small>上一頁</small>{prev.label}</a>}
+        {next
+          ? <a class="next" href={`${base}/${next.id}.html`}><small>下一頁</small>{next.label}</a>
+          : <a class="next" href={`${base}/quickstart.html`}><small>看完了</small>安裝說明</a>}
+      </nav>
+    </div>
+  </main>
+</Base>

@@ -99,3 +99,10 @@ frontend/vite.config.dev8502.js
 
 # Settings overrides per-install — never commit local state.
 settings.local.json
+
+# impeccable (design skill): keep the surface briefs, DESIGN sidecar and config;
+# screenshots, decision-round payloads and question state are local scratch.
+.impeccable/*
+!.impeccable/surfaces/
+!.impeccable/design.json
+!.impeccable/config.json

@@ -1,0 +1,58 @@
+---
+import Ledger from '../layouts/Ledger.astro';
+import Row from '../components/Row.astro';
+const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
+---
+<!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。 -->
+<Ledger id="how-it-works" title="運作方式" checked="2026-10-04"
+  lede="交給 arkiv 一個資料夾，它會逐支看畫面、聽聲音，寫成可以搜尋的文字。"
+  description="arkiv 怎麼把一個素材資料夾變成可以用口語搜尋的素材庫：探測、轉錄、抽幀、視覺描述、建索引，全部在本機。">
+
+  <Row id="move" q="匯入時，|我的素材|會被搬走或改寫嗎？"
+    ev={`素材留在原處，arkiv 的產出全寫在 <code>.arkiv/</code>：資料庫、縮圖、向量索引、proxy。<a href="${GH}docs/pipeline.zh-TW.md">pipeline 文件 §儲存路徑</a>`}>
+    <p>不會。整個過程在你自己的電腦上跑，匯入只<b>讀</b>原始檔，縮圖、逐字稿、索引另外存在專案資料夾裡的 <code>.arkiv/</code>。資料庫記的是相對路徑，整個專案資料夾搬到別顆碟也不會斷。</p>
+    <p>唯一會動到原始檔的是你在介面裡按「刪除素材」：檔案會先移到 <code>.arkiv/trash</code>，30 天內可以救回；專案資料夾以外的檔案（例如備份碟上的）只刪紀錄、不刪檔。</p>
+  </Row>
+
+  <Row id="pipeline" q="匯入之後，|每一支素材|會經過哪些步驟？"
+    ev={`模型名稱是預設值，可用環境變數換掉。<a href="${GH}config.py">config.py</a>`}>
+    <ol class="lg-steps">
+      <li><b>探測</b>用 FFmpeg 與 ExifTool 讀出長度、格率、編碼、機型、鏡頭、GPS、Reel 名，也讀 Sony XAVC 的 sidecar XML。</li>
+      <li><b>轉錄</b>Whisper large-v3-turbo。Apple Silicon 走 MLX，NVIDIA 走 CUDA。中文存檔時轉成台灣繁體。</li>
+      <li><b>抽幀</b>60 秒以下平均抽，60 秒以上用場景偵測抽換景的那幾格。</li>
+      <li><b>看畫面</b>視覺模型（預設 qwen2.5vl:7b，經 Ollama）逐格寫描述、標籤與評分。</li>
+      <li><b>建索引</b>描述、逐字稿、標籤一起轉成向量（bge-m3），存進本機的 ChromaDB。</li>
+    </ol>
+  </Row>
+
+  <Row id="broll" q="沒有人講話的空景，要怎麼搜？"
+    ev="arkiv 自己跑過的庫：1,506 支裡有 1,161 支是無對白 B-roll。">
+    <p>靠「看畫面」那一步。視覺模型看的是畫面本身，所以一支只有風聲的空景，也會有「黃昏、海邊、逆光、遠景」這類描述可以搜。逐字稿那一欄會老實寫「無語音」，不會硬掰出字幕。</p>
+  </Row>
+
+  <Row id="search" q="搜尋時，比對的是什麼？"
+    ev={`查詢語法：<code>"格爾木氧氣" camera:a7s3 tag:cycling lang:zh</code>，語意與條件可以混用。`}>
+    <p>比對的是<b>意思</b>，不是檔名。你打「產品特寫」，它會去找描述或逐字稿意思相近的片段，中文、日文、英文都可以。要更準，可以在同一行加上機型、標籤、語言等條件一起篩。</p>
+    <p>也可以直接用口語問內建的素材庫助手，例如「上一批裡面有沒有手部特寫」，它會接著上一輪的結果繼續篩。</p>
+  </Row>
+
+  <Row id="hallucination" q="Whisper 會在沒聲音的地方|亂寫字幕，|這個怎麼處理？"
+    ev={`<a href="${GH}docs/architecture-anti-hallucination-guard.md">四層防護的設計文件</a>`}>
+    <p>這是 Whisper 最常見的毛病：靜音段被它「聽」成一句謝謝收看。arkiv 疊了四層擋：先用 VAD 把沒有人聲的段落剪掉，再看模型自己回報的「這段沒有語音」機率，接著濾掉空白與重複句，最後用本機語言模型校正。</p>
+  </Row>
+
+  <Row id="handoff" q="挑好的素材|怎麼交給剪輯軟體？"
+    ev="匯出格式：EDL（DF／NDF）、FCPXML 1.8、SRT、VTT、TXT、metadata CSV">
+    <p>DaVinci Resolve 有原生外掛：在 Resolve 裡直接搜 arkiv 的素材庫，結果帶著 clip color 匯入 Media Pool，GOOD／N·G 評等會變成顏色。其他剪輯軟體就走 EDL 或 FCPXML，字幕走 SRT。</p>
+  </Row>
+
+  <Row id="offload" q="能不能從記憶卡開始|就交給它？"
+    ev="ASC MHL v2 已與 ASC 官方 reference implementation 1.2 互通驗證。">
+    <p>可以。DIT 轉存會同時拷到多個目的地，每一個檔都做 hash 比對，拷到一半中斷可以接著跑，結束時每個目的地各留一份 ASC MHL v2 校驗清單。<b>它從不刪除來源卡。</b></p>
+  </Row>
+
+  <Row id="headless" q="一定要開視窗操作嗎？"
+    ev="API 預設只聽 127.0.0.1:8501，MCP 聽 127.0.0.1:8502，都只對本機開放。">
+    <p>不用。同一個素材庫有三個入口：桌面 App、指令列、HTTP API。另外提供 MCP server，可以讓 AI 助手直接查你的素材庫。</p>
+  </Row>
+</Ledger>

@@ -1,0 +1,12 @@
+---
+// Status mark for ledger rows. Drawn SVG (not ✓✕ glyphs) so the three states
+// share one stroke weight; the label is what screen readers get.
+interface Props { kind: 'yes' | 'no' | 'cond' }
+const { kind } = Astro.props;
+const label = { yes: '做得到', no: '做不到', cond: '有條件' }[kind];
+---
+<svg class={`mk mk-${kind}`} viewBox="0 0 20 20" role="img" aria-label={label} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  {kind === 'yes' && <path d="M4.5 10.5l3.6 3.6 7.4-8.2" />}
+  {kind === 'no' && <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />}
+  {kind === 'cond' && <path d="M10 3.8l6.6 11.7H3.4z" />}
+</svg>

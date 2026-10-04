@@ -1,0 +1,65 @@
+---
+import Ledger from '../layouts/Ledger.astro';
+import Row from '../components/Row.astro';
+const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
+---
+<!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。
+     本頁每一列都是對原始碼的事實宣稱（2026-10-04 逐檔實查）。改 code 時若動到
+     連線行為，這頁要一起改；寫不出證據的句子不要加。 -->
+<Ledger id="privacy" title="隱私" checked="2026-10-04"
+  lede="軟體不會把你的素材、逐字稿或使用紀錄傳出去。這個網站則有用 Google Analytics。"
+  description="arkiv 軟體與官網各自會連到哪裡、送出什麼：軟體無遙測、無更新檢查、無線上授權驗證；官網使用 Google Analytics、Google Fonts 與 Kit。">
+
+  <h2 class="lg-group">軟體</h2>
+  <Row level={3} id="media" q="我的素材和逐字稿|會離開這台電腦嗎？" mark="yes"
+    ev={`轉錄在本機；視覺、向量、助手都打 <code>ARKIV_OLLAMA_URL</code>，預設 <code>http://localhost:11434</code>。<a href="${GH}config.py">config.py</a>`}>
+    <p>不會。轉錄在本機跑，看畫面、建索引、素材庫助手都交給你電腦上的 Ollama。</p>
+    <p>唯一的例外是你自己把 Ollama 位址改成另一台機器（例如把運算交給家裡的桌機）：那台機器會收到抽出來的畫面、逐字稿與素材資訊。位址是你設的，資料也只到那裡。</p>
+  </Row>
+
+  <Row level={3} id="telemetry" q="有沒有使用統計、當機回報？" mark="yes"
+    ev={`ChromaDB 內建的 PostHog 統計在 <a href="${GH}vectordb.py">vectordb.py</a> 開頭就關掉了。`}>
+    <p>沒有。程式裡沒有任何遙測或當機回報。連我們用的向量資料庫自帶的匿名統計，也在程式一開始就關閉了。</p>
+  </Row>
+
+  <Row level={3} id="updates" q="會自己檢查更新嗎？" mark="yes">
+    <p>不會。桌面 App 沒有內建自動更新，不會在背景連 GitHub。要更新請自己到下載頁抓新版。</p>
+  </Row>
+
+  <Row level={3} id="license-check" q="Pro 授權|要連網驗證嗎？" mark="yes"
+    ev={`授權檔位置：<code>~/.arkiv/pro-license.json</code>。<a href="${GH}entitlements.py">entitlements.py</a>`}>
+    <p>不用。授權是一個放在你電腦上的檔案，App 只讀這個檔，從不連線驗證。斷網也照常使用。</p>
+  </Row>
+
+  <Row level={3} id="downloads" q="那它什麼時候會連網？" mark="cond">
+    <ul>
+      <li><b>第一次轉錄</b>：自動從 Hugging Face 下載 Whisper 模型，之後用本機快取。</li>
+      <li><b>拉 Ollama 模型</b>：安裝時或你自己執行 <code>ollama pull</code> 時。</li>
+      <li><b>Windows 安裝時</b>：缺 WebView2 的話，安裝程式會向微軟下載。</li>
+    </ul>
+    <p>這三種都只是下載公開檔案，不會送出你的任何資料。說話者分離（預設關閉）開啟時，會用你的 Hugging Face token 下載它需要的模型。</p>
+  </Row>
+
+  <Row level={3} id="listen" q="同一個網路裡的人|連得到我的素材庫嗎？" mark="cond"
+    ev="桌面 App：API 127.0.0.1:8501，MCP 127.0.0.1:8502。Docker：docker-compose.yml 對外發佈 8501、8502。">
+    <p>用桌面 App 的話，連不到：API 與 MCP 都只聽本機（127.0.0.1）。</p>
+    <p><b>用 Docker 的話，連得到。</b>預設的 <code>docker-compose.yml</code> 會把 8501、8502 開在所有網卡上，同網段的人只要有 token 就能存取。不想這樣，把對應改成 <code>127.0.0.1:8501:8501</code>。</p>
+  </Row>
+
+  <h2 class="lg-group">這個網站</h2>
+  <Row level={3} id="ga" q="這個網站會記錄我嗎？" mark="cond">
+    <p>會。網站使用 Google Analytics（Google Tag <code>GT-WB2F3LB8</code>）統計瀏覽，這個 tag 與 wafflehouse.com.tw 共用，用來比對兩個網站之間的導流。Google 會收到你的 IP、瀏覽器資訊與 cookie。</p>
+  </Row>
+
+  <Row level={3} id="site-third-parties" q="還有哪些第三方？">
+    <ul>
+      <li><b>Google Fonts</b>：載入字型時，Google 會收到你的 IP。</li>
+      <li><b>GitHub API</b>：首頁會向 GitHub 查最新版號，每個分頁查一次。</li>
+      <li><b>Kit</b>：只有你在首頁填了訂閱表單，Email 才會送到 Kit。</li>
+    </ul>
+  </Row>
+
+  <Row level={3} id="contact" q="有問題找誰？">
+    <p>寫信到 <a href="mailto:better@wafflehouse.com.tw">better@wafflehouse.com.tw</a>。如果你在程式碼裡發現這頁沒寫到的連線，也請告訴我們，這頁會跟著改。</p>
+  </Row>
+</Ledger>

@@ -1,0 +1,65 @@
+---
+import Ledger from '../layouts/Ledger.astro';
+import Row from '../components/Row.astro';
+import Mark from '../components/Mark.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
+---
+<!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。
+     這頁的規則：做不到的寫在最前面，不藏在 FAQ 底下。 -->
+<Ledger id="limits" title="誠實清單" checked="2026-10-04"
+  lede="裝之前你應該先知道的事，包括它做不到的、要另外準備的，還有會比你預期慢的地方。"
+  description="arkiv 的系統需求與已知限制：僅 Apple Silicon、需自行安裝 FFmpeg 與 Ollama、安裝檔未簽章、沒有 NVIDIA 時轉錄很慢、非 OSI 開源授權。">
+
+  <p class="lg-key" slot="before">
+    <span><Mark kind="yes" />做得到</span>
+    <span><Mark kind="cond" />有條件</span>
+    <span><Mark kind="no" />做不到</span>
+  </p>
+
+  <h2 class="lg-group">平台</h2>
+  <Row level={3} id="intel" q="Intel Mac 能用嗎？" mark="no">
+    <p>不能。macOS 版只支援 Apple Silicon（M1 以後），沒有 Intel 版本。</p>
+  </Row>
+  <Row level={3} id="windows" q="Windows 能用嗎？" mark="yes">
+    <p>可以，x64，有 <code>.exe</code> 與 <code>.msi</code> 兩種安裝檔。沒有 NVIDIA 顯示卡的話請看下面「速度」那幾列。</p>
+  </Row>
+  <Row level={3} id="linux" q="Linux 呢？" mark="cond"
+    ev={`<a href="${GH}README.zh-TW.md">README：從原始碼安裝／Docker</a>`}>
+    <p>沒有安裝檔。可以從原始碼用 pip 裝，或用 Docker 跑。</p>
+  </Row>
+
+  <h2 class="lg-group">要另外準備的</h2>
+  <Row level={3} id="deps" q="下載安裝檔就能用了嗎？" mark="cond"
+    ev={`<a href="${base}/quickstart.html">安裝說明</a>`}>
+    <p>還差兩樣。安裝檔已經包好 Python 後端與 ML 套件，但 <b>FFmpeg</b>（抽幀、轉檔）和 <b>Ollama</b>（視覺模型、向量、助手）要你自己裝，並先把模型拉下來。第一次轉錄時也會自動下載 Whisper 模型，之後就不用再連網。</p>
+  </Row>
+  <Row level={3} id="unsigned" q="安裝檔有數位簽章嗎？" mark="no">
+    <p>還沒有。macOS 第一次開啟要用「右鍵 → 打開」，Windows 會跳一次 SmartScreen 提示，按「仍要執行」。之後開啟不會再出現。</p>
+  </Row>
+
+  <h2 class="lg-group">速度</h2>
+  <Row level={3} id="speed" q="看畫面要多久？" mark="cond"
+    ev={`M2 Max 實測：qwen2.5vl:7b 約 8 秒／格，qwen3-vl:8b 約 60 秒／格。<a href="${GH}config.py">config.py</a>`}>
+    <p>視覺分析是整條流程最慢的一步。以預設模型在 M2 Max 上算，<b>約 2,000 格要 3.5 小時</b>。一支 60 秒以上的素材通常會抽好幾格，所以大批匯入適合收工後丟著跑一晚。</p>
+  </Row>
+  <Row level={3} id="no-nvidia" q="Windows 沒有 NVIDIA|顯示卡呢？" mark="cond">
+    <p>轉錄預設走 CUDA，沒有 NVIDIA 會直接失敗。把環境變數 <code>ARKIV_WHISPER_DEVICE</code> 設成 <code>cpu</code> 就能跑，但處理時間以倍數計。Apple Silicon 走 MLX，不受影響。</p>
+  </Row>
+  <Row level={3} id="diarization" q="能分辨是誰在講話嗎？" mark="cond">
+    <p>可以，但預設關閉。要另外安裝套件、準備 Hugging Face token，而且轉錄時間大約變兩倍。</p>
+  </Row>
+
+  <h2 class="lg-group">授權與資料</h2>
+  <Row level={3} id="open-source" q="arkiv 是開源軟體嗎？" mark="no"
+    ev={`<a href="${GH}LICENSE">PolyForm Perimeter 1.0.1</a>`}>
+    <p>不是 OSI 定義的開源。原始碼公開（source-available），任何用途免費，包含商業接案；唯一不准的是拿它做成跟 arkiv 競爭的產品。我們不會把它寫成「開源」。</p>
+  </Row>
+  <Row level={3} id="projects" q="免費版有限制嗎？" mark="cond"
+    ev={`<a href="${base}/#tiers">首頁：免費版與 Pro</a>`}>
+    <p>免費版可以建 3 個專案。Pro 是 NT$3,000 一次買斷，專案數不限，並且可以跨專案一起搜。1.1.0 以前就在用的安裝，這兩項永久保留。</p>
+  </Row>
+  <Row level={3} id="old-subs" q="舊的素材庫|會自動套用新功能嗎？" mark="cond">
+    <p>不一定。例如 v1.2.0 的字幕依行寬斷行，只對新轉錄的素材生效，舊的要重新轉錄一次。這類情況會寫在<a href={`${base}/changelog.html`}>更新紀錄</a>裡。</p>
+  </Row>
+</Ledger>

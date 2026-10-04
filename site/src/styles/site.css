@@ -32,3 +32,9 @@
 .doc-index a{display:block;padding:16px 18px;border:1px solid var(--rule);border-radius:10px;text-decoration:none;color:var(--ink)}
 .doc-index a:hover{border-color:var(--rule-hi)}
 .doc-index small{display:block;color:var(--quiet);font-family:var(--ak-mono);font-size:12px;margin-top:2px}
+
+/* On a phone the eight links wrap to two or three lines; pinned, that strip
+   would cover an eighth of the screen on every scroll. */
+@media (max-width:760px){
+  .topnav{position:static}
+}

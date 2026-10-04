@@ -1,0 +1,30 @@
+---
+import Mark from './Mark.astro';
+// One ledger row: the reader's question on the left (a link to itself, so a
+// row can be shared by URL), the answer and its evidence on the right.
+interface Props {
+  id: string; q: string; mark?: 'yes' | 'no' | 'cond'; pin?: number; ev?: string;
+  // h3 on pages that group rows under h2 group headings.
+  level?: 2 | 3;
+  // A native-size crop of the demo screenshot: { src, w, h, alt } in CSS px.
+  shot?: { src: string; w: number; h: number; alt: string };
+}
+const { id, q, mark, pin, ev, level = 2, shot } = Astro.props;
+const H = level === 3 ? 'h3' : 'h2';
+// "|" in a question marks a phrase boundary. With word-break:keep-all the line
+// may only break there (or at punctuation), so CJK words are never split.
+const parts = q.split('|');
+---
+<div class="lg-row" id={id} data-pin={pin}>
+  <H class="lg-q">
+    {mark && <Mark kind={mark} />}
+    {pin && <span class="pin-no" aria-hidden="true">{pin}</span>}
+    <a href={`#${id}`}>{parts.map((t, i) => <>{i > 0 && <wbr />}{t}</>)}</a>
+  </H>
+  <div class="lg-a">
+    {shot && <img class="lg-shot" src={shot.src} width={shot.w} height={shot.h} alt={shot.alt} loading="lazy" decoding="async">}
+    <slot />
+    {ev && <p class="lg-ev" set:html={ev} />}
+    <slot name="ev" />
+  </div>
+</div>
