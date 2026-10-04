@@ -1,0 +1,28 @@
+---
+import Base from '../layouts/Base.astro';
+import Feedback from '../components/Feedback.astro';
+import '../styles/ledger.css';
+const GH = 'https://github.com/vulture-s/arkiv/issues';
+---
+<!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。 -->
+<Base title="回饋 · arkiv" description="告訴我們 arkiv 哪裡好用、哪裡卡住、還缺什麼。可以留 Email 等我們回覆，也可以匿名。" current="feedback">
+  <main class="lg">
+    <div class="wrap">
+      <header class="lg-head">
+        <h1 class="lg-title">回饋<span class="dot">.</span></h1>
+        <p class="lg-lede">哪裡好用、哪裡卡住、還缺什麼，都想聽。留 Email 我們會回，不留也可以。</p>
+      </header>
+      <Feedback variant="page" page="回饋頁" />
+      <div class="lg-rows" style="margin-top:48px">
+        <div class="lg-row" id="who-reads">
+          <h2 class="lg-q"><a href="#who-reads">誰會讀到？</a></h2>
+          <div class="lg-a"><p>開發者本人。每一則都會讀，有留 Email 的會回信。內容不會公開，也不會拿去做行銷。</p></div>
+        </div>
+        <div class="lg-row" id="bug">
+          <h2 class="lg-q"><a href="#bug">遇到 bug，怎麼寫最有用？</a></h2>
+          <div class="lg-a"><p>寫下你的作業系統、arkiv 版本、你做了什麼、預期會怎樣、實際發生什麼。有錯誤訊息就整段貼上。</p><p>如果你有 GitHub 帳號，也可以直接開 <a href={GH}>Issue</a>，其他使用者看得到進度。</p></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</Base>

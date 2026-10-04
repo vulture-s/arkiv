@@ -1,5 +1,6 @@
 ---
 import Base from './Base.astro';
+import Feedback from '../components/Feedback.astro';
 import '../styles/ledger.css';
 
 // Shared shell for the read pages. Order here is the reading order the pager follows.
@@ -29,6 +30,7 @@ const next = PAGES[i + 1];
       <div class="lg-rows">
         <slot />
       </div>
+      <Feedback page={title} />
       <nav class="lg-pager" aria-label="上一頁／下一頁">
         {prev && <a href={`${base}/${prev.id}.html`}><small>上一頁</small>{prev.label}</a>}
         {next

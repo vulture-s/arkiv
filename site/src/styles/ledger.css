@@ -108,3 +108,26 @@ html{scrollbar-color:var(--rule-hi) var(--bg)}
   .lg-pager .next{grid-column:1;text-align:left}
 }
 @media (prefers-reduced-motion:reduce){.pin,.pin-no{transition:none}.lg-row:target{animation:none}}
+
+/* feedback form (inline on ledger pages, full on /feedback.html) */
+.fb{padding:40px 0 8px}
+.fb-h{font-family:var(--ak-sans);font-size:clamp(19px,2.4vw,22px);font-weight:700;letter-spacing:-.01em;color:var(--ink);margin:0 0 16px}
+.fb-form{display:grid;gap:8px;max-width:640px}
+.fb-label{font-size:14px;color:var(--ink-2);margin-top:8px}
+.fb-opt{margin-left:10px;font-size:13px;color:var(--quiet)}
+.fb textarea,.fb input[type=email]{
+  width:100%;background:var(--surface-2);border:1px solid var(--rule-hi);border-radius:10px;
+  color:var(--ink);font:inherit;font-size:15px;line-height:1.6;padding:12px 14px;resize:vertical;
+}
+.fb textarea:focus-visible,.fb input[type=email]:focus-visible{outline:2px solid var(--cyan);outline-offset:1px;border-color:transparent}
+.fb ::placeholder{color:var(--quiet)}
+.fb-trap{position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
+.fb-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;margin-top:8px}
+.fb-btn{background:var(--invert);color:var(--invert-ink);border:0;border-radius:10px;padding:12px 26px;font:inherit;font-weight:600;font-size:15px;cursor:pointer}
+.fb-btn:hover{opacity:.9}
+.fb-btn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.fb-btn[disabled]{opacity:.5;cursor:default}
+.fb-status{font-size:14px;color:var(--ink-2);min-height:1.4em}
+.fb-status.ok{color:var(--cyan)}
+.fb-status.bad{color:#e2686d}
+.fb-fallback{font-size:16px;color:var(--ink-2);padding:24px 0}
