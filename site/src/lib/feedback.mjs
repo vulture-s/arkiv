@@ -3,6 +3,6 @@
 // that inbox. Empty = every feedback form stays out of the build: the per-page
 // block disappears and /feedback.html shows the mail address instead. A form
 // that cannot deliver is worse than no form.
-export const WEB3FORMS_KEY = '';
+export const WEB3FORMS_KEY = '7092e3a2-55c0-4a83-a707-c29910554d61';
 export const FEEDBACK_ENDPOINT = 'https://api.web3forms.com/submit';
 export const FEEDBACK_MAIL = 'better@wafflehouse.com.tw';
