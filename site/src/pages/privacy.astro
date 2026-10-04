@@ -40,10 +40,10 @@ const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
     <p>這三種都只是下載公開檔案，不會送出你的任何資料。說話者分離（預設關閉）開啟時，會用你的 Hugging Face token 下載它需要的模型。</p>
   </Row>
 
-  <Row level={3} id="listen" q="同一個網路裡的人|連得到我的素材庫嗎？" mark="cond"
-    ev="桌面 App：API 127.0.0.1:8501，MCP 127.0.0.1:8502。Docker：docker-compose.yml 對外發佈 8501、8502。">
-    <p>用桌面 App 的話，連不到：API 與 MCP 都只聽本機（127.0.0.1）。</p>
-    <p><b>用 Docker 的話，連得到。</b>預設的 <code>docker-compose.yml</code> 會把 8501、8502 開在所有網卡上，同網段的人只要有 token 就能存取。不想這樣，把對應改成 <code>127.0.0.1:8501:8501</code>。</p>
+  <Row level={3} id="listen" q="同一個網路裡的人|連得到我的素材庫嗎？" mark="yes"
+    ev="桌面 App：API 127.0.0.1:8501，MCP 127.0.0.1:8502。Docker：docker-compose.yml 預設發佈在 127.0.0.1，由 ARKIV_BIND_HOST 控制。">
+    <p>預設連不到。桌面 App 的 API 與 MCP 都只聽本機（127.0.0.1）；Docker 版從 2026-10 起，對外的埠也預設只綁本機。</p>
+    <p>如果你就是要讓別台電腦連進來（例如區網裡的 MCP），用 Docker 啟動時加上 <code>ARKIV_BIND_HOST=0.0.0.0</code>。打開之後，同網段的人只要有 token 就能存取，請自己保管好 token。</p>
   </Row>
 
   <h2 class="lg-group">這個網站</h2>

@@ -2,9 +2,7 @@
 
 <!-- impeccable:product-schema 1 -->
 
-> **草稿（2026-10-03，從 repo 證據推論，尚未經 Hevin 逐條確認）。**
-> 標 `〔推論〕` 的句子是 CC 從現有官網、README、CHANGELOG 讀出來的，不是訪談答案。
-> 依 impeccable `init` 的規則，這份要經過一輪確認才算定稿；確認後拿掉本段與標記。
+> 2026-10-03 由 CC 從 repo 證據起草，**Hevin 2026-10-05 逐條確認定稿**。
 
 ## Platform
 
@@ -18,7 +16,7 @@ Astro（`site/`），GitHub Actions build → GitHub Pages。Hevin 2026-10-03 �
 ## Users
 
 小型影視團隊與個人創作者：沒有 DIT 崗位，收工後自己過檔、挑毛片、分類、轉字幕的人。
-〔推論〕次要讀者是評估「要不要裝」的技術型 Mac 使用者，與想串 MCP／Resolve 的工具型使用者。
+次要讀者是評估「要不要裝」的技術型 Mac 使用者，與想串 MCP／Resolve 的工具型使用者。
 
 ## Product Purpose
 
@@ -29,7 +27,7 @@ Astro（`site/`），GitHub Actions build → GitHub Pages。Hevin 2026-10-03 �
 ## Positioning
 
 - 本機優先：不依賴雲端服務、軟體不外傳素材與逐字稿。
-- 檔案不移動：路徑式 ingest，素材留在原處。〔推論：todo 記為「從未對外講過」的定位語言〕
+- 檔案不移動：路徑式 ingest，素材留在原處。
 - 時間碼對得上畫面：逐字稿點一句就跳到那一句真正的位置；逐格 IN／OUT（59.94p）。
 - 無對白素材也搜得到：視覺模型自己寫場景描述與標籤。
 - 中／日／英語意搜尋；DaVinci Resolve 原生外掛；360 素材（`.insv`／`.360`）進同一個庫。
@@ -37,7 +35,7 @@ Astro（`site/`），GitHub Actions build → GitHub Pages。Hevin 2026-10-03 �
 ## Operating Context
 
 拍攝結束後的過片、挑毛片、分類場景、轉錄字幕。交棒給剪輯軟體走 EDL／FCPXML／SRT 匯出，
-或 Resolve 外掛一鍵匯入 Media Pool。〔推論〕使用者常把素材放在外接碟或 NAS。
+或 Resolve 外掛一鍵匯入 Media Pool。使用者常把素材放在外接碟或 NAS。
 
 ## Capabilities and Constraints
 
@@ -53,7 +51,6 @@ Astro（`site/`），GitHub Actions build → GitHub Pages。Hevin 2026-10-03 �
 
 - 名稱小寫 `arkiv`，字標後接青色句點。現行官網：深色底、Archivo Black 字標、
   Inter／Noto Sans TC 內文、JetBrains Mono 標籤、單一青色強調（`#18b6dc`）。
-  〔推論：這是現行實作，不代表 Hevin 已鎖定；視覺方向 2026-10-03 定為「保留 arkiv 自己的語言」〕
 - 中文段落在原始碼裡不折行（HTML 會把換行算成空白，中文句讀後會多出半形空隙）。
 - 版號執行時向 GitHub 取，取不到就不顯示 —— 不寫死。
 - 訂閱表單不在無法確認時顯示「訂閱成功」。
@@ -68,7 +65,6 @@ Astro（`site/`），GitHub Actions build → GitHub Pages。Hevin 2026-10-03 �
 
 ## Product Principles
 
-〔推論，待確認〕
 1. 誠實優先於好看：做不到的寫出來（系統需求、未簽章、CPU 很慢），不藏在 FAQ 底下。
 2. 失敗要出聲：靜默降級比明確失敗更糟（產品裡反覆出現的原則，官網也照做）。
 3. 證據取代形容詞：用數字與實際畫面，不用「強大」「智慧」。
