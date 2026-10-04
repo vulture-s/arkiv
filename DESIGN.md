@@ -9,8 +9,7 @@ colors:
   rule-hi: "#3a3a3f"
   ink: "#f3f2ee"
   ink-2: "#b6b5b0"
-  quiet: "#6a6a6d"
-  lg-dim: "#8a8a8e"
+  quiet: "#8a8a8e"
   invert: "#f3f2ee"
   invert-ink: "#0a0a0c"
   cyan: "#18b6dc"
@@ -112,7 +111,7 @@ components:
     typography: "{typography.body}"
     width: "68ch"
   ledger-evidence:
-    textColor: "{colors.lg-dim}"
+    textColor: "{colors.quiet}"
     typography: "{typography.evidence}"
   pin:
     backgroundColor: "{colors.cyan}"
@@ -157,14 +156,13 @@ arkiv 的官網是一本攤開在剪輯台旁的深色場記本：近黑的底�
 - **Hairline Strong** (`rule-hi`): 群組標題上緣、ghost 按鈕與徽章外框、步驟列表左軸、上下頁頂線。
 - **Paper Ink** (`ink`): 標題、問題、粗體、主要文字。
 - **Pencil** (`ink-2`): 內文、答案段落、導覽連結、「有條件」記號（17.7:1 與 9.6:1 對地面）。
-- **Ledger Dim** (`lg-dim`): 內頁所有可讀的小字：證據行、實查日期、圖說、圖例、上下頁小標（5.8:1）。宣告於 `.lg` 範圍，不在 `:root`。
-- **Graphite** (`quiet`): 3.7:1，只夠當線與非文字元素；見下方規則。
+- **Graphite** (`quiet`): 全站可讀的小字：證據行、實查日期、圖說、圖例、上下頁小標、頁尾、表頭（5.8:1 on `bg`，5.4:1 on `surface`）。2026-10-04 從 #6a6a6d（3.7:1）調亮，原內頁專用的 `lg-dim` 併入。
 - **Invert / Invert Ink** (`invert`, `invert-ink`): 實心按鈕與圖釘的反白組合，數值同 `ink` 與 `bg`。
 
 ### Named Rules
 **The One Pen Rule.** 只有一支彩色筆。青色標記「可操作」或「是」；不要引入第二個強調色，紅色不是強調而是否定。
 
-**The Readable Gray Rule.** 任何要被閱讀的小字至少用 `lg-dim`（5.8:1）。`quiet`（3.7:1）不得再用於新文字。
+**The Readable Gray Rule.** 任何要被閱讀的小字最暗只能到 `quiet`（5.8:1）。不准為了「更低調」再引入比它暗的文字色；WCAG AA 是 PRODUCT.md 的承諾。
 
 ## Typography
 
@@ -260,14 +258,14 @@ arkiv 的官網是一本攤開在剪輯台旁的深色場記本：近黑的底�
 ### Do:
 - **Do** 用問題／答案／證據的列來寫內頁，每列有 id 並可用 hash 分享。
 - **Do** 狀態用 Mark 元件的繪製 SVG（勾／叉／三角），配 `aria-label`。
-- **Do** 內頁小字用 `lg-dim`；證據行用 JetBrains Mono 12.5px。
+- **Do** 小字用 `quiet`；證據行用 JetBrains Mono 12.5px。
 - **Do** 中文標題用 `'Archivo Black','Noto Sans TC',sans-serif` 900，並在詞組邊界標 `<wbr>`。
 - **Do** 讓青色保持唯一強調；紅色只表示否定或錯誤。
 - **Do** 動態只用在狀態回饋（按鈕、圖釘、被分享列），並尊重 `prefers-reduced-motion`。
 
 ### Don't:
 - **Don't** 在內頁用卡片、色塊框或「標題＋三張卡片＋CTA」。
-- **Don't** 用 `quiet`（#6a6a6d，3.7:1）排可讀文字。
+- **Don't** 用比 `quiet` 更暗的灰（例如舊值 #6a6a6d，3.7:1）排可讀文字。
 - **Don't** 用 ✓✕ 等字元當狀態圖示；用繪製 SVG。
 - **Don't** 在原始碼裡折行中文段落。
 - **Don't** 加入陰影來表現層次；圖釘是唯一例外。

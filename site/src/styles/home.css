@@ -4,7 +4,10 @@
   --ak-mono:'JetBrains Mono',ui-monospace,monospace;
   --bg:#0a0a0c; --surface:#111114; --surface-2:#17171a;
   --rule:#26262a; --rule-hi:#3a3a3f;
-  --ink:#f3f2ee; --ink-2:#b6b5b0; --quiet:#6a6a6d;
+  --ink:#f3f2ee; --ink-2:#b6b5b0;
+  /* Small gray text. Was #6a6a6d (3.7:1 on --bg, fails WCAG AA); #8a8a8e is
+     5.8:1 on --bg and 5.4:1 on --surface. Every use of --quiet is text. */
+  --quiet:#8a8a8e;
   --invert:#f3f2ee; --invert-ink:#0a0a0c; --cyan:#18b6dc;
 }
 *{margin:0;padding:0;box-sizing:border-box}

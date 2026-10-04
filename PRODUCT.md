@@ -76,4 +76,4 @@ Astro（`site/`），GitHub Actions build → GitHub Pages。Hevin 2026-10-03 �
 
 ## Accessibility & Inclusion
 
-繁體中文為主要語言，英文走 README。〔推論〕對比與鍵盤操作依 WCAG AA。
+繁體中文為主要語言，英文走 README。對比與鍵盤操作依 WCAG AA（Hevin 2026-10-04 確認；當天首頁灰字從 3.7:1 調到 5.8:1）。

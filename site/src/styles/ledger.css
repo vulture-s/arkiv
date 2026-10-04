@@ -2,12 +2,7 @@
    One shape: a question column and an answer column, row by row, like a
    script supervisor's notebook. Tokens come from home.css. */
 
-.lg{
-  /* --quiet (#6a6a6d) is 3.7:1 on the ground — fine for rules, too low for
-     text. Every readable small line on these pages uses this instead (5.8:1). */
-  --lg-dim:#8a8a8e;
-  padding:64px 0 24px
-}
+.lg{padding:64px 0 24px}
 .lg .wrap{max-width:960px}
 .lg-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 32px;align-items:end;padding-bottom:40px}
 /* Archivo Black has no CJK: without Noto Sans TC 900 next in the stack the
@@ -15,10 +10,10 @@
 .lg-title{font-family:'Archivo Black','Noto Sans TC',sans-serif;font-weight:900;font-size:clamp(40px,6.4vw,64px);line-height:1;letter-spacing:-.03em;color:var(--ink);text-wrap:balance}
 .lg-title .dot{color:var(--cyan)}
 .lg-lede{grid-column:1 / -1;margin-top:20px;max-width:52ch;font-size:clamp(18px,2.4vw,21px);line-height:1.6;color:var(--ink);word-break:keep-all;overflow-wrap:anywhere}
-.lg-checked{font-family:var(--ak-mono);font-size:12px;color:var(--lg-dim);white-space:nowrap;padding-bottom:6px}
+.lg-checked{font-family:var(--ak-mono);font-size:12px;color:var(--quiet);white-space:nowrap;padding-bottom:6px}
 .lg-checked time{color:var(--ink-2)}
 
-.lg-key{display:flex;flex-wrap:wrap;gap:8px 24px;margin:-12px 0 32px;font-size:13.5px;color:var(--lg-dim)}
+.lg-key{display:flex;flex-wrap:wrap;gap:8px 24px;margin:-12px 0 32px;font-size:13.5px;color:var(--quiet)}
 .lg-key span{display:inline-flex;align-items:center;gap:8px}
 
 /* rows */
@@ -43,7 +38,7 @@
 .lg-a ul,.lg-a ol{padding-left:1.25em}
 .lg-a li + li{margin-top:6px}
 .lg-a code{font-family:var(--ak-mono);font-size:.86em;color:var(--ink);background:var(--surface-2);border:1px solid var(--rule);border-radius:4px;padding:1px 5px;overflow-wrap:anywhere}
-.lg-ev{font-family:var(--ak-mono);font-size:12.5px;line-height:1.6;color:var(--lg-dim);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.lg-ev{font-family:var(--ak-mono);font-size:12.5px;line-height:1.6;color:var(--quiet);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .lg-ev a{color:var(--ink-2);text-decoration-color:var(--rule-hi);text-underline-offset:3px}
 .lg-ev a:hover{color:var(--cyan)}
 
@@ -78,7 +73,7 @@
 }
 .pin:hover,.pin.on{transform:translate(-50%,-50%) scale(1.25);background:var(--ink)}
 .pin:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-.lg-fig figcaption{margin-top:12px;font-size:13.5px;color:var(--lg-dim)}
+.lg-fig figcaption{margin-top:12px;font-size:13.5px;color:var(--quiet)}
 .lg-shot{display:block;max-width:100%;height:auto;border:1px solid var(--rule);border-radius:6px;margin-bottom:16px}
 .pin-no{
   flex:0 0 auto;display:grid;place-items:center;width:24px;height:24px;margin-top:1px;border-radius:50%;
@@ -91,7 +86,7 @@
 .lg-pager{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:40px 0 24px}
 .lg-pager a{display:block;padding:18px 0;text-decoration:none;color:var(--ink);border-top:1px solid var(--rule-hi)}
 .lg-pager a:hover{border-top-color:var(--cyan)}
-.lg-pager small{display:block;font-size:12.5px;color:var(--lg-dim);margin-bottom:2px}
+.lg-pager small{display:block;font-size:12.5px;color:var(--quiet);margin-bottom:2px}
 .lg-pager .next{text-align:right;grid-column:2}
 .lg-cta{display:flex;flex-wrap:wrap;gap:12px;padding:16px 0 56px}
 
