@@ -153,6 +153,9 @@ ARKIV_MCP_ALLOWED_HOSTS=192.168.1.50:8502 \
 python mcp_http_server.py            # or: the arkiv-mcp service in docker compose
 ```
 
+With docker compose, the ports are published on `127.0.0.1` by default. Start it with
+`ARKIV_BIND_HOST=0.0.0.0 docker compose up -d` to make them reachable from other machines.
+
 Point your MCP client at `http://<host>:8502/sse` with an `Authorization: Bearer <token>`
 header. Tokens are the same ones the REST API uses, so revoking one revokes it everywhere.
 

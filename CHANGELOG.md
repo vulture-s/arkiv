@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Docker：對外埠改成預設只綁本機（127.0.0.1）。**
+原本 `docker-compose.yml` 把 8501（API）、8502（MCP）、11434（Ollama）開在所有網卡上，
+同一個區網的人拿到 token 就能讀素材庫，Ollama 則是誰都能用。
+
+🔴 **如果你是從別台機器連 Docker 裡的 arkiv**（例如區網 MCP、另一台電腦開網頁），
+升級後要加一個環境變數才連得到：`ARKIV_BIND_HOST=0.0.0.0 docker compose up -d`。
+只在同一台電腦上用的人不受影響。
+
 ## v1.3.0 - 2026-09-05
 
 **如果你的素材庫裡有 JPEG，它們一直是半盲的。**
