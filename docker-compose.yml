@@ -4,7 +4,13 @@ services:
   arkiv:
     build: .
     ports:
-      - "8501:8501"
+      # Published on 127.0.0.1 only. Docker's default ("8501:8501") binds every host
+      # interface, so anyone on the LAN could reach the library API with a token
+      # (on Linux, Docker's iptables rules also route around ufw). To serve other
+      # machines on purpose, start with ARKIV_BIND_HOST=0.0.0.0 — every published
+      # port in this file follows it. Containers reach each other on the compose network,
+      # not through these host ports, so this changes nothing between them.
+      - "${ARKIV_BIND_HOST:-127.0.0.1}:8501:8501"
     volumes:
       - ./media.db:/app/media.db
       - ./chroma_db:/app/chroma_db
@@ -101,7 +107,7 @@ services:
     # source. Tag kept for readability, digest authoritative; refresh via dependabot.
     image: ollama/ollama:latest@sha256:10c13eb515db310990527d36ca14a136da4bcc0fbf2bf3b15e9c1f111e9d3cd4
     ports:
-      - "11434:11434"
+      - "${ARKIV_BIND_HOST:-127.0.0.1}:11434:11434"  # Ollama has no auth at all; see the arkiv service ports note
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
@@ -135,7 +141,7 @@ services:
     build: .
     command: ["python", "mcp_http_server.py"]
     ports:
-      - "8502:8502"
+      - "${ARKIV_BIND_HOST:-127.0.0.1}:8502:8502"  # see the arkiv service ports note
     volumes:
       # 🔴 chroma_db is NOT :ro. chromadb 1.5.5 cannot open a read-only persist
       # dir — it raises `attempt to write a readonly database` — and
