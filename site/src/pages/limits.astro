@@ -30,9 +30,23 @@ const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
   </Row>
 
   <h2 class="lg-group">要另外準備的</h2>
-  <Row level={3} id="deps" q="下載安裝檔就能用了嗎？" mark="cond"
-    ev={`<a href="${base}/quickstart.html">安裝說明</a>`}>
-    <p>還差兩樣。安裝檔已經包好 Python 後端與 ML 套件，但 <b>FFmpeg</b>（抽幀、轉檔）和 <b>Ollama</b>（視覺模型、向量、助手）要你自己裝，並先把模型拉下來。第一次轉錄時也會自動下載 Whisper 模型，之後就不用再連網。</p>
+  <Row level={3} id="deps" q="下載安裝檔|就能用了嗎？" mark="cond"
+    ev={`完整步驟：<a href="${base}/quickstart-mac.html">macOS 安裝說明</a>・<a href="${base}/quickstart-windows.html">Windows 安裝說明</a>`}>
+    <p>安裝檔已經包好 Python 後端與 ML 套件，但 <b>FFmpeg</b>（抽幀、轉檔）和 <b>Ollama</b>（視覺模型、向量、助手）兩套工具需要你額外自己裝，並先把模型拉下來。第一次轉錄時也會自動下載 Whisper 模型，往後工具就不必連網就能使用。</p>
+    <p class="lg-sub">macOS（打開「終端機」，需先安裝 <a href="https://brew.sh/">Homebrew</a>）</p>
+    <pre><code>brew install ollama ffmpeg exiftool
+brew services start ollama
+ollama pull bge-m3
+ollama pull qwen2.5vl:7b
+ollama pull qwen2.5:14b</code></pre>
+    <p class="lg-sub">Windows（打開 PowerShell；Ollama 裝好後從開始選單開一次，它會留在背景執行）</p>
+    <pre><code>winget install Ollama.Ollama
+winget install Gyan.FFmpeg
+winget install OliverBetz.ExifTool
+ollama pull bge-m3
+ollama pull qwen2.5vl:7b
+ollama pull qwen2.5:14b</code></pre>
+    <p>三個模型合計約 15 GB，只需要下載一次。ExifTool 是選裝的，用來讀機型、鏡頭、拍攝時間；沒裝也能用，只是少了這些資訊。</p>
   </Row>
   <Row level={3} id="unsigned" q="安裝檔有數位簽章嗎？" mark="no">
     <p>還沒有。macOS 第一次開啟要用「右鍵 → 打開」，Windows 會跳一次 SmartScreen 提示，按「仍要執行」。之後開啟不會再出現。</p>

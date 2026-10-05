@@ -38,6 +38,9 @@
 .lg-a ul,.lg-a ol{padding-left:1.25em}
 .lg-a li + li{margin-top:6px}
 .lg-a code{font-family:var(--ak-mono);font-size:.86em;color:var(--ink);background:var(--surface-2);border:1px solid var(--rule);border-radius:4px;padding:1px 5px;overflow-wrap:anywhere}
+.lg-sub{font-size:13.5px;color:var(--ink-2);font-weight:600;margin-bottom:-4px}
+.lg-a pre{background:var(--bg);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;overflow-x:auto}
+.lg-a pre code{background:none;border:0;padding:0;font-size:13px;line-height:1.7;color:var(--ink)}
 .lg-ev{font-family:var(--ak-mono);font-size:12.5px;line-height:1.6;color:var(--quiet);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .lg-ev a{color:var(--ink-2);text-decoration-color:var(--rule-hi);text-underline-offset:3px}
 .lg-ev a:hover{color:var(--cyan)}
