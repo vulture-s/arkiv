@@ -3,7 +3,7 @@
    script supervisor's notebook. Tokens come from home.css. */
 
 .lg{padding:64px 0 24px}
-.lg .wrap{max-width:960px}
+.lg .wrap{max-width:1200px}
 .lg-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 32px;align-items:end;padding-bottom:40px}
 /* Archivo Black has no CJK: without Noto Sans TC 900 next in the stack the
    title falls to the platform face at 400 and loses the display voice. */

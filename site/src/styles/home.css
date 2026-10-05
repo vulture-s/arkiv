@@ -17,7 +17,7 @@ body{
   font-family:var(--ak-sans); font-feature-settings:'ss01','cv11','tnum';
   line-height:1.7; -webkit-font-smoothing:antialiased;
 }
-.wrap{max-width:960px;margin:0 auto;padding:0 24px}
+.wrap{max-width:1200px;margin:0 auto;padding:0 24px}
 section{padding:72px 0;border-bottom:1px solid var(--rule)}
 section:last-of-type{border-bottom:0}
 h2{font-size:clamp(20px,3.2vw,26px);font-weight:600;letter-spacing:-.01em;margin-bottom:28px}
