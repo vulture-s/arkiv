@@ -10,7 +10,7 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 用它產出的成品永遠是你的。公益工作要用核心，不需要向我們申請任何東西。
 
 要收費的只有一個東西：**Pro 附加元件**（無限專案 + 跨專案聚合，NT$3,000 買斷）。
-免費核心規劃的額度為 3 個專案（**現行版本尚未實施此限制**，詳見下方說明）。
+免費核心的額度為 3 個專案（**自 1.1.0 起實施**，詳見下方說明）。
 長期經營的紀錄片團隊、地方影像資料庫與口述歷史計畫，通常會超出此一額度。
 
 **公益方案就是為這種情況設的：只要你做的是有公共價值的影像工作，這個附加元件我們免費提供，
@@ -18,9 +18,9 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 
 素材的知識層——「拍過的東西找得回來、可重複使用」——不該只有大製作用得起。
 
-> **現況說明**：目前已發布的任何 arkiv 版本，都**不限制專案數、也未保留跨專案聚合功能**。
-> 免費額度將自未來某一版起對**新安裝**生效；在該版之前已在使用的素材庫永久不受限制。
-> 因此若你現在就開始用，實際上還不需要這個方案 —— 但先申請、先入列也可以，grant 是終身的。
+> **現況說明**：免費額度（3 個專案、不含跨專案聚合）**自 1.1.0 起對新安裝生效**。
+> 在 1.1.0 之前就已在使用的素材庫，永久保留無限專案數與跨專案聚合兩項功能，不需要申請。
+> 1.0.0 及更早的版本完全不執行此額度。
 
 ## 誰適合申請（例示，非窮舉）
 
@@ -34,7 +34,7 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 ## 什麼不在這個方案裡
 
 - 純商業廣告、品牌行銷、企業形象片。此類用途使用 arkiv 不受任何限制（授權本即允許），
-  惟日後專案數超過免費額度時，請循一般管道購買 Pro 附加元件。
+  惟專案數超過免費額度時，請循一般管道購買 Pro 附加元件。
 - 把 arkiv（或其 fork）當產品／服務**販售、架站、重新包裝**——這在任何情況都不允許，
   [授權正文](LICENSE)的 Noncompete 與 Competition 兩節已明訂。
 - 「有社會意義」的空泛主張但實質是商業專案——我們保留逐案判斷、婉拒的權利。
@@ -76,8 +76,8 @@ arkiv itself is free to use for **any** purpose under the
 with it is always yours. Public-interest work needs no permission from us to use the core.
 
 Only one thing costs money: the **Pro add-on** (unlimited projects and cross-project
-aggregation, NT$3,000 one time). The free tier is planned at 3 projects — **no shipped
-version enforces this yet** — an allowance that long-running documentary teams, community
+aggregation, NT$3,000 one time). The free tier is 3 projects — **enforced since
+1.1.0** — an allowance that long-running documentary teams, community
 media archives, and oral-history projects outgrow quickly.
 
 **The Public-Interest Program exists for exactly that case: if the work you're doing serves
@@ -86,11 +86,10 @@ the public interest, we grant the add-on for free, perpetually.**
 The knowledge layer over footage — being able to find and reuse what you already shot —
 shouldn't be something only big productions can afford.
 
-> **Current status**: no released version of arkiv caps projects or withholds cross-project
-> aggregation. The free allowance will apply to **new installations** from a future release
-> onward; libraries already in use before then are permanently unrestricted. If you are
-> starting now you do not yet need this programme — applying early is still fine, as grants
-> are perpetual.
+> **Current status**: the free allowance (3 projects, no cross-project aggregation) has applied
+> to **new installations since 1.1.0**. Libraries already in use before 1.1.0 permanently keep
+> unlimited projects and cross-project aggregation — no application needed. 1.0.0 and earlier
+> do not enforce the allowance at all.
 
 ## Who can apply (examples, not exhaustive)
 
