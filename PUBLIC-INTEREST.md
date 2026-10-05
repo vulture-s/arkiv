@@ -42,7 +42,7 @@ arkiv 軟體本身依 [PolyForm Perimeter 授權](LICENSE)**任何用途皆免�
 ## 怎麼申請
 
 1. 開一個 [GitHub Issue](https://github.com/vulture-s/arkiv/issues)，標題加上 `[public-interest]`；
-   或 IG 私訊 [@vulture.s](https://www.instagram.com/vulture.s/)。
+   或寫信到 [better@wafflehouse.com.tw](mailto:better@wafflehouse.com.tw)。
 2. 簡述你的專案：**做什麼、給誰看、由誰製作、有無商業成分**。不用寫長，三五句講清楚即可。
 3. 我們逐案人工看，通常幾天內回覆。
 
@@ -118,7 +118,7 @@ shouldn't be something only big productions can afford.
 ## How to apply
 
 1. Open a [GitHub Issue](https://github.com/vulture-s/arkiv/issues) with `[public-interest]`
-   in the title, or DM [@vulture.s](https://www.instagram.com/vulture.s/) on Instagram.
+   in the title, or email [better@wafflehouse.com.tw](mailto:better@wafflehouse.com.tw).
 2. Briefly describe your project: **what it is, who it's for, who's making it, and whether it
    has commercial elements.** A few sentences is enough.
 3. We review each request by hand, usually within a few days.
