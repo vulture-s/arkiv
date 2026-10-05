@@ -183,15 +183,24 @@ import Base from '../layouts/Base.astro';
         <tr><td>商業使用</td><td><b>✓</b></td><td class="pro"><b>✓</b></td></tr>
         <tr><td>專案數</td><td><b>3 個</b><br><span class="future">1.1.0 前已在使用的安裝：不限</span></td><td class="pro"><b>無限</b></td></tr>
         <tr><td>跨專案聚合搜尋</td><td><b>—</b><br><span class="future">1.1.0 前已在使用的安裝：保留</span></td><td class="pro"><b>✓</b></td></tr>
-        <tr class="price"><td>價格</td><td><b class="amt">NT$0</b></td><td class="pro"><b class="amt">NT$3,000</b><span class="once">一次買斷</span>
-          <a class="btn buy" href="https://wafflehouse.com.tw/product/arkiv-pro/">購買 Pro<small>3 個工作天內寄送授權檔</small></a></td></tr>
+        <tr class="price"><td>價格</td><td><b class="amt">NT$0</b></td><td class="pro"><b class="amt">NT$3,000</b><span class="once">一次買斷</span></td></tr>
       </tbody>
     </table>
-    <ul class="buy-terms">
-      <li>由立凡科技有限公司銷售，付款後 3 個工作天內以 Email 寄送具名授權檔。</li>
-      <li>數位內容交付後恕不退款，詳見<a href="https://github.com/vulture-s/arkiv/blob/main/docs/pro-addon-license.md">授權條款</a>。</li>
-      <li>紀錄片、非營利、檔案保存與公共教育類製作，可循<a href="https://github.com/vulture-s/arkiv/blob/main/PUBLIC-INTEREST.md">公益方案</a>免費申請。</li>
-    </ul>
+    <!-- 購買框沿用「實際運作規模」的 .proof 形式（Hevin 2026-10-05 指定）。 -->
+    <div class="proof buy-box">
+      <div class="buy-main">
+        <div>
+          <div class="big">NT$3,000 <span class="buy-unit">arkiv Pro</span></div>
+          <p>一次買斷、終身有效，無訂閱。<b style="color:var(--ink-2)">專案數不限，可以跨專案一起搜尋</b>；維護期間的更新不另收費。</p>
+        </div>
+        <a class="btn buy" href="https://wafflehouse.com.tw/product/arkiv-pro/">購買 Pro<small>3 個工作天內寄送授權檔</small></a>
+      </div>
+      <ul class="buy-terms">
+        <li>由立凡科技有限公司銷售，付款後 3 個工作天內以 Email 寄送具名授權檔。</li>
+        <li>數位內容交付後恕不退款，詳見<a href="https://github.com/vulture-s/arkiv/blob/main/docs/pro-addon-license.md">授權條款</a>。</li>
+        <li>紀錄片、非營利、檔案保存與公共教育類製作，可循<a href="https://github.com/vulture-s/arkiv/blob/main/PUBLIC-INTEREST.md">公益方案</a>免費申請。</li>
+      </ul>
+    </div>
     <p class="tier-note">免費額度自 <b style="color:var(--ink)">1.1.0</b> 起生效，<b style="color:var(--ink)">只對新安裝</b>。<b style="color:var(--ink)">在 1.1.0 之前已在使用的安裝，永久保留無限專案數與跨專案聚合兩項功能</b>，這項承諾已寫入軟體：素材庫在初次使用時就記錄了版本，判定依該紀錄而非事後推測。1.0.0 及更早的版本完全不執行此額度。</p>
   </div>
 </section>

@@ -88,19 +88,22 @@ th{font-size:12px;font-family:var(--ak-mono);letter-spacing:.12em;text-transform
 td:first-child{color:var(--ink-2)}
 td b{color:var(--ink)}
 .soon{display:inline-block;font-family:var(--ak-mono);font-size:11px;color:var(--invert-ink);background:var(--ink-2);border-radius:4px;padding:2px 7px;margin-left:8px;vertical-align:middle}
-/* Pro column: the column you can buy carries its own ground, the header is
-   inverted, and the price cell holds the one cyan-filled button on the page —
-   the purchase used to be a text link in the table's last cell. */
+/* Pro column + purchase box. The table only compares; buying lives in its own
+   box under it, in the same .proof form as 實際運作規模 (Hevin 2026-10-05). */
 .tiers th.pro{background:var(--invert);color:var(--invert-ink);font-weight:600;border-radius:8px 8px 0 0}
 .tiers td.pro{background:var(--surface)}
-.tiers tr.price td{vertical-align:top;padding-top:18px;padding-bottom:20px;border-bottom:0}
+.tiers tr.price td{border-bottom:0}
 .tiers tr.price td.pro{border-radius:0 0 8px 8px}
-.tiers .amt{font-family:var(--ak-mono);font-size:clamp(20px,3vw,24px);font-weight:500;letter-spacing:-.02em}
-.tiers .once{display:block;font-size:13px;color:var(--ink-2);margin:2px 0 14px}
-.btn.buy{background:var(--cyan);color:var(--invert-ink);padding:14px 26px;font-size:16px}
+.tiers .amt{font-family:var(--ak-mono);font-weight:500;letter-spacing:-.02em}
+.tiers .once{margin-left:8px;font-size:13px;color:var(--ink-2)}
+.buy-box{margin-top:28px}
+.buy-main{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px 32px}
+.buy-main > div{flex:1 1 320px}
+.buy-unit{font-family:var(--ak-sans);font-size:15px;font-weight:600;color:var(--ink-2);letter-spacing:0;margin-left:10px}
+.btn.buy{background:var(--cyan);color:var(--invert-ink);padding:14px 28px;font-size:16px;flex:0 0 auto}
 .btn.buy small{opacity:.78}
 .btn.buy:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
-.buy-terms{list-style:none;margin-top:20px;display:grid;gap:6px;font-size:14px;color:var(--quiet)}
+.buy-terms{list-style:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--rule);display:grid;gap:6px;font-size:13.5px;color:var(--quiet)}
 .buy-terms li{padding-left:14px;position:relative}
 .buy-terms li::before{content:"";position:absolute;left:0;top:.75em;width:6px;height:1px;background:var(--rule-hi)}
 .tier-note{margin-top:20px;font-size:14px;color:var(--quiet)}
@@ -135,7 +138,7 @@ footer a:hover{color:var(--cyan)}
 .foot-links{margin-bottom:20px}
 
 @media (max-width:600px){
-  .btn.buy{display:flex;padding:12px 14px;font-size:15px}
+  .btn.buy{width:100%}
   section{padding:56px 0}
   .hero{padding:64px 0 56px}
   .lic{padding:24px 20px}
