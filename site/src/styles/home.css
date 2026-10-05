@@ -57,7 +57,15 @@ a{color:var(--cyan)}
 /* product shot */
 .shot-sec{padding:72px 0}
 .shot{margin:0}
-.shot img{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:12px}
+.shot img,.shot video{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:12px;background:var(--surface)}
+.tour-steps{list-style:none;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin-top:14px}
+.tour-steps button{width:100%;height:100%;text-align:left;display:flex;gap:8px;align-items:baseline;background:none;border:0;border-top:2px solid var(--rule);padding:10px 2px 0;color:var(--quiet);font:inherit;font-size:13px;line-height:1.5;cursor:pointer;transition:color .2s,border-color .2s}
+.tour-steps .ts-n{font-family:var(--ak-mono);font-size:11px;flex:0 0 auto}
+.tour-steps button:hover{color:var(--ink-2)}
+.tour-steps li.on button{color:var(--ink);border-top-color:var(--cyan)}
+.tour-steps li.on .ts-n{color:var(--cyan)}
+.tour-steps button:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+@media (max-width:700px){.tour-steps{grid-template-columns:1fr;gap:0}.tour-steps button{padding:9px 2px}}
 .shot figcaption{margin-top:14px;font-size:13.5px;color:var(--quiet);line-height:1.65;max-width:72ch}
 .shot figcaption b{color:var(--ink-2);font-weight:500}
 /* license — the wedge */

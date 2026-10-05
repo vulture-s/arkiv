@@ -58,15 +58,21 @@ import Features from '../components/Features.astro';
 <section class="shot-sec">
   <div class="wrap">
     <figure class="shot">
-      <!-- 刻意不加 loading="lazy"：這張緊接首屏，lazy 只會延後它。
-           alt 保持簡短——細節在 figcaption，兩邊都寫會被螢幕閱讀器唸兩次。 -->
-      <!-- WebP，3200px（2x）。同尺寸的 JPEG 要 460 KB，這張 203 KB。畫面裡
-           20 張實拍縮圖遠比先前那 4 張卡通耗位元，1x 會在 retina 上糊掉。 -->
-      <img src="img/arkiv-ui.webp" width="1600" height="890" decoding="async"
-           alt="arkiv 軟體操作介面">
-      <figcaption>
-      左欄拍攝日已下鑽到 <b>08-17</b>，標題列顯示 20 / 24 支篩選中。右欄由上而下：自動標籤、波形與<b>逐格 IN／OUT</b>（59.94p）、逐字稿、<b>場景時間軸</b>。逐字稿那格寫著「無語音」，而最下方那幾行中文是視覺模型自己寫的。
-    </figcaption>
+      <!-- 介面導覽短片：真實截圖逐區運鏡＋字卡（site/scripts/make-ui-tour.py 產生）。
+           暫代版 —— 等乾淨示範庫的實機錄影出來再換（Hevin 2026-10-05）。
+           poster 就是原截圖：影片載入前、或使用者關掉動態效果時，看到的是同一張真實畫面。 -->
+      <video id="ui-tour" src="video/arkiv-ui-tour.mp4" poster="img/arkiv-ui.webp" width="1600" height="890"
+             autoplay muted loop playsinline preload="metadata"
+             aria-label="arkiv 操作介面導覽：口語搜尋、Smart Pool 與拍攝日、評等、場景時間軸、匯出"></video>
+      <!-- 字卡放在頁面上而不是燒進影片：手機上影片只剩 350px 寬，燒進去的字會小到看不清。
+           時間窗＝make-ui-tour.py 執行時印出的那五段（改了運鏡要一起改）。點一項跳到那一段。 -->
+      <ol class="tour-steps">
+        <li data-t0="3.2" data-t1="5.8"><button type="button"><span class="ts-n">01</span>口語搜尋：語意和條件寫在同一行</button></li>
+        <li data-t0="7.0" data-t1="9.6"><button type="button"><span class="ts-n">02</span>Smart Pool 自動分池，拍攝日一路點到某一天</button></li>
+        <li data-t0="10.8" data-t1="13.4"><button type="button"><span class="ts-n">03</span>GOOD／REV／N·G 直接標在素材上</button></li>
+        <li data-t0="14.6" data-t1="17.2"><button type="button"><span class="ts-n">04</span>視覺模型逐場景寫描述，沒有對白也搜得到</button></li>
+        <li data-t0="18.4" data-t1="21.0"><button type="button"><span class="ts-n">05</span>一鍵匯出 EDL、FCPXML、SRT</button></li>
+      </ol>
     </figure>
   </div>
 </section>
@@ -216,6 +222,26 @@ import Features from '../components/Features.astro';
   </div>
 </section>
 
+<script is:inline>
+  // 使用者開了「減少動態效果」就不自動播放，改成顯示控制列讓他自己決定。
+  (function () {
+    var v = document.getElementById('ui-tour');
+    if (v && window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      v.removeAttribute('autoplay'); v.pause(); v.controls = true;
+    }
+    if (!v) return;
+    var steps = [].slice.call(document.querySelectorAll('.tour-steps li'));
+    v.addEventListener('timeupdate', function () {
+      var t = v.currentTime;
+      steps.forEach(function (li) { li.classList.toggle('on', t >= +li.dataset.t0 - 0.6 && t <= +li.dataset.t1); });
+    });
+    steps.forEach(function (li) {
+      li.querySelector('button').addEventListener('click', function () {
+        v.currentTime = +li.dataset.t0 - 1.0; if (v.paused) v.play();
+      });
+    });
+  })();
+</script>
 <script is:inline>
   // Google tag 只在 Base.astro 設定一次。這裡原本也有一份（從單頁版逐字搬來），
   // 兩份 gtag('config') 會讓首頁每次瀏覽記成兩筆 page_view。
