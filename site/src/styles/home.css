@@ -103,6 +103,8 @@ td b{color:var(--ink)}
 .btn.buy{background:var(--cyan);color:var(--invert-ink);padding:14px 28px;font-size:16px;flex:0 0 auto}
 .btn.buy small{opacity:.78}
 .btn.buy:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+/* In the hero row it sits beside the download buttons, so it takes their size. */
+.dl .btn.buy{padding:13px 22px;font-size:15px}
 .buy-terms{list-style:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--rule);display:grid;gap:6px;font-size:13.5px;color:var(--quiet)}
 .buy-terms li{padding-left:14px;position:relative}
 .buy-terms li::before{content:"";position:absolute;left:0;top:.75em;width:6px;height:1px;background:var(--rule-hi)}
@@ -138,7 +140,7 @@ footer a:hover{color:var(--cyan)}
 .foot-links{margin-bottom:20px}
 
 @media (max-width:600px){
-  .btn.buy{width:100%}
+  .buy-box .btn.buy{width:100%}
   section{padding:56px 0}
   .hero{padding:64px 0 56px}
   .lic{padding:24px 20px}
