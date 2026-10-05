@@ -117,19 +117,28 @@
 
 /* tier 2 / tier 3 ------------------------------------------------------ */
 .feat-tier{margin:72px 0 22px;font-size:clamp(19px,2.4vw,22px);font-weight:700;color:var(--ink)}
-.more-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:28px;border-top:1px solid var(--rule);padding-top:22px}
-.more{padding:0;border:0}
-.more h4{font-size:14px;font-weight:600;color:var(--quiet);letter-spacing:.04em;margin-bottom:12px}
-.more ul{list-style:none;display:grid;gap:16px}
-.more li{font-size:13.5px;line-height:1.7;color:var(--ink-2)}
-.more li b{display:block;color:var(--ink);font-size:14.5px;font-weight:600;margin-bottom:2px}
-.more-where{display:inline-block;margin-left:6px;font-family:var(--ak-mono);font-size:11px;color:var(--quiet);border:1px solid var(--rule-hi);border-radius:3px;padding:0 6px;line-height:1.7;white-space:nowrap}
+.card-group{margin-bottom:36px}
+.card-group-h{font-size:14px;font-weight:600;color:var(--quiet);letter-spacing:.04em;margin-bottom:12px}
+.card-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.mini{display:flex;flex-direction:column;gap:6px;padding:14px 14px 16px;background:var(--surface);border:1px solid var(--rule);border-radius:10px;transition:border-color .2s,transform .3s cubic-bezier(.34,1.56,.64,1)}
+.mini:hover{border-color:var(--rule-hi);transform:translateY(-3px)}
+.mini-art{width:100%;height:auto;aspect-ratio:160/90;display:block;margin-bottom:8px;border-radius:6px;background:var(--bg);
+  fill:none;stroke:var(--ink-2);stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;color:var(--ink-2)}
+.mini-art .a{stroke:var(--cyan)}
+.mini-art .fill{fill:var(--cyan);stroke:none}
+.mini-art .dash{stroke-dasharray:4 3}
+.mini-art .t{fill:var(--ink-2);stroke:none;font-family:var(--ak-mono);font-size:9.5px}
+.mini-art .t.a{fill:var(--cyan)}
+.mini-art .t.x{text-decoration:line-through;fill:var(--quiet)}
+.mini-art .t.big{font-size:30px;fill:var(--ink-2)}
+.mini h5{font-size:15px;font-weight:600;color:var(--ink);line-height:1.4}
+.mini p{font-size:13px;line-height:1.65;color:var(--ink-2);flex:1}
+.mini .more-where{align-self:flex-start;margin:4px 0 0}
+.more-where{display:inline-block;font-family:var(--ak-mono);font-size:11px;color:var(--quiet);border:1px solid var(--rule-hi);border-radius:3px;padding:0 6px;line-height:1.7;white-space:nowrap}
 .more-where.tag-cli{color:var(--ink-2)}
 .more-where.tag-pro{color:var(--cyan);border-color:var(--cyan)}
 .next-note{margin:-12px 0 16px;font-size:13.5px;color:var(--quiet)}
-.next-list{list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px 28px;border-top:1px dashed var(--rule-hi);padding-top:18px}
-.next-list li{font-size:13.5px;line-height:1.7;color:var(--ink-2)}
-.next-list li b{display:block;color:var(--ink);font-weight:600;font-size:14.5px}
+.mini-next{border-style:dashed}
 
 /* 8. Resolve ----------------------------------------------------------- */
 .st-resolve{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:24px;align-items:stretch}
@@ -143,11 +152,11 @@
 .rv-clip.y{--c:var(--y);animation-delay:.25s}.rv-clip.o{--c:var(--o);animation-delay:.5s}
 @keyframes rv{0%,15%{opacity:0;transform:translateX(-90px) scale(.7)}15%{animation-timing-function:cubic-bezier(.34,1.56,.64,1)}30%,88%{opacity:1;transform:none}100%{opacity:0}}
 
-@media (max-width:1000px){.more-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:1000px){.card-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:700px){
   .feat-wide .stage.st-dit{grid-template-columns:1fr}
   .dt-dsts{grid-template-columns:1fr}
-  .more-grid{grid-template-columns:1fr}
+  .card-row{grid-template-columns:1fr}
   .feat-grid{grid-template-columns:1fr;gap:36px}
   .stage{height:176px;padding:14px}
   .feat-wide .stage{height:150px}
@@ -156,6 +165,7 @@
 }
 /* No motion: every stage shows its finished state. */
 @media (prefers-reduced-motion:reduce){
+  .mini{transition:none}.mini:hover{transform:none}
   .stage *,.stage.on *{animation:none!important}
   .sn-row,.se-res img,.rv-clip,.rt-stamp,.dt-ok,.dt-mhl{opacity:1}
   .dt-bar i{transform:none}

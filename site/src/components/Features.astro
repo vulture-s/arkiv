@@ -1,5 +1,6 @@
 ---
 import '../styles/features.css';
+import { MORE, NEXT } from '../lib/feature-cards.mjs';
 // Homepage "收工之後": each feature as a small working piece of the real UI.
 // Thumbnails, file names and scene lines are cut from the real screenshot
 // (docs/img/arkiv-ui.webp); transcript lines and timecodes are illustrative.
@@ -127,54 +128,33 @@ const peaks = [0.42,0.48,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,
     </div>
 
     <h3 class="feat-tier">還有這些</h3>
-    <div class="more-grid">
-      <section class="more">
-        <h4>轉錄</h4>
-        <ul>
-          <li><b>校正字典與熱詞</b>每個專案一份，專有名詞先餵給 Whisper，轉完再批次修正；修正前先預覽，可還原。<span class="more-where">設定 → 進階</span></li>
-          <li><b>字幕顯示時間規則</b>最短、最長顯示時間、句間空隙、每秒字數，匯出 SRT／VTT 自動套用；實測違規率 10.2% → 1.7%。<span class="more-where">自動</span></li>
-          <li><b>多語逐字稿</b>同一支素材可以保留中、日、英各一份，選一份當主要的拿去搜尋和匯出。<span class="more-where">Inspector</span></li>
-          <li><b>YouTube 章節</b>依場景時間軸產生章節清單，貼到影片說明就能用。<span class="more-where">Inspector「YT 章節」</span></li>
-        </ul>
-      </section>
-      <section class="more">
-        <h4>拍攝現場</h4>
-        <ul>
-          <li><b>轉存自動歸檔</b>依 <span class="mono">{'{date}'}/{'{camera}'}/{'{reel}'}</span> 自動建資料夾，先預覽再拷。<span class="more-where">DIT 介面・指令列</span></li>
-          <li><b>插卡自動轉存</b>記憶卡一插上就開始拷，已經插著的卡不會重拷。<span class="more-where tag-cli">指令列</span></li>
-          <li><b>攝影日報</b>20 欄 DIT 規格的 CSV：Reel、Scene、Take、TC、機型、鏡頭、ISO、快門……<span class="more-where tag-cli">指令列</span></li>
-          <li><b>監看資料夾</b>新檔案拷進指定資料夾、大小穩定後就自動匯入。<span class="more-where tag-cli">指令列</span></li>
-        </ul>
-      </section>
-      <section class="more">
-        <h4>素材管理</h4>
-        <ul>
-          <li><b>素材庫助手</b>用口語問，它會分辨你要找素材、續篩、找相似鏡頭還是看統計；記得前 10 輪對話，答案裡的場景點了就回到那支素材。<span class="more-where">「CHAT」</span></li>
-          <li><b>精選集</b>把散在各處的素材收成一組，可以整組複製成新專案。<span class="more-where">★・跨專案需 Pro</span></li>
-          <li><b>跨專案搜尋</b>一次搜所有專案，結果依專案分組。<span class="more-where tag-pro">Pro</span></li>
-          <li><b>360 素材</b>雙魚眼的 <span class="mono">.insv</span>、<span class="mono">.360</span> 攤平成全景，在 Inspector 裡拖曳環視，跟一般素材進同一個庫。<span class="more-where">Inspector</span></li>
-        </ul>
-      </section>
-      <section class="more">
-        <h4>格式與進階</h4>
-        <ul>
-          <li><b>影片、音訊、圖片同一個庫</b>影片 mp4／mov／mkv／mts／mxf 等，音訊 wav／mp3／flac 等，圖片 jpg／png／webp 等；HEVC、ProRes 這類瀏覽器播不了的，自動產生預覽用 proxy。</li>
-          <li><b>內建範例庫</b>新安裝的空素材庫一鍵載入 4 支範例短片，馬上可以試搜尋。<span class="more-where">空白素材庫畫面</span></li>
-          <li><b>HTTP API 與 MCP</b>分權限 token（12 種權限、IP 白名單、到期時間），也能讓 AI 助手透過 MCP 查詢。<a href="how-it-works.html#mcp">運作方式</a></li>
-          <li><b>NAS 共享向量庫</b>多台電腦共用同一份搜尋索引（Postgres + pgvector）。<span class="more-where tag-cli">環境變數</span></li>
-        </ul>
-      </section>
-    </div>
+    {MORE.map((g) => (
+      <div class="card-group">
+        <h4 class="card-group-h">{g.group}</h4>
+        <div class="card-row">
+          {g.items.map((it) => (
+            <article class="mini">
+              <svg class="mini-art" viewBox="0 0 160 90" aria-hidden="true" set:html={it.art} />
+              <h5>{it.t}</h5>
+              <p>{it.d}</p>
+              <span class={`more-where${it.tag ? ` tag-${it.tag}` : ''}`}>{it.w}</span>
+            </article>
+          ))}
+        </div>
+      </div>
+    ))}
 
     <h3 class="feat-tier">接下來</h3>
     <p class="next-note">規劃中，還沒做好，也沒有承諾時程。</p>
-    <ul class="next-list">
-      <li><b>拖進剪輯軟體</b>從搜尋結果直接把素材（或 IN／OUT 那一段）拖進 Resolve 或 Finder。</li>
-      <li><b>首次啟動精靈</b>偵測你的硬體、選裝置、顯示模型下載進度，不用再自己照指令裝。</li>
-      <li><b>中英夾雜的轉錄</b>同一句裡中英文混著講的訪談，目前在評估中。</li>
-      <li><b>日文轉錄後處理</b>清掉日文特有的幻覺句與重複。</li>
-      <li><b>跨案分析</b>統計產品在畫面裡出現的頻率與時長、比對多支影片的拍攝風格。</li>
-    </ul>
+    <div class="card-row next">
+      {NEXT.map((it) => (
+        <article class="mini mini-next">
+          <svg class="mini-art" viewBox="0 0 160 90" aria-hidden="true" set:html={it.art} />
+          <h5>{it.t}</h5>
+          <p>{it.d}</p>
+        </article>
+      ))}
+    </div>
     <p class="feat-note">上方動畫是介面示意；縮圖、檔名與場景描述取自實際畫面，逐字稿、時間碼與轉存進度為示範。</p>
   </div>
 </section>
