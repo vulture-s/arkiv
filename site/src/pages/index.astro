@@ -1,5 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
+import Features from '../components/Features.astro';
 // Ported verbatim from the single-page docs/index.html (2026-10-03).
 // Visual redesign is a separate pass; this file is the baseline.
 ---
@@ -70,58 +71,7 @@ import Base from '../layouts/Base.astro';
   </div>
 </section>
 
-<section>
-  <div class="wrap">
-    <h2>收工之後</h2>
-    <div class="why">
-      <div class="row">
-        <span class="n">01</span>
-        <div>
-          <h3>過片：不用全部看過一遍</h3>
-          <p>
-      有畫面的分析畫面，有聲音的轉錄成逐字稿，兩邊都寫進索引。資料庫比對的是<b style="color:var(--ink)">畫面內容與逐字稿</b>。內建本地 AI 助手，想找某顆畫面就用口語問，例如「訪談畫面」或是「產品特寫」。
-    </p>
-        </div>
-      </div>
-      <div class="row">
-        <span class="n">02</span>
-        <div>
-          <h3>挑毛片：評等留在素材上，不在你腦子裡</h3>
-          <p>
-      標好的 Good／N·G 直接掛在素材上。Smart Pool 自動分成待審、可用、不用。<b style="color:var(--ink)">逐格標 IN／OUT</b>，播放器貼齊真正的格邊界，59.94p 也對得準。 DaVinci Resolve 另有外掛，搜尋結果一鍵匯入當前專案的 Media Pool；也可以輸出 EDL、FCPXML、SRT，交給剪輯軟體接手。
-    </p>
-        </div>
-      </div>
-      <div class="row">
-        <span class="n">03</span>
-        <div>
-          <h3>分類場景：視覺模型自己寫描述</h3>
-          <p>
-      沒有對白的素材同樣有內容可搜。場景描述與標籤是<b style="color:var(--ink)">看畫面產生的</b>。也可以照拍攝日或機型分組，多機拍攝時各機的素材各自成組。素材庫裡多半是空景與 B-roll，那正是最難用檔名找的一半。
-    </p>
-        </div>
-      </div>
-      <div class="row">
-        <span class="n">04</span>
-        <div>
-          <h3>轉錄字幕：時間碼對得上畫面</h3>
-          <p>
-      點一句逐字稿就<b style="color:var(--ink)">跳到那一句真正的位置</b>。可匯出 SRT／VTT，中文依字幕行寬斷行，也可以輸出不含時間碼的純文字。<span class="q">（v1.2.0 起。先前建立的素材庫需重新轉錄一次才會套用。）</span>
-    </p>
-        </div>
-      </div>
-      <div class="row">
-        <span class="n">05</span>
-        <div>
-          <h3>360 素材</h3>
-          <p>
-      360 挑片的苦我們懂。arkiv 在 Inspector 裡把那一格攤平成全景，可以拖曳環視，挑完再進 360 剪輯軟體 reframe。同時 Insta360 的 <span class="mono">.insv</span> 與 GoPro Max 的 <span class="mono">.360</span> 都能進同一個資料庫。
-    </p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
+<Features />
 
 <section>
   <div class="wrap">

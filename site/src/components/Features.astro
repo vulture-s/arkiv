@@ -1,0 +1,131 @@
+---
+import '../styles/features.css';
+// Homepage "收工之後": each feature as a small working piece of the real UI.
+// Thumbnails, file names and scene lines are cut from the real screenshot
+// (docs/img/arkiv-ui.webp); transcript lines and timecodes are illustrative.
+// Motion only runs while a stage is on screen (.on), and not at all under
+// prefers-reduced-motion, where every stage shows its finished state.
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const img = (n: string) => `${base}/img/feat/${n}.webp`;
+// Fixed pseudo-random bar heights so the build is deterministic.
+const bars = Array.from({ length: 44 }, (_, i) => 18 + Math.round(70 * Math.abs(Math.sin(i * 1.7) * Math.cos(i * 0.43))));
+---
+<section class="feat-sec">
+  <div class="wrap">
+    <h2>收工之後</h2>
+    <p class="feat-lede">過片、挑毛片、分類場景、轉字幕。下面每一格都是 arkiv 介面裡實際有的東西。</p>
+    <div class="feat-grid">
+
+      <article class="feat feat-wide">
+        <div class="stage st-inout" aria-hidden="true">
+          <div class="io-tc"><span class="io-l">IN</span><b class="io-v io-in">00:00:04;18</b><span class="io-l">OUT</span><b class="io-v io-out">00:00:09;02</b><span class="io-fps">59.94p</span></div>
+          <div class="io-track">
+            <div class="io-ticks"></div>
+            <div class="io-sel"></div>
+            <div class="io-mk io-mk-in"></div>
+            <div class="io-mk io-mk-out"></div>
+          </div>
+        </div>
+        <h3>逐格標 IN／OUT</h3>
+        <p>標點會貼齊真正的格邊界，59.94p 也對得準，不會落在兩格中間。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-wave" aria-hidden="true">
+          <div class="wv">
+            {bars.map((h, i) => <span class={i >= 14 && i <= 30 ? 'wv-b in' : 'wv-b'} style={`--h:${h}%;--d:${(i % 11) * 70}ms`}></span>)}
+            <i class="wv-mk" style="left:31.8%"></i><i class="wv-mk" style="left:70.4%"></i>
+          </div>
+        </div>
+        <h3>波形</h3>
+        <p>有聲音的素材直接看波形，標好的 IN／OUT 區段一眼就看得出來。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-script" aria-hidden="true">
+          <div class="sc-bar"><i class="sc-head"></i></div>
+          <ol class="sc-lines">
+            <li><span>00:02</span>今天先從桌面開始拍</li>
+            <li class="sc-hit"><span>00:11</span>這一段我們再試一次</li>
+            <li><span>00:19</span>好，換手部特寫</li>
+          </ol>
+        </div>
+        <h3>點逐字稿，跳到那一句</h3>
+        <p>點一句就跳到那一句真正的位置。可匯出 SRT、VTT 或純文字。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-scene" aria-hidden="true">
+          <div class="sn-row"><span class="sn-tc">00:00</span><span class="sn-tag">A-Roll</span><span class="sn-txt">一個人在工作桌前使用筆記本電腦編輯照片。</span></div>
+          <div class="sn-row"><span class="sn-tc">00:06</span><span class="sn-tag">A-Roll</span><span class="sn-txt">一個人在電腦前編輯照片。</span></div>
+          <div class="sn-row"><span class="sn-tc">00:12</span><span class="sn-tag">B-Roll</span><span class="sn-txt">一名男子在工作桌前使用電腦和筆記本。</span></div>
+        </div>
+        <h3>場景時間軸</h3>
+        <p>視覺模型逐場景寫描述與標籤，沒有對白的空景也搜得到。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-rate" aria-hidden="true">
+          {[['9896', 'GOOD', 'good'], ['9895', 'REV', 'rev'], ['9894', 'N·G', 'ng']].map(([n, label, k]) => (
+            <figure class={`rt rt-${k}`}>
+              <img src={img(n)} alt="" width="160" height="91" loading="lazy" decoding="async">
+              <figcaption><span class="rt-name">A7520260818_{n}.MP4</span><b class="rt-stamp">{label}</b></figcaption>
+            </figure>
+          ))}
+        </div>
+        <h3>評等掛在素材上</h3>
+        <p>GOOD、REV、N·G 直接標在素材上，Smart Pool 自動分成待審、可用、不用。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-search" aria-hidden="true">
+          <div class="se-box"><span class="se-ico"></span><span class="se-q">手寫特寫</span><i class="se-caret"></i></div>
+          <div class="se-res">
+            {['9887', '9885', '9891', '9889'].map((n) => <img src={img(n)} alt="" width="160" height="91" loading="lazy" decoding="async">)}
+          </div>
+        </div>
+        <h3>用口語搜尋</h3>
+        <p>比對的是畫面內容和逐字稿的意思，不是檔名。中文、日文、英文都可以。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-360" aria-hidden="true">
+          <div class="p3-fish"><i></i><i></i></div>
+          <div class="p3-arrow"></div>
+          <div class="p3-pano"><span class="p3-hand"></span></div>
+        </div>
+        <h3>360 素材</h3>
+        <p>雙魚眼的 <span class="mono">.insv</span>、<span class="mono">.360</span> 攤平成全景，在 Inspector 裡拖曳環視，跟一般素材進同一個庫。</p>
+      </article>
+
+      <article class="feat feat-wide">
+        <div class="stage st-resolve" aria-hidden="true">
+          <ul class="rv-src">
+            <li class="g">A7520260818_9896.MP4</li>
+            <li class="y">A7520260818_9895.MP4</li>
+            <li class="o">A7520260818_9894.MP4</li>
+          </ul>
+          <div class="rv-pool"><span class="rv-label">Media Pool</span>
+            <i class="rv-clip g"></i><i class="rv-clip y"></i><i class="rv-clip o"></i>
+          </div>
+        </div>
+        <h3>一鍵進 Resolve</h3>
+        <p>搜尋結果帶著 clip color 匯入 Media Pool：GOOD 綠、REV 黃、N·G 橘。也可以輸出 EDL、FCPXML、SRT。</p>
+      </article>
+
+    </div>
+    <p class="feat-note">動畫是介面示意；縮圖、檔名與場景描述取自實際畫面，逐字稿與時間碼為示範。</p>
+  </div>
+</section>
+
+<script is:inline>
+  // Run each stage only while it is on screen.
+  (function () {
+    var stages = document.querySelectorAll('.feat .stage');
+    if (!('IntersectionObserver' in window)) { stages.forEach(function (s) { s.classList.add('on'); }); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { e.target.classList.toggle('on', e.isIntersecting); });
+    }, { threshold: 0.35 });
+    stages.forEach(function (s) { io.observe(s); });
+  })();
+</script>
