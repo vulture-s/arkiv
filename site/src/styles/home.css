@@ -68,6 +68,16 @@ a{color:var(--cyan)}
 @media (max-width:700px){.tour-steps{grid-template-columns:1fr;gap:0}.tour-steps button{padding:9px 2px}}
 .shot figcaption{margin-top:14px;font-size:13.5px;color:var(--quiet);line-height:1.65;max-width:72ch}
 .shot figcaption b{color:var(--ink-2);font-weight:500}
+/* English page: feature grid + also-included list */
+.en-feat{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px 40px}
+.en-feat .wide{grid-column:1 / -1}
+.en-feat p{font-size:15px}
+.en-also{margin:56px 0 16px;font-size:17px}
+.en-also-list .more-where{display:inline-block;margin-left:6px;font-family:var(--ak-mono);font-size:11px;color:var(--ink-2);border:1px solid var(--rule-hi);border-radius:3px;padding:0 6px;line-height:1.7}
+.en-also-list .tag-pro{color:var(--cyan);border-color:var(--cyan)}
+.en-also-list{list-style:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 24px;font-size:14px;color:var(--ink-2);border-top:1px solid var(--rule);padding-top:18px}
+@media (max-width:900px){.en-also-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:600px){.en-feat{grid-template-columns:1fr}.en-also-list{grid-template-columns:1fr}}
 /* license — the wedge */
 .lic{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:32px}
 .lic ul{list-style:none;display:grid;gap:20px}
@@ -104,7 +114,7 @@ td b{color:var(--ink)}
 .tiers tr.price td.pro{border-radius:0 0 8px 8px}
 .tiers .amt{font-family:var(--ak-mono);font-weight:500;letter-spacing:-.02em}
 .tiers .once{margin-left:8px;font-size:13px;color:var(--ink-2)}
-#tiers{scroll-margin-top:56px} /* sticky nav height */
+#tiers,#pricing,#features,#requirements{scroll-margin-top:56px} /* sticky nav height */
 .buy-box{margin-top:28px}
 .buy-main{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px 32px}
 .buy-main > div{flex:1 1 320px}
