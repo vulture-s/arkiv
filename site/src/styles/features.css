@@ -14,26 +14,39 @@
 .stage *{animation-play-state:paused}
 .stage.on *{animation-play-state:running}
 
-/* 1. IN / OUT ---------------------------------------------------------- */
-.io-tc{display:flex;align-items:baseline;gap:8px 12px;flex-wrap:wrap;font-family:var(--ak-mono);font-size:13px}
-.io-l{color:var(--quiet);font-size:11px;letter-spacing:.12em}
-.io-v{color:var(--ink);font-weight:500;display:inline-block}
-.io-fps{margin-left:auto;color:var(--quiet);font-size:11px}
-.io-in{animation:io-pop 6s infinite}
-.io-out{animation:io-pop 6s infinite .35s}
-@keyframes io-pop{0%,28%{transform:none;color:var(--ink-2)}33%{transform:scale(1.18);color:var(--cyan)}40%,100%{transform:none;color:var(--ink)}}
-.io-track{position:absolute;left:18px;right:18px;bottom:22px;height:46px}
-.io-ticks{position:absolute;inset:14px 0 0;background:repeating-linear-gradient(90deg,var(--rule-hi) 0 1px,transparent 1px 12px);border-top:1px solid var(--rule-hi)}
-.io-sel{position:absolute;top:14px;bottom:0;left:30%;right:28%;background:var(--cyan);opacity:.16;transform-origin:center;animation:io-sel 6s infinite}
-@keyframes io-sel{0%,18%{opacity:0;transform:scaleX(.2)}38%{opacity:.18;transform:scaleX(1)}85%{opacity:.18;transform:scaleX(1)}95%,100%{opacity:0;transform:scaleX(.2)}}
-.io-mk{position:absolute;top:0;bottom:-6px;width:2px;background:var(--invert)}
-.io-mk::before{content:"";position:absolute;top:0;width:8px;height:7px;background:var(--invert)}
-.io-mk-in{left:30%}.io-mk-in::before{left:0}
-.io-mk-out{left:72%}.io-mk-out::before{right:0}
-.io-mk-in{animation:io-in 6s infinite}
-.io-mk-out{animation:io-out 6s infinite .35s}
-@keyframes io-in{0%,12%{transform:translateX(-160%)}12%{animation-timing-function:cubic-bezier(.34,1.56,.64,1)}30%,85%{transform:translateX(0)}95%,100%{transform:translateX(-160%)}}
-@keyframes io-out{0%,12%{transform:translateX(160%)}12%{animation-timing-function:cubic-bezier(.34,1.56,.64,1)}30%,85%{transform:translateX(0)}95%,100%{transform:translateX(160%)}}
+/* 1. IN / OUT — rebuilt from the real Inspector waveform block
+   (frontend/src/lib/Waveform.svelte + Inspector.svelte), at 2x its size.
+   IN 4.30s / OUT 9.05s on a 33.03s clip → 13.0% / 27.4%. */
+.feat-wide .stage.st-inout{height:auto;padding:20px 22px}
+.io-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-family:var(--ak-mono)}
+.io-eyebrow{font-size:11px;letter-spacing:.18em;color:var(--quiet)}
+.io-read{font-size:11.5px;color:var(--quiet)}
+.io-v{color:var(--ink-2);font-weight:400;display:inline-block}
+.io-in{animation:io-pop 7s infinite}
+.io-out{animation:io-pop 7s infinite 1.1s}
+@keyframes io-pop{0%,22%{color:var(--quiet);transform:none}26%{color:var(--cyan);transform:scale(1.12)}34%,100%{color:var(--ink-2);transform:none}}
+.io-wf{position:relative;height:84px;margin:16px 0 14px}
+.io-svg{width:100%;height:100%;display:block;fill:var(--ink-2)}
+.io-sel{position:absolute;top:0;bottom:0;left:13%;right:72.6%;background:var(--ink);opacity:.1;transform-origin:left;animation:io-sel 7s infinite}
+@keyframes io-sel{0%,30%{transform:scaleX(0)}38%,88%{transform:scaleX(1)}96%,100%{transform:scaleX(0)}}
+.io-mk{position:absolute;top:-6px;bottom:-6px;width:1.5px;background:var(--invert)}
+.io-mk::before{content:"";position:absolute;top:-6px;width:9px;height:7px;background:var(--invert)}
+.io-mk-in{left:13%}.io-mk-in::before{left:0}
+.io-mk-out{left:27.4%}.io-mk-out::before{right:0}
+.io-mk-in{animation:io-in 7s infinite}
+.io-mk-out{animation:io-out 7s infinite}
+@keyframes io-in{0%,14%{opacity:0;transform:translateY(-12px)}14%{animation-timing-function:cubic-bezier(.34,1.56,.64,1)}22%,88%{opacity:1;transform:none}96%,100%{opacity:0}}
+@keyframes io-out{0%,30%{opacity:0;transform:translateY(-12px)}30%{animation-timing-function:cubic-bezier(.34,1.56,.64,1)}38%,88%{opacity:1;transform:none}96%,100%{opacity:0}}
+.io-ph{position:absolute;top:-8px;bottom:-8px;width:1px;background:var(--ink);left:2%;animation:io-ph 7s infinite}
+@keyframes io-ph{0%{left:2%}14%{left:13%}22%{left:13%}30%{left:27.4%}46%{left:27.4%}60%,90%{left:20%}100%{left:2%}}
+.io-tools{display:flex;align-items:center;gap:8px;margin-top:8px}
+.io-btn{font-family:var(--ak-mono);font-size:12px;color:var(--ink);border:1px solid var(--rule-hi);border-radius:4px;padding:4px 12px}
+.io-dim{color:var(--quiet)}
+.io-frame,.io-count{font-family:var(--ak-mono);font-size:11.5px;color:var(--quiet);margin-left:8px}
+.io-count{margin-left:auto}
+.io-press-in{animation:io-press 7s infinite}
+.io-press-out{animation:io-press 7s infinite 1.12s}
+@keyframes io-press{0%,13%{background:transparent;color:var(--ink)}15%{background:var(--invert);color:var(--invert-ink);transform:scale(.94)}19%,100%{background:transparent;color:var(--ink);transform:none}}
 
 /* 2. waveform ---------------------------------------------------------- */
 .wv{position:absolute;inset:26px 18px;display:flex;align-items:center;gap:3px}

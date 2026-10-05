@@ -8,6 +8,8 @@ import '../styles/features.css';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const img = (n: string) => `${base}/img/feat/${n}.webp`;
 // Fixed pseudo-random bar heights so the build is deterministic.
+// Real peaks of A7520260820_9908.MP4 from /api/media/85/waveform (2026-10-05).
+const peaks = [0.42,0.48,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.02,0.01,0.01,0.54,0.75,0.35,0.36,0.02,0.37,0.59,0.02,0.41,0.35,0.01,0.72,0.42,0.02,0.58,0.24,0.55,0.68,0.02,0.02,0.76,0.09,0.05,0.67,0.41,0.39,0.75,0.04,0.6,0.75,0.75,0.57,0.04,0.01,0.02,0.09,0.06,0.4,0.12,0.01,0.02,0.7];
 const bars = Array.from({ length: 44 }, (_, i) => 18 + Math.round(70 * Math.abs(Math.sin(i * 1.7) * Math.cos(i * 0.43))));
 ---
 <section class="feat-sec">
@@ -18,16 +20,25 @@ const bars = Array.from({ length: 44 }, (_, i) => 18 + Math.round(70 * Math.abs(
 
       <article class="feat feat-wide">
         <div class="stage st-inout" aria-hidden="true">
-          <div class="io-tc"><span class="io-l">IN</span><b class="io-v io-in">00:00:04;18</b><span class="io-l">OUT</span><b class="io-v io-out">00:00:09;02</b><span class="io-fps">59.94p</span></div>
-          <div class="io-track">
-            <div class="io-ticks"></div>
+          <div class="io-head"><span class="io-eyebrow">WAVEFORM</span><span class="io-read">IN <b class="io-v io-in">00:00:04:17</b> · OUT <b class="io-v io-out">00:00:09:02</b></span></div>
+          <div class="io-wf">
             <div class="io-sel"></div>
+            <svg viewBox="0 0 60 56" preserveAspectRatio="none" class="io-svg">
+              {peaks.map((v, i) => <rect x={i + 0.15} y={(56 - Math.max(2, v * 50)) / 2} width="0.7" height={Math.max(2, v * 50)} />)}
+            </svg>
             <div class="io-mk io-mk-in"></div>
             <div class="io-mk io-mk-out"></div>
+            <div class="io-ph"></div>
+          </div>
+          <div class="io-tools">
+            <span class="io-btn">◂ 格</span><span class="io-btn">格 ▸</span><span class="io-frame">f395 · 00:00:06:35 · 59.940fps</span>
+          </div>
+          <div class="io-tools">
+            <span class="io-btn io-press-in">設 IN</span><span class="io-btn io-press-out">設 OUT</span><span class="io-btn io-dim">清除</span><span class="io-count">285 格</span>
           </div>
         </div>
         <h3>逐格標 IN／OUT</h3>
-        <p>標點會貼齊真正的格邊界，59.94p 也對得準，不會落在兩格中間。</p>
+        <p>按 <span class="mono">i</span>、<span class="mono">o</span> 或直接拖曳標記；可以一格一格移動，標點貼齊真正的格邊界，59.94p 也對得準。匯出 EDL、SRT 時套用這個區間。</p>
       </article>
 
       <article class="feat">
