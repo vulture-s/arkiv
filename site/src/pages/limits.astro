@@ -60,20 +60,5 @@ ollama pull qwen2.5:14b</code></pre>
   <Row level={3} id="no-nvidia" q="Windows 沒有 NVIDIA|顯示卡呢？" mark="cond">
     <p>轉錄預設走 CUDA，沒有 NVIDIA 會直接失敗。把環境變數 <code>ARKIV_WHISPER_DEVICE</code> 設成 <code>cpu</code> 就能跑，但處理時間以倍數計。Apple Silicon 走 MLX，不受影響。</p>
   </Row>
-  <Row level={3} id="diarization" q="能分辨是誰在講話嗎？" mark="cond">
-    <p>可以，但預設關閉。要另外安裝套件、準備 Hugging Face token，而且轉錄時間大約變兩倍。</p>
-  </Row>
 
-  <h2 class="lg-group">授權與資料</h2>
-  <Row level={3} id="open-source" q="arkiv 是開源軟體嗎？" mark="no"
-    ev={`<a href="${GH}LICENSE">PolyForm Perimeter 1.0.1</a>`}>
-    <p>不是 OSI 定義的開源。原始碼公開（source-available），任何用途免費，包含商業接案；唯一不准的是拿它做成跟 arkiv 競爭的產品。我們不會把它寫成「開源」。</p>
-  </Row>
-  <Row level={3} id="projects" q="免費版有限制嗎？" mark="cond"
-    ev={`<a href="${base}/#tiers">首頁：免費版與 Pro</a>`}>
-    <p>免費版可以建 3 個專案。Pro 是 NT$3,000 一次買斷，專案數不限，並且可以跨專案一起搜。1.1.0 以前就在用的安裝，這兩項永久保留。</p>
-  </Row>
-  <Row level={3} id="old-subs" q="舊的素材庫|會自動套用新功能嗎？" mark="cond">
-    <p>不一定。例如 v1.2.0 的字幕依行寬斷行，只對新轉錄的素材生效，舊的要重新轉錄一次。這類情況會寫在<a href={`${base}/changelog.html`}>更新紀錄</a>裡。</p>
-  </Row>
 </Ledger>

@@ -1,0 +1,42 @@
+---
+import Ledger from '../layouts/Ledger.astro';
+import Row from '../components/Row.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
+---
+<!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。
+     取代舊的英文 docs/faq.md（內容已過期，例如還寫跨專案搜尋在 roadmap 上）；網址 faq.html 不變。
+     機器與安裝相關的問題放「支援設備」，這頁放授權、價格與功能。 -->
+<Ledger id="faq" title="常見問答" checked="2026-10-05"
+  lede="授權、價格、資料與功能，最常被問到的幾件事。"
+  description="arkiv 常見問答：是不是開源、免費版有什麼限制、素材會不會上傳、能不能分辨說話者、舊素材庫會不會套用新功能。">
+
+  <h2 class="lg-group">授權與價格</h2>
+  <Row level={3} id="open-source" q="arkiv 是開源軟體嗎？" mark="no"
+    ev={`<a href="${GH}LICENSE">PolyForm Perimeter 1.0.1</a>`}>
+    <p>不是 OSI 定義的開源。原始碼公開（source-available），任何用途免費，包含商業接案；唯一不准的是拿它做成跟 arkiv 競爭的產品。我們不會把它寫成「開源」。</p>
+  </Row>
+  <Row level={3} id="projects" q="免費版有限制嗎？" mark="cond"
+    ev={`<a href="${base}/#tiers">首頁：免費版與 Pro</a>`}>
+    <p>免費版可以建 3 個專案。Pro 是 NT$3,000 一次買斷，專案數不限，並且可以跨專案一起搜。1.1.0 以前就在用的安裝，這兩項永久保留。</p>
+  </Row>
+
+  <h2 class="lg-group">資料</h2>
+  <Row level={3} id="upload" q="我的素材|會被上傳嗎？" mark="yes"
+    ev={`逐條查過原始碼的連線清單：<a href="${base}/privacy.html">隱私</a>`}>
+    <p>不會。轉錄、看畫面、建索引、搜尋全部在你的電腦上完成，軟體沒有遙測，也不會連網驗證授權。會連網的只有第一次下載公開的 AI 模型。</p>
+  </Row>
+
+  <h2 class="lg-group">功能</h2>
+  <Row level={3} id="diarization" q="能分辨是誰在講話嗎？" mark="cond">
+    <p>可以，但預設關閉。要另外安裝套件、準備 Hugging Face token，而且轉錄時間大約變兩倍。</p>
+  </Row>
+  <Row level={3} id="old-subs" q="舊的素材庫|會自動套用新功能嗎？" mark="cond">
+    <p>不一定。例如 v1.2.0 的字幕依行寬斷行，只對新轉錄的素材生效，舊的要重新轉錄一次。這類情況會寫在<a href={`${base}/changelog.html`}>更新紀錄</a>裡。</p>
+  </Row>
+
+  <h2 class="lg-group">其他</h2>
+  <Row level={3} id="contact" q="問題不在這裡？">
+    <p>到<a href={`${base}/feedback.html`}>回饋頁</a>留言，或寫信到 <a href="mailto:better@wafflehouse.com.tw">better@wafflehouse.com.tw</a>。常被問到的問題會補進這一頁。</p>
+  </Row>
+</Ledger>
