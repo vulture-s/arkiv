@@ -1,0 +1,62 @@
+---
+import Ledger from '../layouts/Ledger.astro';
+import Row from '../components/Row.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
+---
+<!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。
+     取代舊的英文 docs/faq.md（內容已過期，例如還寫跨專案搜尋在 roadmap 上）；網址 faq.html 不變。
+     機器與安裝相關的問題放「支援設備」，這頁放授權、價格與功能。 -->
+<Ledger id="faq" title="常見問答" checked="2026-10-05"
+  lede="授權、價格、資料與功能，最常被問到的幾件事。"
+  description="arkiv 常見問答：是不是開源、免費版有什麼限制、素材會不會上傳、能不能分辨說話者、舊素材庫會不會套用新功能。">
+
+  <h2 class="lg-group">授權與價格</h2>
+  <Row level={3} id="open-source" q="arkiv 是開源軟體嗎？" mark="no"
+    ev={`<a href="${GH}LICENSE">PolyForm Perimeter 1.0.1</a>`}>
+    <p>不是 OSI 定義的開源。原始碼公開（source-available），任何用途免費，包含商業接案；唯一不准的是拿它做成跟 arkiv 競爭的產品。我們不會把它寫成「開源」。</p>
+  </Row>
+  <Row level={3} id="projects" q="免費版有限制嗎？" mark="cond"
+    ev={`<a href="${base}/#tiers">首頁：免費版與 Pro</a>`}>
+    <p>免費版可以建 3 個專案。Pro 是 NT$3,000 一次買斷，專案數不限，並且可以跨專案一起搜。1.1.0 以前就在用的安裝，這兩項永久保留。</p>
+  </Row>
+
+  <Row level={3} id="public-interest" q="做紀錄片或公益影像，|可以免費用 Pro 嗎？" mark="yes"
+    ev={`方案全文與申請範例：<a href="${GH}PUBLIC-INTEREST.md">公益方案</a>`}>
+    <p><b>可以申請，核准後免費提供 Pro，而且是終身授權。</b>適合的類型例如：</p>
+    <ul>
+      <li>公共議題紀錄片：環境、勞動、人權、公共衛生、文化保存</li>
+      <li>非營利、公益團體自製或委製的影像</li>
+      <li>地方記憶與檔案保存：口述歷史、地方誌、社區影像資料庫</li>
+      <li>公共教育與公共媒體：學校、圖書館、博物館</li>
+    </ul>
+    <p>這是例子，不是資格表；沒列到但你覺得有公共價值的，一樣可以來談。純商業廣告、品牌行銷、企業形象片不在方案內。</p>
+    <p><b>怎麼申請</b>：開一個 <a href="https://github.com/vulture-s/arkiv/issues">GitHub Issue</a>，標題加上 <code>[public-interest]</code>，或寫信到 <a href="mailto:better@wafflehouse.com.tw">better@wafflehouse.com.tw</a>。三五句寫清楚做什麼、給誰看、由誰製作、有沒有商業成分就好。每一封都由專人逐案看，通常幾天內回覆。</p>
+  </Row>
+
+  <h2 class="lg-group">資料</h2>
+  <Row level={3} id="upload" q="我的素材|會被上傳嗎？" mark="yes"
+    ev={`逐條查過原始碼的連線清單：<a href="${base}/privacy.html">隱私</a>`}>
+    <p>預設不會。轉錄、看畫面、建索引、搜尋全部在你的電腦上完成，軟體沒有遙測，也不會連網驗證授權。會連網的只有第一次下載公開的 AI 模型。例外是你自己開了 MCP 並接上雲端模型，見下一題。</p>
+  </Row>
+
+  <Row level={3} id="why-mcp" q="既然主打離線，|為什麼還要串 MCP？" mark="cond"
+    ev={`MCP 的 7 個工具與回傳內容：<a href="${base}/how-it-works.html#mcp">運作方式：MCP</a>。完整連線清單：<a href="${base}/privacy.html">隱私</a>`}>
+    <p><b>因為離線的是素材，不是你的工作方式。</b>arkiv 在本機把影片轉成 IR 層，也就是把影片轉成文字的中介層：場景描述、逐字稿、時間碼、標籤。素材本身一直留在你的電腦裡。MCP 只是把這一層開放給 AI 助手查詢，讓它幫你找素材、整理段落、規劃剪接，不用你自己一支一支看。</p>
+    <p><b>但要知道它會送出什麼。</b>如果接的是雲端模型（例如 Claude、ChatGPT），它查詢時拿到的 IR 層文字會送到那家服務商：逐字稿內容、場景描述、檔名、標籤、相機資訊（素材有記錄的話，包含 GPS 座標）。影片和圖檔本身不經過 MCP；不過，如果你的 AI 工具同時有權限讀你電腦上的檔案，它可以照著路徑去開縮圖。</p>
+    <p>MCP 預設是關的，桌面 App 不會自己啟動它，要你在 AI 工具裡設定才會連上。要讓資料完全不出本機，就不要開，或接在本機跑的模型上。</p>
+  </Row>
+
+  <h2 class="lg-group">功能</h2>
+  <Row level={3} id="diarization" q="能分辨是誰在講話嗎？" mark="cond">
+    <p>可以，但預設關閉。要另外安裝套件、準備 Hugging Face token，而且轉錄時間大約變兩倍。</p>
+  </Row>
+  <Row level={3} id="old-subs" q="舊的素材庫|會自動套用新功能嗎？" mark="cond">
+    <p>不一定。例如 v1.2.0 的字幕依行寬斷行，只對新轉錄的素材生效，舊的要重新轉錄一次。這類情況會寫在<a href={`${base}/changelog.html`}>更新紀錄</a>裡。</p>
+  </Row>
+
+  <h2 class="lg-group">其他</h2>
+  <Row level={3} id="contact" q="問題不在這裡？">
+    <p>到<a href={`${base}/feedback.html`}>回饋頁</a>留言，或寫信到 <a href="mailto:better@wafflehouse.com.tw">better@wafflehouse.com.tw</a>。常被問到的問題會補進這一頁。</p>
+  </Row>
+</Ledger>

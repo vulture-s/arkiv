@@ -17,7 +17,7 @@ body{
   font-family:var(--ak-sans); font-feature-settings:'ss01','cv11','tnum';
   line-height:1.7; -webkit-font-smoothing:antialiased;
 }
-.wrap{max-width:960px;margin:0 auto;padding:0 24px}
+.wrap{max-width:1200px;margin:0 auto;padding:0 24px}
 section{padding:72px 0;border-bottom:1px solid var(--rule)}
 section:last-of-type{border-bottom:0}
 h2{font-size:clamp(20px,3.2vw,26px);font-weight:600;letter-spacing:-.01em;margin-bottom:28px}
@@ -32,7 +32,7 @@ a{color:var(--cyan)}
 .wordmark{font-family:var(--ak-display);font-size:clamp(52px,11vw,92px);line-height:.92;letter-spacing:-.03em}
 .wordmark .dot{color:var(--cyan)}
 .lede{font-size:clamp(22px,4vw,34px);font-weight:600;letter-spacing:-.02em;color:var(--ink);margin:28px 0 16px;line-height:1.3}
-.sub{font-size:clamp(15px,2.2vw,17px);max-width:62ch}
+.sub{font-size:clamp(15px,2.2vw,17px);max-width:62ch;word-break:keep-all;overflow-wrap:anywhere}
 /* 兩段以上時才需要間距。.sub 的 margin 是 0，hero 從一段變兩段後，痛點那句
    會緊貼上一段、讀起來像同一段（實測 p1.bottom === p2.top）。 */
 .sub + .sub{margin-top:18px}
@@ -57,9 +57,27 @@ a{color:var(--cyan)}
 /* product shot */
 .shot-sec{padding:72px 0}
 .shot{margin:0}
-.shot img{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:12px}
+.shot img,.shot video{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:12px;background:var(--surface)}
+.tour-steps{list-style:none;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin-top:14px}
+.tour-steps button{width:100%;height:100%;text-align:left;display:flex;gap:8px;align-items:baseline;background:none;border:0;border-top:2px solid var(--rule);padding:10px 2px 0;color:var(--quiet);font:inherit;font-size:13px;line-height:1.5;cursor:pointer;transition:color .2s,border-color .2s}
+.tour-steps .ts-n{font-family:var(--ak-mono);font-size:11px;flex:0 0 auto}
+.tour-steps button:hover{color:var(--ink-2)}
+.tour-steps li.on button{color:var(--ink);border-top-color:var(--cyan)}
+.tour-steps li.on .ts-n{color:var(--cyan)}
+.tour-steps button:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+@media (max-width:700px){.tour-steps{grid-template-columns:1fr;gap:0}.tour-steps button{padding:9px 2px}}
 .shot figcaption{margin-top:14px;font-size:13.5px;color:var(--quiet);line-height:1.65;max-width:72ch}
 .shot figcaption b{color:var(--ink-2);font-weight:500}
+/* English page: feature grid + also-included list */
+.en-feat{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px 40px}
+.en-feat .wide{grid-column:1 / -1}
+.en-feat p{font-size:15px}
+.en-also{margin:56px 0 16px;font-size:17px}
+.en-also-list .more-where{display:inline-block;margin-left:6px;font-family:var(--ak-mono);font-size:11px;color:var(--ink-2);border:1px solid var(--rule-hi);border-radius:3px;padding:0 6px;line-height:1.7}
+.en-also-list .tag-pro{color:var(--cyan);border-color:var(--cyan)}
+.en-also-list{list-style:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 24px;font-size:14px;color:var(--ink-2);border-top:1px solid var(--rule);padding-top:18px}
+@media (max-width:900px){.en-also-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:600px){.en-feat{grid-template-columns:1fr}.en-also-list{grid-template-columns:1fr}}
 /* license — the wedge */
 .lic{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:32px}
 .lic ul{list-style:none;display:grid;gap:20px}
@@ -96,6 +114,7 @@ td b{color:var(--ink)}
 .tiers tr.price td.pro{border-radius:0 0 8px 8px}
 .tiers .amt{font-family:var(--ak-mono);font-weight:500;letter-spacing:-.02em}
 .tiers .once{margin-left:8px;font-size:13px;color:var(--ink-2)}
+#tiers,#pricing,#features,#requirements{scroll-margin-top:56px} /* sticky nav height */
 .buy-box{margin-top:28px}
 .buy-main{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px 32px}
 .buy-main > div{flex:1 1 320px}
@@ -103,6 +122,8 @@ td b{color:var(--ink)}
 .btn.buy{background:var(--cyan);color:var(--invert-ink);padding:14px 28px;font-size:16px;flex:0 0 auto}
 .btn.buy small{opacity:.78}
 .btn.buy:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+/* In the hero row it sits beside the download buttons, so it takes their size. */
+.dl .btn.buy{padding:13px 22px;font-size:15px}
 .buy-terms{list-style:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--rule);display:grid;gap:6px;font-size:13.5px;color:var(--quiet)}
 .buy-terms li{padding-left:14px;position:relative}
 .buy-terms li::before{content:"";position:absolute;left:0;top:.75em;width:6px;height:1px;background:var(--rule-hi)}
@@ -138,7 +159,7 @@ footer a:hover{color:var(--cyan)}
 .foot-links{margin-bottom:20px}
 
 @media (max-width:600px){
-  .btn.buy{width:100%}
+  .buy-box .btn.buy{width:100%}
   section{padding:56px 0}
   .hero{padding:64px 0 56px}
   .lic{padding:24px 20px}

@@ -2,8 +2,9 @@
 import '../styles/home.css';
 import '../styles/site.css';
 
-interface Props { title: string; description?: string; current?: string }
-const { title, description = '', current = '' } = Astro.props;
+interface Props { title: string; description?: string; current?: string; lang?: 'zh' | 'en' }
+const { title, description = '', current = '', lang = 'zh' } = Astro.props;
+const en = lang === 'en';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 // Information architecture borrowed from impeccable.style's top nav.
 // FAQ and 隱私 live in the footer to keep the bar to one line on a laptop.
@@ -12,15 +13,28 @@ const nav = [
   { id: 'how-it-works', href: `${base}/how-it-works.html`, label: '運作方式' },
   { id: 'demo', href: `${base}/demo.html`, label: '實際畫面' },
   { id: 'cases', href: `${base}/cases.html`, label: '案例' },
-  { id: 'limits', href: `${base}/limits.html`, label: '誠實清單' },
+  { id: 'limits', href: `${base}/limits.html`, label: '支援設備' },
+  { id: 'faq', href: `${base}/faq.html`, label: '常見問答' },
   { id: 'quickstart', href: `${base}/quickstart.html`, label: '安裝' },
   { id: 'docs', href: `${base}/docs.html`, label: '文件' },
   { id: 'changelog', href: `${base}/changelog.html`, label: '更新紀錄' },
   { id: 'feedback', href: `${base}/feedback.html`, label: '回饋' },
+  { id: 'en', href: `${base}/en.html`, label: 'EN', lang: 'en' },
+];
+// The English page is one landing page, not a mirror: its nav points into its
+// own sections and out to the English docs, plus a way back to 中文.
+const navEn = [
+  { id: 'features', href: '#features', label: 'Features' },
+  { id: 'pricing', href: '#pricing', label: 'Pricing' },
+  { id: 'requirements', href: '#requirements', label: 'Requirements' },
+  { id: 'quickstart', href: `${base}/quickstart.html`, label: 'Install' },
+  { id: 'docs', href: `${base}/docs.html`, label: 'Docs' },
+  { id: 'changelog', href: `${base}/changelog.html`, label: 'Changelog' },
+  { id: 'zh', href: `${base}/`, label: '中文', lang: 'zh-Hant' },
 ];
 ---
 <!doctype html>
-<html lang="zh-Hant">
+<html lang={en ? 'en' : 'zh-Hant'}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -41,23 +55,40 @@ const nav = [
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
 </head>
 <body>
-<nav class="topnav" aria-label="主要導覽">
+<nav class="topnav" aria-label={en ? 'Main' : '主要導覽'}>
   <div class="wrap topnav-in">
     <a class="topnav-mark" href={`${base}/`}>arkiv<span class="dot">.</span></a>
     <ul>
-      {nav.map((n) => <li><a href={n.href} aria-current={n.id === current ? 'page' : undefined}>{n.label}</a></li>)}
+      {(en ? navEn : nav).map((n) => <li><a href={n.href} hreflang={n.lang} lang={n.lang} aria-current={n.id === current ? 'page' : undefined}>{n.label}</a></li>)}
       <li><a href="https://github.com/vulture-s/arkiv">GitHub</a></li>
     </ul>
   </div>
 </nav>
 <slot />
+{en ? (
+<footer>
+  <div class="wrap">
+    <div class="foot-links">
+      <a href="https://github.com/vulture-s/arkiv">GitHub</a>
+      <a href="https://github.com/vulture-s/arkiv#readme">README</a>
+      <a href={`${base}/quickstart.html`}>Install</a>
+      <a href={`${base}/docs.html`}>Docs</a>
+      <a href={`${base}/changelog.html`}>Changelog</a>
+      <a href="https://github.com/vulture-s/arkiv/blob/main/LICENSE">License</a>
+      <a href={`${base}/`} lang="zh-Hant">中文</a>
+      <a href="mailto:better@wafflehouse.com.tw">Contact: better@wafflehouse.com.tw</a>
+    </div>
+    <p>PolyForm Perimeter 1.0.1 · source-available (not an OSI open-source license)<br>Local-first · no cloud dependency · the app never uploads your footage or transcripts (this page uses Google Analytics)</p>
+  </div>
+</footer>
+) : (
 <footer>
   <div class="wrap">
     <div class="foot-links">
       <a href="https://github.com/vulture-s/arkiv">GitHub</a>
       <a href={`${base}/quickstart.html`}>安裝說明</a>
       <a href={`${base}/docs.html`}>文件</a>
-      <a href={`${base}/faq.html`}>FAQ</a>
+      <a href={`${base}/faq.html`}>常見問答</a>
       <a href={`${base}/privacy.html`}>隱私</a>
       <a href={`${base}/feedback.html`}>回饋</a>
       <a href={`${base}/changelog.html`}>更新紀錄</a>
@@ -70,5 +101,6 @@ const nav = [
     </p>
   </div>
 </footer>
+)}
 </body>
 </html>

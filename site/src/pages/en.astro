@@ -1,0 +1,191 @@
+---
+import Base from '../layouts/Base.astro';
+// English landing page (Hevin 2026-10-05: option B — one English entry page,
+// not a mirror of every Chinese page). Wording follows README.md so the two
+// English surfaces say the same thing; facts were checked against the code for
+// the Chinese pages on the same day. Deeper reading goes to the English docs.
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
+const STEPS = [
+  [3.2, 5.8, 'Search in plain language, with filters on the same line'],
+  [7.0, 9.6, 'Smart Pools sort clips; drill shoot dates down to the day'],
+  [10.8, 13.4, 'GOOD / REV / N·G live on the clip itself'],
+  [14.6, 17.2, 'The vision model describes every scene, so B-roll is searchable'],
+  [18.4, 21.0, 'One-click export to EDL, FCPXML and SRT'],
+];
+---
+<Base title="arkiv · A local AI media library for small video teams" lang="en"
+  description="arkiv indexes your footage with local AI models: transcripts, scene descriptions and tags, searchable in plain language in Chinese, Japanese and English. Native DaVinci Resolve plugin. Free for any purpose, commercial use included.">
+<link slot="head" rel="alternate" hreflang="zh-Hant" href={`${base}/`}>
+<meta slot="head" property="og:title" content="arkiv · A local AI media library for small video teams">
+<meta slot="head" property="og:type" content="website">
+
+<header class="hero">
+  <div class="wrap">
+    <div class="wordmark">arkiv<span class="dot">.</span></div>
+    <p class="lede">A local AI media library for small video teams.</p>
+    <p class="sub">arkiv ingests your footage, transcribes what is said and describes what is shown, and indexes both on your own machine.<br>Then you find shots by asking for them, in Chinese, Japanese or English.<br>It follows a film-industry DIT workflow: offload, name, verify, index.</p>
+    <p class="sub"><b style="color:var(--ink)">Big crews have a DIT for this. On a small team, the work starts when the shoot ends.</b><br>arkiv batch-indexes your footage with local models and a fixed pipeline: no cloud service, nothing to pay per hour.</p>
+
+    <div class="badges">
+      <span class="badge"><b>Free</b>　any purpose</span>
+      <span class="badge"><b>Commercial use</b>　client work included</span>
+      <span class="badge"><b>Source-available</b>　PolyForm Perimeter</span>
+      <span class="badge">DaVinci Resolve native</span>
+      <span class="badge">Search in 中 / 日 / EN</span>
+    </div>
+
+    <div class="dl">
+      <a class="btn" href="https://github.com/vulture-s/arkiv/releases/latest">Download for macOS<small>Apple Silicon · .dmg</small></a>
+      <a class="btn" href="https://github.com/vulture-s/arkiv/releases/latest">Download for Windows<small>x64 · .exe / .msi</small></a>
+      <a class="btn buy" href="#pricing">Get Pro<small>NT$3,000 · one-time</small></a>
+      <a class="btn ghost" href="https://github.com/vulture-s/arkiv">Source<small>GitHub</small></a>
+    </div>
+    <p class="dl-note">Before installing, read the <a href="#requirements">requirements</a>　·　<a href={`${base}/`} lang="zh-Hant">中文版</a></p>
+  </div>
+</header>
+
+<section class="shot-sec">
+  <div class="wrap">
+    <figure class="shot">
+      <video id="ui-tour" src={`${base}/video/arkiv-ui-tour.mp4`} poster={`${base}/img/arkiv-ui.webp`} width="1600" height="890"
+             autoplay muted loop playsinline preload="metadata"
+             aria-label="arkiv interface tour: search, Smart Pools and shoot dates, ratings, scene timeline, export"></video>
+      <ol class="tour-steps">
+        {STEPS.map(([t0, t1, cap], i) => (
+          <li data-t0={t0} data-t1={t1}><button type="button"><span class="ts-n">{String(i + 1).padStart(2, '0')}</span>{cap}</button></li>
+        ))}
+      </ol>
+    </figure>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2>After the shoot</h2>
+    <div class="en-feat">
+      <div><h3>Offload a card to two drives at once</h3><p>Every file is hash-verified (xxh3), interrupted copies resume, and each destination gets an ASC MHL v2 manifest. It never deletes the source card.</p></div>
+      <div><h3>Scene timeline</h3><p>A local vision model describes each scene and tags it, so footage with no dialogue is just as searchable as interviews.</p></div>
+      <div><h3>Search in plain language</h3><p>It matches the meaning of scene descriptions and transcripts, not filenames. Add camera, tag or language filters on the same line.</p></div>
+      <div><h3>Ratings live on the clip</h3><p>GOOD, REV and N·G stay on the footage; Smart Pools split it into to-review, usable and rejected.</p></div>
+      <div><h3>Click a transcript line to jump to it</h3><p>Seek to the exact spot a line is spoken. Export SRT, VTT or plain text. Whisper hallucinations are filtered in four layers.</p></div>
+      <div><h3>Waveform and frame-accurate IN / OUT</h3><p>Mark with <span class="mono">i</span> / <span class="mono">o</span> or drag; marks snap to real frame boundaries, 59.94p included, and exports use the range.</p></div>
+      <div class="wide"><h3>Into DaVinci Resolve, timecode intact</h3><p>Search arkiv inside Resolve and import results into the Media Pool with clip colors (GOOD green, REV yellow, N·G orange), binned by camera. EDL and FCPXML use the camera's own start timecode plus your IN point, so relinking lands on the same frame; 29.97 / 59.94 use drop-frame automatically.</p></div>
+    </div>
+
+    <h3 class="en-also">Also included</h3>
+    <ul class="en-also-list">
+      <li>Per-project correction dictionary and hotwords</li>
+      <li>Subtitle timing rules (min / max duration, gaps, CPS)</li>
+      <li>Multiple transcripts per clip, one per language</li>
+      <li>YouTube chapters from the scene timeline</li>
+      <li>Offload auto-organize by date / camera / reel</li>
+      <li>Auto-offload on card insert <span class="more-where tag-cli">CLI</span></li>
+      <li>20-column camera report CSV <span class="more-where tag-cli">CLI</span></li>
+      <li>Watch folders and auto-ingest <span class="more-where tag-cli">CLI</span></li>
+      <li>Library chat assistant with conversation memory</li>
+      <li>Bins that collect clips across libraries</li>
+      <li>Cross-project search <span class="more-where tag-pro">Pro</span></li>
+      <li>360 footage (.insv / .360) flattened for review</li>
+      <li>Video, audio and stills in one library; automatic proxies</li>
+      <li>Built-in sample library to try search instantly</li>
+      <li>HTTP API with scoped tokens, and MCP for AI assistants</li>
+      <li>Shared vector index on a NAS (Postgres + pgvector)</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Proven at scale</h2>
+    <div class="proof">
+      <div class="big">1,506 clips</div>
+      <p>A production-line training film's footage, fully indexed: <b style="color:var(--ink-2)">1,161 of the clips are dialogue-free B-roll</b>. One RTX 4070, 100% index coverage.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Your footage stays on your machine</h2>
+    <div class="en-feat">
+      <div><h3>Local by default</h3><p>Transcription, vision, indexing and search all run locally. No telemetry, no update check, no online license check. The only automatic internet traffic is downloading public AI models the first time.</p></div>
+      <div><h3>MCP is opt-in, and text-only</h3><p>MCP lets an AI assistant query arkiv's text layer: scene descriptions, transcripts, timecodes, tags, filenames and camera metadata (GPS included, if recorded). Video and images never pass through it. If the assistant is a cloud model, that text goes to its provider. It is off unless you configure it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>License</h2>
+    <div class="lic">
+      <ul>
+        <li><span class="mk yes">✓</span><div><b>Free for any purpose, commercial use included.</b><p>Client commissions, day-to-day studio work and grant-funded productions are all covered. No separate license, no need to tell us.</p></div></li>
+        <li><span class="mk yes">✓</span><div><b>What you make is entirely yours.</b><p>Videos, timelines, EDL / FCPXML exports and thumbnails carry no restriction from this license.</p></div></li>
+        <li><span class="mk no">✕</span><div><b>The one restriction: don't use it to build a product that competes with arkiv.</b><p>Turning it into a competing media-management tool, offering indexing as a service to third parties, or re-implementing it as a replacement — even for free.</p></div></li>
+      </ul>
+      <p class="fine">The test is <b style="color:var(--ink-2)">what your client is buying</b>: work you finished with arkiv is ordinary tool use; arkiv's functionality itself (as a product, service, library or plug-in) is competition. Full terms: <a href="https://github.com/vulture-s/arkiv/blob/main/LICENSE">PolyForm Perimeter 1.0.1</a>.</p>
+    </div>
+  </div>
+</section>
+
+<section id="pricing">
+  <div class="wrap">
+    <h2>Free and Pro</h2>
+    <table class="tiers">
+      <thead><tr><th></th><th>Free</th><th class="pro">Pro</th></tr></thead>
+      <tbody>
+        <tr><td>All indexing and search</td><td><b>Yes</b></td><td class="pro"><b>Yes</b></td></tr>
+        <tr><td>Commercial use</td><td><b>Yes</b></td><td class="pro"><b>Yes</b></td></tr>
+        <tr><td>Projects</td><td><b>3</b><br><span class="future">installs from before 1.1.0: unlimited</span></td><td class="pro"><b>Unlimited</b></td></tr>
+        <tr><td>Cross-project search</td><td><b>—</b><br><span class="future">installs from before 1.1.0: kept</span></td><td class="pro"><b>Yes</b></td></tr>
+        <tr class="price"><td>Price</td><td><b class="amt">NT$0</b></td><td class="pro"><b class="amt">NT$3,000</b><span class="once">one-time</span></td></tr>
+      </tbody>
+    </table>
+    <div class="proof buy-box">
+      <div class="buy-main">
+        <div>
+          <div class="big">NT$3,000 <span class="buy-unit">arkiv Pro</span></div>
+          <p>One-time, perpetual, no subscription. <b style="color:var(--ink-2)">Unlimited projects and cross-project search</b>; updates are free while the add-on is maintained.</p>
+        </div>
+        <a class="btn buy" href="https://wafflehouse.com.tw/product/arkiv-pro/">Buy Pro</a>
+      </div>
+      <ul class="buy-terms">
+        <li>Sold and licensed by 立凡科技有限公司 (Lifan Technology Co., Ltd.) through its Waffle House store; a named license file is emailed after payment. The checkout page is in Traditional Chinese. International customers can pay via PayPal — email <a href="mailto:better@wafflehouse.com.tw">better@wafflehouse.com.tw</a>.</li>
+        <li>Digital goods are non-refundable once delivered; see the <a href="https://github.com/vulture-s/arkiv/blob/main/docs/pro-addon-license.md">license terms</a>.</li>
+        <li>Documentary, non-profit, archival and public-education work can apply for Pro free of charge: <a href={`${GH}PUBLIC-INTEREST.md`}>Public-Interest Program</a>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="requirements">
+  <div class="wrap">
+    <h2>Requirements</h2>
+    <div class="real">
+      <div><span class="m">01</span><span>The installer bundles the Python backend and ML packages, but <b style="color:var(--ink)">you install FFmpeg and Ollama yourself</b> and pull the models (~15 GB, once). Step-by-step: <a href={`${base}/quickstart-mac.html`}>macOS</a> · <a href={`${base}/quickstart-windows.html`}>Windows</a>.</span></div>
+      <div><span class="m">02</span><span>macOS builds are <b style="color:var(--ink)">Apple Silicon only</b>; Windows is x64. Linux runs from source or Docker.</span></div>
+      <div><span class="m">03</span><span>Installers are <b style="color:var(--ink)">not code-signed yet</b>: right-click → Open the first time on macOS; Windows shows SmartScreen once.</span></div>
+      <div><span class="m">04</span><span>On Windows without an NVIDIA GPU, set <span class="mono">ARKIV_WHISPER_DEVICE=cpu</span>; transcription works but takes several times longer. Apple Silicon uses MLX.</span></div>
+    </div>
+  </div>
+</section>
+
+<script is:inline>
+  (function () {
+    var v = document.getElementById('ui-tour');
+    if (!v) return;
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      v.removeAttribute('autoplay'); v.pause(); v.controls = true;
+    }
+    var steps = [].slice.call(document.querySelectorAll('.tour-steps li'));
+    v.addEventListener('timeupdate', function () {
+      var t = v.currentTime;
+      steps.forEach(function (li) { li.classList.toggle('on', t >= +li.dataset.t0 - 0.6 && t <= +li.dataset.t1); });
+    });
+    steps.forEach(function (li) {
+      li.querySelector('button').addEventListener('click', function () { v.currentTime = +li.dataset.t0 - 1.0; if (v.paused) v.play(); });
+    });
+  })();
+</script>
+</Base>

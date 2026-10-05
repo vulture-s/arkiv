@@ -2,19 +2,24 @@
 import Ledger from '../layouts/Ledger.astro';
 import Row from '../components/Row.astro';
 const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 <!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。
      本頁每一列都是對原始碼的事實宣稱（2026-10-04 逐檔實查）。改 code 時若動到
      連線行為，這頁要一起改；寫不出證據的句子不要加。 -->
-<Ledger id="privacy" title="隱私" checked="2026-10-04"
+<Ledger id="privacy" title="隱私" checked="2026-10-05"
   lede="軟體不會把你的素材、逐字稿或使用紀錄傳出去。這個網站則有用 Google Analytics。"
   description="arkiv 軟體與官網各自會連到哪裡、送出什麼：軟體無遙測、無更新檢查、無線上授權驗證；官網使用 Google Analytics、Google Fonts 與 Kit。">
 
   <h2 class="lg-group">軟體</h2>
   <Row level={3} id="media" q="我的素材和逐字稿|會離開這台電腦嗎？" mark="yes"
     ev={`轉錄在本機；視覺、向量、助手都打 <code>ARKIV_OLLAMA_URL</code>，預設 <code>http://localhost:11434</code>。<a href="${GH}config.py">config.py</a>`}>
-    <p>不會。轉錄在本機跑，看畫面、建索引、素材庫助手都交給你電腦上的 Ollama。</p>
-    <p>唯一的例外是你自己把 Ollama 位址改成另一台機器（例如把運算交給家裡的桌機）：那台機器會收到抽出來的畫面、逐字稿與素材資訊。位址是你設的，資料也只到那裡。</p>
+    <p>預設不會。轉錄在本機跑，看畫面、建索引、素材庫助手都交給你電腦上的 Ollama。</p>
+    <p>有兩個例外，都要你自己設定才會發生：</p>
+    <ul>
+      <li><b>把 Ollama 位址改成另一台機器</b>（例如把運算交給家裡的桌機）：那台機器會收到抽出來的畫面、逐字稿與素材資訊。位址是你設的，資料也只到那裡。</li>
+      <li><b>開了 MCP、接到雲端 AI 模型</b>：它查詢時會拿到 arkiv 整理出的文字層，包含逐字稿、場景描述、檔名、標籤、相機資訊（含 GPS），這些會送到那家服務商。影片和圖檔本身不經過 MCP。詳見<a href={`${base}/faq.html#why-mcp`}>常見問答</a>。</li>
+    </ul>
   </Row>
 
   <Row level={3} id="telemetry" q="有沒有使用統計、當機回報？" mark="yes"
@@ -41,8 +46,8 @@ const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
   </Row>
 
   <Row level={3} id="listen" q="同一個網路裡的人|連得到我的素材庫嗎？" mark="yes"
-    ev="桌面 App：API 127.0.0.1:8501，MCP 127.0.0.1:8502。Docker：docker-compose.yml 預設發佈在 127.0.0.1，由 ARKIV_BIND_HOST 控制。">
-    <p>預設連不到。桌面 App 的 API 與 MCP 都只聽本機（127.0.0.1）；Docker 版從 2026-10 起，對外的埠也預設只綁本機。</p>
+    ev="桌面 App：API 只綁 127.0.0.1，埠號每次開啟由系統指定；App 不會啟動 MCP。自己執行 MCP 的 HTTP 版時預設 127.0.0.1:8502。Docker：docker-compose.yml 預設發佈在 127.0.0.1，由 ARKIV_BIND_HOST 控制。">
+    <p>預設連不到。桌面 App 的 API 只聽本機（127.0.0.1），也不會啟動 MCP；Docker 版從 2026-10 起，對外的埠也預設只綁本機。</p>
     <p>如果你就是要讓別台電腦連進來（例如區網裡的 MCP），用 Docker 啟動時加上 <code>ARKIV_BIND_HOST=0.0.0.0</code>。打開之後，同網段的人只要有 token 就能存取，請自己保管好 token。</p>
   </Row>
 

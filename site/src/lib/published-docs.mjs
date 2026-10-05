@@ -6,7 +6,6 @@ export const PUBLISHED_DOCS = {
   'quickstart-mac': 'docs/quickstart-mac.md',
   'quickstart-windows': 'docs/quickstart-windows.md',
   'install': 'docs/install.md',
-  'faq': 'docs/faq.md',
   'pipeline': 'docs/pipeline.md',
   'pipeline.zh-TW': 'docs/pipeline.zh-TW.md',
   'api': 'docs/api.md',
