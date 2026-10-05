@@ -2,19 +2,21 @@
 import Ledger from '../layouts/Ledger.astro';
 import Row from '../components/Row.astro';
 const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 <!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。 -->
 <Ledger id="how-it-works" title="運作方式" checked="2026-10-04"
   lede="交給 arkiv 一個資料夾，它會逐支看畫面、聽聲音，寫成可以搜尋的文字。"
   description="arkiv 怎麼把一個素材資料夾變成可以用口語搜尋的素材庫：探測、轉錄、抽幀、視覺描述、建索引，全部在本機。">
 
-  <Row id="move" q="匯入時，|我的素材|會被搬走或改寫嗎？"
+  <h2 class="lg-group">從匯入到搜尋</h2>
+  <Row level={3} id="move" q="匯入時，|我的素材|會被搬走或改寫嗎？"
     ev={`素材留在原處，arkiv 的產出全寫在 <code>.arkiv/</code>：資料庫、縮圖、向量索引、proxy。<a href="${GH}docs/pipeline.zh-TW.md">pipeline 文件 §儲存路徑</a>`}>
     <p>不會。整個過程在你自己的電腦上跑，匯入只<b>讀</b>原始檔，縮圖、逐字稿、索引另外存在專案資料夾裡的 <code>.arkiv/</code>。資料庫記的是相對路徑，整個專案資料夾搬到別顆碟也不會斷。</p>
     <p>唯一會動到原始檔的是你在介面裡按「刪除素材」：檔案會先移到 <code>.arkiv/trash</code>，30 天內可以救回；專案資料夾以外的檔案（例如備份碟上的）只刪紀錄、不刪檔。</p>
   </Row>
 
-  <Row id="pipeline" q="匯入之後，|每一支素材|會經過哪些步驟？"
+  <Row level={3} id="pipeline" q="匯入之後，|每一支素材|會經過哪些步驟？"
     ev={`模型名稱是預設值，可用環境變數換掉。<a href="${GH}config.py">config.py</a>`}>
     <ol class="lg-steps">
       <li><b>探測</b>用 FFmpeg 與 ExifTool 讀出長度、格率、編碼、機型、鏡頭、GPS、Reel 名，也讀 Sony XAVC 的 sidecar XML。</li>
@@ -25,34 +27,56 @@ const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
     </ol>
   </Row>
 
-  <Row id="broll" q="沒有人講話的空景，要怎麼搜？"
+  <Row level={3} id="broll" q="沒有人講話的空景，要怎麼搜？"
     ev="arkiv 自己跑過的庫：1,506 支裡有 1,161 支是無對白 B-roll。">
     <p>靠「看畫面」那一步。視覺模型看的是畫面本身，所以一支只有風聲的空景，也會有「黃昏、海邊、逆光、遠景」這類描述可以搜。逐字稿那一欄會老實寫「無語音」，不會硬掰出字幕。</p>
   </Row>
 
-  <Row id="search" q="搜尋時，比對的是什麼？"
+  <Row level={3} id="search" q="搜尋時，比對的是什麼？"
     ev={`查詢語法：<code>"格爾木氧氣" camera:a7s3 tag:cycling lang:zh</code>，語意與條件可以混用。`}>
     <p>比對的是<b>意思</b>，不是檔名。你打「產品特寫」，它會去找描述或逐字稿意思相近的片段，中文、日文、英文都可以。要更準，可以在同一行加上機型、標籤、語言等條件一起篩。</p>
     <p>也可以直接用口語問內建的素材庫助手，例如「上一批裡面有沒有手部特寫」，它會接著上一輪的結果繼續篩。</p>
   </Row>
 
-  <Row id="hallucination" q="Whisper 會在沒聲音的地方|亂寫字幕，|這個怎麼處理？"
+  <Row level={3} id="hallucination" q="Whisper 會在沒聲音的地方|亂寫字幕，|這個怎麼處理？"
     ev={`<a href="${GH}docs/architecture-anti-hallucination-guard.md">四層防護的設計文件</a>`}>
     <p>這是 Whisper 最常見的毛病：靜音段被它「聽」成一句謝謝收看。arkiv 疊了四層擋：先用 VAD 把沒有人聲的段落剪掉，再看模型自己回報的「這段沒有語音」機率，接著濾掉空白與重複句，最後用本機語言模型校正。</p>
   </Row>
 
-  <Row id="handoff" q="挑好的素材|怎麼交給剪輯軟體？"
-    ev="匯出格式：EDL（DF／NDF）、FCPXML 1.8、SRT、VTT、TXT、metadata CSV">
-    <p>DaVinci Resolve 有原生外掛：在 Resolve 裡直接搜 arkiv 的素材庫，結果帶著 clip color 匯入 Media Pool，GOOD／N·G 評等會變成顏色。其他剪輯軟體就走 EDL 或 FCPXML，字幕走 SRT。</p>
-  </Row>
-
-  <Row id="offload" q="能不能從記憶卡開始|就交給它？"
+  <Row level={3} id="offload" q="能不能從記憶卡開始|就交給它？"
     ev="ASC MHL v2 已與 ASC 官方 reference implementation 1.2 互通驗證。">
     <p>可以。DIT 轉存會同時拷到多個目的地，每一個檔都做 hash 比對，拷到一半中斷可以接著跑，結束時每個目的地各留一份 ASC MHL v2 校驗清單。<b>它從不刪除來源卡。</b></p>
   </Row>
 
-  <Row id="headless" q="一定要開視窗操作嗎？"
-    ev="API 預設只聽 127.0.0.1:8501，MCP 聽 127.0.0.1:8502，都只對本機開放。">
-    <p>不用。同一個素材庫有三個入口：桌面 App、指令列、HTTP API。另外提供 MCP server，可以讓 AI 助手直接查你的素材庫。</p>
+
+  <h2 class="lg-group">接進你的工作流程</h2>
+
+  <Row level={3} id="resolve" q="DaVinci Resolve 外掛|能做什麼？" mark="yes"
+    ev={`Resolve 裡從「工作區 → 腳本」開啟。macOS 需安裝 python.org 的 Python 3.10（Resolve 不認 Homebrew 裝的 Python）。<a href="${GH}README.md">README：DaVinci Resolve Plugin</a>`}>
+    <p><b>不離開 Resolve，就能搜 arkiv 的素材庫。</b>在外掛視窗裡用口語搜尋，勾選結果一鍵匯入目前專案的 Media Pool：</p>
+    <ul>
+      <li><b>自動分 bin</b>：依攝影機／來源資料夾在 Master 底下建好 bin，多機拍攝不會混在一起。</li>
+      <li><b>評等變顏色</b>：GOOD 綠、REV 黃、N·G 橘，匯入時直接套成 clip color。</li>
+      <li><b>場景變標記</b>：視覺模型寫的場景描述，可以加成時間軸上片段的 marker，依時間軸的格率換算位置。</li>
+      <li><b>相機資訊</b>：機型、鏡頭、ISO、快門、光圈、GPS、拍攝時間匯出成 CSV，用 Resolve 的「從 CSV 匯入詮釋資料」一次帶進去。</li>
+    </ul>
+  </Row>
+
+  <Row level={3} id="timecode" q="匯出到剪輯軟體，|時間碼對得上嗎？" mark="yes"
+    ev="匯出格式：EDL（CMX3600，DF／NDF）、FCPXML 1.8、SRT、VTT、TXT。EDL 錄製時間碼從 01:00:00:00 起算。">
+    <p><b>對得上，用的是攝影機本身的時間碼。</b>匯入時 arkiv 會讀出每支素材的起始時間碼（攝影機錄下的那個，不一定從 00:00:00:00 開始），匯出 EDL、FCPXML 時，來源時間碼＝<b>起始時間碼＋你標的 IN 點</b>，剪輯軟體 relink 回原始檔時會落在同一格。</p>
+    <ul>
+      <li><b>每支用自己的格率算</b>：29.97、59.94 自動用 drop-frame，其他用 non-drop。</li>
+      <li><b>混格率會提醒</b>：同一份 EDL 裡素材格率不一致時，檔頭會加註解提醒，因為整條時間軸只能用一個格率。</li>
+      <li><b>Reel 名稱</b>：優先用相機寫的 ReelName，沒有就用檔名，符合 CMX3600 的 8 字元限制。</li>
+      <li><b>IN／OUT 貼齊格邊界</b>：在 arkiv 裡標的點本來就是整格，不會落在兩格中間。</li>
+    </ul>
+  </Row>
+
+  <Row level={3} id="mcp" q="MCP 是什麼？|AI 助手能拿到什麼？" mark="cond"
+    ev={`7 個唯讀工具：search_media・get_media・get_scenes・get_transcript・list_recent・library_stats・list_tags。<a href="${base}/faq.html#why-mcp">常見問答：為什麼主打離線還要串 MCP</a>`}>
+    <p><b>MCP 讓 Claude 這類 AI 助手直接查你的素材庫。</b>例如問它「上週拍的訪談裡，誰講到產品價格」，它會自己去搜、讀逐字稿、找到時間點回答你。</p>
+    <p>它拿到的是 arkiv 在本機整理出來的 <b>IR 層</b>（把影片轉成文字的中介層）：場景描述、逐字稿與時間碼、標籤、檔名、相機資訊。<b>影片和圖檔本身不經過 MCP。</b>所有工具都是唯讀的，不能新增、修改或刪除任何東西。</p>
+    <p>預設只在本機（stdio）；要讓區網裡別台電腦連，另有 HTTP 版本，需要 token。</p>
   </Row>
 </Ledger>
