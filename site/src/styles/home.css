@@ -104,6 +104,7 @@ td b{color:var(--ink)}
 .tiers tr.price td.pro{border-radius:0 0 8px 8px}
 .tiers .amt{font-family:var(--ak-mono);font-weight:500;letter-spacing:-.02em}
 .tiers .once{margin-left:8px;font-size:13px;color:var(--ink-2)}
+#tiers{scroll-margin-top:56px} /* sticky nav height */
 .buy-box{margin-top:28px}
 .buy-main{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px 32px}
 .buy-main > div{flex:1 1 320px}
