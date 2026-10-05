@@ -7,16 +7,84 @@ import '../styles/features.css';
 // prefers-reduced-motion, where every stage shows its finished state.
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const img = (n: string) => `${base}/img/feat/${n}.webp`;
-// Fixed pseudo-random bar heights so the build is deterministic.
 // Real peaks of A7520260820_9908.MP4 from /api/media/85/waveform (2026-10-05).
 const peaks = [0.42,0.48,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.02,0.01,0.01,0.54,0.75,0.35,0.36,0.02,0.37,0.59,0.02,0.41,0.35,0.01,0.72,0.42,0.02,0.58,0.24,0.55,0.68,0.02,0.02,0.76,0.09,0.05,0.67,0.41,0.39,0.75,0.04,0.6,0.75,0.75,0.57,0.04,0.01,0.02,0.09,0.06,0.4,0.12,0.01,0.02,0.7];
-const bars = Array.from({ length: 44 }, (_, i) => 18 + Math.round(70 * Math.abs(Math.sin(i * 1.7) * Math.cos(i * 0.43))));
 ---
 <section class="feat-sec">
   <div class="wrap">
     <h2>收工之後</h2>
     <p class="feat-lede">過片、挑毛片、分類場景、轉字幕。下面每一格都是 arkiv 介面裡實際有的東西。</p>
     <div class="feat-grid">
+
+      <article class="feat feat-wide">
+        <div class="stage st-dit" aria-hidden="true">
+          <div class="dt-src"><span class="dt-label">CARD · A001</span><span class="dt-keep">來源卡不刪除</span></div>
+          <div class="dt-dsts">
+            {['BACKUP_1', 'BACKUP_2'].map((d, di) => (
+              <div class="dt-dst">
+                <span class="dt-label">{d}</span>
+                {['9896', '9895', '9894'].map((n, i) => (
+                  <div class="dt-row" style={`--d:${(di * 0.25 + i * 0.55).toFixed(2)}s`}>
+                    <span class="dt-name">A7520260818_{n}.MP4</span>
+                    <span class="dt-bar"><i></i></span>
+                    <span class="dt-ok">xxh3 OK</span>
+                  </div>
+                ))}
+                <span class="dt-mhl" style={`--d:${(di * 0.25 + 2.1).toFixed(2)}s`}>ascmhl OK</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <h3>收工先轉存：一張卡，同時拷到兩顆碟</h3>
+        <p>每個檔都做 hash 比對，拷到一半中斷可以接著跑，結束時每顆碟各留一份 ASC MHL 校驗清單。<b>它從不刪除來源卡。</b>介面上按「DIT」就能開始，逐檔看得到進度。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-scene" aria-hidden="true">
+          <div class="sn-row"><span class="sn-tc">00:00</span><span class="sn-tag">A-Roll</span><span class="sn-txt">一個人在工作桌前使用筆記本電腦編輯照片。</span></div>
+          <div class="sn-row"><span class="sn-tc">00:06</span><span class="sn-tag">A-Roll</span><span class="sn-txt">一個人在電腦前編輯照片。</span></div>
+          <div class="sn-row"><span class="sn-tc">00:12</span><span class="sn-tag">B-Roll</span><span class="sn-txt">一名男子在工作桌前使用電腦和筆記本。</span></div>
+        </div>
+        <h3>場景時間軸</h3>
+        <p>視覺模型逐場景寫描述與標籤，沒有對白的空景也搜得到。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-search" aria-hidden="true">
+          <div class="se-box"><span class="se-ico"></span><span class="se-q">手寫特寫</span><i class="se-caret"></i></div>
+          <div class="se-res">
+            {['9887', '9885', '9891', '9889'].map((n) => <img src={img(n)} alt="" width="160" height="91" loading="lazy" decoding="async">)}
+          </div>
+        </div>
+        <h3>用口語搜尋</h3>
+        <p>比對的是畫面內容和逐字稿的意思，不是檔名。中文、日文、英文都可以。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-rate" aria-hidden="true">
+          {[['9896', 'GOOD', 'good'], ['9895', 'REV', 'rev'], ['9894', 'N·G', 'ng']].map(([n, label, k]) => (
+            <figure class={`rt rt-${k}`}>
+              <img src={img(n)} alt="" width="160" height="91" loading="lazy" decoding="async">
+              <figcaption><span class="rt-name">A7520260818_{n}.MP4</span><b class="rt-stamp">{label}</b></figcaption>
+            </figure>
+          ))}
+        </div>
+        <h3>評等掛在素材上</h3>
+        <p>GOOD、REV、N·G 直接標在素材上，Smart Pool 自動分成待審、可用、不用。</p>
+      </article>
+
+      <article class="feat">
+        <div class="stage st-script" aria-hidden="true">
+          <div class="sc-bar"><i class="sc-head"></i></div>
+          <ol class="sc-lines">
+            <li><span>00:02</span>今天先從桌面開始拍</li>
+            <li class="sc-hit"><span>00:11</span>這一段我們再試一次</li>
+            <li><span>00:19</span>好，換手部特寫</li>
+          </ol>
+        </div>
+        <h3>點逐字稿，跳到那一句</h3>
+        <p>點一句就跳到那一句真正的位置。可匯出 SRT、VTT 或純文字。</p>
+      </article>
 
       <article class="feat feat-wide">
         <div class="stage st-inout" aria-hidden="true">
@@ -37,76 +105,8 @@ const bars = Array.from({ length: 44 }, (_, i) => 18 + Math.round(70 * Math.abs(
             <span class="io-btn io-press-in">設 IN</span><span class="io-btn io-press-out">設 OUT</span><span class="io-btn io-dim">清除</span><span class="io-count">285 格</span>
           </div>
         </div>
-        <h3>逐格標 IN／OUT</h3>
-        <p>按 <span class="mono">i</span>、<span class="mono">o</span> 或直接拖曳標記；可以一格一格移動，標點貼齊真正的格邊界，59.94p 也對得準。匯出 EDL、SRT 時套用這個區間。</p>
-      </article>
-
-      <article class="feat">
-        <div class="stage st-wave" aria-hidden="true">
-          <div class="wv">
-            {bars.map((h, i) => <span class={i >= 14 && i <= 30 ? 'wv-b in' : 'wv-b'} style={`--h:${h}%;--d:${(i % 11) * 70}ms`}></span>)}
-            <i class="wv-mk" style="left:31.8%"></i><i class="wv-mk" style="left:70.4%"></i>
-          </div>
-        </div>
-        <h3>波形</h3>
-        <p>有聲音的素材直接看波形，標好的 IN／OUT 區段一眼就看得出來。</p>
-      </article>
-
-      <article class="feat">
-        <div class="stage st-script" aria-hidden="true">
-          <div class="sc-bar"><i class="sc-head"></i></div>
-          <ol class="sc-lines">
-            <li><span>00:02</span>今天先從桌面開始拍</li>
-            <li class="sc-hit"><span>00:11</span>這一段我們再試一次</li>
-            <li><span>00:19</span>好，換手部特寫</li>
-          </ol>
-        </div>
-        <h3>點逐字稿，跳到那一句</h3>
-        <p>點一句就跳到那一句真正的位置。可匯出 SRT、VTT 或純文字。</p>
-      </article>
-
-      <article class="feat">
-        <div class="stage st-scene" aria-hidden="true">
-          <div class="sn-row"><span class="sn-tc">00:00</span><span class="sn-tag">A-Roll</span><span class="sn-txt">一個人在工作桌前使用筆記本電腦編輯照片。</span></div>
-          <div class="sn-row"><span class="sn-tc">00:06</span><span class="sn-tag">A-Roll</span><span class="sn-txt">一個人在電腦前編輯照片。</span></div>
-          <div class="sn-row"><span class="sn-tc">00:12</span><span class="sn-tag">B-Roll</span><span class="sn-txt">一名男子在工作桌前使用電腦和筆記本。</span></div>
-        </div>
-        <h3>場景時間軸</h3>
-        <p>視覺模型逐場景寫描述與標籤，沒有對白的空景也搜得到。</p>
-      </article>
-
-      <article class="feat">
-        <div class="stage st-rate" aria-hidden="true">
-          {[['9896', 'GOOD', 'good'], ['9895', 'REV', 'rev'], ['9894', 'N·G', 'ng']].map(([n, label, k]) => (
-            <figure class={`rt rt-${k}`}>
-              <img src={img(n)} alt="" width="160" height="91" loading="lazy" decoding="async">
-              <figcaption><span class="rt-name">A7520260818_{n}.MP4</span><b class="rt-stamp">{label}</b></figcaption>
-            </figure>
-          ))}
-        </div>
-        <h3>評等掛在素材上</h3>
-        <p>GOOD、REV、N·G 直接標在素材上，Smart Pool 自動分成待審、可用、不用。</p>
-      </article>
-
-      <article class="feat">
-        <div class="stage st-search" aria-hidden="true">
-          <div class="se-box"><span class="se-ico"></span><span class="se-q">手寫特寫</span><i class="se-caret"></i></div>
-          <div class="se-res">
-            {['9887', '9885', '9891', '9889'].map((n) => <img src={img(n)} alt="" width="160" height="91" loading="lazy" decoding="async">)}
-          </div>
-        </div>
-        <h3>用口語搜尋</h3>
-        <p>比對的是畫面內容和逐字稿的意思，不是檔名。中文、日文、英文都可以。</p>
-      </article>
-
-      <article class="feat">
-        <div class="stage st-360" aria-hidden="true">
-          <div class="p3-fish"><i></i><i></i></div>
-          <div class="p3-arrow"></div>
-          <div class="p3-pano"><span class="p3-hand"></span></div>
-        </div>
-        <h3>360 素材</h3>
-        <p>雙魚眼的 <span class="mono">.insv</span>、<span class="mono">.360</span> 攤平成全景，在 Inspector 裡拖曳環視，跟一般素材進同一個庫。</p>
+        <h3>波形與逐格 IN／OUT</h3>
+        <p>有聲音的素材直接看波形。按 <span class="mono">i</span>、<span class="mono">o</span> 或直接拖曳標記；可以一格一格移動，標點貼齊真正的格邊界，59.94p 也對得準。匯出 EDL、SRT 時套用這個區間。</p>
       </article>
 
       <article class="feat feat-wide">
@@ -120,12 +120,62 @@ const bars = Array.from({ length: 44 }, (_, i) => 18 + Math.round(70 * Math.abs(
             <i class="rv-clip g"></i><i class="rv-clip y"></i><i class="rv-clip o"></i>
           </div>
         </div>
-        <h3>一鍵進 Resolve</h3>
-        <p>搜尋結果帶著 clip color 匯入 Media Pool：GOOD 綠、REV 黃、N·G 橘。也可以輸出 EDL、FCPXML、SRT。</p>
+        <h3>一鍵進 Resolve，時間碼對得上</h3>
+        <p>搜尋結果帶著 clip color 匯入 Media Pool（GOOD 綠、REV 黃、N·G 橘），依攝影機自動分 bin。匯出 EDL、FCPXML 時用攝影機本身的時間碼加上你標的 IN 點，relink 回原始檔落在同一格。</p>
       </article>
 
     </div>
-    <p class="feat-note">動畫是介面示意；縮圖、檔名與場景描述取自實際畫面，逐字稿與時間碼為示範。</p>
+
+    <h3 class="feat-tier">還有這些</h3>
+    <div class="more-grid">
+      <section class="more">
+        <h4>轉錄</h4>
+        <ul>
+          <li><b>校正字典與熱詞</b>每個專案一份，專有名詞先餵給 Whisper，轉完再批次修正；修正前先預覽，可還原。<span class="more-where">設定 → 進階</span></li>
+          <li><b>字幕顯示時間規則</b>最短、最長顯示時間、句間空隙、每秒字數，匯出 SRT／VTT 自動套用；實測違規率 10.2% → 1.7%。<span class="more-where">自動</span></li>
+          <li><b>多語逐字稿</b>同一支素材可以保留中、日、英各一份，選一份當主要的拿去搜尋和匯出。<span class="more-where">Inspector</span></li>
+          <li><b>YouTube 章節</b>依場景時間軸產生章節清單，貼到影片說明就能用。<span class="more-where">Inspector「YT 章節」</span></li>
+        </ul>
+      </section>
+      <section class="more">
+        <h4>拍攝現場</h4>
+        <ul>
+          <li><b>轉存自動歸檔</b>依 <span class="mono">{'{date}'}/{'{camera}'}/{'{reel}'}</span> 自動建資料夾，先預覽再拷。<span class="more-where">DIT 介面・指令列</span></li>
+          <li><b>插卡自動轉存</b>記憶卡一插上就開始拷，已經插著的卡不會重拷。<span class="more-where tag-cli">指令列</span></li>
+          <li><b>攝影日報</b>20 欄 DIT 規格的 CSV：Reel、Scene、Take、TC、機型、鏡頭、ISO、快門……<span class="more-where tag-cli">指令列</span></li>
+          <li><b>監看資料夾</b>新檔案拷進指定資料夾、大小穩定後就自動匯入。<span class="more-where tag-cli">指令列</span></li>
+        </ul>
+      </section>
+      <section class="more">
+        <h4>素材管理</h4>
+        <ul>
+          <li><b>素材庫助手</b>用口語問，它會分辨你要找素材、續篩、找相似鏡頭還是看統計；記得前 10 輪對話，答案裡的場景點了就回到那支素材。<span class="more-where">「CHAT」</span></li>
+          <li><b>精選集</b>把散在各處的素材收成一組，可以整組複製成新專案。<span class="more-where">★・跨專案需 Pro</span></li>
+          <li><b>跨專案搜尋</b>一次搜所有專案，結果依專案分組。<span class="more-where tag-pro">Pro</span></li>
+          <li><b>360 素材</b>雙魚眼的 <span class="mono">.insv</span>、<span class="mono">.360</span> 攤平成全景，在 Inspector 裡拖曳環視，跟一般素材進同一個庫。<span class="more-where">Inspector</span></li>
+        </ul>
+      </section>
+      <section class="more">
+        <h4>格式與進階</h4>
+        <ul>
+          <li><b>影片、音訊、圖片同一個庫</b>影片 mp4／mov／mkv／mts／mxf 等，音訊 wav／mp3／flac 等，圖片 jpg／png／webp 等；HEVC、ProRes 這類瀏覽器播不了的，自動產生預覽用 proxy。</li>
+          <li><b>內建範例庫</b>新安裝的空素材庫一鍵載入 4 支範例短片，馬上可以試搜尋。<span class="more-where">空白素材庫畫面</span></li>
+          <li><b>HTTP API 與 MCP</b>分權限 token（12 種權限、IP 白名單、到期時間），也能讓 AI 助手透過 MCP 查詢。<a href="how-it-works.html#mcp">運作方式</a></li>
+          <li><b>NAS 共享向量庫</b>多台電腦共用同一份搜尋索引（Postgres + pgvector）。<span class="more-where tag-cli">環境變數</span></li>
+        </ul>
+      </section>
+    </div>
+
+    <h3 class="feat-tier">接下來</h3>
+    <p class="next-note">規劃中，還沒做好，也沒有承諾時程。</p>
+    <ul class="next-list">
+      <li><b>拖進剪輯軟體</b>從搜尋結果直接把素材（或 IN／OUT 那一段）拖進 Resolve 或 Finder。</li>
+      <li><b>首次啟動精靈</b>偵測你的硬體、選裝置、顯示模型下載進度，不用再自己照指令裝。</li>
+      <li><b>中英夾雜的轉錄</b>同一句裡中英文混著講的訪談，目前在評估中。</li>
+      <li><b>日文轉錄後處理</b>清掉日文特有的幻覺句與重複。</li>
+      <li><b>跨案分析</b>統計產品在畫面裡出現的頻率與時長、比對多支影片的拍攝風格。</li>
+    </ul>
+    <p class="feat-note">上方動畫是介面示意；縮圖、檔名與場景描述取自實際畫面，逐字稿、時間碼與轉存進度為示範。</p>
   </div>
 </section>
 
