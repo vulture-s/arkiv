@@ -44,7 +44,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   </Row>
 
   <Row level={3} id="offload" q="能不能從記憶卡開始|就交給它？"
-    ev="ASC MHL v2 已與 ASC 官方 reference implementation 1.2 互通驗證。">
+    ev="校驗清單為 ASC MHL v2 格式（urn:ASC:MHL:v2.0），可選 xxh3／md5／sha1／sha256／c4。">
     <p>可以。DIT 轉存會同時拷到多個目的地，每一個檔都做 hash 比對，拷到一半中斷可以接著跑，結束時每個目的地各留一份 ASC MHL v2 校驗清單。<b>它從不刪除來源卡。</b></p>
   </Row>
 

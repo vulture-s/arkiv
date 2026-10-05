@@ -46,8 +46,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   </Row>
 
   <Row level={3} id="listen" q="同一個網路裡的人|連得到我的素材庫嗎？" mark="yes"
-    ev="桌面 App：API 127.0.0.1:8501，MCP 127.0.0.1:8502。Docker：docker-compose.yml 預設發佈在 127.0.0.1，由 ARKIV_BIND_HOST 控制。">
-    <p>預設連不到。桌面 App 的 API 與 MCP 都只聽本機（127.0.0.1）；Docker 版從 2026-10 起，對外的埠也預設只綁本機。</p>
+    ev="桌面 App：API 只綁 127.0.0.1，埠號每次開啟由系統指定；App 不會啟動 MCP。自己執行 MCP 的 HTTP 版時預設 127.0.0.1:8502。Docker：docker-compose.yml 預設發佈在 127.0.0.1，由 ARKIV_BIND_HOST 控制。">
+    <p>預設連不到。桌面 App 的 API 只聽本機（127.0.0.1），也不會啟動 MCP；Docker 版從 2026-10 起，對外的埠也預設只綁本機。</p>
     <p>如果你就是要讓別台電腦連進來（例如區網裡的 MCP），用 Docker 啟動時加上 <code>ARKIV_BIND_HOST=0.0.0.0</code>。打開之後，同網段的人只要有 token 就能存取，請自己保管好 token。</p>
   </Row>
 
