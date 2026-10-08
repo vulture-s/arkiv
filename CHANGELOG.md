@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+**新增：剪輯用 proxy —— 寫到原始檔旁邊的 `Proxy/<原檔名>.mov`，Resolve 可以直接連結。**
+Inspector 的 proxy 給不了剪輯軟體用：它叫 `{id}_{hash}.mp4`（Resolve 靠檔名配對 proxy）、
+沒有 timecode、只留一條雙聲道、720p H.264，而且只在瀏覽器播不了的編碼才會產生。
+這次**另外加一份選用輸出**，Inspector 的 proxy 一個字都沒動：
+
+- ProRes 422 Proxy、保留原始 timecode、**保留全部音軌**，最高 1080p 且不放大（`ARKIV_EDITOR_PROXY_HEIGHT`）
+- **絕不覆蓋**：`Proxy/` 裡已經有同名 `.mov`／`.mp4`／`.mxf`（剪輯師自己做的）就跳過；編碼途中有人放進來也是對方贏
+- 先寫隱藏暫存檔，成功才搬到定位；失敗會清掉暫存檔，以及這次才建立的空 `Proxy/` 資料夾
+- 用法：`python editor_proxy.py <media_id>…` 或 `--all`；API `POST /api/proxy/editor`（`{"ids": […]}`，`ingest_write`）、
+  `GET /api/proxy/editor/status`、`GET /api/proxy/editor/{media_id}`
+
+⚠️ 它會**寫進你的素材資料夾**（這正是重點，剪輯軟體才找得到）。唯讀的素材碟會回 `failed`，不會改寫別處。
+
 **Docker：對外埠改成預設只綁本機（127.0.0.1）。**
 原本 `docker-compose.yml` 把 8501（API）、8502（MCP）、11434（Ollama）開在所有網卡上，
 同一個區網的人拿到 token 就能讀素材庫，Ollama 則是誰都能用。
