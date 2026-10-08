@@ -25,10 +25,10 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
+import commands
 import config
 import corrections
 import db
-import embed
 import media_delete
 import mediatypes
 import progress
@@ -699,6 +699,12 @@ def get_media_chapters(
     return {"media_id": media_id, "format": format, "chapters": text, "count": count}
 
 
+def _sent(body: BaseModel) -> dict:
+    """Only the fields the client actually sent — the PATCH contract that
+    commands.py's setters take (omitted = untouched, explicit null = clear)."""
+    return {field: getattr(body, field) for field in body.model_fields_set}
+
+
 @router.patch("/api/media/{media_id}/rating")
 def update_rating(
     media_id: int,
@@ -711,27 +717,11 @@ def update_rating(
     untouched; an explicit null clears it. PATCH {rating:'good'} used to
     silently wipe the stored note (PUT semantics in a PATCH endpoint).
     """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        out = commands.set_rating(media_id, _sent(body))
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    provided = body.model_fields_set  # audit M20: omitted vs explicit-null
-    sets, params = [], []
-    if "rating" in provided:
-        sets.append("rating = ?")
-        params.append(body.rating)
-    if "note" in provided:
-        sets.append("rating_note = ?")
-        params.append(body.note)
-    if sets:
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
-                (*params, media_id),
-            )
-    new_rating = body.rating if "rating" in provided else rec.get("rating")
-    new_note = body.note if "note" in provided else rec.get("rating_note")
-    return {"ok": True, "rating": new_rating, "note": new_note}
-
+    return {"ok": True, **out}
 
 @router.patch("/api/media/{media_id}/inout")
 def update_inout(
@@ -747,31 +737,13 @@ def update_inout(
     sub-clips. PATCH semantics (same as rating): an OMITTED field is left untouched;
     an explicit null clears that mark.
     """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        out = commands.set_inout(media_id, _sent(body))
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    provided = body.model_fields_set
-    new_in = body.in_point if "in_point" in provided else rec.get("in_point")
-    new_out = body.out_point if "out_point" in provided else rec.get("out_point")
-    # An inverted window (in ≥ out) exports an empty/negative range downstream —
-    # reject it rather than silently persisting a range that yields nothing.
-    if new_in is not None and new_out is not None and new_in >= new_out:
-        raise HTTPException(422, "in_point 必須小於 out_point")
-    sets, params = [], []
-    if "in_point" in provided:
-        sets.append("in_point = ?")
-        params.append(body.in_point)
-    if "out_point" in provided:
-        sets.append("out_point = ?")
-        params.append(body.out_point)
-    if sets:
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
-                (*params, media_id),
-            )
-    return {"ok": True, "in_point": new_in, "out_point": new_out}
-
+    except commands.Invalid as e:
+        raise HTTPException(422, str(e))
+    return {"ok": True, **out}
 
 @router.patch("/api/media/{media_id}/camera")
 def update_camera(
@@ -787,27 +759,11 @@ def update_camera(
     inout/rating): an OMITTED field is left untouched; an explicit null (or blank)
     clears it. Kept out of _ALLOWED_COLS so a re-ingest never overwrites the mark.
     """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        out = commands.set_camera(media_id, _sent(body))
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    provided = body.model_fields_set
-    sets, params = [], []
-    if "camera_id" in provided:
-        sets.append("camera_id = ?")
-        params.append(body.camera_id)
-    if "angle" in provided:
-        sets.append("angle = ?")
-        params.append(body.angle)
-    if sets:
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
-                (*params, media_id),
-            )
-    new_camera_id = body.camera_id if "camera_id" in provided else rec.get("camera_id")
-    new_angle = body.angle if "angle" in provided else rec.get("angle")
-    return {"ok": True, "camera_id": new_camera_id, "angle": new_angle}
-
+    return {"ok": True, **out}
 
 @router.get("/api/media/{media_id}/tags")
 def get_tags(
@@ -823,15 +779,11 @@ def add_tag(
     body: TagCreate,
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
-    rec = db.get_record_by_id(media_id)
-    if not rec:
-        raise HTTPException(404, "找不到")
-    db.add_tag(media_id, body.name, body.source)
     try:
-        embed.reindex_media(media_id)
-    except Exception as e:
-        print("[warn] reindex after add_tag failed (non-fatal):", e)
-    return {"ok": True, "tags": db.get_tags(media_id)}
+        tags = commands.add_tag(media_id, body.name, body.source)
+    except commands.NotFound:
+        raise HTTPException(404, "找不到")
+    return {"ok": True, "tags": tags}
 
 
 @router.delete("/api/media/{media_id}/tags/{tag_name}")
@@ -840,12 +792,7 @@ def remove_tag(
     tag_name: str,
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
-    db.remove_tag(media_id, tag_name)
-    try:
-        embed.reindex_media(media_id)
-    except Exception as e:
-        print("[warn] reindex after remove_tag failed (non-fatal):", e)
-    return {"ok": True, "tags": db.get_tags(media_id)}
+    return {"ok": True, "tags": commands.remove_tag(media_id, tag_name)}
 
 
 @router.get("/api/media/{media_id}/remotion-props")
