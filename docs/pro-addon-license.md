@@ -26,6 +26,10 @@ things the free core does not provide:
 | Projects | Up to 3 | Unlimited |
 | Cross-project aggregation (search and collections spanning projects) | — | ✅ |
 
+Modifying the free core to exceed its allowance or to switch on these features
+is not permitted under the core licence's Additional Terms (see
+[LICENSE](../LICENSE)) — including for your own use.
+
 > **In effect from release 1.1.0.** No shipped version up to and including 1.0.0
 > capped projects or withheld cross-project aggregation, and those builds do not
 > enforce the allowance at all. From 1.1.0 the free allowance applies to **new
@@ -159,6 +163,8 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 |---|---|---|
 | 專案數 | 最多 3 個 | 無限 |
 | 跨專案聚合（跨專案搜尋與精選集） | — | ✅ |
+
+修改免費核心來超過額度或開啟這兩項功能，依核心授權的附加條款（見 [LICENSE](../LICENSE)）不被允許 —— 自己使用也一樣。
 
 > **自 1.1.0 起實施。** 截至 1.0.0 為止已發布的任何版本都不限制專案數、
 > 亦未保留跨專案聚合功能，且那些版本完全不執行此額度。

@@ -23,7 +23,7 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **AI editing tools only understand footage with someone talking** → arkiv runs vision analysis + transcription on every clip, so B-roll and dialogue-free footage stay searchable and manageable.
 - **Your library has to feed any downstream edit** → manual, automated, or script-driven: native Resolve plugin, EDL / FCPXML export, API / MCP interface.
 
-> **License in one line:** arkiv is free to use for **any** purpose, commercial work included (source-available); what you make with it is **100% yours**. The only thing off-limits is turning arkiv into a product that competes with it.
+> **License in one line:** arkiv is free to use for **any** purpose, commercial work included (source-available); what you make with it is **100% yours**. Off-limits: turning arkiv into a product that competes with it, and modifying it to get past the free-tier allowance.
 >
 > **Proven at scale:** fully indexed a **1,506-clip real production library** (1,161 of them dialogue-free B-roll) on a single RTX 4070.
 
@@ -481,9 +481,9 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 ## License
 
-PolyForm Perimeter License 1.0.1 — see [LICENSE](LICENSE).
+PolyForm Perimeter License 1.0.1 plus Additional Terms — see [LICENSE](LICENSE).
 
-Using arkiv is free for **any** purpose, commercial work included: paid client jobs, studio use, funded productions. Videos, timelines and exports you produce with it are yours, with no restriction from the license. The one thing that is not permitted is providing others with a product that competes with arkiv — forking it into a rival asset manager, wrapping it as a hosted indexing service sold to third parties, or reimplementing its functionality as a substitute product, including free of charge.
+Using arkiv is free for **any** purpose, commercial work included: paid client jobs, studio use, funded productions. Videos, timelines and exports you produce with it are yours, with no restriction from the license. Two things are not permitted. **Modifying arkiv to exceed the free-tier allowance or to switch on Pro functionality** — this applies to your own use too (Additional Terms 1–2; libraries that predate the allowance keep their exemption). And **providing others with a product that competes with arkiv** — forking it into a rival asset manager, wrapping it as a hosted indexing service sold to third parties, or reimplementing its functionality as a substitute product, including free of charge.
 
 The line is what your customer is buying: a deliverable you produced with arkiv is ordinary tool use; arkiv's functionality itself, sold as a product or service, competes.
 
@@ -491,7 +491,7 @@ The line is what your customer is buying: a deliverable you produced with arkiv 
 
 The free core covers up to **3 projects**. The optional **Pro add-on** — a separate closed-source component — unlocks unlimited projects and cross-project aggregation (search and collections spanning projects) for **NT$3,000, one time, perpetual**. No subscription, no activation server, no phone-home. Terms: [docs/pro-addon-license.md](docs/pro-addon-license.md).
 
-> Not yet on sale — the purchase path is still being built. The terms page is published so you can read them before that happens.
+> On sale since 2026-10-03 through the Waffle House store — see the [product page](https://vulture-s.github.io/arkiv/).
 
 ## Public-Interest Program
 

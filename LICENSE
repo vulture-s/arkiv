@@ -1,5 +1,5 @@
 arkiv is licensed under the PolyForm Perimeter License 1.0.1, reproduced in full
-below.
+below, together with the Additional Terms that follow this summary.
 
 Required Notice: Copyright (c) 2026 Hevin Yeh (https://github.com/vulture-s/arkiv)
 
@@ -17,9 +17,14 @@ This summary is for convenience and does not modify them.
     timelines, EDL/FCPXML/OTIO exports, thumbnails, and any other output -- are
     yours, with no restriction of any kind arising from this license.
 
-  * The sole restriction is that you may not provide others with a product that
-    competes with arkiv. Deriving a rival asset manager from it, offering it to
-    third parties as a hosted indexing service, or reimplementing its
+  * The free core includes a free-tier allowance (up to three projects, no
+    cross-project aggregation). Modifying arkiv to exceed that allowance or to
+    switch on Pro functionality is not permitted -- for your own use either.
+    See Additional Terms below.
+
+  * Beyond that, the restriction is that you may not provide others with a
+    product that competes with arkiv. Deriving a rival asset manager from it,
+    offering it to third parties as a hosted indexing service, or reimplementing its
     functionality as a substitute product all fall under the Noncompete and
     Competition sections below -- including where the competing product is
     supplied free of charge.
@@ -30,8 +35,38 @@ supplied as a product, a service, a library, or a plug-in -- competes with the
 software.
 
 Separately licensed component: the optional Pro add-on (unlimited projects and
-cross-project aggregation) is NOT covered by this license. It is a closed-source
-component distributed under its own terms; see docs/pro-addon-license.md.
+cross-project aggregation) is NOT covered by this license. It is distributed
+under its own terms; see docs/pro-addon-license.md.
+
+================================================================================
+Additional Terms
+================================================================================
+
+These Additional Terms supplement the PolyForm Perimeter License 1.0.1 below,
+whose text is reproduced unmodified. Where the two conflict, these Additional
+Terms control. They apply to releases that include them; earlier releases
+remain under the terms they shipped with.
+
+1. Free-tier allowance. The software contains a free-tier allowance (at the
+   time of writing: up to three projects, and no aggregation across projects)
+   and the checks that apply it. Changing, removing, disabling or otherwise
+   working around that allowance or those checks -- including by supplying a
+   licence record you did not obtain from the licensor -- is not a permitted
+   purpose. This applies to your own use, not only to what you provide to
+   others.
+
+2. Pro functionality. Enabling, unlocking or reproducing in the software the
+   functionality of the separately licensed Pro add-on, other than by
+   installing the Pro add-on under its own terms, is likewise not a permitted
+   purpose.
+
+3. Grandfathered libraries. Nothing in these Additional Terms withdraws the
+   exemption from the free-tier allowance granted to libraries in use before
+   that allowance took effect, as described in docs/pro-addon-license.md.
+
+4. Everything else is unchanged. All other uses permitted by the PolyForm
+   Perimeter License 1.0.1 -- including commercial use, and changes and new
+   works for any permitted purpose -- remain permitted.
 
 ================================================================================
 # PolyForm Perimeter License 1.0.1
