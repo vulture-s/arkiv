@@ -718,7 +718,7 @@ def update_rating(
     silently wipe the stored note (PUT semantics in a PATCH endpoint).
     """
     try:
-        out = commands.set_rating(media_id, _sent(body))
+        out = commands.set_rating(media_id, _sent(body), _tok)
     except commands.NotFound:
         raise HTTPException(404, "找不到")
     return {"ok": True, **out}
@@ -738,7 +738,7 @@ def update_inout(
     an explicit null clears that mark.
     """
     try:
-        out = commands.set_inout(media_id, _sent(body))
+        out = commands.set_inout(media_id, _sent(body), _tok)
     except commands.NotFound:
         raise HTTPException(404, "找不到")
     except commands.Invalid as e:
@@ -760,7 +760,7 @@ def update_camera(
     clears it. Kept out of _ALLOWED_COLS so a re-ingest never overwrites the mark.
     """
     try:
-        out = commands.set_camera(media_id, _sent(body))
+        out = commands.set_camera(media_id, _sent(body), _tok)
     except commands.NotFound:
         raise HTTPException(404, "找不到")
     return {"ok": True, **out}
@@ -780,7 +780,7 @@ def add_tag(
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
     try:
-        tags = commands.add_tag(media_id, body.name, body.source)
+        tags = commands.add_tag(media_id, body.name, body.source, _tok)
     except commands.NotFound:
         raise HTTPException(404, "找不到")
     return {"ok": True, "tags": tags}
@@ -792,7 +792,7 @@ def remove_tag(
     tag_name: str,
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
-    return {"ok": True, "tags": commands.remove_tag(media_id, tag_name)}
+    return {"ok": True, "tags": commands.remove_tag(media_id, tag_name, _tok)}
 
 
 @router.get("/api/media/{media_id}/remotion-props")
