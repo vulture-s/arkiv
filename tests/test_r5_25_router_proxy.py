@@ -33,6 +33,9 @@ def test_router_owns_proxy_routes_and_workers():
         ("/api/proxy/status", "GET"),
         ("/api/proxy/build", "POST"),
         ("/api/proxy/build/{media_id}", "POST"),
+        ("/api/proxy/editor", "POST"),
+        ("/api/proxy/editor/status", "GET"),
+        ("/api/proxy/editor/{media_id}", "GET"),
     }
     for name in ("proxy_status", "proxy_build", "proxy_build_one",
                  "_build_proxies", "_build_proxies_all"):
@@ -72,4 +75,7 @@ def test_proxy_routes_mounted_and_auth_guarded(server_module):
         assert c.get("/api/proxy/status").status_code == 401
         assert c.post("/api/proxy/build").status_code == 401
         assert c.post("/api/proxy/build/1").status_code == 401
+        assert c.post("/api/proxy/editor", json={"ids": [1]}).status_code == 401
+        assert c.get("/api/proxy/editor/status").status_code == 401
+        assert c.get("/api/proxy/editor/1").status_code == 401
         assert c.get("/api/proxy/statuszz").status_code == 404

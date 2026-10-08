@@ -400,6 +400,10 @@ _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
 # so encode stays libx264). Defaults on for arm64 macOS, off elsewhere; the encoder
 # retries in software if a source's codec/pix_fmt isn't hardware-decodable.
 PROXY_HEIGHT = int(os.getenv("ARKIV_PROXY_HEIGHT", "720"))
+# Editing proxy (editor_proxy.py): ProRes Proxy written to <source dir>/Proxy/ for
+# the NLE. Separate from PROXY_HEIGHT on purpose — the browser proxy wants small,
+# an editing proxy wants enough picture to cut on. Never upscales.
+EDITOR_PROXY_HEIGHT = int(os.getenv("ARKIV_EDITOR_PROXY_HEIGHT", "1080"))
 _hwd = os.getenv("ARKIV_PROXY_HWDECODE", "auto").strip().lower()
 PROXY_HWDECODE_DEFAULT = _IS_MLX if _hwd in ("", "auto") else _hwd in ("1", "true", "yes", "on")
 
