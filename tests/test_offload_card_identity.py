@@ -156,6 +156,60 @@ def test_mhl_flags_file_changed_since_previous_generation(scratch, monkeypatch):
     assert s["status"] == "failed"
     assert "A/C0001.MP4" in (s["error"] or "")
 
+    # …and it must STAY failed: the tampered hash was written into the new
+    # generation, so a previous-generation-only comparison would go green here
+    # with the damage still on disk (#497 review C1).
+    c3 = _card(scratch / "card3", {"C/C0001.MP4": b"yet another clip"})
+    code, summary, _ = offload.run_offload(c3, [dst])
+    s = summary[str(dst.resolve())]
+    assert code != 0 and s["status"] == "failed"
+    assert "A/C0001.MP4" in (s["error"] or "")
+
+
+# ── OS metadata on the card (#497 review B1) ────────────────────────────────
+def test_finder_metadata_is_not_footage(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    c = _card(scratch / "card", {"DCIM/C0001.MP4": b"clip",
+                                 ".DS_Store": b"finder v1",
+                                 "DCIM/._C0001.MP4": b"appledouble",
+                                 ".Spotlight-V100/Store-V2/x": b"idx",
+                                 ".fseventsd/0001": b"ev",
+                                 ".Trashes/501/junk": b"t",
+                                 "System Volume Information/IndexerVolumeGuid": b"w"})
+    names = [p.name for p in offload._collect_sources(c)]
+    assert names == ["C0001.MP4"]
+
+
+def test_finder_touching_card_between_runs_keeps_resume_and_no_conflict(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    mount = scratch / "Volumes" / "Untitled"
+    dst = scratch / "dst"
+    st = scratch / "st.json"
+    _card(mount, {"PRIVATE/M4ROOT/CLIP/C0001.MP4": b"clip one", ".DS_Store": b"finder v1"})
+    assert offload.run_offload(mount, [dst], resume=st, emit_mhl=False)[0] == 0
+    (mount / ".DS_Store").write_bytes(b"finder v2 -- DIT opened the card")
+    (mount / "PRIVATE/M4ROOT/CLIP/._C0001.MP4").write_bytes(b"appledouble")
+    code, summary, _ = offload.run_offload(mount, [dst], resume=st, emit_mhl=False)
+    assert code == 0
+    assert summary[str(dst.resolve())]["conflict_files"] == []
+    assert not (dst / ".DS_Store").exists()
+
+
+def test_api_same_card_after_finder_gets_same_state_key(fastapi_client, tmp_path, monkeypatch):
+    import routers.offload as ro
+    state_cwd = _state_dir(monkeypatch, tmp_path)
+    mount = tmp_path / "Volumes" / "Untitled"
+    _card(mount, {"PRIVATE/M4ROOT/CLIP/C0001.MP4": b"clip one", ".DS_Store": b"finder v1"})
+    dst = tmp_path / "backup"; dst.mkdir()
+    key1 = ro._offload_state_path(state_cwd, mount.resolve())
+    _ = fastapi_client.post("/api/offload", json={"src": str(mount), "dst": [str(dst)]}).text
+    (mount / ".DS_Store").write_bytes(b"finder v2")
+    assert ro._offload_state_path(state_cwd, mount.resolve()) == key1  # resume still applies
+    r = fastapi_client.post("/api/offload", json={"src": str(mount), "dst": [str(dst)]})
+    done = [json.loads(l) for l in r.text.splitlines() if '"type": "done"' in l][-1]
+    assert done["code"] == 0
+
 
 # ── API: per-card state key ─────────────────────────────────────────────────
 def _state_dir(monkeypatch, tmp_path):

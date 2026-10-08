@@ -137,7 +137,10 @@ def offload_run(
     # single cwd/offload-state.json: a retry re-copied from zero, and a second
     # concurrent card clobbered the first's state. A stable per-source path means a
     # 400GB offload that dies at 92% picks up from the last verified file.
-    state_path = _offload_state_path(state_cwd, src, body.include_heic)
+    try:
+        state_path = _offload_state_path(state_cwd, src, body.include_heic)
+    except OSError as exc:  # unreadable card → a 400 the UI can show, not a 500
+        raise HTTPException(400, "無法讀取來源：{0}".format(exc))
     cmd += ["--resume", str(state_path)]
 
     # Single-flight per source (see _acquire_offload_slot): reject a second run over

@@ -45,6 +45,7 @@
   let pTotal = 0
   let pDone = 0
   let pFailed = 0
+  let conflictToasted = false
   let recent = [] // [{name, status}] — last handful of files, failed flagged
   let summary = null // {dst: {verified_files, failed_files, mhl_path, status}}
   let doneCode = null
@@ -140,7 +141,7 @@
     const missing = blockers({ needDst: true, needPreview: true })
     if (missing.length) { pushToast(`無法開始複製 — 缺少：${missing.join('、')}`, 'error'); return }
     err = ''; phase = 'running'; stopped = false
-    curDst = ''; pTotal = 0; pDone = 0; pFailed = 0; recent = []; summary = null; doneCode = null
+    curDst = ''; pTotal = 0; pDone = 0; pFailed = 0; recent = []; summary = null; doneCode = null; conflictToasted = false
     stage = ''; stageFiles = 0
     abortCtl = new AbortController()
     try {
@@ -174,7 +175,12 @@
             recent = [{ name: ev.name, status: ev.status, reason: ev.reason }, ...recent].slice(0, 8)
             // reason:'conflict' = a DIFFERENT file with this name is already on the
             // backup drive (e.g. a second card's C0001). It was NOT overwritten.
-            if (ev.reason === 'conflict') pushToast(`目的地已有同名但內容不同的檔案，未覆蓋：${ev.name}`, 'error')
+            // One toast per run, not per file: a wrong destination can collide
+            // on hundreds of names (#497 review N1). Count shows in the summary.
+            if (ev.reason === 'conflict' && !conflictToasted) {
+              conflictToasted = true
+              pushToast(`目的地已有同名但內容不同的檔案，未覆蓋（${ev.name} 等，見摘要）`, 'error')
+            }
           } else if (ev.type === 'phase') {
             // mhl_failed is terminal for this destination: keep the row's own
             // error visible rather than showing a hashing pass that already died.

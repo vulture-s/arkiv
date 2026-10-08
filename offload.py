@@ -257,6 +257,31 @@ def _hash_file(path, algo=DEFAULT_HASH):
     return hasher.hexdigest().lower()
 
 
+# OS bookkeeping that macOS / Windows write onto a card just by mounting or
+# browsing it (Finder → .DS_Store, AppleDouble ._*, Spotlight, fseventsd, the
+# Trash, Windows' System Volume Information). They are not footage: copying them
+# made "the same card, opened in Finder" fingerprint as a different card (no
+# resume) and turned the rewritten .DS_Store into a destination conflict on a
+# re-run (#497 review B1). Excluded from enumeration, so from fingerprint, copy,
+# conflict checks and the resume set alike.
+_OS_METADATA_DIRS = frozenset((
+    ".fseventsd", ".spotlight-v100", ".trashes", ".temporaryitems",
+    ".documentrevisions-v100", "system volume information", "$recycle.bin",
+))
+_OS_METADATA_FILES = frozenset((".ds_store", "thumbs.db", "desktop.ini", ".volumeicon.icns", ".apdisk"))
+
+
+def _is_os_metadata(path, root):
+    try:
+        rel_parts = path.relative_to(root).parts
+    except ValueError:
+        rel_parts = path.parts
+    if any(part.lower() in _OS_METADATA_DIRS for part in rel_parts[:-1]):
+        return True
+    name = path.name
+    return name.lower() in _OS_METADATA_FILES or name.startswith("._")
+
+
 def _collect_sources(src, include_heic=False):
     root = Path(src).expanduser().resolve(strict=False)
     if root.is_file():
@@ -266,6 +291,8 @@ def _collect_sources(src, include_heic=False):
         if not path.is_file():
             continue
         if any(part == "ascmhl" for part in path.parts):
+            continue
+        if _is_os_metadata(path, root):
             continue
         if path.name.endswith(".partial"):
             continue
@@ -461,19 +488,10 @@ def _write_mhl(dst_root, hash_algo, op="offload"):
     return mhl_path
 
 
-def _latest_mhl(dst_root):
-    if mhl is None or not hasattr(mhl, "latest_manifest"):
-        return None
-    try:
-        return mhl.latest_manifest(Path(dst_root) / "ascmhl")
-    except Exception:
-        return None
-
-
-def _mhl_changed_since(previous_mhl, current_mhl):
-    if previous_mhl is None or mhl is None or not hasattr(mhl, "changed_since"):
+def _mhl_changed_vs_history(current_mhl):
+    if mhl is None or not hasattr(mhl, "changed_against_history") or not Path(current_mhl).exists():
         return []
-    return mhl.changed_since(previous_mhl, current_mhl)
+    return mhl.changed_against_history(current_mhl)
 
 
 def _check_destination_mount(dst_root):
@@ -753,18 +771,21 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
             try:
                 _emit(progress, {"type": "phase", "dst": dst_key, "phase": "mhl_write",
                                  "files": len(verified_rel_paths)})
-                previous_mhl = _latest_mhl(dst_root)
                 mhl_path = _write_mhl(dst_root, hash_algo, op="offload")
                 dst_state["mhl_path"] = str(mhl_path)
                 _save_state(state_path, state)
                 # Chain of custody across runs: a clip recorded by an earlier
-                # generation must still hash the same. A new generation alone
-                # would just record the new hash and the chain would stay "valid".
-                changed = _mhl_changed_since(previous_mhl, mhl_path)
+                # generation must still hash the same as when it was FIRST
+                # recorded. A new generation alone would just record the new hash
+                # and the chain would stay "valid" — and comparing only against the
+                # previous generation alerts once, then goes green (#497 review).
+                changed = _mhl_changed_vs_history(mhl_path)
                 if changed:
                     raise RuntimeError(
-                        "mhl history mismatch: {0} file(s) changed since {1}: {2}".format(
-                            len(changed), Path(previous_mhl).name, ", ".join(changed[:10])))
+                        "mhl history mismatch: {0} file(s) differ from their first "
+                        "recorded hash: {1}".format(
+                            len(changed),
+                            ", ".join("{0} (first in {1})".format(p, g) for p, g in changed[:10])))
                 if verify:
                     _emit(progress, {"type": "phase", "dst": dst_key, "phase": "mhl_verify",
                                      "files": len(verified_rel_paths)})

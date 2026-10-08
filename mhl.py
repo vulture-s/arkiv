@@ -517,6 +517,61 @@ def changed_since(previous_mhl: Path, current_mhl: Path) -> List[str]:
     return sorted(changed)
 
 
+def _generations(output_dir: Path) -> List[Path]:
+    """All manifests in an ascmhl folder, oldest first (chain order, falling back
+    to the filename sequence for manifests the chain does not list)."""
+    output_dir = Path(output_dir)
+    seqs: Dict[str, int] = {}
+    try:
+        for entry in _read_chain(output_dir / "ascmhl_chain.xml"):
+            seqs[entry.mhl_name] = entry.sequence
+    except Exception:
+        pass
+    found = []
+    for child in output_dir.glob("*.mhl"):
+        match = MHL_FILENAME_RE.match(child.name)
+        seq = seqs.get(child.name, int(match.group(1)) if match else 0)
+        found.append((seq, child.name, child))
+    return [p for _, _, p in sorted(found)]
+
+
+def changed_against_history(current_mhl: Path) -> List[Tuple[str, str]]:
+    """Paths in ``current_mhl`` whose hash differs from the FIRST hash any earlier
+    generation recorded for that path → [(rel_path, first_generation_name)].
+
+    Compared against the first record, not just the previous generation: a
+    tampered/overwritten file is written into the new generation as soon as it is
+    detected, so a previous-generation-only check alerts exactly once and the next
+    run is green again with the damage still on disk (review of #497). Anchoring
+    on the first record keeps it failing until a human resolves it."""
+    current_mhl = Path(current_mhl)
+    baseline: Dict[str, Tuple[Dict[str, str], str]] = {}
+    for gen in _generations(current_mhl.parent):
+        if gen.name == current_mhl.name:
+            continue
+        try:
+            files, _ = _manifest_entries(_parse_manifest(gen))
+        except Exception:
+            continue
+        for record in files:
+            hashes = baseline.setdefault(record.rel_path, ({}, gen.name))[0]
+            for item in record.hashes:
+                hashes.setdefault(item.algo, item.value)
+    if not baseline:
+        return []  # first generation in this folder: no history to break
+    cur_files, _ = _manifest_entries(_parse_manifest(current_mhl))
+    changed: List[Tuple[str, str]] = []
+    for record in cur_files:
+        base = baseline.get(record.rel_path)
+        if not base:
+            continue
+        for item in record.hashes:
+            if item.algo in base[0] and base[0][item.algo] != item.value:
+                changed.append((record.rel_path, base[1]))
+                break
+    return sorted(changed)
+
+
 def _parse_manifest(mhl_path: Path):
     tree = ET.parse(mhl_path)
     root = tree.getroot()
