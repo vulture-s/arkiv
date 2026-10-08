@@ -62,6 +62,66 @@ def _looks_proxied(request: Request) -> bool:
     return any(h in request.headers for h in _PROXY_HEADERS)
 
 
+def _hostname_of(host_header: str) -> str:
+    """'Host' header → bare lowercase hostname ('[::1]:8501' → '::1')."""
+    h = (host_header or "").strip().lower()
+    if h.startswith("["):
+        end = h.find("]")
+        return h[1:end] if end > 0 else h
+    if h.count(":") == 1:
+        h = h.split(":", 1)[0]
+    return h.rstrip(".")
+
+
+def _extra_allowed_hosts() -> list:
+    """`ARKIV_ALLOWED_HOSTS` — extra hostnames this deployment answers to, APPENDED
+    to the built-in safe set (same shape as mcp_http_server's
+    ARKIV_MCP_ALLOWED_HOSTS). `*` disables the Host check entirely."""
+    raw = os.getenv("ARKIV_ALLOWED_HOSTS", "")
+    return [_hostname_of(h) for h in raw.split(",") if h.strip()]
+
+
+def _host_is_trusted(host_header: str) -> bool:
+    """Can a request carrying this `Host:` be a DNS-rebinding attack?
+
+    Audit 2026-10-09 (HIGH): a malicious page rebinds ITS OWN name to 127.0.0.1;
+    the browser then treats it as same-origin, the peer is loopback, and there is
+    no forwarding header — loopback trust handed it all 12 scopes (bulk-delete,
+    trash purge, mint an admin token). The tell is the Host header: it carries the
+    attacker's name. Rebinding needs an attacker-controlled DNS name, so these are
+    safe: no Host (non-browser HTTP/1.0), an IP literal (127.0.0.1, ::1, the tailnet
+    IP behind the L4 forwarder), `localhost` and `*.localhost` (RFC 6761 — browsers
+    pin it to loopback; covers tauri.localhost), plus ARKIV_ALLOWED_HOSTS."""
+    name = _hostname_of(host_header)
+    if not name:
+        return True
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        pass
+    if name == "localhost" or name.endswith(".localhost"):
+        return True
+    extra = _extra_allowed_hosts()
+    return "*" in extra or name in extra
+
+
+def _trust_proxy_headers() -> bool:
+    """ARKIV_TRUST_PROXY_HEADERS=1: arkiv really sits behind a reverse proxy that
+    sets X-Forwarded-For itself, so the (uvicorn-rewritten) client IP is real."""
+    return os.getenv("ARKIV_TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def loopback_trusted(client_host: str, headers) -> bool:
+    """Single definition of token-free local access, shared by HTTP and WS."""
+    return (
+        _trust_loopback()
+        and client_host in _LOOPBACK_HOSTS
+        and not any(h in headers for h in _PROXY_HEADERS)
+        and _host_is_trusted(headers.get("host", ""))
+    )
+
+
 def hash_token(raw):
     """Legacy unsalted SHA-256. Kept for the dual-read transition (Phase 16.1)
     and as the fallback when no server HMAC key is configured."""
@@ -109,6 +169,13 @@ def new_raw_token():
     return secrets.token_urlsafe(32)
 
 
+def _ip_allowlist_is_wildcard(allowed_ips_json) -> bool:
+    try:
+        return "*" in json.loads(allowed_ips_json or "[]")
+    except Exception:
+        return False
+
+
 def _check_ip_allowed(client_ip, allowed_ips_json):
     try:
         allowed = json.loads(allowed_ips_json or "[]")
@@ -138,7 +205,7 @@ def verify_token(request: Request) -> dict:
     # this stops a proxied remote request from being handed full admin (and a
     # spoofed X-Forwarded-For from a remote peer, whose own host isn't loopback,
     # never reaches here anyway).
-    if _trust_loopback() and client_host in _LOOPBACK_HOSTS and not _looks_proxied(request):
+    if loopback_trusted(client_host, request.headers):
         return {"id": "loopback", "name": "loopback (local)", "scopes": SCOPES}
 
     auth_header = request.headers.get("Authorization", "")
@@ -153,10 +220,10 @@ def verify_token(request: Request) -> dict:
         raw = (request.query_params.get("token") or "").strip()
     client_ip = request.client.host if (request.client is not None and request.client.host) else ""
     user_agent = request.headers.get("user-agent", "")
-    return resolve_raw_token(raw, client_ip, user_agent)
+    return resolve_raw_token(raw, client_ip, user_agent, forwarded=_looks_proxied(request))
 
 
-def resolve_raw_token(raw: str, client_ip: str, user_agent: str = "") -> dict:
+def resolve_raw_token(raw: str, client_ip: str, user_agent: str = "", forwarded: bool = False) -> dict:
     """Validate a raw token string → token dict (id/name/scopes). Hash lookup +
     expiry + per-token IP allowlist + scopes, and records last-used. Raises
     HTTPException(401/403). Shared by the HTTP path (verify_token) and the
@@ -194,6 +261,17 @@ def resolve_raw_token(raw: str, client_ip: str, user_agent: str = "") -> dict:
 
         if not _check_ip_allowed(client_ip, row["allowed_ips_json"]):
             raise HTTPException(403, "Client IP not in token's allowlist")
+        # Audit 2026-10-09 (MED): uvicorn's default proxy_headers=True rewrites the
+        # client address from X-Forwarded-For when the peer is 127.0.0.1, so any
+        # loopback peer (ssh -L, a socat/L4 forwarder, a local process) could name
+        # whatever IP satisfies the allowlist. The launchers now pass
+        # --no-proxy-headers; this is the backstop for a launcher that doesn't: an
+        # IP-restricted token is not honoured on a forwarded request unless the
+        # operator declared a real reverse proxy (ARKIV_TRUST_PROXY_HEADERS=1).
+        if forwarded and not _trust_proxy_headers() and not _ip_allowlist_is_wildcard(row["allowed_ips_json"]):
+            raise HTTPException(
+                403, "Forwarded request: token IP allowlist cannot be verified "
+                     "(set ARKIV_TRUST_PROXY_HEADERS=1 only behind a reverse proxy you control)")
 
         # Opportunistic migration — ONLY after the token fully validates (Codex
         # SHOULD-FIX: don't mutate on a request that ends up rejected). A legacy

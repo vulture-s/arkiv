@@ -284,6 +284,9 @@ fn main() {
                 "127.0.0.1",
                 "--port",
                 &port.to_string(),
+                // Never trust X-Forwarded-For: nothing proxies the sidecar, and
+                // uvicorn's default lets a loopback peer forge its IP (audit 2026-10-09).
+                "--no-proxy-headers",
             ])
             .current_dir(&src_dir)
             .env("PYTHONPATH", &pythonpath)

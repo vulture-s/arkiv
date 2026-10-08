@@ -200,10 +200,10 @@ echo ""
 echo "  Location:  $INSTALL_DIR"
 if [ -n "$SHORTCUT_CREATED" ]; then
     echo "  Launch:    double-click ~/Desktop/arkiv.command"
-    echo "  Or:        cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT"
+    echo "  Or:        cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT --no-proxy-headers"
 else
     # No desktop shortcut on a piped/headless install — don't advertise it (Codex P3)
-    echo "  Launch:    cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT"
+    echo "  Launch:    cd $INSTALL_DIR && source .venv/bin/activate && uvicorn server:app --port $PORT --no-proxy-headers"
 fi
 echo "  Ingest:    python ingest.py --dir /path/to/your/footage"
 echo "  Health:    python health.py"

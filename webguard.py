@@ -270,20 +270,74 @@ def _assert_ingest_path_safe(target: Path) -> None:
 
 # ── same-site (CSRF) guard ───────────────────────────────────────────────────
 
-def _assert_same_site(request: Request) -> None:
-    """audit M14: the no-body POSTs below are CORS 'simple requests' — a
-    malicious page can fire them cross-site WITHOUT a preflight, and
-    loopback-trust then authorizes them (whole-library rebuild / proxy-build
-    DoS). Browsers attach Sec-Fetch-Site and/or Origin on cross-site POSTs;
-    non-browser clients (curl, scripts) send neither and pass through."""
-    sfs = request.headers.get("sec-fetch-site")
+_SAFE_METHODS = frozenset(("GET", "HEAD", "OPTIONS"))
+
+
+def _has_explicit_credentials(headers, query_string: str = "") -> bool:
+    if (headers.get("authorization") or "").startswith("Bearer "):
+        return True
+    from urllib.parse import parse_qs
+    return bool((parse_qs(query_string or "").get("token") or [""])[0].strip())
+
+
+def same_site_violation(headers, has_credentials: bool = False):
+    """Return a reason string when a browser request is cross-site, else None.
+
+    Browsers attach Sec-Fetch-Site and/or Origin on cross-site requests;
+    non-browser clients (curl, scripts, the Resolve plugin) send neither and pass.
+    Origin == Host used to be accepted unconditionally as "same-origin for any
+    deployment host" — but under DNS rebinding the attacker's page IS same-origin
+    with itself (audit 2026-10-09 HIGH). It is now accepted only when that Host
+    can't be a rebinding name (auth._host_is_trusted) or the request carries its
+    own token (then token auth, not loopback trust, decides)."""
+    sfs = headers.get("sec-fetch-site")
     if sfs and sfs not in ("same-origin", "same-site", "none"):
-        raise HTTPException(403, "cross-site request rejected")
-    origin = request.headers.get("origin")
+        return "cross-site (sec-fetch-site={0})".format(sfs)
+    origin = headers.get("origin")
     if not origin:
-        return  # non-browser client
+        return None  # non-browser client
     if origin in _ALLOWED_ORIGINS:
-        return
-    if origin != "null" and origin.split("://", 1)[-1] == request.headers.get("host", ""):
-        return  # same-origin for whatever host/port this deployment uses
-    raise HTTPException(403, "cross-site request rejected")
+        return None
+    host = headers.get("host", "")
+    if origin != "null" and origin.split("://", 1)[-1] == host:
+        import auth  # lazy: keep webguard a leaf at import time
+        if auth._host_is_trusted(host) or has_credentials:
+            return None  # same-origin on a host that can't be a rebinding name
+        return "untrusted host {0!r}".format(host)
+    return "cross-site origin {0!r}".format(origin)
+
+
+def _assert_same_site(request: Request) -> None:
+    """audit M14: the no-body POSTs are CORS 'simple requests' — a malicious page
+    can fire them cross-site WITHOUT a preflight, and loopback-trust then
+    authorizes them. Kept for the routes that call it explicitly; every write is
+    ALSO covered by SameSiteWriteGuard (server.py) since audit 2026-10-09."""
+    query = getattr(getattr(request, "url", None), "query", "") or ""
+    if same_site_violation(request.headers, _has_explicit_credentials(request.headers, query)):
+        raise HTTPException(403, "cross-site request rejected")
+
+
+class SameSiteWriteGuard:
+    """ASGI middleware: the same-site check on EVERY non-GET/HEAD/OPTIONS request.
+
+    Audit 2026-10-09 (MED): `_assert_same_site` was hand-attached to 13 of 52
+    write routes; multipart upload, trash purge/restore, reingest, retry-vision,
+    projects/sync were open to a cross-site <form> / no-cors fetch under loopback
+    trust. Enforcing it here means a new route can't forget it. Pure ASGI (not
+    BaseHTTPMiddleware) so streaming responses (offload ndjson) are untouched;
+    WebSocket handshakes keep their own Origin check in routers/ingest.py."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("method", "GET").upper() not in _SAFE_METHODS:
+            from starlette.datastructures import Headers
+            headers = Headers(scope=scope)
+            qs = (scope.get("query_string") or b"").decode("latin-1")
+            if same_site_violation(headers, _has_explicit_credentials(headers, qs)):
+                from starlette.responses import JSONResponse
+                resp = JSONResponse({"detail": "cross-site request rejected"}, status_code=403)
+                await resp(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
