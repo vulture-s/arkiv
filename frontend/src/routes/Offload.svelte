@@ -171,7 +171,10 @@
           } else if (ev.type === 'file') {
             pDone++
             if (ev.status === 'failed') pFailed++
-            recent = [{ name: ev.name, status: ev.status }, ...recent].slice(0, 8)
+            recent = [{ name: ev.name, status: ev.status, reason: ev.reason }, ...recent].slice(0, 8)
+            // reason:'conflict' = a DIFFERENT file with this name is already on the
+            // backup drive (e.g. a second card's C0001). It was NOT overwritten.
+            if (ev.reason === 'conflict') pushToast(`目的地已有同名但內容不同的檔案，未覆蓋：${ev.name}`, 'error')
           } else if (ev.type === 'phase') {
             // mhl_failed is terminal for this destination: keep the row's own
             // error visible rather than showing a hashing pass that already died.
@@ -351,7 +354,7 @@
             {#each recent as r}
               <div class="prow file" class:fail={r.status === 'failed'}>
                 <Mono style="font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{r.name}</Mono>
-                <span class="st {r.status}">{r.status === 'failed' ? 'FAIL' : r.status === 'skipped' ? 'SKIP' : 'OK'}</span>
+                <span class="st {r.status}">{r.reason === 'conflict' ? 'EXISTS' : r.status === 'failed' ? 'FAIL' : r.status === 'skipped' ? 'SKIP' : 'OK'}</span>
               </div>
             {/each}
           </div>
@@ -361,7 +364,7 @@
               {#each Object.entries(summary) as [dst, s]}
                 <div class="srow" class:fail={s.failed_files > 0}>
                   <Mono style="font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{base(dst)}</Mono>
-                  <Mono dim style="font-size:10px;">{s.verified_files} ok{s.failed_files ? ` · ${s.failed_files} fail` : ''}{s.mhl_path ? ' · MHL' : ''}{s.error ? ` · MHL 失敗：${s.error}` : ''}</Mono>
+                  <Mono dim style="font-size:10px;">{s.verified_files} ok{s.failed_files ? ` · ${s.failed_files} fail` : ''}{s.conflict_files?.length ? ` · ${s.conflict_files.length} 檔與既有備份同名不同內容（未覆蓋）` : ''}{s.mhl_path ? ' · MHL' : ''}{s.error ? ` · MHL 失敗：${s.error}` : ''}</Mono>
                 </div>
               {/each}
             </div>

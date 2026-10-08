@@ -343,6 +343,65 @@ def _build_file_records(source_files, dsts):
     return files
 
 
+def _stat_sig(path):
+    st = path.stat()
+    return st.st_size, st.st_mtime_ns
+
+
+def source_fingerprint(source_files, src_root):
+    """Identity of a card's CONTENT (not its mount path): sha1 over every file's
+    relpath + size + mtime_ns. Two cards mounted at the same /Volumes/Untitled get
+    different fingerprints; the same card re-inserted gets the same one."""
+    h = hashlib.sha1()
+    root = Path(src_root)
+    for f in source_files:
+        size, mtime_ns = _stat_sig(f)
+        try:
+            rel = _normalize_relpath(f, root)
+        except ValueError:
+            rel = str(f)
+        h.update("{0}\0{1}\0{2}\n".format(rel, size, mtime_ns).encode("utf-8"))
+    return h.hexdigest()
+
+
+def _assert_state_matches_source(state, source_files, src_root):
+    """Refuse to resume a state that was built from a DIFFERENT card.
+
+    Audit 2026-10-09 (HIGH): the resume state used to be trusted blindly — once it
+    had `files`, the source was never re-enumerated. A second card at the same
+    mount point (every Sony card mounts as /Volumes/Untitled) then reused card A's
+    records: card B's new files were never seen, its same-named C0001 was skipped
+    as "already verified", and the run reported done / code 0. A DIT who formats
+    on "done" loses card B. So: the source path, the set of files, and each file's
+    size (+ mtime when the state recorded it) must all match."""
+    problems = []
+    stored_src = state.get("source")
+    if stored_src and Path(stored_src) != Path(src_root):
+        problems.append("source path {0!r} != {1!r}".format(stored_src, str(src_root)))
+    records = {fe["source"]: fe for fe in state.get("files", [])}
+    current = {str(f): f for f in source_files}
+    missing = sorted(set(records) - set(current))
+    extra = sorted(set(current) - set(records))
+    if missing:
+        problems.append("{0} file(s) in state not on source (e.g. {1})".format(
+            len(missing), Path(missing[0]).name))
+    if extra:
+        problems.append("{0} file(s) on source not in state (e.g. {1})".format(
+            len(extra), Path(extra[0]).name))
+    for key in sorted(set(records) & set(current)):
+        rec = records[key]
+        size, mtime_ns = _stat_sig(current[key])
+        if rec.get("size") != size or (rec.get("mtime_ns") is not None and rec["mtime_ns"] != mtime_ns):
+            problems.append("{0} changed (size/mtime differ)".format(Path(key).name))
+            break
+    if problems:
+        raise ValueError(
+            "resume state does not match this source — it was built from a different "
+            "card or the card changed: {0}. Refusing to resume (nothing was copied). "
+            "Start a fresh offload without --resume, or point --resume at a new "
+            "state file.".format("; ".join(problems)))
+
+
 def _ensure_file_records(state, source_files, dsts, organize=None):
     if state.get("files"):
         return state
@@ -364,11 +423,13 @@ def _ensure_file_records(state, source_files, dsts, organize=None):
             rel_seen[key] = src_file
         else:
             rel = _normalize_relpath(src_file, Path(state["source"]))
+        size, mtime_ns = _stat_sig(src_file)
         state["files"].append(
             {
                 "rel": rel,
                 "source": str(src_file),
-                "size": src_file.stat().st_size,
+                "size": size,
+                "mtime_ns": mtime_ns,
                 "destinations": {
                     str(Path(dst).expanduser().resolve(strict=False)): {
                         "status": "pending",
@@ -400,6 +461,21 @@ def _write_mhl(dst_root, hash_algo, op="offload"):
     return mhl_path
 
 
+def _latest_mhl(dst_root):
+    if mhl is None or not hasattr(mhl, "latest_manifest"):
+        return None
+    try:
+        return mhl.latest_manifest(Path(dst_root) / "ascmhl")
+    except Exception:
+        return None
+
+
+def _mhl_changed_since(previous_mhl, current_mhl):
+    if previous_mhl is None or mhl is None or not hasattr(mhl, "changed_since"):
+        return []
+    return mhl.changed_since(previous_mhl, current_mhl)
+
+
 def _check_destination_mount(dst_root):
     try:
         import health
@@ -413,6 +489,42 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
     final_path = dst_root / rel_path
     partial_path = final_path.with_name(final_path.name + ".partial")
     _ensure_parent(final_path)
+
+    # Never clobber (audit 2026-10-09 HIGH): a file already at the destination is
+    # either THIS clip from an earlier run (identical bytes → verified, nothing to
+    # copy) or a DIFFERENT clip that happens to share the name — a second card's
+    # C0001.MP4, or an --organize template without {stem}/{reel}. The second case
+    # used to be os.replace'd over the first card's verified backup with code 0.
+    # It is refused here (status "conflict", counted as failed) and never retried:
+    # the outcome is deterministic and only a human can say which clip wins.
+    if final_path.exists():
+        conflict = None
+        try:
+            if final_path.stat().st_size != src_path.stat().st_size:
+                conflict = "size differs"
+            else:
+                existing_hash = _hash_file(final_path, hash_algo)
+                src_hash = _hash_file(src_path, hash_algo)
+                if existing_hash == src_hash:
+                    file_state["status"] = "verified"
+                    file_state["src_hash"] = src_hash
+                    file_state["dst_hash"] = existing_hash
+                    file_state["partial"] = None
+                    file_state["error"] = None
+                    _save_state(state_path, state)
+                    return True
+                conflict = "content differs ({0} {1} != {2})".format(hash_algo, existing_hash, src_hash)
+        except OSError as exc:
+            conflict = "could not compare: {0}".format(exc)
+        file_state["status"] = "conflict"
+        file_state["partial"] = None
+        file_state["error"] = (
+            "destination already exists with different content: {0} ({1}); refusing "
+            "to overwrite an existing backup. Offload this card to a separate folder "
+            "or use an --organize template with {{stem}}/{{reel}} that keeps names "
+            "unique.".format(final_path, conflict))
+        _save_state(state_path, state)
+        return False
 
     for attempt in range(file_state["attempts"] + 1, retry_limit + 1):
         file_state["attempts"] = attempt
@@ -457,7 +569,21 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
                         rel_path, hash_algo, src_hash, dst_hash
                     )
                 )
-            os.replace(str(partial_path), str(final_path))
+            if final_path.exists():
+                # Appeared while we were copying (another run / tool). Same rule as
+                # above: never replace an existing file.
+                existing_hash = _hash_file(final_path, hash_algo)
+                partial_path.unlink()
+                if existing_hash != src_hash:
+                    file_state["status"] = "conflict"
+                    file_state["partial"] = None
+                    file_state["error"] = (
+                        "destination appeared during copy with different content: {0}; "
+                        "refusing to overwrite".format(final_path))
+                    _save_state(state_path, state)
+                    return False
+            else:
+                os.replace(str(partial_path), str(final_path))
             file_state["status"] = "verified"
             file_state["partial"] = None
             file_state["error"] = None
@@ -523,6 +649,8 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
                 "requested {1!r}. Resume with the original template, or omit "
                 "--organize to reuse it.".format(stored, organize))
     source_files = _collect_sources(src_root, include_heic=include_heic)
+    if state.get("files"):
+        _assert_state_matches_source(state, source_files, src_root)
     state = _ensure_file_records(state, source_files, dst_roots, organize=organize)
     _save_state(state_path, state)
 
@@ -556,6 +684,7 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
 
         verified_rel_paths = []
         failed = 0
+        conflicts = []
         total = len(state["files"])
         _emit(progress, {"type": "dst_start", "dst": dst_key, "total": total})
         for idx, file_entry in enumerate(state["files"], 1):
@@ -580,8 +709,15 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
                 verified_rel_paths.append(rel_path)
             else:
                 failed += 1
-            _emit(progress, {"type": "file", "dst": dst_key, "index": idx, "total": total,
-                             "name": src_path.name, "status": "verified" if ok else "failed"})
+            ev = {"type": "file", "dst": dst_key, "index": idx, "total": total,
+                  "name": src_path.name, "status": "verified" if ok else "failed"}
+            if not ok and file_state.get("status") == "conflict":
+                # status stays "failed" so an older UI still counts it as a failure;
+                # `reason` lets a newer UI say WHY (existing backup, not overwritten).
+                conflicts.append(rel_path)
+                ev["reason"] = "conflict"
+                ev["error"] = file_state.get("error")
+            _emit(progress, ev)
 
         dst_state["verified_files"] = len(verified_rel_paths)
         dst_state["failed_files"] = failed
@@ -617,9 +753,18 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
             try:
                 _emit(progress, {"type": "phase", "dst": dst_key, "phase": "mhl_write",
                                  "files": len(verified_rel_paths)})
+                previous_mhl = _latest_mhl(dst_root)
                 mhl_path = _write_mhl(dst_root, hash_algo, op="offload")
                 dst_state["mhl_path"] = str(mhl_path)
                 _save_state(state_path, state)
+                # Chain of custody across runs: a clip recorded by an earlier
+                # generation must still hash the same. A new generation alone
+                # would just record the new hash and the chain would stay "valid".
+                changed = _mhl_changed_since(previous_mhl, mhl_path)
+                if changed:
+                    raise RuntimeError(
+                        "mhl history mismatch: {0} file(s) changed since {1}: {2}".format(
+                            len(changed), Path(previous_mhl).name, ", ".join(changed[:10])))
                 if verify:
                     _emit(progress, {"type": "phase", "dst": dst_key, "phase": "mhl_verify",
                                      "files": len(verified_rel_paths)})
@@ -639,6 +784,7 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
         summary[dst_key] = {
             "verified_files": len(verified_rel_paths),
             "failed_files": failed,
+            "conflict_files": conflicts,
             "mhl_path": str(mhl_path) if mhl_path else None,
             "status": dst_state["status"],
             "error": mhl_error,

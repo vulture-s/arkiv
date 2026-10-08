@@ -44,6 +44,26 @@ def _release_offload_slot(key: str) -> None:
         _offload_active.discard(key)
 
 
+def _offload_state_path(state_cwd: Path, src: Path, include_heic: bool = False) -> Path:
+    """Resumable state file for ONE card.
+
+    Audit 2026-10-09 (HIGH): this used to be keyed on the mount path alone, so a
+    second card mounted at the same path (Sony → /Volumes/Untitled, Canon →
+    /Volumes/EOS_DIGITAL) silently reused the first card's state and was reported
+    done without being copied. The key now also covers the card's content
+    fingerprint (every file's relpath + size + mtime) — the same card re-inserted
+    after an interruption resumes; a different card starts a fresh state. The
+    engine additionally refuses a state that does not match the source, so a
+    fingerprint collision cannot reintroduce the bug."""
+    import hashlib as _hashlib
+    import offload as _offload
+    files = _offload._collect_sources(src, include_heic=include_heic)
+    fp = _offload.source_fingerprint(files, src)
+    key = "{0}\0{1}\0{2}".format(src, int(bool(include_heic)), fp)
+    return state_cwd / "offload-state-{0}.json".format(
+        _hashlib.sha1(key.encode("utf-8")).hexdigest()[:16])
+
+
 class OffloadPreviewRequest(BaseModel):
     src: str
     organize: Optional[str] = None
@@ -117,9 +137,7 @@ def offload_run(
     # single cwd/offload-state.json: a retry re-copied from zero, and a second
     # concurrent card clobbered the first's state. A stable per-source path means a
     # 400GB offload that dies at 92% picks up from the last verified file.
-    import hashlib as _hashlib
-    state_path = state_cwd / "offload-state-{0}.json".format(
-        _hashlib.sha1(str(src).encode("utf-8")).hexdigest()[:16])
+    state_path = _offload_state_path(state_cwd, src, body.include_heic)
     cmd += ["--resume", str(state_path)]
 
     # Single-flight per source (see _acquire_offload_slot): reject a second run over

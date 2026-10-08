@@ -471,6 +471,52 @@ def create_manifest(
     return mhl_path, chain_path
 
 
+def latest_manifest(output_dir: Path) -> Optional[Path]:
+    """The newest existing generation in an ``ascmhl/`` folder (by chain sequence,
+    falling back to the filename sequence), or None when there is no history."""
+    output_dir = Path(output_dir)
+    if not output_dir.is_dir():
+        return None
+    chain_path = output_dir / "ascmhl_chain.xml"
+    try:
+        entries = _read_chain(chain_path)
+    except Exception:
+        entries = []
+    for entry in sorted(entries, key=lambda e: e.sequence, reverse=True):
+        candidate = output_dir / entry.mhl_name
+        if candidate.exists():
+            return candidate
+    best = None
+    best_seq = -1
+    for child in output_dir.glob("*.mhl"):
+        match = MHL_FILENAME_RE.match(child.name)
+        if match and int(match.group(1)) > best_seq:
+            best, best_seq = child, int(match.group(1))
+    return best
+
+
+def changed_since(previous_mhl: Path, current_mhl: Path) -> List[str]:
+    """Paths recorded in BOTH generations whose hash (for any algorithm present in
+    both) differs — i.e. bytes that changed under an existing record. This is the
+    chain-of-custody break ascmhl's history check reports: a new generation alone
+    just records the new hash and the chain stays "valid", which is how a silent
+    overwrite of an already-backed-up clip went unnoticed (audit 2026-10-09).
+    Paths that disappeared or are new are not reported here."""
+    prev_files, _ = _manifest_entries(_parse_manifest(Path(previous_mhl)))
+    cur_files, _ = _manifest_entries(_parse_manifest(Path(current_mhl)))
+    prev = {r.rel_path: {h.algo: h.value for h in r.hashes} for r in prev_files}
+    changed: List[str] = []
+    for record in cur_files:
+        old = prev.get(record.rel_path)
+        if not old:
+            continue
+        for item in record.hashes:
+            if item.algo in old and old[item.algo] != item.value:
+                changed.append(record.rel_path)
+                break
+    return sorted(changed)
+
+
 def _parse_manifest(mhl_path: Path):
     tree = ET.parse(mhl_path)
     root = tree.getroot()
