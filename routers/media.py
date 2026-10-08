@@ -1165,15 +1165,38 @@ def prune_missing_media(
     data-integrity operation (delete_media_full over ghost rows), not a token
     /admin one (R5-25 route ownership)."""
     missing = db.iter_missing()
+    # Audit 2026-10-09 (MED): a file is only "missing" if the storage it lives on
+    # is actually there. An unmounted NAS / external drive made EVERY row on it
+    # look deleted, and a real run dropped the whole library (tags, ratings,
+    # transcripts — CASCADE, no trash row) with no way back. Rows whose storage
+    # root is unavailable are excluded and reported instead.
+    prunable, unavailable = [], {}
+    avail_cache = {}
+    for m in missing:
+        try:
+            resolved = db.resolve_path(m["path"])
+        except ValueError:
+            resolved = m["path"]
+        root = db.storage_root(resolved)
+        if root is not None:
+            if root not in avail_cache:
+                avail_cache[root] = db.storage_root_available(root)
+            if not avail_cache[root]:
+                unavailable[root] = unavailable.get(root, 0) + 1
+                continue
+        prunable.append(m)
+    unavailable_roots = [{"root": r, "count": n} for r, n in sorted(unavailable.items())]
     if body.dry_run:
         return {
             "scanned": len(missing),
+            "prunable": len(prunable),
             "pruned": 0,
             "pruned_ids": [],
+            "unavailable_roots": unavailable_roots,
             "dry_run": True,
         }
     pruned_ids = []
-    for m in missing:
+    for m in prunable:
         r = media_delete.delete_media_full(
             m["id"], allow_file_delete=False, token_info=_tok
         )
@@ -1181,7 +1204,9 @@ def prune_missing_media(
             pruned_ids.append(m["id"])
     return {
         "scanned": len(missing),
+        "prunable": len(prunable),
         "pruned": len(pruned_ids),
         "pruned_ids": pruned_ids,
+        "unavailable_roots": unavailable_roots,
         "dry_run": False,
     }

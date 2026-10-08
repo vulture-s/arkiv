@@ -1442,7 +1442,17 @@ def list_trash() -> list:
             "SELECT id, media_id, filename, original_path, trash_path, "
             "deleted_at, expires_at FROM trash ORDER BY deleted_at DESC"
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        # size_bytes lets the purge confirmation say how much is about to be
+        # permanently deleted (None when the original is gone / metadata-only).
+        try:
+            d["size_bytes"] = Path(d["trash_path"]).stat().st_size if d.get("trash_path") else None
+        except OSError:
+            d["size_bytes"] = None
+        out.append(d)
+    return out
 
 
 def purge_trash(ttl_days: int = 30) -> int:
@@ -1451,6 +1461,11 @@ def purge_trash(ttl_days: int = 30) -> int:
     import datetime as _dt
     import os as _os
     import shutil as _shutil
+    # A negative TTL put the cutoff in the FUTURE — i.e. "purge everything",
+    # spelled in a way nobody would read as that (audit 2026-10-09). 0 is the
+    # explicit "everything" and the UI asks for confirmation first.
+    if ttl_days is None or int(ttl_days) < 0:
+        raise ValueError("ttl_days must be >= 0 (0 = purge everything)")
     cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=ttl_days)).isoformat()
     purged = 0
     with get_conn() as conn:
@@ -1471,6 +1486,47 @@ def purge_trash(ttl_days: int = 30) -> int:
             conn.execute("DELETE FROM trash WHERE id=?", (r["id"],))
             purged += 1
     return purged
+
+
+def storage_root(resolved: str):
+    """The volume/root a resolved media path lives on, for "is the storage even
+    there?" checks: /Volumes/<name> (macOS), /mnt/<name>, /media/<user>/<name>,
+    /run/media/<user>/<name> (Linux), a drive / UNC anchor (Windows), else
+    PROJECT_ROOT when the file is inside it, else None (unknown)."""
+    p = Path(resolved)
+    parts = p.parts
+    posix = p.as_posix()
+    if posix.startswith("/Volumes/") and len(parts) >= 3:
+        return str(Path(*parts[:3]))
+    if posix.startswith("/mnt/") and len(parts) >= 3:
+        return str(Path(*parts[:3]))
+    if posix.startswith("/media/") and len(parts) >= 4:
+        return str(Path(*parts[:4]))
+    if posix.startswith("/run/media/") and len(parts) >= 5:
+        return str(Path(*parts[:5]))
+    if p.drive:
+        return p.anchor
+    try:
+        root = Path(_config.PROJECT_ROOT).resolve()
+        p.relative_to(root)
+        return str(root)
+    except (ValueError, OSError):
+        return None
+
+
+def storage_root_available(root: str) -> bool:
+    """True when the storage root is really present. A missing /Volumes/X is an
+    unmounted volume; an EXISTING /Volumes/X that is not a mount point is the
+    stale empty folder macOS leaves behind (writes to an unmounted share create
+    it), which must not count as "the files were deleted" either."""
+    import os as _os
+    if not root or not _os.path.exists(root):
+        return False
+    rp = Path(root)
+    if rp.as_posix().startswith(("/Volumes/", "/mnt/", "/media/", "/run/media/")):
+        real = _os.path.realpath(root)  # /Volumes/Macintosh HD → /
+        return _os.path.ismount(real)
+    return True
 
 
 def iter_missing() -> list:
@@ -1510,9 +1566,20 @@ def restore_trash(trash_id: int) -> str:
         src = row["trash_path"]
         if not src or not Path(src).exists():
             raise ValueError("trashed file missing: %s" % src)
-        dest_dir = Path(row["original_path"]).parent
-        if not dest_dir.exists():
-            dest_dir = PROJECT_ROOT / "media-in"
+        # Audit 2026-10-09 (HIGH): original_path is stored RELATIVE for in-root
+        # media (ingest's to_relative), so `Path(original_path).parent` resolved
+        # against the process cwd — which in the Tauri app is the bundled backend
+        # dir, not the project. The fallback then hit an undefined `PROJECT_ROOT`
+        # (this module only has `_config`) → NameError → 500 on every restore.
+        # Resolve through resolve_path (same as stream/delete) and always hand the
+        # caller an ABSOLUTE destination for the re-ingest.
+        try:
+            original = Path(resolve_path(row["original_path"] or ""))
+        except ValueError:
+            original = None  # escapes the root (poisoned row) → media-in
+        dest_dir = original.parent if (original is not None and row["original_path"]) else None
+        if dest_dir is None or not dest_dir.is_absolute() or not dest_dir.exists():
+            dest_dir = Path(_config.PROJECT_ROOT).resolve() / "media-in"
             dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / row["filename"]
         # don't clobber an existing file with the same name
