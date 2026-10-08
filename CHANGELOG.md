@@ -13,6 +13,8 @@ Inspector 的 proxy 給不了剪輯軟體用：它叫 `{id}_{hash}.mp4`（Resolv
 - 用法：`python editor_proxy.py <media_id>…` 或 `--all`；API `POST /api/proxy/editor`（`{"ids": […]}`，`ingest_write`）、
   `GET /api/proxy/editor/status`、`GET /api/proxy/editor/{media_id}`
 
+- Inspector 的 Reprocess 區多一顆「剪輯用 proxy」：按下去會等到做完，直接顯示寫到哪裡、已經有同名檔所以沒覆蓋、或失敗的原因
+
 ⚠️ 它會**寫進你的素材資料夾**（這正是重點，剪輯軟體才找得到）。唯讀的素材碟會回 `failed`，不會改寫別處。
 
 **Docker：對外埠改成預設只綁本機（127.0.0.1）。**
