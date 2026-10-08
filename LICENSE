@@ -51,8 +51,8 @@ remain under the terms they shipped with.
    time of writing: up to three projects, and no aggregation across projects)
    and the checks that apply it. Changing, removing, disabling or otherwise
    working around that allowance or those checks -- including by supplying a
-   licence record you did not obtain from the licensor -- is not a permitted
-   purpose. This applies to your own use, not only to what you provide to
+   licence record that was not issued by the licensor or by the issuer of the
+   Pro add-on (see docs/pro-addon-license.md) -- is not a permitted purpose. This applies to your own use, not only to what you provide to
    others.
 
 2. Pro functionality. Enabling, unlocking or reproducing in the software the
