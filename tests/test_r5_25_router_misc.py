@@ -32,6 +32,7 @@ def test_router_owns_misc_routes_and_helpers():
     assert pairs == {
         ("/api/stream/{media_id}", "GET"),
         ("/api/embed/rebuild", "POST"),
+        ("/api/embed/status", "GET"),
         ("/api/open-file", "POST"),
         ("/api/client-log", "POST"),
         ("/api/version", "GET"),
