@@ -1,0 +1,48 @@
+---
+// The "material card" that follows one shoot through the five chapters.
+// Every layer carries data-step (1–5) and --s. Inside the scroll stage all
+// layers are rendered and faded by the --c/--p the scroll script writes; as a
+// per-chapter snapshot (upto = chapter) only layers up to that step render,
+// fully shown, so it stands on its own without any script.
+// File names are cut from the real screenshot (docs/img/arkiv-ui.webp);
+// scene line, transcript line and timecodes are illustrative.
+interface Props { upto?: number }
+const { upto = 5 } = Astro.props;
+const on = (s: number) => s <= upto;
+const files = ['9896', '9895', '9894', '9891'];
+const check = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l2.6 2.5L10 3.2"/></svg>';
+---
+<div class="sc" aria-hidden="true">
+  {on(4) && (
+    <div class="sc-q" data-step="4" style="--s:4"><span class="sc-q-ico"></span><span>黃昏 海邊 逆光</span><span class="sc-q-hint">camera:a7v</span></div>
+  )}
+  <div class="sc-head" data-step="1" style="--s:1">
+    <span>CARD · A001</span>
+    {on(2) && <span class="sc-dst" data-step="2" style="--s:2">→ BACKUP_1 · BACKUP_2</span>}
+  </div>
+  <ul class="sc-files" data-step="1" style="--s:1">
+    {files.map((n) => (
+      <li class={n === '9891' ? 'is-hit' : undefined}>
+        <span class="sc-name">A7520260818_{n}.MP4</span>
+        {on(2) && <span class="sc-ok" data-step="2" style="--s:2" set:html={check} />}
+        {n === '9891' && on(4) && <span class="sc-hitmark" data-step="4" style="--s:4"></span>}
+      </li>
+    ))}
+    <li class="sc-more"><span class="sc-name">⋯</span></li>
+  </ul>
+  {on(2) && <div class="sc-mhl" data-step="2" style="--s:2">ascmhl OK · xxh3 · 來源卡保留</div>}
+  {on(3) && (
+    <div class="sc-ir" data-step="3" style="--s:3">
+      <div class="sc-ir-row"><span class="sc-tc">9894 · 00:11</span><span class="sc-tag">逐字稿</span><span>這一段我們再試一次</span></div>
+      <div class="sc-ir-row is-hit"><span class="sc-tc">9891 · 00:00</span><span class="sc-tag">B-Roll</span><span>黃昏的海邊，逆光下的遠景</span>{on(4) && <span class="sc-ir-hit" data-step="4" style="--s:4"></span>}</div>
+      <div class="sc-ir-row"><span class="sc-tc">9891</span><span class="sc-tag">逐字稿</span><span class="sc-dim">無語音</span></div>
+    </div>
+  )}
+  {on(5) && (
+    <div class="sc-bin" data-step="5" style="--s:5">
+      <span class="sc-bin-path">Resolve · Media Pool › A7V</span>
+      <span class="sc-clip"><i></i>A7520260818_9891.MP4</span>
+      <span class="sc-marker">▾ marker · 黃昏的海邊，逆光下的遠景</span>
+    </div>
+  )}
+</div>
