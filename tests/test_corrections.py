@@ -78,6 +78,31 @@ def test_hotword_terms_only_pre(corr_env):
     assert corrections.hotword_terms() == ["Furutech"]
 
 
+def test_dictionary_is_isolated_per_project(corr_env, tmp_path, monkeypatch):
+    """Person-name rules built for one project (e.g. a shoot's cast) must not
+    leak into another project's hotwords or recorrect pass — the dictionary
+    lives under each project's own ``.arkiv/`` and follows PROJECT_ROOT."""
+    corrections = corr_env
+    config = importlib.import_module("config")
+    proj_a = tmp_path / "proj_a"
+    proj_b = tmp_path / "proj_b"
+    proj_a.mkdir()
+    proj_b.mkdir()
+
+    monkeypatch.setattr(config, "PROJECT_ROOT", proj_a)
+    corrections.save_rules([{"from": "李東煙", "to": "李多慧", "pre": True}])
+    assert corrections.corrections_path() == proj_a / ".arkiv" / "corrections.json"
+    assert corrections.hotword_terms() == ["李多慧"]
+
+    monkeypatch.setattr(config, "PROJECT_ROOT", proj_b)
+    assert corrections.load_rules() == []
+    assert corrections.hotword_terms() == []
+    assert not (proj_b / ".arkiv" / "corrections.json").exists()
+
+    monkeypatch.setattr(config, "PROJECT_ROOT", proj_a)
+    assert [r["to"] for r in corrections.load_rules()] == ["李多慧"]
+
+
 # ── scope semantics (the red line) ───────────────────────────────────────────
 
 def test_global_scope_replaces_everywhere(corr_env):
