@@ -617,6 +617,12 @@
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
           {reBusy === 'proxy' ? '排入中…' : '建立 proxy'}
         </button>
+        <!-- ProRes Proxy into <source dir>/Proxy/<name>.mov, with source TC and
+             every audio track, so Resolve can relink it. Not the button above:
+             that one is the 720p H.264 the browser plays. -->
+        <button class="ak-btn rebtn" disabled={!!reBusy} title="ProRes Proxy 寫到原始檔旁的 Proxy/，保留 TC 與全部音軌；不覆蓋既有檔" on:click={() => doReprocess('editor-proxy')}>
+          {reBusy === 'editor-proxy' ? (reProgress ? `生成中… ${reProgress}` : '生成中…') : '剪輯用 proxy'}
+        </button>
       </div>
       {#if reMsg}<Mono dim style="font-size:10px;line-height:1.45;display:block;">{reMsg}</Mono>{/if}
     </div>

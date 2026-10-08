@@ -200,3 +200,24 @@ def test_editor_guard_is_not_the_browser_proxy_guard():
     import state
     assert rp._editor_guard is state.editor_proxy_build
     assert rp._editor_guard is not rp._proxy_guard
+
+
+def test_batch_progress_reports_where_or_why_per_clip(monkeypatch):
+    # The Inspector button ends on results[]: without it, "failed" is all the UI
+    # could say — no path on success, no reason on failure.
+    import routers.proxy as rp
+    import state
+    outcomes = {
+        1: {"media_id": 1, "status": ep.CREATED, "path": "/m/Proxy/A.mov"},
+        2: {"media_id": 2, "status": ep.FAILED, "path": "/m/Proxy/B.mov", "reason": "Permission denied"},
+    }
+    monkeypatch.setattr(ep, "generate_for_ids", lambda ids: [dict(outcomes[ids[0]])])
+    assert state.editor_proxy_build.acquire()
+    state.editor_proxy_build.reset_progress(running=True, total=2, done=0, created=0,
+                                            exists=0, failed=0, current=None, results=[])
+    rp._build_editor_proxies([1, 2])
+    p = state.editor_proxy_build.progress
+    assert p["running"] is False and not state.editor_proxy_build.active
+    assert (p["done"], p["created"], p["failed"]) == (2, 1, 1)
+    assert p["results"][1] == {"media_id": 2, "status": "failed", "path": "/m/Proxy/B.mov",
+                               "reason": "Permission denied"}

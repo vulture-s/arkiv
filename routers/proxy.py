@@ -153,7 +153,7 @@ def editor_proxy_build(body: EditorProxyBody, request: Request, background_tasks
     if not _editor_guard.acquire():
         raise HTTPException(409, "剪輯用 proxy 生成已在進行中，請稍候")
     _editor_guard.reset_progress(running=True, total=len(ids), done=0, created=0,
-                                 exists=0, failed=0, current=None)
+                                 exists=0, failed=0, current=None, results=[])
     background_tasks.add_task(_build_editor_proxies, ids)
     return {"message": "開始生成 {0} 個剪輯用 proxy（背景執行）".format(len(ids)), "queued": len(ids)}
 
@@ -167,10 +167,14 @@ def _build_editor_proxies(ids: list):
                 res = editor_proxy.generate_for_ids([mid])[0]
             except Exception as exc:  # one bad clip must not end the batch
                 print("[editor-proxy] {0} crashed: {1}".format(mid, exc))
-                res = {"status": editor_proxy.FAILED}
+                res = {"media_id": mid, "status": editor_proxy.FAILED, "reason": str(exc)}
             key = {editor_proxy.CREATED: "created", editor_proxy.EXISTS: "exists"}.get(res["status"], "failed")
             if res["status"] != "skipped":
                 p[key] += 1
+            # Per-clip outcome so the UI can say WHERE it wrote, or WHY not —
+            # "failed" alone reads as a mystery. Capped: a --all batch is the CLI's job.
+            if len(p["results"]) < 200:
+                p["results"].append({k: res.get(k) for k in ("media_id", "status", "path", "reason")})
             p["done"] += 1
     finally:
         p["running"] = False
