@@ -18,16 +18,16 @@ Yes. arkiv is CJK-first — transcription and search are tested on Mandarin Chin
 
 **Q: Can I search across multiple projects at once?**
 
-Cross-project query is on the roadmap (W2). Current release uses per-project `media.db` files. Track progress in the [arkiv roadmap](https://github.com/vulture-s/arkiv).
+Each project keeps its own library in `<PROJECT_ROOT>/.arkiv/` (`project.db`, `chroma_db/`, `thumbnails/`). The free core covers up to 3 projects. Search and collections that span projects are part of the optional Pro add-on. See [pro-addon-license.md](pro-addon-license.md).
 
 ## GPU requirements
 
 **Q: Do I need a GPU?**
 
-No. arkiv runs CPU-only with `faster-whisper` (no torch). A GPU speeds up transcription 3-5x. Vision descriptions (`qwen2.5vl:7b`) can be skipped with `--skip-vision` if GPU is unavailable.
+No. arkiv runs CPU-only with `faster-whisper` (no torch), but transcription is much slower without acceleration. Measured RTF (processing time ÷ audio length) is 0.158 on an M2 Max with MLX and 0.087 on an RTX 4070 with CUDA. Full numbers are in [BENCHMARK.md](../BENCHMARK.md). If you have no GPU, skip vision descriptions (`qwen2.5vl:7b`) with `--skip-vision`.
 
 ## DaVinci Resolve plugin
 
 **Q: Does the Resolve plugin work on Windows and Linux?**
 
-The plugin is developed and tested on macOS with DaVinci Resolve 18/19/21. Windows support is in progress. Linux (Resolve Studio) is untested — open a GitHub Discussion if you get it working.
+The plugin is developed and tested on macOS with DaVinci Resolve 18/19/21. `resolve_plugin/arkiv_resolve.py` includes Windows install paths; macOS is the only tested platform so far. Linux (Resolve Studio) is untested — open a GitHub Discussion if you get it working.

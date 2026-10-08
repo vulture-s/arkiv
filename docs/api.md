@@ -33,7 +33,9 @@ Use the token in requests:
 curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
 ```
 
-Available scopes: `videos_read`, `videos_write`, `media_read`, `collections_read`, `collections_write`, `projects_read`, `projects_write`, `ingest_write`, `chat_read`, `chat_write`, `admin`
+Available scopes: `videos_read`, `videos_write`, `media_read`, `collections_read`, `collections_write`, `projects_read`, `projects_write`, `ingest_write`, `chat_read`, `chat_write`, `media_delete`, `admin`
+
+`media_delete` is separate from `videos_write` and guards `DELETE /api/media/{id}` and `POST /api/media/bulk-delete`. Source files inside `PROJECT_ROOT` are moved to `.arkiv/trash`, not unlinked; files outside it are metadata-only.
 
 ### Chat API — RAG over your video library
 
