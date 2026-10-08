@@ -181,3 +181,31 @@ def test_logs_tail_redacts_tokens(server_module, tmp_path, monkeypatch):
     assert r.status_code == 200
     body = r.text
     assert "SECRETRAWTOKEN123" not in body and "token=REDACTED" in body
+
+
+# ── #498 review C1: a bogus token must not exempt a request from the guard ───
+@pytest.mark.parametrize("how", ["query", "bearer"])
+def test_bogus_token_does_not_bypass_write_guard(server_module, how):
+    c = _local(server_module, host=EVIL)
+    hdr = {"Origin": "http://" + EVIL}
+    path = "/api/client-log"  # unauthenticated sink → only the guard stands in the way
+    body = {"level": "error", "message": "injected"}
+    if how == "query":
+        r = c.post(path + "?token=x", json=body, headers=hdr)
+    else:
+        r = c.post(path, json=body, headers=dict(hdr, Authorization="Bearer junk"))
+    assert r.status_code == 403, r.text
+
+
+def test_valid_token_on_custom_host_still_passes_guard(server_module):
+    import admin, auth
+    raw = admin.create_token(name="remote", scopes=sorted(auth.SCOPES))["raw_token"]
+    c = TestClient(server_module.app, client=("10.0.0.7", 40000), base_url="http://arkiv.example:8501")
+    r = c.post("/api/projects/sync", headers={"Origin": "http://arkiv.example:8501",
+                                               "Authorization": "Bearer " + raw})
+    assert r.status_code == 200, r.text
+
+
+def test_untrusted_host_401_says_how_to_fix(server_module):
+    r = _local(server_module, host="m2max:8501").get("/api/media")
+    assert r.status_code == 401 and "ARKIV_ALLOWED_HOSTS" in r.text

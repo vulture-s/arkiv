@@ -218,6 +218,14 @@ def verify_token(request: Request) -> dict:
         # hash / expiry / IP-allowlist / scope checks apply; the token's IP
         # allowlist still bounds exposure even though the value rides in a URL.
         raw = (request.query_params.get("token") or "").strip()
+    if (not raw and client_host in _LOOPBACK_HOSTS and _trust_loopback()
+            and not _host_is_trusted(request.headers.get("host", ""))):
+        # Would have been loopback-trusted before the rebinding fix; say why it
+        # isn't, so a hostname-via-forwarder user isn't sent hunting for a token.
+        raise HTTPException(
+            401, "Host {0!r} is not trusted for token-free local access; add it to "
+                 "ARKIV_ALLOWED_HOSTS or use 127.0.0.1/localhost".format(
+                     _hostname_of(request.headers.get("host", ""))))
     client_ip = request.client.host if (request.client is not None and request.client.host) else ""
     user_agent = request.headers.get("user-agent", "")
     return resolve_raw_token(raw, client_ip, user_agent, forwarded=_looks_proxied(request))
