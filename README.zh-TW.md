@@ -306,9 +306,9 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 
 | 變數 | 預設值 | 說明 |
 |------|--------|------|
-| `ARKIV_DB_PATH` | `./media.db` | SQLite 資料庫路徑 |
-| `ARKIV_CHROMA_PATH` | `./chroma_db` | ChromaDB 向量庫 |
-| `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | 縮圖輸出目錄 |
+| `ARKIV_DB_PATH` | `<PROJECT_ROOT>/.arkiv/project.db` | SQLite 資料庫路徑 |
+| `ARKIV_CHROMA_PATH` | `<PROJECT_ROOT>/.arkiv/chroma_db` | ChromaDB 向量庫 |
+| `ARKIV_THUMBNAILS_DIR` | `<PROJECT_ROOT>/.arkiv/thumbnails` | 縮圖輸出目錄 |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API 端點 |
 | `ARKIV_EMBED_MODEL` | `bge-m3` | 嵌入模型 —— **建索引後請勿更換**（見下方說明） |
 | `ARKIV_VISION_MODEL` | `qwen2.5vl:7b` | 視覺模型（幀描述）。**預設刻意用 2.5-VL 而非 qwen3-vl:8b**：Qwen3-VL 在 Ollama 下的視覺路徑約慢 10×（實測 ~60s/幀 vs ~8s/幀），2000 幀就是 30 小時 vs 3.5 小時、標註品質相當。要更高上限可設 `ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b` |

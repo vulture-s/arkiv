@@ -1005,6 +1005,31 @@
       const r = await api.buildProxyOne(id)
       return { ok: true, message: r.message || '已排入 proxy 生成（背景）' }
     }
+    if (action === 'editor-proxy') {
+      // ProRes into <source dir>/Proxy/ for the NLE. The POST only queues, so wait
+      // for the batch here — the button stays busy and ends on a real answer
+      // (written / already there / why it failed) instead of "queued".
+      await api.buildEditorProxies([id])
+      const deadline = Date.now() + 60 * 60 * 1000
+      let s = null
+      while (Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 1500))
+        try {
+          s = await api.editorProxyStatus()
+        } catch (_) {
+          continue
+        }
+        if (s && !s.running) break
+        if (s && s.total) reProgress = `${s.done || 0}/${s.total}`
+      }
+      reProgress = ''
+      const res = s && (s.results || []).find((x) => x.media_id === id)
+      if (!s || s.running || !res) return { ok: false, message: '仍在背景生成中，稍後再看 Proxy/ 資料夾' }
+      if (res.status === 'created') return { ok: true, message: `已寫入 ${res.path}` }
+      if (res.status === 'exists') return { ok: true, message: `Proxy/ 已有同名檔，未覆蓋：${res.path}` }
+      if (res.status === 'skipped') return { ok: false, message: '不是影片，略過' }
+      return { ok: false, message: `失敗：${res.reason || '見後端 log'}` }
+    }
     return { ok: false, message: `未知動作: ${action}` }
   }
 

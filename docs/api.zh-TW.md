@@ -33,7 +33,9 @@ python arkiv_token.py revoke <token-id>
 curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
 ```
 
-可用 scopes：`videos_read`、`videos_write`、`media_read`、`collections_read`、`collections_write`、`projects_read`、`projects_write`、`ingest_write`、`chat_read`、`chat_write`、`admin`
+可用 scopes：`videos_read`、`videos_write`、`media_read`、`collections_read`、`collections_write`、`projects_read`、`projects_write`、`ingest_write`、`chat_read`、`chat_write`、`media_delete`、`admin`
+
+`media_delete` 跟 `videos_write` 是分開的 scope，守 `DELETE /api/media/{id}` 與 `POST /api/media/bulk-delete`。`PROJECT_ROOT` 內的原始檔會移進 `.arkiv/trash`，不是直接刪除；`PROJECT_ROOT` 外的檔只刪資料庫紀錄。
 
 ### Chat API — 素材庫 RAG 問答
 

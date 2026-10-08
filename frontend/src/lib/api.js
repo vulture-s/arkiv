@@ -512,5 +512,13 @@ export const buildProxies = (opts) => req('/api/proxy/build', { method: 'POST', 
 // just one clip's proxy in the background.
 export const buildProxyOne = (id, opts) =>
   req(`/api/proxy/build/${id}`, { method: 'POST', ...opts })
+// Editing proxy (ProRes → <source dir>/Proxy/<stem>.mov, for the NLE). Separate
+// from the browser proxy above. POST queues in the background (409 if a batch is
+// already running); poll editorProxyStatus until running=false, then read
+// results[] for where it wrote or why not. Never overwrites an existing file.
+export const buildEditorProxies = (ids, opts) =>
+  req('/api/proxy/editor', { method: 'POST', body: { ids }, ...opts })
+export const editorProxyStatus = (opts) => req('/api/proxy/editor/status', opts)
+export const editorProxyFor = (id, opts) => req(`/api/proxy/editor/${id}`, opts)
 
 export { ApiError }

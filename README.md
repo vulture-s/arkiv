@@ -372,9 +372,9 @@ Copy `.env.example` to `.env` and customize:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ARKIV_DB_PATH` | `./media.db` | SQLite database path |
-| `ARKIV_CHROMA_PATH` | `./chroma_db` | ChromaDB vector store |
-| `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | Thumbnail output dir |
+| `ARKIV_DB_PATH` | `<PROJECT_ROOT>/.arkiv/project.db` | SQLite database path |
+| `ARKIV_CHROMA_PATH` | `<PROJECT_ROOT>/.arkiv/chroma_db` | ChromaDB vector store |
+| `ARKIV_THUMBNAILS_DIR` | `<PROJECT_ROOT>/.arkiv/thumbnails` | Thumbnail output dir |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `ARKIV_EMBED_MODEL` | `bge-m3` | Embedding model — **do not change after indexing** (see note below) |
 | `ARKIV_VISION_MODEL` | `qwen2.5vl:7b` | Vision model for frame descriptions. **2.5-VL is the deliberate default over qwen3-vl:8b**: Qwen3-VL's vision path is ~10× slower under Ollama (measured ~60s/frame vs ~8s/frame) — 30h vs 3.5h across 2000 frames, at comparable tag quality. Set `ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b` for the higher ceiling |

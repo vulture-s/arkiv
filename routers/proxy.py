@@ -7,15 +7,22 @@ single-flighted by the shared R5-22 (#59) guard — imported from state.py (the 
 instance) so a double-clicked "build all" can't launch parallel ffmpeg loops that
 would stream truncated proxies mid-build. `_proxy_ready` (the consumer side of the
 C1 atomic-write fix) moved to pathres.py so /api/stream + these routes share it.
-Imports auth + db + config + webguard + pathres + state — no server import, no cycle.
+Also hosts the editing-proxy routes (/api/proxy/editor*, ProRes beside the
+source for the NLE — see editor_proxy.py), on their own single-flight slot.
+Imports auth + db + config + editor_proxy + webguard + pathres + state — no server import, no cycle.
 """
+from typing import List
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 import config
 import db
+import editor_proxy
 from auth import require_scopes
 from pathres import _proxy_ready, _resolve_media_path
 from state import proxy_build as _proxy_guard
+from state import editor_proxy_build as _editor_guard
 from webguard import _assert_same_site
 
 router = APIRouter()
@@ -102,3 +109,74 @@ def _build_proxies(items: list):
                 print(f"[proxy] Failed {item['id']}")
         except Exception as e:
             print(f"[proxy] Failed {item['id']}: {e}")
+
+
+# ── editing proxies (ProRes beside the source, for the NLE) ──────────────────
+# Independent of everything above: a different file, folder, codec and purpose.
+# See editor_proxy.py for why the Inspector proxy can't double as this.
+
+class EditorProxyBody(BaseModel):
+    ids: List[int]
+
+
+@router.get("/api/proxy/editor/status")
+def editor_proxy_status(_tok: dict = Depends(require_scopes("videos_read"))):
+    """Progress of the current/last editing-proxy batch."""
+    return dict(_editor_guard.progress)
+
+
+@router.get("/api/proxy/editor/{media_id}")
+def editor_proxy_one(media_id: int, _tok: dict = Depends(require_scopes("videos_read"))):
+    """Is there already a `Proxy/<stem>.*` beside this clip? Read-only."""
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise HTTPException(404, "找不到媒體")
+    src = _resolve_media_path(rec["path"])
+    found = editor_proxy.existing_for(src)
+    return {
+        "media_id": media_id,
+        "exists": found is not None,
+        "path": str(found) if found else None,
+        "target": str(editor_proxy.target_for(src)),
+    }
+
+
+@router.post("/api/proxy/editor")
+def editor_proxy_build(body: EditorProxyBody, request: Request, background_tasks: BackgroundTasks,
+                       _tok: dict = Depends(require_scopes("ingest_write"))):
+    """Write ProRes Proxy files to `<source dir>/Proxy/` for the given ids.
+    Writes into the media folder, never over an existing file there."""
+    _assert_same_site(request)
+    ids = list(dict.fromkeys(int(i) for i in body.ids))
+    if not ids:
+        raise HTTPException(422, "ids 不可為空")
+    if not _editor_guard.acquire():
+        raise HTTPException(409, "剪輯用 proxy 生成已在進行中，請稍候")
+    _editor_guard.reset_progress(running=True, total=len(ids), done=0, created=0,
+                                 exists=0, failed=0, current=None, results=[])
+    background_tasks.add_task(_build_editor_proxies, ids)
+    return {"message": "開始生成 {0} 個剪輯用 proxy（背景執行）".format(len(ids)), "queued": len(ids)}
+
+
+def _build_editor_proxies(ids: list):
+    p = _editor_guard.progress
+    try:
+        for mid in ids:
+            p["current"] = mid
+            try:
+                res = editor_proxy.generate_for_ids([mid])[0]
+            except Exception as exc:  # one bad clip must not end the batch
+                print("[editor-proxy] {0} crashed: {1}".format(mid, exc))
+                res = {"media_id": mid, "status": editor_proxy.FAILED, "reason": str(exc)}
+            key = {editor_proxy.CREATED: "created", editor_proxy.EXISTS: "exists"}.get(res["status"], "failed")
+            if res["status"] != "skipped":
+                p[key] += 1
+            # Per-clip outcome so the UI can say WHERE it wrote, or WHY not —
+            # "failed" alone reads as a mystery. Capped: a --all batch is the CLI's job.
+            if len(p["results"]) < 200:
+                p["results"].append({k: res.get(k) for k in ("media_id", "status", "path", "reason")})
+            p["done"] += 1
+    finally:
+        p["running"] = False
+        p["current"] = None
+        _editor_guard.release()
