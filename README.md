@@ -483,7 +483,7 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 PolyForm Perimeter License 1.0.1 plus Additional Terms — see [LICENSE](LICENSE).
 
-Using arkiv is free for **any** purpose, commercial work included: paid client jobs, studio use, funded productions. Videos, timelines and exports you produce with it are yours, with no restriction from the license. Two things are not permitted. **Modifying arkiv to exceed the free-tier allowance or to switch on Pro functionality** — this applies to your own use too (Additional Terms 1–2; libraries that predate the allowance keep their exemption). And **providing others with a product that competes with arkiv** — forking it into a rival asset manager, wrapping it as a hosted indexing service sold to third parties, or reimplementing its functionality as a substitute product, including free of charge.
+Using arkiv is free for **any** purpose, commercial work included: paid client jobs, studio use, funded productions. Videos, timelines and exports you produce with it are yours, with no restriction from the license. Two things are not permitted. **Modifying arkiv to exceed the free-tier allowance or to switch on Pro functionality** — this applies to your own use too (Additional Terms 1–2; installations in use before 1.1.0 keep their exemption). And **providing others with a product that competes with arkiv** — forking it into a rival asset manager, wrapping it as a hosted indexing service sold to third parties, or reimplementing its functionality as a substitute product, including free of charge.
 
 The line is what your customer is buying: a deliverable you produced with arkiv is ordinary tool use; arkiv's functionality itself, sold as a product or service, competes.
 

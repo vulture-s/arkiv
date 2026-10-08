@@ -44,25 +44,35 @@ Additional Terms
 
 These Additional Terms supplement the PolyForm Perimeter License 1.0.1 below,
 whose text is reproduced unmodified. Where the two conflict, these Additional
-Terms control. They apply to releases that include them; earlier releases
-remain under the terms they shipped with.
+Terms control, except that nothing in them limits the Fair Use section of that
+licence or any right that applicable law does not allow a licence to restrict.
+They apply to releases that include them; earlier releases remain under the
+terms they shipped with.
 
-1. Free-tier allowance. The software contains a free-tier allowance (at the
-   time of writing: up to three projects, and no aggregation across projects)
-   and the checks that apply it. Changing, removing, disabling or otherwise
-   working around that allowance or those checks -- including by supplying a
-   licence record that was not issued by the licensor or by the issuer of the
-   Pro add-on (see docs/pro-addon-license.md) -- is not a permitted purpose. This applies to your own use, not only to what you provide to
-   others.
+1. Free-tier allowance. The software contains a free-tier allowance (as
+   implemented in the release you received: up to three projects, and no
+   aggregation across projects) and the checks that apply it. Changing,
+   removing, disabling or otherwise working around that allowance or those
+   checks -- including by supplying a licence record that was not issued by
+   the licensor or by 立凡科技有限公司 (Lifan Technology Co., Ltd.) or its
+   successor as owner of the Pro add-on -- is not a permitted purpose. This
+   applies to your own use, not only to what you provide to others. It does
+   not restrict changes that applicable law permits regardless of these terms,
+   such as adapting the software to the machine you use it on (Taiwan
+   Copyright Act, Article 59), provided the result does not exceed the
+   allowance.
 
 2. Pro functionality. Enabling, unlocking or reproducing in the software the
    functionality of the separately licensed Pro add-on, other than by
    installing the Pro add-on under its own terms, is likewise not a permitted
    purpose.
 
-3. Grandfathered libraries. Nothing in these Additional Terms withdraws the
-   exemption from the free-tier allowance granted to libraries in use before
-   that allowance took effect, as described in docs/pro-addon-license.md.
+3. Grandfathered installations. An installation of arkiv already in use
+   before release 1.1.0, when the free-tier allowance took effect, keeps
+   unlimited projects and cross-project aggregation permanently, without the
+   Pro add-on. Nothing in these Additional Terms withdraws that exemption. How
+   the software recognises such an installation is described in
+   docs/pro-addon-license.md.
 
 4. Everything else is unchanged. All other uses permitted by the PolyForm
    Perimeter License 1.0.1 -- including commercial use, and changes and new
