@@ -267,6 +267,11 @@ export const uploadFiles = (files, opts) => {
 export const rebuildEmbedIndex = (opts) =>
   req('/api/embed/rebuild', { method: 'POST', ...opts })
 
+// GET /api/embed/status — how many clips the semantic index has gone stale on
+// (text/tags changed after embedding) or never indexed. Requires videos_read.
+// → {total_media, fresh_media, stale_media, unindexed_media, rebuild_running}
+export const getEmbedStatus = (opts) => req('/api/embed/status', opts)
+
 // ---- DIT offload (card → backup) ----
 // POST /api/offload/preview {src, organize?, include_heic?, limit?} → read-only
 // layout {src, count, organize, files:[{source, rel, size_mb}]}. videos_write.

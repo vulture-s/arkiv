@@ -199,6 +199,39 @@ def embed_rebuild(request: Request, background_tasks: BackgroundTasks, _tok: dic
     return {"message": f"開始重建向量索引（{total} 筆素材，背景執行）", "queued": total}
 
 
+@router.get("/api/embed/status")
+def embed_status(_tok: dict = Depends(require_scopes("videos_read"))):
+    """How many clips the semantic index has gone stale on.
+
+    /api/health's `embeddings.coverage` counts rows with an embed_hash, so a clip
+    whose tags or description changed after it was embedded still counts as
+    indexed — e.g. a tag edit whose reindex failed. This compares each row's
+    stored embed_hash with the hash of its CURRENT source text (the same check
+    embed.run_embed uses to pick what to re-embed), so `stale_media` is what the
+    next incremental embed would actually fix.
+
+    Kept off /api/health on purpose: that route is unauthenticated and polled at
+    startup, and this one hashes every row's text.
+    """
+    import embed
+
+    stale = unindexed = 0
+    signatures = embed.get_content_signatures()
+    for stored, current in signatures.values():
+        if stored is None:
+            unindexed += 1
+        elif stored != current:
+            stale += 1
+    total = len(signatures)
+    return {
+        "total_media": total,
+        "fresh_media": total - stale - unindexed,
+        "stale_media": stale,
+        "unindexed_media": unindexed,
+        "rebuild_running": _embed_guard.active,
+    }
+
+
 @router.post("/api/open-file")
 def open_file(
     body: OpenFileRequest,

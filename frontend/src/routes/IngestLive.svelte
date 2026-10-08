@@ -46,6 +46,9 @@
   let log = [] // [{t, stage, text}]
   let busy = false
   let rebuilding = false
+  // Index freshness for the line under 重建索引. null = not loaded / failed —
+  // the line is simply absent then; it is a hint, not a gate.
+  let embedStatus = null
   let err = ''
   let startedAt = 0 // ms — set when the run's 'start' event arrives (for elapsed)
   let joinedLate = false // true when startedAt was seeded by a mid-run join, not 'start'
@@ -165,6 +168,7 @@
         // would read a cut-short run as a finished one.
         if (msg.halted && !halted) halted = { reason: msg.halted }
         pushLog(`complete · ok=${msg.ok} skipped=${msg.skipped} failed=${msg.failed}`)
+        loadEmbedStatus()
       }
     }
   }
@@ -205,6 +209,14 @@
     }
   }
 
+  async function loadEmbedStatus() {
+    try {
+      embedStatus = await api.getEmbedStatus()
+    } catch (e) {
+      embedStatus = null
+    }
+  }
+
   // Manual "Reconnect now" — also used by the auto-retry tick.
   function reconnectNow() {
     reconnectAt = 0
@@ -214,6 +226,7 @@
 
   onMount(() => {
     connect()
+    loadEmbedStatus()
     tick = setInterval(() => {
       now = Date.now()
       if (reconnectAt && now >= reconnectAt && conn === 'closed' && !closedByUs) reconnectNow()
@@ -332,6 +345,11 @@
                 <button class="ak-btn ak-btn--primary" on:click={trigger} disabled={busy || conn !== 'open'}>{busy ? 'running…' : 'Start ingest →'}</button>
                 <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title="重建 ChromaDB 向量索引（背景執行）">{rebuilding ? '排入中…' : '重建索引'}</button>
               </div>
+              {#if embedStatus && (embedStatus.stale_media || embedStatus.unindexed_media)}
+                <!-- Stale = text/tags changed after embedding; search on those clips is
+                     out of date until the next ingest or a rebuild. -->
+                <Mono style="font-size:11px;color:var(--quiet);margin-top:6px;display:block;">索引：{embedStatus.stale_media} 支內容已變更待更新 · {embedStatus.unindexed_media} 支尚未索引</Mono>
+              {/if}
             </div>
           </div>
         {/if}
