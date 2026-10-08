@@ -1152,6 +1152,7 @@ def bulk_delete_media(
 
 class PruneMissingBody(BaseModel):
     dry_run: bool = True
+    force: bool = False  # override the ">= 90% of a storage looks missing" hold-back
 
 
 @router.post("/api/media/prune-missing")
@@ -1168,33 +1169,76 @@ def prune_missing_media(
     # Audit 2026-10-09 (MED): a file is only "missing" if the storage it lives on
     # is actually there. An unmounted NAS / external drive made EVERY row on it
     # look deleted, and a real run dropped the whole library (tags, ratings,
-    # transcripts — CASCADE, no trash row) with no way back. Rows whose storage
-    # root is unavailable are excluded and reported instead.
-    prunable, unavailable = [], {}
-    avail_cache = {}
+    # transcripts — CASCADE, no trash row) with no way back.
+    #  1. rows whose volume is not mounted are excluded (db.storage_status);
+    #  2. second net for storage we can't classify (an NFS/SMB share mounted at an
+    #     arbitrary path leaves an ordinary empty folder when it drops): if the
+    #     rows under one nearest-existing folder would lose >= 90% (and >= 10
+    #     rows), they are held back unless the caller passes force=true.
+    # Every skipped row is reported (`skipped`, capped) so nothing is silent.
+    prunable_by_root, unavailable, skipped = {}, {}, []
+    status_cache = {}
     for m in missing:
         try:
             resolved = db.resolve_path(m["path"])
         except ValueError:
             resolved = m["path"]
-        root = db.storage_root(resolved)
-        if root is not None:
-            if root not in avail_cache:
-                avail_cache[root] = db.storage_root_available(root)
-            if not avail_cache[root]:
-                unavailable[root] = unavailable.get(root, 0) + 1
+        parent = str(Path(resolved).parent)
+        if parent not in status_cache:
+            status_cache[parent] = db.storage_status(resolved)
+        st = status_cache[parent]
+        if not st["available"]:
+            unavailable[st["root"]] = unavailable.get(st["root"], 0) + 1
+            skipped.append({"id": m["id"], "path": m["path"], "root": st["root"], "reason": st["reason"]})
+            continue
+        # Group by the nearest EXISTING folder, not the mount: on a single-disk
+        # machine the mount is "/" and would lump the whole library together.
+        prunable_by_root.setdefault(st.get("anchor") or st["root"], []).append(m)
+
+    held_back = []
+    prunable = []
+    if prunable_by_root:
+        def _under(rp, root):
+            try:
+                Path(rp).relative_to(root)
+                return True
+            except ValueError:
+                return False
+
+        totals = {}
+        with db.get_conn() as conn:
+            for r in conn.execute("SELECT path FROM media").fetchall():
+                try:
+                    rp = db.resolve_path(r["path"])
+                except ValueError:
+                    continue
+                # deepest matching anchor wins (anchors may nest)
+                hits = [root for root in prunable_by_root if _under(rp, root)]
+                if hits:
+                    best = max(hits, key=len)
+                    totals[best] = totals.get(best, 0) + 1
+        for root, rows in sorted(prunable_by_root.items()):
+            total = max(totals.get(root, len(rows)), len(rows))
+            if not body.force and len(rows) >= 10 and len(rows) >= 0.9 * total:
+                held_back.append({"root": root, "count": len(rows), "total": total})
+                for m in rows:
+                    skipped.append({"id": m["id"], "path": m["path"], "root": root,
+                                    "reason": "held back: {0}/{1} rows on this storage look missing "
+                                              "(pass force=true if they really were deleted)".format(len(rows), total)})
                 continue
-        prunable.append(m)
+            prunable.extend(rows)
+
     unavailable_roots = [{"root": r, "count": n} for r, n in sorted(unavailable.items())]
+    report = {
+        "scanned": len(missing),
+        "prunable": len(prunable),
+        "unavailable_roots": unavailable_roots,
+        "held_back": held_back,
+        "skipped_count": len(skipped),
+        "skipped": skipped[:200],
+    }
     if body.dry_run:
-        return {
-            "scanned": len(missing),
-            "prunable": len(prunable),
-            "pruned": 0,
-            "pruned_ids": [],
-            "unavailable_roots": unavailable_roots,
-            "dry_run": True,
-        }
+        return dict(report, pruned=0, pruned_ids=[], dry_run=True)
     pruned_ids = []
     for m in prunable:
         r = media_delete.delete_media_full(
@@ -1202,11 +1246,4 @@ def prune_missing_media(
         )
         if r is not None:
             pruned_ids.append(m["id"])
-    return {
-        "scanned": len(missing),
-        "prunable": len(prunable),
-        "pruned": len(pruned_ids),
-        "pruned_ids": pruned_ids,
-        "unavailable_roots": unavailable_roots,
-        "dry_run": False,
-    }
+    return dict(report, pruned=len(pruned_ids), pruned_ids=pruned_ids, dry_run=False)

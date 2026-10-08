@@ -1488,45 +1488,62 @@ def purge_trash(ttl_days: int = 30) -> int:
     return purged
 
 
-def storage_root(resolved: str):
-    """The volume/root a resolved media path lives on, for "is the storage even
-    there?" checks: /Volumes/<name> (macOS), /mnt/<name>, /media/<user>/<name>,
-    /run/media/<user>/<name> (Linux), a drive / UNC anchor (Windows), else
-    PROJECT_ROOT when the file is inside it, else None (unknown)."""
-    p = Path(resolved)
-    parts = p.parts
-    posix = p.as_posix()
-    if posix.startswith("/Volumes/") and len(parts) >= 3:
-        return str(Path(*parts[:3]))
-    if posix.startswith("/mnt/") and len(parts) >= 3:
-        return str(Path(*parts[:3]))
-    if posix.startswith("/media/") and len(parts) >= 4:
-        return str(Path(*parts[:4]))
-    if posix.startswith("/run/media/") and len(parts) >= 5:
-        return str(Path(*parts[:5]))
-    if p.drive:
-        return p.anchor
-    try:
-        root = Path(_config.PROJECT_ROOT).resolve()
-        p.relative_to(root)
-        return str(root)
-    except (ValueError, OSError):
-        return None
+_REMOVABLE_PREFIXES = ("/Volumes/", "/mnt/", "/media/", "/run/media/")
 
 
-def storage_root_available(root: str) -> bool:
-    """True when the storage root is really present. A missing /Volumes/X is an
-    unmounted volume; an EXISTING /Volumes/X that is not a mount point is the
-    stale empty folder macOS leaves behind (writes to an unmounted share create
-    it), which must not count as "the files were deleted" either."""
+def _ismount(path) -> bool:
     import os as _os
-    if not root or not _os.path.exists(root):
+    try:
+        return _os.path.ismount(_os.path.realpath(str(path)))  # /Volumes/Macintosh HD → /
+    except OSError:
         return False
-    rp = Path(root)
-    if rp.as_posix().startswith(("/Volumes/", "/mnt/", "/media/", "/run/media/")):
-        real = _os.path.realpath(root)  # /Volumes/Macintosh HD → /
-        return _os.path.ismount(real)
-    return True
+
+
+def storage_status(resolved: str) -> dict:
+    """Is the storage a (missing) media file lives on actually present?
+
+    Walks up to the nearest EXISTING ancestor, then up to the mount point that
+    holds it — no fixed path depth (#499 review C1: the old /media/<user>/<name>
+    rule turned the repo's own docker-compose layout, media bind-mounted at
+    /media, into "never prunable", and missed /mnt/nas/share-style mounts).
+
+    → {"root": str, "available": bool, "reason": str|None}
+      * unavailable "volume not mounted": the path sits under /Volumes, /mnt,
+        /media or /run/media but its nearest existing ancestor lives on the
+        system root mount — i.e. the volume is missing, or only a stale empty
+        mount-point folder is left (macOS leaves /Volumes/NAS behind).
+      * unavailable "drive not present": no ancestor exists at all (a Windows
+        drive letter / UNC share that is gone).
+      * available otherwise; root = the mount point, anchor = the nearest
+        existing ancestor folder (used by prune's mass-missing hold-back)."""
+    import os as _os
+    p = Path(resolved)
+    ancestor = p.parent
+    while not ancestor.exists():
+        if ancestor.parent == ancestor:
+            return {"root": p.anchor or str(ancestor), "available": False, "reason": "drive not present"}
+        ancestor = ancestor.parent
+    mount = ancestor
+    while not _ismount(mount) and mount.parent != mount:
+        mount = mount.parent
+    posix = p.as_posix()
+    prefix = next((pre for pre in _REMOVABLE_PREFIXES if posix.startswith(pre)), None)
+    if prefix is not None:
+        system_root = Path(_os.path.realpath(mount)) == Path(_os.path.realpath("/"))
+        if system_root:
+            # Report the volume-level path: first component under the prefix,
+            # one deeper for the per-user layouts (/run/media/<user>/<vol>, and
+            # desktop /media/<user>/<vol> when that user folder exists).
+            parts = p.parts
+            n = len(Path(prefix).parts) + 1
+            if prefix == "/run/media/" or (
+                    prefix == "/media/" and len(parts) > n + 1
+                    and Path(*parts[:n]).is_dir() and not _ismount(Path(*parts[:n]))
+                    and any(Path(*parts[:n]).iterdir())):
+                n += 1
+            root = str(Path(*parts[:n])) if len(parts) > n else str(p.parent)
+            return {"root": root, "available": False, "reason": "volume not mounted"}
+    return {"root": str(mount), "available": True, "reason": None, "anchor": str(ancestor)}
 
 
 def iter_missing() -> list:

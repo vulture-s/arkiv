@@ -146,3 +146,50 @@ def test_frontend_prune_client_sends_json_body():
     seg = src[src.index("export const pruneMissing"):]
     seg = seg[:seg.index("\n\n")]
     assert "dry_run: dryRun" in seg and "body:" in seg and "qs(" not in seg
+
+
+# ── #499 review C1/C2: mount detection by walking, not by fixed depth ────────
+def _fake_media_mount(monkeypatch, media_dir, mounted):
+    import db
+    monkeypatch.setattr(db, "_REMOVABLE_PREFIXES", db._REMOVABLE_PREFIXES + (str(media_dir) + "/",))
+    real = db._ismount
+    monkeypatch.setattr(db, "_ismount", lambda p: (mounted if Path(str(p)) == media_dir else
+                                                    (False if str(p).startswith(str(media_dir)) else real(p))))
+
+
+def test_docker_style_media_mount_subfolder_files_are_prunable(proj, fastapi_client, monkeypatch, tmp_path):
+    # docker-compose.remote-ollama.yml mounts footage at /media; files live in
+    # /media/<day>/<clip> — the old fixed-depth rule never pruned them.
+    media = (tmp_path / "media").resolve()
+    (media / "day1").mkdir(parents=True)
+    _fake_media_mount(monkeypatch, media, mounted=True)
+    gid = _row(str(media / "day1" / "A001.mov"), "A001.mov")
+    gid2 = _row(str(media / "day2" / "sub" / "B001.mov"), "B001.mov")  # whole folder deleted
+    real = fastapi_client.post("/api/media/prune-missing", json={"dry_run": False}).json()
+    assert sorted(real["pruned_ids"]) == sorted([gid, gid2]), real
+    assert real["unavailable_roots"] == [] and real["skipped_count"] == 0
+
+
+def test_stale_mountpoint_folder_counts_as_unmounted(proj, fastapi_client, monkeypatch, tmp_path):
+    # macOS leaves /Volumes/NAS behind as an ordinary empty folder; Linux /media
+    # without its bind mount is the same shape.
+    media = (tmp_path / "media").resolve()
+    media.mkdir()
+    _fake_media_mount(monkeypatch, media, mounted=False)
+    rid = _row(str(media / "day1" / "A001.mov"), "A001.mov")
+    dry = fastapi_client.post("/api/media/prune-missing", json={"dry_run": True}).json()
+    assert dry["prunable"] == 0 and dry["skipped_count"] == 1
+    assert dry["skipped"][0]["id"] == rid and dry["skipped"][0]["reason"] == "volume not mounted"
+    real = fastapi_client.post("/api/media/prune-missing", json={"dry_run": False}).json()
+    assert real["pruned_ids"] == []
+
+
+def test_mass_missing_on_one_storage_is_held_back_unless_forced(proj, fastapi_client):
+    # A share mounted at an arbitrary path drops and leaves an empty folder —
+    # indistinguishable from "deleted" by path rules. 10/10 rows missing → hold.
+    (proj / "nfs").mkdir()
+    ids = [_row(str(proj / "nfs" / "c{0}.mov".format(i)), "c{0}.mov".format(i)) for i in range(10)]
+    r = fastapi_client.post("/api/media/prune-missing", json={"dry_run": False}).json()
+    assert r["pruned_ids"] == [] and r["held_back"] and r["skipped_count"] == 10
+    r = fastapi_client.post("/api/media/prune-missing", json={"dry_run": False, "force": True}).json()
+    assert sorted(r["pruned_ids"]) == sorted(ids)
