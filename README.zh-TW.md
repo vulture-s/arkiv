@@ -423,7 +423,7 @@ arkiv **任何用途皆免費，包含商業工作**：接案、工作室內部�
 
 ## Pro 附加元件
 
-免費核心支援 **3 個專案**。選購的 **Pro 附加元件**（另一個閉源元件）解鎖無限專案與跨專案聚合（跨專案搜尋與精選集），**NT$3,000 一次買斷、終身有效**。無訂閱、無啟用伺服器、不對外回報。條款：[docs/pro-addon-license.md](docs/pro-addon-license.md)。
+免費核心支援 **3 個專案**。選購的 **Pro 附加元件**（另外授權的付費方案，以簽章授權檔啟用）解鎖無限專案與跨專案聚合（跨專案搜尋與精選集），**NT$3,000 一次買斷、終身有效**。無訂閱、無啟用伺服器、不對外回報。條款：[docs/pro-addon-license.md](docs/pro-addon-license.md)。
 
 > 2026-10-03 起於 Waffle House 商店販售 —— 見[產品頁](https://vulture-s.github.io/arkiv/)。
 
