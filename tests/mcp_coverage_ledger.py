@@ -162,6 +162,7 @@ NOT_EXPOSED = {
     "POST /api/projects/sync": ("admin", "project registry"),
     "GET /api/entitlements": ("admin", "licence state"),
     "GET /api/health": ("admin", "service health"),
+    "GET /api/embed/status": ("admin", "index freshness; search_media already reports degraded search"),
     "GET /api/version": ("admin", "service version"),
     "GET /api/logs/tail": ("admin", "server logs"),
 }
