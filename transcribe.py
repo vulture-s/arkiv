@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import json
+import math
 import os
 import subprocess
 import tempfile
@@ -740,11 +741,15 @@ def _mean_no_speech(segments: list) -> float:
         if "start" not in seg or "end" not in seg:
             durations = None
             break
-        try:
-            duration = float(seg["end"]) - float(seg["start"])
-        except (TypeError, ValueError):
+        start, end = seg["start"], seg["end"]
+        # Only finite real numbers: numeric *strings* were float()-ed here, passed
+        # Guard 1, then crashed Guard 2 (`"30" - "0"`) — the plain mean had
+        # rejected that batch first (Codex audit of whisper-guard#1).
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                   and math.isfinite(v) for v in (start, end)):
             durations = None
             break
+        duration = float(end) - float(start)
         if duration <= 0:
             durations = None
             break

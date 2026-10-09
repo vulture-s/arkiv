@@ -258,3 +258,13 @@ def test_postprocess_still_rejects_silent_by_count_and_duration(monkeypatch):
              for i in range(3)]
     cleaned, _, timed, words = transcribe._postprocess("原始文字", "zh", segs, "zh")
     assert (cleaned, timed, words) == ("", [], [])
+
+
+def test_mean_no_speech_string_timestamps_fall_back_to_plain_mean(monkeypatch):
+    transcribe = importlib.import_module("transcribe")
+    monkeypatch.setattr(transcribe, "LLM_POLISH", False)
+    seg = {"avg_logprob": -0.2, "compression_ratio": 1.0}
+    segs = [dict(seg, text="幻覺", no_speech_prob=0.05, start="0", end="30")]
+    segs += [dict(seg, text="音樂", no_speech_prob=0.95, start=30.0 + i, end=31.0 + i) for i in range(3)]
+    assert abs(transcribe._mean_no_speech(segs) - 0.725) < 1e-9
+    assert transcribe._postprocess("原始文字", "zh", segs, "zh")[0] == ""
