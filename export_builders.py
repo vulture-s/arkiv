@@ -287,8 +287,14 @@ def _edl_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:
     """EDL timecode: HH:MM:SS:FF (NDF) or HH:MM:SS;FF (DF)."""
     if fps <= 0:
         fps = 30.0
+    return _frames_to_edl_label(round(seconds * fps), fps, drop_frame)
+
+
+def _frames_to_edl_label(total_frames: int, fps: float, drop_frame: bool = False) -> str:
+    """Absolute frame count → HH:MM:SS:FF (NDF) or HH:MM:SS;FF (DF)."""
+    if fps <= 0:
+        fps = 30.0
     int_fps = round(fps)
-    total_frames = round(seconds * fps)
 
     if drop_frame and int_fps in (30, 60):
         # Drop-frame: skip frame 0,1 (30p) or 0,1,2,3 (60p) each minute except every 10th
@@ -368,6 +374,29 @@ def _tc_label_to_frames(tc: str, fps: float) -> "int | None":
         total_minutes = hh * 60 + mm
         frames -= d * (total_minutes - total_minutes // 10)
     return frames
+
+
+def _edl_span(start_s: float, dur_s: float, fps: float, drop: bool):
+    """(in_label, out_label) for one EDL side, with out = in + round(dur*fps)
+    frames. Rounding the two ends independently let the source and record
+    sides of one event differ by a frame (src 26 vs rec 25 for a 1 s window
+    starting half a frame in) — CMX3600 reads that as a speed change (audit
+    N1). Counting the length once makes both sides agree whenever they share a
+    rate."""
+    if fps <= 0:
+        fps = 30.0
+    f_in = round(start_s * fps)
+    n = round(dur_s * fps)
+    return _frames_to_edl_label(f_in, fps, drop), _frames_to_edl_label(f_in + n, fps, drop)
+
+
+def _record_base_seconds(fps: float, drop: bool) -> float:
+    """Media seconds of the conventional record start 01:00:00:00 (;00 for DF).
+    `3600.0` is 01:00:00:00 only at integer rates; at 23.976 it labels as
+    00:59:56:10."""
+    label = "01:00:00;00" if drop else "01:00:00:00"
+    frames = _tc_label_to_frames(label, fps)
+    return frames / fps if frames is not None and fps > 0 else 3600.0
 
 
 def _start_tc_seconds(rec: dict, clip_fps: float) -> float:

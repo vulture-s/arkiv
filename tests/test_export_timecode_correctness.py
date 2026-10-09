@@ -192,3 +192,41 @@ def test_camera_report_explicit_tc_format_still_honoured():
     # 01:00:00;00 is frame 107892; +300 frames = 108192 → NDF label 01:00:06:12
     assert cr._format_timecode_out("01:00:00;00", 300 / (30000 / 1001), 29.97, "ndf") == "01:00:06:12"
     assert cr._format_timecode_out("01:00:00:00", 300 / (30000 / 1001), 29.97, "df") == _ref_df_label(108300, 30)
+
+
+# ── 6. one EDL event: source and record spans have the same length ───────────
+
+def _label_frames(tc, nominal):
+    h, m, s, f = [int(x) for x in re.split("[:;]", tc)]
+    return ((h * 60 + m) * 60 + s) * nominal + f
+
+
+def test_timeline_edl_source_and_record_lengths_agree(fastapi_client, sample_record):
+    db = importlib.import_module("db")
+    for i in range(3):
+        db.upsert(sample_record(path="/tmp/c%d.mov" % i, filename="c%d.mov" % i, duration_s=10.0,
+                                fps=25.0, start_tc="01:00:00:00"))
+    # half-frame IN point: rounding each end separately gave src 26 vs rec 25
+    fastapi_client.patch("/api/media/1/inout", json={"in_point": 0.02, "out_point": 1.02})
+    fastapi_client.patch("/api/media/2/inout", json={"in_point": 0.5, "out_point": 2.13})
+    body = fastapi_client.get("/api/export/timeline/edl", params={"ids": "1,2,3"}).text
+    events = [ln.split() for ln in body.splitlines() if ln[:3].isdigit()]
+    assert len(events) == 3
+    prev_rec_out = None
+    for ev in events:
+        s_in, s_out, r_in, r_out = ev[-4:]
+        assert _label_frames(s_out, 25) - _label_frames(s_in, 25) == \
+            _label_frames(r_out, 25) - _label_frames(r_in, 25), ev
+        if prev_rec_out is not None:
+            assert r_in == prev_rec_out  # contiguous, no rounding gaps/overlaps
+        prev_rec_out = r_out
+
+
+def test_23976_record_tc_starts_at_one_hour(fastapi_client, sample_record):
+    db = importlib.import_module("db")
+    db.upsert(sample_record(path="/tmp/a.mov", filename="a.mov", duration_s=10.0,
+                            fps=23.976, start_tc="01:00:00:00"))
+    for url, params in (("/api/media/1/export/edl", None), ("/api/export/timeline/edl", {"ids": "1"})):
+        line = next(ln for ln in fastapi_client.get(url, params=params).text.splitlines()
+                    if ln.startswith("001  "))
+        assert line.split()[-2:] == ["01:00:00:00", "01:00:10:00"], (url, line)

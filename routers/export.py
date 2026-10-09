@@ -31,9 +31,11 @@ from export_builders import (
     _edl_comment,
     _edl_fps_warning,
     _edl_reel,
+    _edl_span,
     _edl_timecode,
     _fcpxml_rational,
     _media_streams,
+    _record_base_seconds,
     _start_tc_seconds,
     _subtitle_text,
     _tc_is_drop,
@@ -250,12 +252,11 @@ def export_media(
         start_tc_offset = _start_tc_seconds(rec, clip_fps)
 
         # Source TC = camera start TC + offset into clip (shifted by trim_in when trimmed)
-        src_start = _edl_tc(start_tc_offset + trim_in, clip_fps, is_df)
-        src_end = _edl_tc(start_tc_offset + trim_in + duration, clip_fps, is_df)
-        # Record TC = timeline position (starts at 01:00:00:00 by convention)
-        rec_base = 3600.0  # 01:00:00:00
-        rec_start = _edl_tc(rec_base, clip_fps, is_df)
-        rec_end = _edl_tc(rec_base + duration, clip_fps, is_df)
+        src_start, src_end = _edl_span(start_tc_offset + trim_in, duration, clip_fps, is_df)
+        # Record TC = timeline position (starts at 01:00:00:00 by convention —
+        # in label terms, so 23.976 does not start at 00:59:56:10)
+        rec_base = _record_base_seconds(clip_fps, is_df)
+        rec_start, rec_end = _edl_span(rec_base, duration, clip_fps, is_df)
 
         edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n\n"
         reel = _edl_reel(rec, stem)
@@ -546,7 +547,7 @@ def export_timeline(
         if fps_warn:
             edl += fps_warn + "\n"
         edl += "\n"
-        rec_pos = 3600.0  # timeline starts at 01:00:00:00 by convention
+        rec_pos = _record_base_seconds(tl_fps, tl_is_df)  # 01:00:00:00 by convention
         for i, rec in enumerate(recs, 1):
             filename = rec.get("filename", f"media_{rec.get('id')}")
             stem = filename.rsplit(".", 1)[0]
@@ -556,10 +557,11 @@ def export_timeline(
             # Source TC starts at the clip's camera TC PLUS its IN point, so the EDL
             # cuts from the marked in-point rather than the head of the file.
             src_off = _start_tc_seconds(rec, clip_fps) + win_in
-            src_start = _edl_timecode(src_off, clip_fps, clip_is_df)
-            src_end = _edl_timecode(src_off + dur, clip_fps, clip_is_df)
-            rec_start = _edl_timecode(rec_pos, tl_fps, tl_is_df)
-            rec_end = _edl_timecode(rec_pos + dur, tl_fps, tl_is_df)
+            # Each side's length is counted once (round(dur*fps)) so source and
+            # record spans agree; the record head advances by whole frames so
+            # rounding never accumulates along the timeline.
+            src_start, src_end = _edl_span(src_off, dur, clip_fps, clip_is_df)
+            rec_start, rec_end = _edl_span(rec_pos, dur, tl_fps, tl_is_df)
             reel = _edl_reel(rec, stem)
             has_vid, _ = _media_streams(rec)
             chan = "V" if has_vid else "A"  # audio-only clip → audio channel
@@ -568,7 +570,7 @@ def export_timeline(
             if rec.get("start_tc"):
                 edl += f"* SOURCE START TC: {_edl_comment(rec['start_tc'])}\n"
             edl += "\n"
-            rec_pos += dur
+            rec_pos = (round(rec_pos * tl_fps) + round(dur * tl_fps)) / tl_fps
         return HTMLResponse(
             content=edl,
             media_type="text/plain; charset=utf-8",
