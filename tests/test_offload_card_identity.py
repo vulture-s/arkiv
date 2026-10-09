@@ -294,3 +294,94 @@ def test_api_second_card_same_mount_same_dst_reports_conflict(fastapi_client, tm
     conflicts = [e for e in events if e.get("type") == "file" and e.get("reason") == "conflict"]
     assert len(conflicts) == 1 and conflicts[0]["status"] == "failed"  # old UIs count it as FAIL
     assert done["summary"][str(dst.resolve())]["conflict_files"] == ["PRIVATE/M4ROOT/CLIP/C0001.MP4"]
+
+
+# ── dual-track audit of #497 (fallback reviewer) ────────────────────────────
+import os
+
+
+def _same_mtime(*paths):
+    for p in paths:
+        os.utime(p, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
+
+
+def test_cards_with_same_name_size_mtime_but_different_bytes_are_different_cards(
+        scratch, monkeypatch, tmp_path):
+    import routers.offload as ro
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    mount = scratch / "Volumes" / "Untitled"
+    dst = scratch / "dst"
+    _card(mount, {"CLIP/C0001.MP4": b"A" * 1000}); _same_mtime(mount / "CLIP/C0001.MP4")
+    st_a = ro._offload_state_path(tmp_path, mount.resolve())
+    assert offload.run_offload(mount, [dst], resume=st_a, emit_mhl=False)[0] == 0
+    _card(mount, {"CLIP/C0001.MP4": b"B" * 1000}); _same_mtime(mount / "CLIP/C0001.MP4")
+    st_b = ro._offload_state_path(tmp_path, mount.resolve())
+    assert st_b != st_a  # router: a different card gets a fresh state
+    with pytest.raises(ValueError):  # engine: card A's state is refused for card B
+        offload.run_offload(mount, [dst], resume=st_a, emit_mhl=False)
+    code, summary, _ = offload.run_offload(mount, [dst], resume=st_b, emit_mhl=False)
+    assert code != 0 and summary[str(dst.resolve())]["conflict_files"]
+    assert (dst / "CLIP/C0001.MP4").read_bytes() == b"A" * 1000
+
+
+def test_resume_does_not_trust_a_swapped_destination_drive(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    card = _card(scratch / "card", {"CLIP/C0001.MP4": b"real footage 1234"})
+    dst = scratch / "Volumes" / "SHUTTLE"
+    st = scratch / "st.json"
+    assert offload.run_offload(card, [dst], resume=st, emit_mhl=False)[0] == 0
+    # a different shuttle drive with the same volume name, same clip name
+    shutil.rmtree(dst)
+    _card(dst, {"CLIP/C0001.MP4": b"other job ZZZZZZ!"})  # same size, different bytes
+    code, summary, _ = offload.run_offload(card, [dst], resume=st, emit_mhl=False)
+    assert code != 0
+    assert summary[str(dst.resolve())]["conflict_files"] == ["CLIP/C0001.MP4"]
+    # and a missing-then-recreated identical file is still fine
+    _card(dst, {"CLIP/C0001.MP4": b"real footage 1234"})
+    assert offload.run_offload(card, [dst], resume=st, emit_mhl=False)[0] == 0
+
+
+def test_mhl_unreadable_generation_fails_closed(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    dst = scratch / "dst"
+    c1 = _card(scratch / "card1", {"A/C0001.MP4": b"day1"})
+    assert offload.run_offload(c1, [dst])[0] == 0
+    first = sorted((dst / "ascmhl").glob("*.mhl"))[0]
+    first.write_text(first.read_text()[:200])
+    (dst / "A/C0001.MP4").write_bytes(b"tampered")
+    c2 = _card(scratch / "card2", {"B/C0001.MP4": b"day2"})
+    code, summary, _ = offload.run_offload(c2, [dst])
+    s = summary[str(dst.resolve())]
+    assert code != 0 and s["status"] == "failed" and "unreadable" in (s["error"] or "")
+
+
+def test_mhl_history_with_no_common_algorithm_is_not_a_pass(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    dst = scratch / "dst"
+    c1 = _card(scratch / "card1", {"A/C0001.MP4": b"day1"})
+    assert offload.run_offload(c1, [dst])[0] == 0
+    (dst / "A/C0001.MP4").write_bytes(b"tampered")
+    c2 = _card(scratch / "card2", {"B/C0001.MP4": b"day2"})
+    code, summary, _ = offload.run_offload(c2, [dst], hash_algo="md5")
+    assert code != 0 and "A/C0001.MP4" in (summary[str(dst.resolve())]["error"] or "")
+
+
+def test_card_under_a_folder_named_ascmhl_is_still_copied(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    card = _card(scratch / "ascmhl" / "card", {"CLIP/C0001.MP4": b"clip", "ascmhl/x.mhl": b"m"})
+    dst = scratch / "dst"
+    code, summary, _ = offload.run_offload(card, [dst], emit_mhl=False)
+    assert code == 0 and summary[str(dst.resolve())]["verified_files"] == 1
+
+
+def test_empty_source_is_refused_not_done(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    card = _card(scratch / "card", {"DCIM/IMG_0001.HEIC": b"heic only"})
+    with pytest.raises(ValueError):
+        offload.run_offload(card, [scratch / "dst"], emit_mhl=False)

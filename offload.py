@@ -290,7 +290,9 @@ def _collect_sources(src, include_heic=False):
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        if any(part == "ascmhl" for part in path.parts):
+        # Relative parts only: a card mounted under (or a project folder named)
+        # ".../ascmhl/..." used to drop EVERY file and report done with 0 files.
+        if any(part == "ascmhl" for part in path.relative_to(root).parts[:-1]):
             continue
         if _is_os_metadata(path, root):
             continue
@@ -375,6 +377,26 @@ def _stat_sig(path):
     return st.st_size, st.st_mtime_ns
 
 
+_SAMPLE_BYTES = 64 * 1024
+
+
+def _content_sample(path):
+    """sha1 over size + first/last 64 KiB. relpath+size+mtime alone let two
+    cards whose clips share name, size and mtime (unset camera clocks,
+    constant-bitrate codecs) fingerprint and resume as the SAME card — card B
+    was skipped as verified with code 0 (dual-track audit of #497). Two small
+    reads per file, never the whole clip."""
+    path = Path(path)
+    size = path.stat().st_size
+    h = hashlib.sha1(str(size).encode("ascii"))
+    with path.open("rb") as fh:
+        h.update(fh.read(_SAMPLE_BYTES))
+        if size > _SAMPLE_BYTES:
+            fh.seek(max(size - _SAMPLE_BYTES, _SAMPLE_BYTES))
+            h.update(fh.read(_SAMPLE_BYTES))
+    return h.hexdigest()
+
+
 def source_fingerprint(source_files, src_root):
     """Identity of a card's CONTENT (not its mount path): sha1 over every file's
     relpath + size + mtime_ns. Two cards mounted at the same /Volumes/Untitled get
@@ -387,7 +409,7 @@ def source_fingerprint(source_files, src_root):
             rel = _normalize_relpath(f, root)
         except ValueError:
             rel = str(f)
-        h.update("{0}\0{1}\0{2}\n".format(rel, size, mtime_ns).encode("utf-8"))
+        h.update("{0}\0{1}\0{2}\0{3}\n".format(rel, size, mtime_ns, _content_sample(f)).encode("utf-8"))
     return h.hexdigest()
 
 
@@ -420,6 +442,9 @@ def _assert_state_matches_source(state, source_files, src_root):
         size, mtime_ns = _stat_sig(current[key])
         if rec.get("size") != size or (rec.get("mtime_ns") is not None and rec["mtime_ns"] != mtime_ns):
             problems.append("{0} changed (size/mtime differ)".format(Path(key).name))
+            break
+        if rec.get("sample") is not None and rec["sample"] != _content_sample(current[key]):
+            problems.append("{0} content differs (same name/size/mtime, different bytes)".format(Path(key).name))
             break
     if problems:
         raise ValueError(
@@ -457,6 +482,7 @@ def _ensure_file_records(state, source_files, dsts, organize=None):
                 "source": str(src_file),
                 "size": size,
                 "mtime_ns": mtime_ns,
+                "sample": _content_sample(src_file),
                 "destinations": {
                     str(Path(dst).expanduser().resolve(strict=False)): {
                         "status": "pending",
@@ -472,6 +498,22 @@ def _ensure_file_records(state, source_files, dsts, organize=None):
             }
         )
     return state
+
+
+def _dest_still_matches(final_path, file_entry):
+    """Resume may skip a file only if the destination still holds THIS clip.
+    `exists()` alone accepted a different drive mounted at the same path (two
+    shuttle drives with the same name) holding a different C0001 — done, code 0
+    (dual-track audit of #497). Size + head/tail sample is cheap; anything that
+    fails falls through to _copy_single_file, which hash-compares and never
+    overwrites."""
+    try:
+        if not final_path.is_file() or final_path.stat().st_size != file_entry.get("size"):
+            return False
+        sample = file_entry.get("sample")
+        return sample is None or _content_sample(final_path) == sample
+    except OSError:
+        return False
 
 
 def _write_mhl(dst_root, hash_algo, op="offload"):
@@ -667,6 +709,12 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
                 "requested {1!r}. Resume with the original template, or omit "
                 "--organize to reuse it.".format(stored, organize))
     source_files = _collect_sources(src_root, include_heic=include_heic)
+    if not source_files:
+        # "done, 0 files" reads as a finished card to a DIT about to format it.
+        raise ValueError(
+            "no files to offload under {0} (HEIC excluded unless --include-heic; "
+            "OS metadata and ascmhl/ are skipped) — refusing to report an empty "
+            "offload as done".format(src_root))
     if state.get("files"):
         _assert_state_matches_source(state, source_files, src_root)
     state = _ensure_file_records(state, source_files, dst_roots, organize=organize)
@@ -712,7 +760,7 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
                 rel_path = _normalize_relpath(src_path, src_root)
                 file_entry["rel"] = rel_path
             file_state = file_entry["destinations"][dst_key]
-            if file_state["status"] == "verified" and (dst_root / rel_path).exists():
+            if file_state["status"] == "verified" and _dest_still_matches(dst_root / rel_path, file_entry):
                 verified_rel_paths.append(rel_path)
                 _emit(progress, {"type": "file", "dst": dst_key, "index": idx, "total": total,
                                  "name": src_path.name, "status": "skipped"})

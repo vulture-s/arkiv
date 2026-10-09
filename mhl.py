@@ -577,8 +577,13 @@ def changed_against_history(current_mhl: Path) -> List[Tuple[str, str]]:
             continue
         try:
             files, _ = _manifest_entries(_parse_manifest(gen))
-        except Exception:
-            continue
+        except Exception as exc:
+            # Fail closed: skipping an unreadable generation silently moved the
+            # baseline to a later one — possibly one that already recorded the
+            # tampered hash (dual-track audit of #497).
+            raise RuntimeError(
+                "mhl history unreadable: {0} ({1}: {2}); cannot verify chain of "
+                "custody".format(gen.name, type(exc).__name__, exc))
         for record in files:
             hashes = baseline.setdefault(record.rel_path, ({}, gen.name))[0]
             for item in record.hashes:
@@ -593,8 +598,14 @@ def changed_against_history(current_mhl: Path) -> List[Tuple[str, str]]:
         base = baseline.get(record.rel_path)
         if not base:
             continue
-        for item in record.hashes:
-            if item.algo in base[0] and base[0][item.algo] != item.value:
+        common = [item for item in record.hashes if item.algo in base[0]]
+        if not common:
+            # No shared algorithm (e.g. xxh3 history, md5 run): unmeasured is
+            # not "unchanged" — report it rather than pass silently.
+            changed.append((record.rel_path, base[1] + " (no common hash algorithm)"))
+            continue
+        for item in common:
+            if base[0][item.algo] != item.value:
                 changed.append((record.rel_path, base[1]))
                 break
     return sorted(changed)
