@@ -237,7 +237,8 @@ def client_env(fastapi_client, tmp_path, monkeypatch):
 
 def test_api_get_put_corrections(client_env):
     client = client_env
-    assert client.get("/api/corrections").json() == {"rules": []}
+    # load_error: additive field (audit 2026-10-09 K1) — null when nothing is wrong
+    assert client.get("/api/corrections").json() == {"rules": [], "load_error": None}
     r = client.put("/api/corrections", json={"rules": [{"from": "富田", "to": "Furutech"}]})
     assert r.status_code == 200
     assert r.json()["count"] == 1
