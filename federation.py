@@ -13,6 +13,7 @@ import chromadb
 
 import config
 import db
+import search_syntax
 from health import HealthStatus, project_health
 from projects import ProjectMeta, resolve_project_db
 
@@ -271,6 +272,29 @@ def _sql_like_search(conn: sqlite3.Connection, project: ProjectMeta, query: str,
         "FROM media WHERE filename LIKE ? OR transcript LIKE ? ORDER BY id LIMIT ?",
         (like, like, limit),
     ).fetchall()
+    return _rows_to_items(project, rows, query, limit)
+
+
+# With search-box filters, results are cut down AFTER retrieval, so each project
+# retrieves this wide first (same bound as routers/media.py SEARCH_CAP).
+_FILTERED_CANDIDATES = 2000
+
+
+def _list_by_ids(conn: sqlite3.Connection, project: ProjectMeta, ids, limit: int) -> List[Dict[str, Any]]:
+    """Filters-only query (no text): the matching clips themselves, newest first."""
+    wanted = sorted((int(i) for i in ids), reverse=True)[:limit]
+    if not wanted:
+        return []
+    rows = conn.execute(
+        "SELECT id, path, filename, duration_s, rating, lang, ext, "
+        "substr(transcript, 1, 300) AS transcript FROM media WHERE id IN ({0}) "
+        "ORDER BY id DESC".format(",".join("?" * len(wanted))),
+        wanted,
+    ).fetchall()
+    return _rows_to_items(project, rows, "", limit)
+
+
+def _rows_to_items(project: ProjectMeta, rows, query: str, limit: int) -> List[Dict[str, Any]]:
     seen = set()
     results = []
     for row in rows:
@@ -307,7 +331,10 @@ def query_single_project(
     limit: int = 20,
     q_embed=None,
     fallback_sql: bool = True,
+    conditions: Optional[List[Dict[str, Any]]] = None,
 ) -> ProjectQueryResult:
+    """`query` is free text only; `conditions` are the search-box filters
+    (search_syntax.parse), applied against THIS project's own database."""
     project = _project_meta(project)
     started = time.perf_counter()
     conn = None
@@ -331,13 +358,20 @@ def query_single_project(
             )
 
         conn = _connect_project_db(project)
-        if q_embed is None and fallback_sql:
-            items = _sql_like_search(conn, project, query, limit)
+        cond_ids = None
+        fetch = limit
+        if conditions:
+            cond_ids = {str(i) for i in search_syntax.matching_ids(conn, conditions)}
+            fetch = _FILTERED_CANDIDATES
+        if cond_ids is not None and not query:
+            items = _list_by_ids(conn, project, cond_ids, limit)
+        elif q_embed is None and fallback_sql:
+            items = _sql_like_search(conn, project, query, fetch)
         else:
             try:
                 if q_embed is None:
                     q_embed = embed_query(query)
-                chroma_hits = _query_vectors(project, q_embed, limit)
+                chroma_hits = _query_vectors(project, q_embed, fetch)
                 if chroma_hits:
                     for hit in chroma_hits:
                         row = _fetch_media_row(conn, hit["media_id"])
@@ -366,16 +400,18 @@ def query_single_project(
                             })
                     items = chroma_hits
                 elif fallback_sql:
-                    items = _sql_like_search(conn, project, query, limit)
+                    items = _sql_like_search(conn, project, query, fetch)
             except Exception as exc:
                 import vectordb
                 if isinstance(exc, vectordb.EmbeddingDimensionMismatch):
                     raise  # don't SQL-degrade a dim mismatch — surface as project error
                 LOGGER.warning("project query failed for %s: %s", project.name, exc)
                 if fallback_sql:
-                    items = _sql_like_search(conn, project, query, limit)
+                    items = _sql_like_search(conn, project, query, fetch)
                 else:
                     raise
+        if cond_ids is not None:
+            items = [it for it in items if str(it.get("media_id")) in cond_ids]
     except Exception as exc:
         error = str(exc)
         status = "error"
@@ -421,9 +457,12 @@ def search_all_projects(
     timeout: float = 10.0,
     fallback_sql: bool = True,
 ) -> Dict[str, Any]:
+    # Raises search_syntax.QueryError on a bad filter value (route → 422).
+    text, conditions = search_syntax.parse(query)
     projects = _filter_projects(config.discover_projects(), project_names=project_names, tag=tag)
     response = {
         "query": query,
+        "parsed": search_syntax.describe(text, conditions),
         "total_results": 0,
         "projects_queried": len(projects),
         "projects_failed": 0,
@@ -440,7 +479,7 @@ def search_all_projects(
         return response
 
     try:
-        q_embed = embed_query(query)
+        q_embed = embed_query(text) if text else None
     except Exception as exc:
         LOGGER.warning("shared query embed failed: %s", exc)
         q_embed = None
@@ -469,10 +508,11 @@ def search_all_projects(
             futures.append((project, executor.submit(
                 query_single_project,
                 project,
-                query,
+                text,
                 per_project_limit,
                 q_embed,
                 fallback_sql,
+                conditions,
             )))
 
         deadline = time.monotonic() + timeout
