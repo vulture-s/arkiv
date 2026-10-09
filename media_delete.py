@@ -55,6 +55,26 @@ def _unlink_rel(stored_path: str) -> None:
         pass
 
 
+def _other_rows_on_same_file(media_id, stored_path, resolved):
+    """Ids of OTHER media rows that point at the same file, in any stored form
+    (abs / forward-rel / backslash-rel — db.dedup_path_variants)."""
+    variants = set()
+    if stored_path:
+        variants.add(stored_path)
+    if resolved:
+        variants.update(db.dedup_path_variants(str(resolved)))
+    if not variants:
+        return []
+    vs = sorted(variants)
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id FROM media WHERE id <> ? AND path IN ({0}) ORDER BY id".format(
+                ",".join("?" * len(vs))),
+            [media_id] + vs,
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
 def _join_warning(existing, extra):
     """Two things can go wrong in one delete (the file move AND the bins cleanup)
     and `warning` is a single slot. Keep both rather than letting the later one
@@ -104,8 +124,6 @@ def delete_media_full(media_id, allow_file_delete=True, token_info=None):
     path = row["path"]
     filename = row["filename"] or ""
 
-    thumbs = db.delete_media(media_id) or []
-
     resolved = ""
     try:
         if path:
@@ -113,10 +131,23 @@ def delete_media_full(media_id, allow_file_delete=True, token_info=None):
     except ValueError:
         resolved = ""
 
+    # A legacy library can hold two rows for ONE file (abs + rel form — ingest.py
+    # H5 "observed in prod"). The user sees two identical clips and deletes one:
+    # that must not move the original out from under the row they kept, nor unlink
+    # the thumbnails, which are named by the source path and so are shared too.
+    others = _other_rows_on_same_file(media_id, path, resolved)
+
+    thumbs = db.delete_media(media_id) or []
+    if others:
+        thumbs = []
+
     file_deleted = False
     warning = None
     trash_path = ""
-    if resolved and allow_file_delete:
+    if others:
+        warning = "其他素材列仍引用同一個檔案（id {0}）：只移除這一列，原檔保留".format(
+            ", ".join(str(i) for i in others))
+    elif resolved and allow_file_delete:
         if _within_allowed_roots(resolved):
             try:
                 config.TRASH_DIR.mkdir(parents=True, exist_ok=True)

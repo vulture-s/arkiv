@@ -273,6 +273,10 @@ def _conn_returning_row(tmp_path):
             class _C:
                 def fetchone(self_inner):
                     return _Row(id=42, path=str(tmp_path / "gone.mp4"), filename="gone.mp4")
+
+                def fetchall(self_inner):
+                    # media_delete's "another row on the same file?" probe: none here.
+                    return []
             return _C()
 
     @contextlib.contextmanager
