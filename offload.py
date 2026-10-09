@@ -522,7 +522,9 @@ def _dest_still_matches(final_path, file_entry):
         if not final_path.is_file() or final_path.stat().st_size != file_entry.get("size"):
             return False
         sample = file_entry.get("sample")
-        return sample is None or _content_sample(final_path) == sample
+        # No sample (source was unreadable when recorded) → don't skip; the copy
+        # step hash-compares and never overwrites.
+        return sample is not None and _content_sample(final_path) == sample
     except OSError:
         return False
 
