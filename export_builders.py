@@ -287,8 +287,14 @@ def _edl_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:
     """EDL timecode: HH:MM:SS:FF (NDF) or HH:MM:SS;FF (DF)."""
     if fps <= 0:
         fps = 30.0
+    return _frames_to_edl_label(round(seconds * fps), fps, drop_frame)
+
+
+def _frames_to_edl_label(total_frames: int, fps: float, drop_frame: bool = False) -> str:
+    """Absolute frame count → HH:MM:SS:FF (NDF) or HH:MM:SS;FF (DF)."""
+    if fps <= 0:
+        fps = 30.0
     int_fps = round(fps)
-    total_frames = round(seconds * fps)
 
     if drop_frame and int_fps in (30, 60):
         # Drop-frame: skip frame 0,1 (30p) or 0,1,2,3 (60p) each minute except every 10th
@@ -320,19 +326,98 @@ def _edl_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:
     return f"{hh:02d}:{mm:02d}:{ss:02d}{sep}{ff:02d}"
 
 
+def _is_ntsc_df_rate(fps: float) -> bool:
+    """29.97 / 59.94 — the only rates where drop-frame labelling exists."""
+    try:
+        return round(float(fps), 2) in (29.97, 59.94)
+    except (TypeError, ValueError):
+        return False
+
+
+def _tc_is_drop(rec: dict, fps: float) -> bool:
+    """Is this clip's timecode drop-frame?
+
+    The camera's own TC string decides: ffprobe keeps the separator, `;` for DF
+    and `:` for NDF (ingest stores it verbatim). Only when there is no camera TC
+    do we fall back to the old "29.97/59.94 are DF" convention. Deciding from the
+    rate alone exported every NDF 29.97 clip (common on Sony/Canon) as DROP
+    FRAME — 108 frames per hour away from the clip's real TC track (audit N1).
+    """
+    if not _is_ntsc_df_rate(fps):
+        return False
+    tc = rec.get("start_tc") or ""
+    if isinstance(tc, str) and tc.count(":") + tc.count(";") == 3:
+        return ";" in tc
+    return True
+
+
+def _tc_label_to_frames(tc: str, fps: float) -> "int | None":
+    """HH:MM:SS:FF / HH:MM:SS;FF → absolute frame count.
+
+    A TC label counts frames at the NOMINAL integer rate (23.976 → 24, 29.97 →
+    30); drop-frame labels additionally skip frame numbers 0-1 (0-3 at 59.94)
+    every minute except each tenth. None when the string is not a timecode."""
+    if not isinstance(tc, str):
+        return None
+    drop = ";" in tc and _is_ntsc_df_rate(fps)
+    parts = tc.strip().replace(";", ":").split(":")
+    if len(parts) != 4:
+        return None
+    try:
+        hh, mm, ss, ff = (int(p) for p in parts)
+    except ValueError:
+        return None
+    nominal = int(round(fps)) if fps and fps > 0 else 30
+    frames = ((hh * 3600) + (mm * 60) + ss) * nominal + ff
+    if drop:
+        d = 2 if nominal == 30 else 4
+        total_minutes = hh * 60 + mm
+        frames -= d * (total_minutes - total_minutes // 10)
+    return frames
+
+
+def _edl_span(start_s: float, dur_s: float, fps: float, drop: bool):
+    """(in_label, out_label) for one EDL side, with out = in + round(dur*fps)
+    frames. Rounding the two ends independently let the source and record
+    sides of one event differ by a frame (src 26 vs rec 25 for a 1 s window
+    starting half a frame in) — CMX3600 reads that as a speed change (audit
+    N1). Counting the length once makes both sides agree whenever they share a
+    rate."""
+    if fps <= 0:
+        fps = 30.0
+    f_in = round(start_s * fps)
+    n = round(dur_s * fps)
+    return _frames_to_edl_label(f_in, fps, drop), _frames_to_edl_label(f_in + n, fps, drop)
+
+
+def _record_base_seconds(fps: float, drop: bool) -> float:
+    """Media seconds of the conventional record start 01:00:00:00 (;00 for DF).
+    `3600.0` is 01:00:00:00 only at integer rates; at 23.976 it labels as
+    00:59:56:10."""
+    label = "01:00:00;00" if drop else "01:00:00:00"
+    frames = _tc_label_to_frames(label, fps)
+    return frames / fps if frames is not None and fps > 0 else 3600.0
+
+
 def _start_tc_seconds(rec: dict, clip_fps: float) -> float:
-    """Parse a record's camera body start timecode (HH:MM:SS:FF) into seconds."""
-    start_tc_str = rec.get("start_tc") or ""
-    if not start_tc_str:
+    """Media time (seconds) of the clip's first frame per its camera start TC.
+
+    Returned as frames / real fps, so `round(seconds * fps)` gives back exactly
+    the TC's frame count and `_edl_timecode` re-renders the same label. The old
+    version summed the label's fields as if they were wall seconds
+    (h*3600+m*60+s+f/fps); a 23.976 TC counts 24 frames per TC-second, so
+    01:00:00:00 came back out as 00:59:56:10 — before the clip's first frame
+    (audit N1)."""
+    try:
+        fps = float(clip_fps)
+    except (TypeError, ValueError):
         return 0.0
-    _tc = start_tc_str.replace(";", ":").split(":")
-    if len(_tc) == 4:
-        try:
-            _h, _m, _s, _f = int(_tc[0]), int(_tc[1]), int(_tc[2]), int(_tc[3])
-            return _h * 3600 + _m * 60 + _s + _f / clip_fps
-        except (ValueError, ZeroDivisionError):
-            return 0.0
-    return 0.0
+    if fps <= 0:
+        return 0.0
+    frames = _tc_label_to_frames(rec.get("start_tc") or "", fps)
+    if frames is None:
+        return 0.0
+    return frames / fps
 
 
 def _edl_fps_warning(recs: list, tl_fps: float) -> "str | None":
