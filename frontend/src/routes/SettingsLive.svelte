@@ -13,6 +13,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
+  import { vocabLoadState } from '../lib/vocabLoad.js'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
@@ -210,14 +211,22 @@
   let backups = []
   let doRebuild = false
   const normRule = (r) => ({ from: r.from || '', to: r.to || '', scope: r.scope || 'global', pre: !!r.pre, post: r.post !== false })
+  // vocabLoadState: a failed load is NOT an empty dictionary — block Save so the
+  // on-screen list can't be PUT over the real one (audit 2026-10-09 K1).
+  let vocabCanSave = true
   async function loadVocab() {
-    try { rules = ((await api.getCorrections()).rules || []).map(normRule) } catch { rules = [] }
+    let res = null, loadErr = null
+    try { res = await api.getCorrections() } catch (e) { loadErr = e }
+    const st = vocabLoadState(res, loadErr)
+    rules = st.rules.map(normRule); vocabCanSave = st.canSave
+    if (st.msg) vocabMsg = st.msg
     try { backups = (await api.getRecorrectBackups()).backups || [] } catch { backups = [] }
   }
   function addRule() { rules = [...rules, { from: '', to: '', scope: 'global', pre: false, post: true }]; preview = null }
   function removeRule(i) { rules = rules.filter((_, j) => j !== i); preview = null }
   async function saveVocab() {
     if (vocabBusy) return
+    if (!vocabCanSave) { vocabMsg = '字典尚未成功讀取，暫停儲存 — 重新整理後再試'; return }
     vocabBusy = true; vocabMsg = ''
     try {
       const res = await api.putCorrections(rules.filter((r) => (r.from || '').trim()))
@@ -392,7 +401,7 @@
 
             <div class="vctl">
               <button class="ak-btn" on:click={addRule}>+ 新增規則</button>
-              <button class="ak-btn" on:click={saveVocab} disabled={vocabBusy}>儲存字典</button>
+              <button class="ak-btn" on:click={saveVocab} disabled={vocabBusy || !vocabCanSave}>儲存字典</button>
             </div>
 
             <div class="vdiv"></div>

@@ -1132,8 +1132,16 @@ def bulk_delete_media(
 ):
     """Delete several media records at once. Returns the ids that were deleted,
     skipped (e.g. not found), and any hard errors — matching the designed
-    {deleted, skipped, errors} contract."""
+    {deleted, skipped, errors} contract.
+
+    Audit 2026-10-09 K1: `deleted` alone cannot tell a recoverable trash move
+    from a metadata-only delete (clip outside PROJECT_ROOT/ARKIV_MEDIA_ROOTS, or
+    a failed move) — and the UI promised 「可從回收桶還原」 for both. Each
+    delete's outcome is kept: `not_trashed` lists rows whose original did NOT
+    go into the recycle bin (their tags/rating/transcript are unrecoverable),
+    `warnings` carries every per-item warning delete_media_full produced."""
     deleted, skipped, errors = [], [], []
+    not_trashed, warnings = [], []
     for mid in body.ids:
         try:
             mid = int(mid)
@@ -1145,13 +1153,25 @@ def bulk_delete_media(
         )
         if r is None:
             skipped.append(mid)
-        else:
-            deleted.append(mid)
-    return {"ok": True, "deleted": deleted, "skipped": skipped, "errors": errors}
+            continue
+        deleted.append(mid)
+        if not r.get("file_deleted"):
+            not_trashed.append({"media_id": mid, "warning": r.get("warning")})
+        if r.get("warning"):
+            warnings.append({"media_id": mid, "warning": r["warning"]})
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "skipped": skipped,
+        "errors": errors,
+        "not_trashed": not_trashed,
+        "warnings": warnings,
+    }
 
 
 class PruneMissingBody(BaseModel):
     dry_run: bool = True
+    force: bool = False  # override the ">= 90% of a storage looks missing" hold-back
 
 
 @router.post("/api/media/prune-missing")
@@ -1165,23 +1185,84 @@ def prune_missing_media(
     data-integrity operation (delete_media_full over ghost rows), not a token
     /admin one (R5-25 route ownership)."""
     missing = db.iter_missing()
-    if body.dry_run:
-        return {
-            "scanned": len(missing),
-            "pruned": 0,
-            "pruned_ids": [],
-            "dry_run": True,
-        }
-    pruned_ids = []
+    # Audit 2026-10-09 (MED): a file is only "missing" if the storage it lives on
+    # is actually there. An unmounted NAS / external drive made EVERY row on it
+    # look deleted, and a real run dropped the whole library (tags, ratings,
+    # transcripts — CASCADE, no trash row) with no way back.
+    #  1. rows whose volume is not mounted are excluded (db.storage_status);
+    #  2. second net for storage we can't classify (an NFS/SMB share mounted at an
+    #     arbitrary path leaves an ordinary empty folder when it drops): if the
+    #     rows under one nearest-existing folder would lose >= 90% (and >= 10
+    #     rows), they are held back unless the caller passes force=true.
+    # Every skipped row is reported (`skipped`, capped) so nothing is silent.
+    prunable_by_root, unavailable, skipped = {}, {}, []
+    status_cache = {}
     for m in missing:
+        try:
+            resolved = db.resolve_path(m["path"])
+        except ValueError:
+            resolved = m["path"]
+        parent = str(Path(resolved).parent)
+        if parent not in status_cache:
+            status_cache[parent] = db.storage_status(resolved)
+        st = status_cache[parent]
+        if not st["available"]:
+            unavailable[st["root"]] = unavailable.get(st["root"], 0) + 1
+            skipped.append({"id": m["id"], "path": m["path"], "root": st["root"], "reason": st["reason"]})
+            continue
+        # Group by the nearest EXISTING folder, not the mount: on a single-disk
+        # machine the mount is "/" and would lump the whole library together.
+        prunable_by_root.setdefault(st.get("anchor") or st["root"], []).append(m)
+
+    held_back = []
+    prunable = []
+    if prunable_by_root:
+        def _under(rp, root):
+            try:
+                Path(rp).relative_to(root)
+                return True
+            except ValueError:
+                return False
+
+        totals = {}
+        with db.get_conn() as conn:
+            for r in conn.execute("SELECT path FROM media").fetchall():
+                try:
+                    rp = db.resolve_path(r["path"])
+                except ValueError:
+                    continue
+                # deepest matching anchor wins (anchors may nest)
+                hits = [root for root in prunable_by_root if _under(rp, root)]
+                if hits:
+                    best = max(hits, key=len)
+                    totals[best] = totals.get(best, 0) + 1
+        for root, rows in sorted(prunable_by_root.items()):
+            total = max(totals.get(root, len(rows)), len(rows))
+            if not body.force and len(rows) >= 10 and len(rows) >= 0.9 * total:
+                held_back.append({"root": root, "count": len(rows), "total": total})
+                for m in rows:
+                    skipped.append({"id": m["id"], "path": m["path"], "root": root,
+                                    "reason": "held back: {0}/{1} rows on this storage look missing "
+                                              "(pass force=true if they really were deleted)".format(len(rows), total)})
+                continue
+            prunable.extend(rows)
+
+    unavailable_roots = [{"root": r, "count": n} for r, n in sorted(unavailable.items())]
+    report = {
+        "scanned": len(missing),
+        "prunable": len(prunable),
+        "unavailable_roots": unavailable_roots,
+        "held_back": held_back,
+        "skipped_count": len(skipped),
+        "skipped": skipped[:200],
+    }
+    if body.dry_run:
+        return dict(report, pruned=0, pruned_ids=[], dry_run=True)
+    pruned_ids = []
+    for m in prunable:
         r = media_delete.delete_media_full(
             m["id"], allow_file_delete=False, token_info=_tok
         )
         if r is not None:
             pruned_ids.append(m["id"])
-    return {
-        "scanned": len(missing),
-        "pruned": len(pruned_ids),
-        "pruned_ids": pruned_ids,
-        "dry_run": False,
-    }
+    return dict(report, pruned=len(pruned_ids), pruned_ids=pruned_ids, dry_run=False)

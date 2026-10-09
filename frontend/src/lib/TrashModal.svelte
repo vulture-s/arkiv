@@ -6,6 +6,7 @@
   import * as api from './api.js'
   import Eyebrow from './Eyebrow.svelte'
   import Mono from './Mono.svelte'
+  import ConfirmDialog from './ConfirmDialog.svelte'
   export let open = false
   const dispatch = createEventDispatcher()
 
@@ -64,6 +65,16 @@
     }
   }
 
+  // "清空全部" permanently unlinks every trashed ORIGINAL — the one irreversible
+  // action in this modal — so it goes through the same ConfirmDialog the
+  // (reversible) delete uses, with the count and total size spelled out.
+  let confirmPurgeAll = false
+  const fmtBytes = (n) =>
+    n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB'
+      : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB'
+      : Math.max(0, Math.round((n || 0) / 1024)) + ' KB'
+  $: purgeAllBytes = items.reduce((a, t) => a + (t.size_bytes || 0), 0)
+
   const fmt = (s) => (s ? s.replace('T', ' ').slice(0, 16) : '—')
 </script>
 
@@ -92,7 +103,7 @@
         <Eyebrow>回收桶 · Trash</Eyebrow>
         <div class="head-actions">
           <button class="ak-btn" on:click={() => purge(null)} disabled={busyId === 'purge' || !items.length} title="清空過期項（依 TTL）">清空過期</button>
-          <button class="ak-btn danger" on:click={() => purge(0)} disabled={busyId === 'purge' || !items.length} title="立即清空全部">清空全部</button>
+          <button class="ak-btn danger" on:click={() => (confirmPurgeAll = true)} disabled={busyId === 'purge' || !items.length} title="立即清空全部">清空全部</button>
           <button class="ak-btn" on:click={() => dispatch('close')}>關閉</button>
         </div>
       </div>
@@ -119,6 +130,18 @@
     </div>
   </div>
 {/if}
+
+<!-- after the modal in DOM order: same z-index, so this paints on top -->
+<ConfirmDialog
+  open={confirmPurgeAll}
+  danger
+  title="永久清空回收桶？"
+  message={`將永久刪除 ${items.length} 個原始檔（共 ${fmtBytes(purgeAllBytes)}），無法復原。`}
+  confirmLabel="永久刪除"
+  busy={busyId === 'purge'}
+  on:cancel={() => (confirmPurgeAll = false)}
+  on:confirm={async () => { await purge(0); confirmPurgeAll = false }}
+/>
 
 <style>
   .backdrop {

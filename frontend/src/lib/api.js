@@ -421,10 +421,17 @@ export const metadataCsvPath = (ids = null) =>
   `/api/export/metadata-csv${ids && ids.length ? `?ids=${ids.join(',')}` : ''}`
 
 // ---- writes ----
-// note: backend PATCH writes BOTH rating + rating_note, so an omitted note
-// clears any existing note. Always pass the current note through to preserve it.
-export const setRating = (id, rating, note = null, opts) =>
-  req(`/api/media/${id}/rating`, { method: 'PATCH', body: { rating, note }, ...opts })
+// PATCH semantics (backend audit M20): an OMITTED field is left untouched, an
+// explicit null clears it. So `note` is only sent when the caller passes one —
+// the old "always send the current note" workaround sent `note: null` whenever
+// the clip's detail had not loaded yet, wiping the stored note (audit
+// 2026-10-09 K1). Pass `null` explicitly to clear.
+export const setRating = (id, rating, note = undefined, opts) =>
+  req(`/api/media/${id}/rating`, {
+    method: 'PATCH',
+    body: note === undefined ? { rating } : { rating, note },
+    ...opts,
+  })
 
 // PATCH /api/media/{id}/inout {in_point, out_point} → persist the IN/OUT trim
 // window (seconds; null clears a mark). Lets the inspector restore a clip's range
@@ -500,9 +507,12 @@ export const restoreTrash = (trashId, opts) =>
   })
 // POST /api/media/prune-missing {dry_run} → {scanned, pruned, pruned_ids, dry_run}.
 // Clears ghost rows whose source file was manually deleted. Requires media_delete.
+// The endpoint takes a JSON body ({dry_run}); a query-string flag made every call
+// 422. Response carries `unavailable_roots` (unmounted storage, never pruned).
 export const pruneMissing = (dryRun = true, opts) =>
-  req(`/api/media/prune-missing${qs({ dry_run: dryRun ? 1 : 0 })}`, {
+  req('/api/media/prune-missing', {
     method: 'POST',
+    body: { dry_run: dryRun },
     ...opts,
   })
 
