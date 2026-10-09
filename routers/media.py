@@ -962,6 +962,17 @@ def activate_transcript(
     if not row:
         raise HTTPException(404, "該語言尚無轉錄")
     with db.get_conn() as conn:
+        # Archive what is active NOW before replacing it. media.* can be newer than
+        # its archive row — the correction dictionary (corrections.apply) rewrites
+        # only media.* — so copying the archive over it without this step turned
+        # zh(corrected) → en → zh back into the raw, uncorrected text.
+        if (rec.get("transcript") or "").strip() and rec.get("lang"):
+            db.upsert_transcript(media_id, rec["lang"], rec.get("transcript"),
+                                 rec.get("segments_json"), rec.get("words_json"), _conn=conn)
+            if rec["lang"] == body.lang:
+                row = {"transcript": rec.get("transcript"), "lang": rec["lang"],
+                       "segments_json": rec.get("segments_json"),
+                       "words_json": rec.get("words_json")}
         conn.execute(
             "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
             (row["transcript"], row["lang"], row["segments_json"], row["words_json"], media_id),
