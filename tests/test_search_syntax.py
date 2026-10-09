@@ -175,3 +175,106 @@ def test_mcp_bad_filter_is_an_error(mcp):
 def test_a_bare_key_with_nothing_after_it_is_just_text():
     # Someone mid-typing `tag:` should not get an error for it.
     assert parse("海邊 tag:") == ("海邊 tag:", [])
+
+
+# ── cross-project search (/api/search/all — what the app's search box calls) ──
+def _real_project(tmp_path, name, clips):
+    """A project whose DB has the real schema (camera_model, shot_date, tags)."""
+    import config
+    import db
+    root = tmp_path / name
+    (root / ".arkiv" / "chroma_db").mkdir(parents=True)
+    saved = config.DB_PATH
+    config.DB_PATH = root / ".arkiv" / "project.db"
+    try:
+        db.init_db()
+        for c in clips:
+            db.upsert({"path": c["filename"], "filename": c["filename"], "ext": ".mp4",
+                       "transcript": "格爾木氧氣", "camera_model": c["camera"]})
+        with db.get_conn() as conn:
+            for c in clips:
+                conn.execute("UPDATE media SET shot_date=? WHERE filename=?",
+                             (c["shot"], c["filename"]))
+    finally:
+        config.DB_PATH = saved  # federation opens each project's own DB by path
+    import projects
+    return projects.ProjectMeta(name=name, path=root)
+
+
+def _chroma_returning_ids(*ids):
+    class Coll(object):
+        def query(self, query_embeddings, n_results, include):
+            return {
+                "documents": [["hit"] * len(ids)],
+                "metadatas": [[{"media_id": str(i), "filename": "", "path": ""} for i in ids]],
+                "distances": [[0.1] * len(ids)],
+            }
+
+    class Client(object):
+        def __init__(self, path):
+            pass
+
+        def get_collection(self, name):
+            return Coll()
+
+    return Client
+
+
+@pytest.fixture
+def two_projects(tmp_path, monkeypatch):
+    import types
+    import federation
+    alpha = _real_project(tmp_path, "alpha", [
+        {"filename": "a1.mp4", "camera": "ILME-A7S3", "shot": "2025-10-03"},
+        {"filename": "a2.mp4", "camera": "ILME-FX30", "shot": "2025-10-04"},
+    ])
+    beta = _real_project(tmp_path, "beta", [
+        {"filename": "b1.mp4", "camera": "ILME-FX30", "shot": "2024-05-20"},
+        {"filename": "b2.mp4", "camera": "ILME-A7S3", "shot": "2024-05-21"},
+    ])
+    monkeypatch.setattr(federation.config, "discover_projects", lambda: [alpha, beta])
+    monkeypatch.setattr(federation, "embed_query", lambda q: [0.1])
+    # Vector index returns BOTH clips of every project — the filter must cut them.
+    monkeypatch.setattr(federation, "chromadb",
+                        types.SimpleNamespace(PersistentClient=_chroma_returning_ids(1, 2)))
+    return federation
+
+
+def _fed_names(payload):
+    return sorted(i["filename"] for i in payload["items"])
+
+
+def test_cross_project_text_plus_filter(two_projects):
+    p = two_projects.search_all_projects('"格爾木氧氣" camera:a7s3', timeout=5.0)
+    assert _fed_names(p) == ["a1.mp4", "b2.mp4"]
+    assert p["parsed"]["filters"] == [{"field": "camera", "value": "a7s3"}]
+
+
+def test_cross_project_filters_alone(two_projects):
+    assert _fed_names(two_projects.search_all_projects("shot:2024", timeout=5.0)) == ["b1.mp4", "b2.mp4"]
+    assert _fed_names(two_projects.search_all_projects("camera:fx30 shot:2025", timeout=5.0)) == ["a2.mp4"]
+
+
+def test_cross_project_filters_apply_on_the_sql_fallback_too(two_projects, monkeypatch):
+    def down(q):
+        raise RuntimeError("embedder down")
+
+    monkeypatch.setattr(two_projects, "embed_query", down)
+    assert _fed_names(two_projects.search_all_projects("格爾木氧氣 camera:fx30", timeout=5.0)) == ["a2.mp4", "b1.mp4"]
+
+
+def test_cross_project_bad_filter_is_an_error(two_projects):
+    with pytest.raises(QueryError):
+        two_projects.search_all_projects("rating:maybe", timeout=5.0)
+
+
+def test_cross_project_route_applies_filters_and_rejects_bad_ones(fastapi_client, two_projects, monkeypatch):
+    import types
+    import entitlements
+    monkeypatch.setattr(entitlements, "check_cross_project",
+                        lambda **kw: types.SimpleNamespace(allowed=True))
+    ok = fastapi_client.get("/api/search/all", params={"q": "格爾木氧氣 camera:a7s3"})
+    assert ok.status_code == 200
+    assert _fed_names(ok.json()) == ["a1.mp4", "b2.mp4"]
+    bad = fastapi_client.get("/api/search/all", params={"q": "rating:maybe"})
+    assert bad.status_code == 422 and "rating" in bad.text
