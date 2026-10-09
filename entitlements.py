@@ -213,52 +213,59 @@ def _license_file_path():
     ).expanduser()
 
 
-def _pro_from_license_file():
-    """True when a readable licence record names a licensee and a key.
+def licence_status():
+    """(info, problem) for the licence file at `_license_file_path()`.
 
-    Deliberately unsigned and unverified. The add-on is sold as a named,
-    perpetual licence recorded in the public licensee registry; the file exists
-    so an install can tell the user (and this code) which licence it is running
-    under, not to make forgery hard. Forgery is already trivial by editing this
-    module, and pretending otherwise would only cost honest users a support
-    ticket when their licence file fails to parse on a plane.
+    `info` is {key, licensee, issued, issuer, kind} for a record whose signature
+    verifies (`pro_licence.check`), else None. `problem` is None when there is
+    no file at all, and otherwise says why a file that IS there does not count
+    -- so a buyer whose licence fails to unlock is told why instead of seeing
+    the free tier with no explanation.
+
+    Until 2026-10-08 any readable file naming a licensee and a key unlocked Pro.
+    That route is gone: the record must carry the licensor's signature. Offline
+    and permanent all the same -- no expiry, no network.
     """
+    import pro_licence
+
     path = _license_file_path()
     try:
         if not path.exists():
-            return False
+            return None, None
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError):
         # Unreadable or corrupt: not proof of entitlement, but also not an
         # error worth raising into an unrelated user action.
-        return False
-    if not isinstance(data, dict):
-        return False
-    return bool(str(data.get("licensee", "")).strip()) and bool(
-        str(data.get("key", "")).strip()
-    )
+        return None, "the licence file could not be read"
+    ok, reason = pro_licence.check(data)
+    if not ok:
+        return None, reason
+    return {k: data[k] for k in ("key", "licensee", "issued", "issuer", "kind")}, None
+
+
+def _pro_from_license_file():
+    """True when the licence file carries a valid licensor signature."""
+    info, _ = licence_status()
+    return info is not None
 
 
 def _pro_from_addon_module():
-    """True when the closed-source add-on is installed and reports a licence.
+    """True when the closed `arkiv_pro` add-on is installed AND reports a licence.
 
-    The add-on is a separate distribution and is NOT in this repo, so this is an
-    interface definition as much as a check: if `arkiv_pro` is importable, core
-    asks it via `has_valid_license()` when that hook exists, and otherwise
-    treats its mere presence as the answer. Presence-as-answer is the lenient
-    branch on purpose — a user who paid and installed the component should not
-    be gated by core's expectations about the component's internals.
+    The add-on must answer through its `has_valid_license()` hook. Until
+    2026-10-08 an add-on without the hook counted as Pro by its mere presence;
+    that made "a module named arkiv_pro on the import path" a key, so it is
+    gone. Any failure inside the add-on reads as "not licensed" and never
+    propagates into an unrelated user action.
     """
     try:
         import arkiv_pro  # type: ignore
     except Exception:
-        # ImportError in the normal case; anything else means a broken add-on
-        # install, which must not take an unrelated user action down with it.
         return False
     hook = getattr(arkiv_pro, "has_valid_license", None)
     if hook is None:
-        return True
+        return False
     try:
         return bool(hook())
     except Exception:
@@ -268,12 +275,10 @@ def _pro_from_addon_module():
 def has_pro():
     """True when this install is entitled to the Pro features.
 
-    Two independent routes, either one sufficient (Hevin 2026-08-19): the add-on
-    module being importable, or a licence file being present. Two routes because
-    each covers the other's failure: a user who installed the component but
-    never placed a licence file still works, and a user whose component is not
-    on this machine's import path (a packaged .app, a different venv) can still
-    be recognised.
+    Either route is sufficient: a licence file carrying the licensor's
+    signature (the normal case -- see `pro_licence`), or the closed add-on
+    reporting a licence through its hook (for Pro features that ship only in
+    the add-on). Both are verified offline.
     """
     return _pro_from_addon_module() or _pro_from_license_file()
 
@@ -533,6 +538,7 @@ def status(existing_count, db_paths=None):
     grandfathered = install_is_grandfathered(db_paths or []) if not pro else False
     add = check_add_project(existing_count, pro=pro, grandfathered=grandfathered)
     cross = check_cross_project(pro=pro, grandfathered=grandfathered)
+    licence, licence_problem = licence_status()
     return {
         # Reported explicitly so an inert gate is visible rather than silent. A
         # build that carries the code but predates CAP_VERSION allows
@@ -548,4 +554,8 @@ def status(existing_count, db_paths=None):
         "add_project_reason": add.reason,
         "cross_project": cross.allowed,
         "cross_project_reason": cross.reason,
+        # The verified licence (never the signature), and -- when a licence
+        # file is present but does not count -- why, so support is one glance.
+        "licence": licence,
+        "licence_problem": licence_problem,
     }

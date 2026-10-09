@@ -489,7 +489,7 @@ The line is what your customer is buying: a deliverable you produced with arkiv 
 
 ## Pro add-on
 
-The free core covers up to **3 projects**. The optional **Pro add-on** — a separate closed-source component — unlocks unlimited projects and cross-project aggregation (search and collections spanning projects) for **NT$3,000, one time, perpetual**. No subscription, no activation server, no phone-home. Terms: [docs/pro-addon-license.md](docs/pro-addon-license.md).
+The free core covers up to **3 projects**. The optional **Pro add-on** — a separately licensed paid tier, enabled by a signed licence file — unlocks unlimited projects and cross-project aggregation (search and collections spanning projects) for **NT$3,000, one time, perpetual**. No subscription, no activation server, no phone-home. Terms: [docs/pro-addon-license.md](docs/pro-addon-license.md).
 
 > On sale since 2026-10-03 through the Waffle House store — see the [product page](https://vulture-s.github.io/arkiv/).
 

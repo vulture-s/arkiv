@@ -270,12 +270,12 @@ def pro_entitled(tmp_path, monkeypatch):
     failure mode this fixture exists to avoid creating. `tests/
     test_entitlements.py` does NOT use it and keeps asserting the refusals.
     """
-    licence = tmp_path / "pro-license.json"
-    licence.write_text(
-        json.dumps({"licensee": "test suite", "key": "TEST-PRO"}), encoding="utf-8"
-    )
-    monkeypatch.setenv("ARKIV_PRO_LICENSE", str(licence))
-    return licence
+    # A SIGNED record under a test-only key: since 2026-10-08 core accepts
+    # nothing else, and a fixture that still wrote the old unsigned shape would
+    # leave every cross-project test asserting on a 403.
+    from tests.licence_signing import write_licence
+
+    return write_licence(tmp_path / "pro-license.json", monkeypatch)
 
 
 @pytest.fixture

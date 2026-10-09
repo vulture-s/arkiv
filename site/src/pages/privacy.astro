@@ -32,7 +32,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   </Row>
 
   <Row level={3} id="license-check" q="Pro 授權|要連網驗證嗎？" mark="yes"
-    ev={`授權檔位置：<code>~/.arkiv/pro-license.json</code>。<a href="${GH}entitlements.py">entitlements.py</a>`}>
+    ev={`授權檔位置：<code>~/.arkiv/pro-license.json</code>，以內建公鑰離線驗證簽章，不連網。<a href="${GH}entitlements.py">entitlements.py</a>`}>
     <p>不用。授權是一個放在你電腦上的檔案，App 只讀這個檔，從不連線驗證。斷網也照常使用。</p>
   </Row>
 

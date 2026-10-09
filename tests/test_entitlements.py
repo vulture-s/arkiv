@@ -345,15 +345,12 @@ def test_addon_reporting_an_invalid_licence_does_not_grant_pro(monkeypatch):
     assert entitlements.has_pro() is False
 
 
-def test_addon_without_the_hook_counts_as_pro(monkeypatch):
-    """Presence-as-answer is the deliberate lenient branch (see the docstring).
-
-    Pinned because it is the one that looks like an oversight: a reader tightening
-    this to "no hook means no licence" would gate a user who paid and installed
-    the component, on core's expectations about the component's internals.
-    """
+def test_addon_without_the_hook_does_not_count_as_pro(monkeypatch):
+    """Until 2026-10-08 presence alone counted as Pro. That made "any module
+    named arkiv_pro on the import path" a key; the add-on must now answer
+    through its hook."""
     _install_addon(monkeypatch)
-    assert entitlements.has_pro() is True
+    assert entitlements.has_pro() is False
 
 
 def test_a_hook_that_raises_does_not_grant_pro_and_does_not_propagate(monkeypatch):
@@ -442,33 +439,85 @@ def test_grandfathered_install_keeps_everything_when_armed(monkeypatch, tmp_path
 
 # ── Pro entitlement ───────────────────────────────────────────────────────────
 
-def test_licence_file_unlocks_both_features(monkeypatch, tmp_path):
+def test_signed_licence_file_unlocks_both_features(monkeypatch, tmp_path):
+    from tests.licence_signing import write_licence
+
     monkeypatch.setattr(config, "VERSION", ARMED)
+    write_licence(tmp_path / "pro-license.json", monkeypatch,
+                  key="PRO-001", licensee="Studio A")
+    assert entitlements.has_pro() is True
+    assert entitlements.check_add_project(99, db_paths=[]).code == "pro"
+    assert entitlements.check_cross_project(db_paths=[]).allowed is True
+    status = entitlements.status(0, db_paths=[])
+    assert status["licence"]["key"] == "PRO-001"
+    assert status["licence"]["licensee"] == "Studio A"
+    assert "sig" not in status["licence"]
+    assert status["licence_problem"] is None
+
+
+def test_the_old_unsigned_licence_no_longer_unlocks_and_says_why(monkeypatch, tmp_path):
+    """The route this change closes: hand-writing two fields used to be Pro."""
     licence = tmp_path / "pro-license.json"
     licence.write_text(
         json.dumps({"licensee": "Studio A", "key": "ARKIV-PRO-0001"}), encoding="utf-8"
     )
     monkeypatch.setenv("ARKIV_PRO_LICENSE", str(licence))
-    assert entitlements.has_pro() is True
-    assert entitlements.check_add_project(99, db_paths=[]).code == "pro"
-    assert entitlements.check_cross_project(db_paths=[]).allowed is True
+    assert entitlements.has_pro() is False
+    assert "not signed" in entitlements.status(0, db_paths=[])["licence_problem"]
+
+
+def _bad_payload(kind, monkeypatch):
+    import base64
+
+    import pro_licence
+    from tests.licence_signing import make_record, sign
+
+    if kind == "tampered":
+        record = make_record()
+        record["licensee"] = "someone else"
+        return json.dumps(record)
+    if kind == "foreign_key":
+        # Signed correctly -- by a key core does not trust under that kid.
+        record = make_record()
+        record["sig"] = base64.b64encode(
+            sign(pro_licence.signing_bytes(record), seed=bytes(32))
+        ).decode("ascii")
+        return json.dumps(record)
+    if kind == "unknown_kid":
+        return json.dumps(make_record(kid="nobody"))
+    if kind == "revoked":
+        monkeypatch.setattr(pro_licence, "REVOKED", frozenset({"TEST-001"}))
+        return json.dumps(make_record())
+    return kind
 
 
 @pytest.mark.parametrize(
-    "payload",
+    "payload,problem",
     [
-        "{not json",                       # corrupt
-        json.dumps([1, 2, 3]),             # right file, wrong shape
-        json.dumps({"licensee": "Studio"}),  # named but keyless
-        json.dumps({"key": "ARKIV-PRO-1"}),  # keyed but nameless
-        json.dumps({"licensee": " ", "key": " "}),  # whitespace is not a name
+        ("{not json", "could not be read"),
+        (json.dumps([1, 2, 3]), "not a licence record"),
+        (json.dumps({"licensee": "Studio"}), "missing"),
+        ("tampered", "signature does not match"),
+        ("foreign_key", "signature does not match"),
+        ("unknown_kid", "unknown key"),
+        ("revoked", "withdrawn"),
     ],
 )
-def test_unusable_licence_file_does_not_unlock(monkeypatch, tmp_path, payload):
+def test_unusable_licence_file_does_not_unlock(monkeypatch, tmp_path, payload, problem):
+    from tests.licence_signing import trust_test_key
+
+    trust_test_key(monkeypatch)
     licence = tmp_path / "pro-license.json"
-    licence.write_text(payload, encoding="utf-8")
+    licence.write_text(_bad_payload(payload, monkeypatch), encoding="utf-8")
     monkeypatch.setenv("ARKIV_PRO_LICENSE", str(licence))
     assert entitlements.has_pro() is False
+    assert problem in entitlements.status(0, db_paths=[])["licence_problem"]
+
+
+def test_no_licence_file_is_not_a_problem(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARKIV_PRO_LICENSE", str(tmp_path / "absent.json"))
+    status = entitlements.status(0, db_paths=[])
+    assert status["licence"] is None and status["licence_problem"] is None
 
 
 def test_status_reports_whether_the_gate_is_even_armed(monkeypatch):
