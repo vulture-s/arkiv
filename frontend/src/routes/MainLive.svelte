@@ -1288,7 +1288,7 @@
     open={!!confirmDel}
     title={confirmDel ? (confirmDel.kind === 'bulk' ? '刪除所選素材' : '刪除素材') : '確認'}
     message={confirmDel
-      ? `確定要將「${confirmDel.label}」移至回收桶嗎？\n原始檔會保留 30 天，可從回收桶還原。`
+      ? `確定要將「${confirmDel.label}」移至回收桶嗎？\n原始檔會保留 30 天，可從回收桶還原；\n但標籤、評分／備註、IN/OUT、手改逐字稿不會隨還原回來。`
       : ''}
     confirmLabel="移至回收桶"
     danger={true}

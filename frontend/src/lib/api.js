@@ -507,9 +507,12 @@ export const restoreTrash = (trashId, opts) =>
   })
 // POST /api/media/prune-missing {dry_run} → {scanned, pruned, pruned_ids, dry_run}.
 // Clears ghost rows whose source file was manually deleted. Requires media_delete.
+// The endpoint takes a JSON body ({dry_run}); a query-string flag made every call
+// 422. Response carries `unavailable_roots` (unmounted storage, never pruned).
 export const pruneMissing = (dryRun = true, opts) =>
-  req(`/api/media/prune-missing${qs({ dry_run: dryRun ? 1 : 0 })}`, {
+  req('/api/media/prune-missing', {
     method: 'POST',
+    body: { dry_run: dryRun },
     ...opts,
   })
 
