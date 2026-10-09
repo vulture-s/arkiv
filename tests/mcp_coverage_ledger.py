@@ -125,6 +125,7 @@ NOT_EXPOSED = {
     "GET /api/proxy/editor/{media_id}": ("job", "editor proxy state for one clip"),
     "POST /api/offload": ("job", "card offload with checksums"),
     "POST /api/offload/preview": ("job", "offload dry run"),
+    "POST /api/offload/resolve": ("job", "copy one same-name-conflict clip under a user-chosen name"),
     "POST /api/sample/load": ("job", "sample library"),
     "POST /api/sample/remove": ("job", "sample library"),
     "POST /api/sample/seed": ("job", "sample library"),

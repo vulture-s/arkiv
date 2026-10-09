@@ -25,6 +25,10 @@
   import { resolvedTheme } from '../lib/prefs.js'
   import { pickFolder, canPickFolder } from '../lib/pickFolder.js'
   import { pushToast } from '../lib/toast.js'
+  import OffloadRenameDialog from '../lib/OffloadRenameDialog.svelte'
+  import {
+    conflictsFromDone, shouldOpenRenameDialog, cardStatus, canFormat, statusLine, applyResolveResult,
+  } from '../lib/offloadConflicts.js'
 
   let src = ''
   let organize = ''
@@ -45,6 +49,7 @@
   let pTotal = 0
   let pDone = 0
   let pFailed = 0
+  let conflictToasted = false
   let recent = [] // [{name, status}] — last handful of files, failed flagged
   let summary = null // {dst: {verified_files, failed_files, mhl_path, status}}
   let doneCode = null
@@ -54,6 +59,17 @@
   // already terminates the copy subprocess on disconnect (offload_run GeneratorExit).
   let abortCtl = null
   let stopped = false
+
+  // Same-name conflicts (Hevin 2026-10-09 23:14): the run ends needs_rename and
+  // the rename dialog opens by itself. `card` is the one status that decides
+  // whether this card may be formatted — only 'done' may (lib/offloadConflicts.js).
+  let card = '' // '' | done | needs_rename | incomplete | failed
+  let renameRows = []
+  let renameOpen = false
+  let renameBusy = ''
+  let runSrc = '' // the card the conflicts belong to (src may be edited after the run)
+  let runHeic = false
+  $: renamePending = renameRows.filter((r) => r.state === 'pending' || r.state === 'error').length
 
   $: liveDsts = dsts.map((d) => d.trim()).filter(Boolean)
   // Run is armed after a Preview; also re-armed after a Stop so the user can
@@ -68,7 +84,7 @@
   $: previewed = phase === 'preview' || (phase === 'done' && stopped)
   $: pct = pTotal ? Math.min(100, Math.round((pDone / pTotal) * 100)) : 0
   $: anyFailed = summary
-    ? Object.values(summary).some((s) => s.failed_files > 0 || s.error) || doneCode !== 0
+    ? Object.values(summary).some((s) => s.failed_files > 0 || s.error) || doneCode !== 0 || !canFormat(card)
     : false
   const base = (p) => String(p).split(/[\\/]/).pop()
 
@@ -140,8 +156,10 @@
     const missing = blockers({ needDst: true, needPreview: true })
     if (missing.length) { pushToast(`無法開始複製 — 缺少：${missing.join('、')}`, 'error'); return }
     err = ''; phase = 'running'; stopped = false
-    curDst = ''; pTotal = 0; pDone = 0; pFailed = 0; recent = []; summary = null; doneCode = null
+    curDst = ''; pTotal = 0; pDone = 0; pFailed = 0; recent = []; summary = null; doneCode = null; conflictToasted = false
     stage = ''; stageFiles = 0
+    card = ''; renameRows = []; renameOpen = false; renameBusy = ''
+    runSrc = src.trim(); runHeic = includeHeic
     abortCtl = new AbortController()
     try {
       const res = await api.offloadRun({
@@ -170,8 +188,16 @@
             stage = ''; stageFiles = 0
           } else if (ev.type === 'file') {
             pDone++
-            if (ev.status === 'failed') pFailed++
-            recent = [{ name: ev.name, status: ev.status }, ...recent].slice(0, 8)
+            if (ev.status === 'failed' || ev.status === 'needs_rename') pFailed++
+            recent = [{ name: ev.name, status: ev.status, reason: ev.reason }, ...recent].slice(0, 8)
+            // reason:'conflict' = a DIFFERENT file with this name is already on the
+            // backup drive (e.g. a second card's C0001). It was NOT overwritten.
+            // One toast per run, not per file: a wrong destination can collide
+            // on hundreds of names (#497 review N1). Count shows in the summary.
+            if (ev.reason === 'conflict' && !conflictToasted) {
+              conflictToasted = true
+              pushToast(`目的地已有同名但內容不同的檔案，未覆蓋（${ev.name} 等）— 結束後請改名`, 'error')
+            }
           } else if (ev.type === 'phase') {
             // mhl_failed is terminal for this destination: keep the row's own
             // error visible rather than showing a hashing pass that already died.
@@ -181,11 +207,16 @@
             stage = ''
             doneCode = ev.code
             summary = ev.summary || {}
+            card = cardStatus(ev)
+            renameRows = conflictsFromDone(ev)
+            // Open the dialog ourselves — an EXISTS tag in the list is too easy
+            // to read past, and the card is NOT fully backed up until this is done.
+            renameOpen = shouldOpenRenameDialog(ev)
             phase = 'done'
           }
         }
       }
-      if (phase !== 'done') { phase = 'done'; doneCode = doneCode ?? 1 }
+      if (phase !== 'done') { phase = 'done'; doneCode = doneCode ?? 1; card = card || 'failed' }
     } catch (e) {
       if (stopped || e.name === 'AbortError') {
         // User stopped it (or navigated away): the copy is resumable, so this is
@@ -197,6 +228,27 @@
       }
     } finally {
       abortCtl = null
+    }
+  }
+
+  async function resolveRow(row, action) {
+    renameBusy = `${row.dst}\u0000${row.rel}`
+    try {
+      const res = await api.offloadResolve({
+        src: runSrc, dst: row.dst, rel: row.rel, action, include_heic: runHeic,
+        ...(action === 'rename' ? { new_name: row.name } : { confirm: true }),
+      })
+      const next = applyResolveResult(renameRows, row, res)
+      renameRows = next.rows
+      card = next.status
+      if (next.summary && Object.keys(next.summary).length) summary = next.summary
+      doneCode = card === 'done' ? 0 : (doneCode || 3)
+      if (card === 'done') { pushToast('同名衝突全部處理完 · 校驗通過', 'ok'); renameOpen = false }
+    } catch (e) {
+      const msg = e.body?.detail || e.message
+      renameRows = renameRows.map((r) => (r.dst === row.dst && r.rel === row.rel ? { ...r, state: 'error', error: msg } : r))
+    } finally {
+      renameBusy = ''
     }
   }
 
@@ -349,9 +401,9 @@
 
           <div class="rowsbox">
             {#each recent as r}
-              <div class="prow file" class:fail={r.status === 'failed'}>
+              <div class="prow file" class:fail={r.status === 'failed' || r.status === 'needs_rename'}>
                 <Mono style="font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{r.name}</Mono>
-                <span class="st {r.status}">{r.status === 'failed' ? 'FAIL' : r.status === 'skipped' ? 'SKIP' : 'OK'}</span>
+                <span class="st {r.status === 'needs_rename' ? 'failed' : r.status}">{r.reason === 'conflict' ? 'RENAME?' : r.status === 'failed' ? 'FAIL' : r.status === 'skipped' ? 'SKIP' : 'OK'}</span>
               </div>
             {/each}
           </div>
@@ -361,7 +413,7 @@
               {#each Object.entries(summary) as [dst, s]}
                 <div class="srow" class:fail={s.failed_files > 0}>
                   <Mono style="font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{base(dst)}</Mono>
-                  <Mono dim style="font-size:10px;">{s.verified_files} ok{s.failed_files ? ` · ${s.failed_files} fail` : ''}{s.mhl_path ? ' · MHL' : ''}{s.error ? ` · MHL 失敗：${s.error}` : ''}</Mono>
+                  <Mono dim style="font-size:10px;">{s.verified_files} ok{s.failed_files ? ` · ${s.failed_files} fail` : ''}{s.conflict_files?.length ? ` · ${s.conflict_files.length} 檔與既有備份同名不同內容（未覆蓋）` : ''}{s.mhl_path ? ' · MHL' : ''}{s.error ? ` · MHL 失敗：${s.error}` : ''}</Mono>
                 </div>
               {/each}
             </div>
@@ -377,8 +429,12 @@
     <div class="footer">
       {#if err}<Mono style="font-size:11px;" class="errtext">{err}</Mono>
       {:else if phase === 'done' && stopped}<Mono style="font-size:11px;">■ 已停止 · 已校驗檔案保留，可續傳</Mono>
+      {:else if phase === 'done' && card && card !== 'done'}<Mono style="font-size:11px;" class="errtext">{statusLine(card, renamePending)}</Mono>
       {:else if phase === 'done'}<Mono style="font-size:11px;" class={anyFailed ? 'errtext' : ''}>{anyFailed ? `✗ 轉存有失敗 (exit ${doneCode})` : `✓ 轉存完成 (exit ${doneCode})`}</Mono>{/if}
       <div class="grow"></div>
+      {#if phase === 'done' && renamePending}
+        <button class="ak-btn" on:click={() => (renameOpen = true)}>處理同名衝突（{renamePending}）</button>
+      {/if}
       {#if phase === 'done' && !anyFailed}
         <button class="ak-btn" on:click={ingestNext}>接著 ingest →</button>
       {/if}
@@ -394,6 +450,15 @@
     </div>
   </div>
 </div>
+
+<OffloadRenameDialog
+  open={renameOpen}
+  bind:rows={renameRows}
+  busyKey={renameBusy}
+  on:rename={(e) => resolveRow(e.detail.row, 'rename')}
+  on:skip={(e) => resolveRow(e.detail.row, 'skip')}
+  on:close={() => (renameOpen = false)}
+/>
 
 <style>
   /* error red — the LOCKED exception to the B&W palette, failures only */
