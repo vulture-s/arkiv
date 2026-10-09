@@ -535,6 +535,32 @@ def _generations(output_dir: Path) -> List[Path]:
     return [p for _, _, p in sorted(found)]
 
 
+# OS bookkeeping macOS / Windows write onto a DESTINATION drive by mounting or
+# browsing it: AppleDouble ``._*`` (any xattr change on exFAT/FAT — e.g. the
+# lastuseddate LaunchServices stamps when a DIT opens a backup clip in QuickTime),
+# Spotlight, fseventsd, Trash, Windows indexer. Their bytes change for reasons
+# that have nothing to do with the footage, so they must not trip the
+# cross-generation chain-of-custody check — otherwise one opened clip turns every
+# later offload to that drive red, permanently (review of #497, dst-side twin of
+# B1). Keep in sync with offload._OS_METADATA_DIRS / _OS_METADATA_FILES (a test
+# pins the two to the same sets).
+OS_METADATA_DIRS = frozenset((
+    ".fseventsd", ".spotlight-v100", ".trashes", ".temporaryitems",
+    ".documentrevisions-v100", "system volume information", "$recycle.bin",
+))
+OS_METADATA_FILES = frozenset((".ds_store", "thumbs.db", "desktop.ini", ".volumeicon.icns", ".apdisk"))
+
+
+def is_os_metadata_rel(rel_path: str) -> bool:
+    parts = [part for part in rel_path.replace("\\", "/").split("/") if part]
+    if not parts:
+        return False
+    if any(part.lower() in OS_METADATA_DIRS for part in parts[:-1]):
+        return True
+    name = parts[-1]
+    return name.lower() in OS_METADATA_FILES or name.startswith("._")
+
+
 def changed_against_history(current_mhl: Path) -> List[Tuple[str, str]]:
     """Paths in ``current_mhl`` whose hash differs from the FIRST hash any earlier
     generation recorded for that path → [(rel_path, first_generation_name)].
@@ -562,6 +588,8 @@ def changed_against_history(current_mhl: Path) -> List[Tuple[str, str]]:
     cur_files, _ = _manifest_entries(_parse_manifest(current_mhl))
     changed: List[Tuple[str, str]] = []
     for record in cur_files:
+        if is_os_metadata_rel(record.rel_path):
+            continue  # Finder/Spotlight churn is not footage (see OS_METADATA_*)
         base = baseline.get(record.rel_path)
         if not base:
             continue

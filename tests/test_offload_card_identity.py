@@ -166,6 +166,44 @@ def test_mhl_flags_file_changed_since_previous_generation(scratch, monkeypatch):
     assert "A/C0001.MP4" in (s["error"] or "")
 
 
+def test_mhl_history_ignores_os_metadata_churn_on_destination(scratch, monkeypatch):
+    """Dst-side twin of B1: on an exFAT backup drive macOS keeps AppleDouble
+    ``._*`` files (rewritten whenever an xattr changes — opening a clip in
+    QuickTime stamps lastuseddate). The history check must not treat that churn
+    as tampered footage, or every later offload to the drive goes red for good."""
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    dst = scratch / "dst"
+    c1 = _card(scratch / "card1", {"A/C0001.MP4": b"day1 clip"})
+    assert offload.run_offload(c1, [dst])[0] == 0
+    (dst / "A/._C0001.MP4").write_bytes(b"appledouble v1")
+    (dst / ".Spotlight-V100").mkdir()
+    (dst / ".Spotlight-V100/store").write_bytes(b"idx v1")
+    c2 = _card(scratch / "card2", {"B/C0001.MP4": b"day2 clip"})
+    assert offload.run_offload(c2, [dst])[0] == 0
+    (dst / "A/._C0001.MP4").write_bytes(b"appledouble v2 -- clip opened again")
+    (dst / ".Spotlight-V100/store").write_bytes(b"idx v2")
+    c3 = _card(scratch / "card3", {"C/C0001.MP4": b"day3 clip"})
+    code, summary, _ = offload.run_offload(c3, [dst])
+    s = summary[str(dst.resolve())]
+    assert code == 0 and s["status"] == "done", s["error"]
+
+    # …while real footage changing is still caught.
+    (dst / "A/C0001.MP4").write_bytes(b"tampered!")
+    c4 = _card(scratch / "card4", {"D/C0001.MP4": b"day4 clip"})
+    code, summary, _ = offload.run_offload(c4, [dst])
+    s = summary[str(dst.resolve())]
+    assert code != 0 and "A/C0001.MP4" in (s["error"] or "")
+    assert "._C0001" not in (s["error"] or "")
+
+
+def test_os_metadata_sets_match_between_offload_and_mhl(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    import mhl
+    assert offload._OS_METADATA_DIRS == mhl.OS_METADATA_DIRS
+    assert offload._OS_METADATA_FILES == mhl.OS_METADATA_FILES
+
+
 # ── OS metadata on the card (#497 review B1) ────────────────────────────────
 def test_finder_metadata_is_not_footage(scratch, monkeypatch):
     offload = _load_offload(scratch, monkeypatch)
