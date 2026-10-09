@@ -188,3 +188,63 @@ def test_postprocess_reconciles_words_to_kept_segments(monkeypatch):
     }]
     # only words landing inside the surviving segment survive; dropped-segment words gone
     assert [w["word"] for w in out_words] == ["保", "留"]
+
+
+# ── Guard 1 is duration-weighted (mirrors vulture-s/whisper-guard#1 L1) ──────
+# Before: a plain per-segment mean. 30 s of clear speech + three 1 s BGM tails
+# (0.95 each) averaged 0.725 > 0.6 and the whole transcript was wiped. Weighted
+# by duration it is 0.13 and must pass.
+
+
+def _speech_plus_bgm_tails():
+    seg = {"avg_logprob": -0.2, "compression_ratio": 1.0}
+    return [
+        dict(seg, text="這是一段三十秒的正常講話內容", no_speech_prob=0.05, start=0.0, end=30.0),
+        dict(seg, text="音樂", no_speech_prob=0.95, start=30.0, end=31.0),
+        dict(seg, text="音樂", no_speech_prob=0.95, start=31.0, end=32.0),
+        dict(seg, text="音樂", no_speech_prob=0.95, start=32.0, end=33.0),
+    ]
+
+
+def test_mean_no_speech_is_duration_weighted():
+    transcribe = importlib.import_module("transcribe")
+    got = transcribe._mean_no_speech(_speech_plus_bgm_tails())
+    assert abs(got - (0.05 * 30 + 0.95 * 3) / 33) < 1e-9
+
+
+def test_mean_no_speech_falls_back_to_plain_mean_without_timing():
+    transcribe = importlib.import_module("transcribe")
+    segs = [{"no_speech_prob": 0.9}, {"no_speech_prob": 0.5, "start": 0.0, "end": 10.0}]
+    assert abs(transcribe._mean_no_speech(segs) - 0.7) < 1e-9
+    zero_len = [{"no_speech_prob": 0.9, "start": 1.0, "end": 1.0},
+                {"no_speech_prob": 0.5, "start": 1.0, "end": 9.0}]
+    assert abs(transcribe._mean_no_speech(zero_len) - 0.7) < 1e-9
+    bad = [{"no_speech_prob": 0.9, "start": "x", "end": 1.0},
+           {"no_speech_prob": 0.5, "start": 0.0, "end": 1.0}]
+    assert abs(transcribe._mean_no_speech(bad) - 0.7) < 1e-9
+
+
+def test_postprocess_keeps_speech_with_short_bgm_tails(monkeypatch):
+    transcribe = importlib.import_module("transcribe")
+    monkeypatch.setattr(transcribe, "LLM_POLISH", False)
+    cleaned, _, timed, _ = transcribe._postprocess("原始文字", "zh", _speech_plus_bgm_tails(), "zh")
+    assert "三十秒的正常講話" in cleaned
+    # the BGM tails are still dropped by the per-segment filter (Guard 2)
+    assert [t["text"] for t in timed] == ["這是一段三十秒的正常講話內容"]
+
+
+def test_postprocess_still_rejects_mostly_silent_by_duration(monkeypatch):
+    """Converse: most segments are speech by COUNT, but most of the TIME is
+    silence -> still rejected as a whole. Plain mean 0.4125 (< 0.6, the old
+    code let it through); duration-weighted ~0.727 (> 0.6)."""
+    transcribe = importlib.import_module("transcribe")
+    monkeypatch.setattr(transcribe, "LLM_POLISH", False)
+    seg = {"avg_logprob": -0.2, "compression_ratio": 1.0}
+    segs = [
+        dict(seg, text="短句一", no_speech_prob=0.3, start=0.0, end=1.0),
+        dict(seg, text="短句二", no_speech_prob=0.3, start=1.0, end=2.0),
+        dict(seg, text="短句三", no_speech_prob=0.3, start=2.0, end=3.0),
+        dict(seg, text="長靜音", no_speech_prob=0.75, start=3.0, end=60.0),
+    ]
+    cleaned, _, timed, words = transcribe._postprocess("原始文字", "zh", segs, "zh")
+    assert (cleaned, timed, words) == ("", [], [])
