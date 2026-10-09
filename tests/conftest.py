@@ -7,7 +7,60 @@ import types
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+
+# ── Keep the suite out of any real library ───────────────────────────────────
+# config.PROJECT_ROOT defaults to BASE_DIR (the checkout), and every storage path
+# hangs off it: the DB, proxies, thumbnails, trash, the audit logs. Tests that do
+# not ask for tmp_db therefore wrote straight into <checkout>/.arkiv — measured on
+# a clean tree: project.db, 7 proxy files, offload state, recorrect backups and
+# both audit logs. In a dev checkout that is litter. In ~/.arkiv, which is a
+# checkout AND the live library launchd serves, it is writing into real data.
+#
+# So, before anything imports config: point the root at a throwaway directory and
+# drop every per-path override a developer's shell might carry. ARKIV_MEDIA_ROOTS
+# matters most — it widens where the delete endpoint may physically remove files.
+# Tests that need a specific root still monkeypatch it themselves.
+for _var in (
+    "ARKIV_DB_PATH", "ARKIV_CHROMA_PATH", "ARKIV_THUMBNAILS_DIR",
+    "ARKIV_PROXIES_DIR", "ARKIV_MEDIA_ROOTS",
+):
+    os.environ.pop(_var, None)
+os.environ["ARKIV_PROJECT_ROOT"] = tempfile.mkdtemp(prefix="arkiv-test-root-")
+
+from fastapi.testclient import TestClient  # noqa: E402  (after the env is fixed)
+
+_CHECKOUT_ARKIV = Path(__file__).resolve().parent.parent / ".arkiv"
+
+
+def _arkiv_dir_state():
+    if not _CHECKOUT_ARKIV.exists():
+        return {}
+    return {
+        str(p): (p.stat().st_size, p.stat().st_mtime_ns)
+        for p in _CHECKOUT_ARKIV.rglob("*") if p.is_file()
+    }
+
+
+def pytest_sessionstart(session):
+    session.config._arkiv_dir_before = _arkiv_dir_state()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run if any test wrote into the checkout's .arkiv/ anyway — the
+    env redirect above is what keeps tests out, this is what notices when a new
+    one finds another way in (a hard-coded BASE_DIR path, a config reload that
+    drops the env, ...)."""
+    before = getattr(session.config, "_arkiv_dir_before", None)
+    if before is None:
+        return
+    after = _arkiv_dir_state()
+    touched = sorted(p for p, sig in after.items() if before.get(p) != sig)
+    if touched:
+        sys.stderr.write(
+            "\n[conftest] tests wrote into the checkout's .arkiv/ — they must use a "
+            "temp root:\n  " + "\n  ".join(touched[:20]) + "\n"
+        )
+        session.exitstatus = 1
 
 
 def _install_fake_modules():
