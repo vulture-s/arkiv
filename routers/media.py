@@ -32,6 +32,7 @@ import db
 import media_delete
 import mediatypes
 import progress
+import search_syntax
 import tag_quality
 import transcript_compare
 from auth import require_scopes
@@ -280,7 +281,22 @@ def list_media(
         for rec in records:
             rec["tags"] = tags_by_id.get(rec["id"], [])
         return {"items": records, "total": len(records), "search": True}
+    # `camera:a7s3 tag:海邊 …` in the search box → typed filters (search_syntax).
+    # `q` is narrowed to the free text; the filters become one SQL predicate that
+    # both legs below must satisfy, so they cannot drift apart.
+    conditions: list = []
+    cond_ids = None
+    parsed = None
     if q:
+        try:
+            q, conditions = search_syntax.parse(q)
+        except search_syntax.QueryError as exc:
+            raise HTTPException(422, str(exc))
+        parsed = search_syntax.describe(q, conditions)
+        if conditions:
+            with db.get_conn() as conn:
+                cond_ids = search_syntax.matching_ids(conn, conditions)
+    if q or conditions:
         search_warning = None
         import vectordb as vdb
         # audit M19: search MUST paginate correctly. `total` is the STABLE number
@@ -291,6 +307,8 @@ def list_media(
         SEARCH_CAP = 2000
 
         def _passes_filters(rec: dict) -> bool:
+            if cond_ids is not None and rec["id"] not in cond_ids:
+                return False
             # Applied to the ENRICHED record (which has real lang/rating), not the
             # raw vector hit — vectordb results carry no `rating`, so filtering on
             # them dropped every semantic hit under `rating=good` and silently fell
@@ -337,7 +355,8 @@ def list_media(
         # scores + excerpt). May be empty on degradation (search_warning set).
         semantic: dict = {}
         try:
-            raw = vdb.search(q, n_results=SEARCH_CAP)
+            # Filters only, no text: nothing to rank by meaning.
+            raw = vdb.search(q, n_results=SEARCH_CAP) if q else []
             seen = set()
             for r in raw:
                 mid = int(r["media_id"])
@@ -388,22 +407,26 @@ def list_media(
             filter_sql += " AND " + shot_sql
             filter_params.extend(shot_params)
         lexical_ids: list = []
-        with db.get_conn() as conn:
-            rows = conn.execute(
-                "SELECT id FROM media "
-                "WHERE (filename LIKE ? OR transcript LIKE ?)" + filter_sql +
-                " ORDER BY id LIMIT ?",
-                (like, like, *filter_params, SEARCH_CAP),
-            ).fetchall()
-            lexical_ids = [dict(r)["id"] for r in rows]
-            tag_rows = conn.execute(
-                "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
-                (like, SEARCH_CAP),
-            ).fetchall()
-        for tr in tag_rows:
-            tid = dict(tr)["media_id"]
-            if tid not in lexical_ids:
-                lexical_ids.append(tid)
+        if q:
+            with db.get_conn() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM media "
+                    "WHERE (filename LIKE ? OR transcript LIKE ?)" + filter_sql +
+                    " ORDER BY id LIMIT ?",
+                    (like, like, *filter_params, SEARCH_CAP),
+                ).fetchall()
+                lexical_ids = [dict(r)["id"] for r in rows]
+                tag_rows = conn.execute(
+                    "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
+                    (like, SEARCH_CAP),
+                ).fetchall()
+            for tr in tag_rows:
+                tid = dict(tr)["media_id"]
+                if tid not in lexical_ids:
+                    lexical_ids.append(tid)
+        else:
+            # Filters only, no text: the matching set IS the result, newest first.
+            lexical_ids = sorted(cond_ids, reverse=True)[:SEARCH_CAP]
 
         # Stable, offset-independent ordering: semantic hits by score desc, then
         # lexical hits in id order, de-duplicated. Capped at SEARCH_CAP.
@@ -438,6 +461,8 @@ def list_media(
         for rec in items:
             rec["tags"] = tags_by_id.get(rec["id"], [])
         resp = {"items": items, "total": total, "search": True}
+        if parsed is not None:
+            resp["parsed"] = parsed
         if search_warning:
             resp["search_degraded"] = True
             resp["warning"] = search_warning
