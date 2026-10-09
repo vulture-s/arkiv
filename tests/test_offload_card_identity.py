@@ -385,3 +385,64 @@ def test_empty_source_is_refused_not_done(scratch, monkeypatch):
     card = _card(scratch / "card", {"DCIM/IMG_0001.HEIC": b"heic only"})
     with pytest.raises(ValueError):
         offload.run_offload(card, [scratch / "dst"], emit_mhl=False)
+
+
+def test_orphan_truncated_mhl_from_an_interrupted_run_does_not_poison_the_drive(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    dst = scratch / "dst"
+    c1 = _card(scratch / "card1", {"A/C0001.MP4": b"day1"})
+    assert offload.run_offload(c1, [dst])[0] == 0
+    # killed between manifest write and chain append: an unlisted, truncated .mhl
+    (dst / "ascmhl" / "0002_dst_2000-01-01_000000Z.mhl").write_text("<?xml version")
+    for n in (2, 3):
+        c = _card(scratch / "card{0}".format(n), {"D{0}/C0001.MP4".format(n): b"day %d" % n})
+        code, summary, _ = offload.run_offload(c, [dst])
+        assert code == 0, summary[str(dst.resolve())]["error"]
+    # tampering is still caught (the chain-listed history is intact)
+    (dst / "A/C0001.MP4").write_bytes(b"tampered")
+    c4 = _card(scratch / "card4", {"D4/C0001.MP4": b"day4"})
+    assert offload.run_offload(c4, [dst])[0] != 0
+
+
+def test_mhl_writes_leave_no_temp_files(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    dst = scratch / "dst"
+    c1 = _card(scratch / "card1", {"A/C0001.MP4": b"day1"})
+    assert offload.run_offload(c1, [dst])[0] == 0
+    assert not [p for p in (dst / "ascmhl").iterdir() if p.name.endswith(".tmp")]
+
+
+@pytest.mark.skipif(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                    reason="chmod 000 is not enforced here")
+def test_one_unreadable_clip_does_not_block_the_card(scratch, monkeypatch, tmp_path):
+    import routers.offload as ro
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    card = _card(scratch / "card", {"CLIP/C0001.MP4": b"ok one", "CLIP/C0002.MP4": b"locked"})
+    locked = card / "CLIP/C0002.MP4"
+    locked.chmod(0)
+    try:
+        st = ro._offload_state_path(tmp_path, card.resolve())  # no PermissionError → no 400
+        dst = scratch / "dst"
+        code, summary, _ = offload.run_offload(card, [dst], resume=st, emit_mhl=False)
+        s = summary[str(dst.resolve())]
+        assert code != 0 and s["verified_files"] == 1 and s["failed_files"] == 1
+        assert (dst / "CLIP/C0001.MP4").read_bytes() == b"ok one"
+    finally:
+        locked.chmod(0o644)
+
+
+def test_cli_resume_with_pre_sampling_state_is_refused(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    card = _card(scratch / "card", {"CLIP/C0001.MP4": b"clip"})
+    st = scratch / "st.json"
+    assert offload.run_offload(card, [scratch / "dst"], resume=st, emit_mhl=False)[0] == 0
+    data = json.loads(st.read_text())
+    for fe in data["files"]:
+        fe.pop("sample")
+    st.write_text(json.dumps(data))
+    with pytest.raises(ValueError):
+        offload.run_offload(card, [scratch / "dst"], resume=st, emit_mhl=False)

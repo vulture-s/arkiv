@@ -385,15 +385,22 @@ def _content_sample(path):
     cards whose clips share name, size and mtime (unset camera clocks,
     constant-bitrate codecs) fingerprint and resume as the SAME card — card B
     was skipped as verified with code 0 (dual-track audit of #497). Two small
-    reads per file, never the whole clip."""
+    reads per file, never the whole clip. This narrows the collision, it does
+    not close it: two clips identical in name, size, mtime AND first/last 64 KiB
+    still look alike (only a full-content hash would). None = unreadable."""
     path = Path(path)
-    size = path.stat().st_size
-    h = hashlib.sha1(str(size).encode("ascii"))
-    with path.open("rb") as fh:
-        h.update(fh.read(_SAMPLE_BYTES))
-        if size > _SAMPLE_BYTES:
-            fh.seek(max(size - _SAMPLE_BYTES, _SAMPLE_BYTES))
+    try:
+        size = path.stat().st_size
+        h = hashlib.sha1(str(size).encode("ascii"))
+        with path.open("rb") as fh:
             h.update(fh.read(_SAMPLE_BYTES))
+            if size > _SAMPLE_BYTES:
+                fh.seek(max(size - _SAMPLE_BYTES, _SAMPLE_BYTES))
+                h.update(fh.read(_SAMPLE_BYTES))
+    except OSError:
+        # One unreadable clip must not block the whole card (it used to be a
+        # 400 / traceback); the copy step records that file as failed.
+        return None
     return h.hexdigest()
 
 
@@ -443,7 +450,11 @@ def _assert_state_matches_source(state, source_files, src_root):
         if rec.get("size") != size or (rec.get("mtime_ns") is not None and rec["mtime_ns"] != mtime_ns):
             problems.append("{0} changed (size/mtime differ)".format(Path(key).name))
             break
-        if rec.get("sample") is not None and rec["sample"] != _content_sample(current[key]):
+        if "sample" not in rec:
+            problems.append("state predates content sampling (no 'sample' per file)")
+            break
+        cur_sample = _content_sample(current[key])
+        if rec["sample"] is not None and cur_sample is not None and rec["sample"] != cur_sample:
             problems.append("{0} content differs (same name/size/mtime, different bytes)".format(Path(key).name))
             break
     if problems:

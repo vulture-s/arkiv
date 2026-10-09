@@ -462,13 +462,27 @@ def create_manifest(
 
     creator_time = _local_now().replace(microsecond=0)
     manifest_xml = _render_manifest(creator_time, root_hashes, manifest_entries, op)
-    mhl_path.write_text(manifest_xml, encoding="utf-8")
+    _atomic_write_text(mhl_path, manifest_xml)
 
     chain_entries = _read_chain(chain_path)
     chain_entries.append(ChainEntry(sequence=sequence, mhl_name=mhl_path.name, c4=_c4_from_file(mhl_path)))
     chain_xml = _render_chain(chain_entries)
-    chain_path.write_text(chain_xml, encoding="utf-8")
+    _atomic_write_text(chain_path, chain_xml)
     return mhl_path, chain_path
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """tmp in the same dir + fsync + os.replace: a killed offload must never leave
+    a truncated manifest or chain behind (the cross-generation check reads every
+    listed generation and fails closed on one it can't parse)."""
+    import os as _os
+    path = Path(path)
+    tmp = path.with_name("." + path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(text)
+        fh.flush()
+        _os.fsync(fh.fileno())
+    _os.replace(str(tmp), str(path))
 
 
 def latest_manifest(output_dir: Path) -> Optional[Path]:
@@ -517,22 +531,26 @@ def changed_since(previous_mhl: Path, current_mhl: Path) -> List[str]:
     return sorted(changed)
 
 
-def _generations(output_dir: Path) -> List[Path]:
-    """All manifests in an ascmhl folder, oldest first (chain order, falling back
-    to the filename sequence for manifests the chain does not list)."""
+def _generations(output_dir: Path) -> List[Tuple[Path, bool]]:
+    """Manifests in an ascmhl folder, oldest first → [(path, authoritative)].
+
+    When the chain exists it is the authority: only the generations it lists
+    count, and a listed one that is missing or unreadable must fail the check
+    (authoritative=True). A ``.mhl`` the chain does not list is an orphan — e.g.
+    a run killed between writing the manifest and appending the chain — and is
+    ignored, so one interrupted offload can't turn the drive red forever
+    (dual-track audit of #497). Without a chain (legacy/foreign folder) fall
+    back to the filename sequence, best effort (authoritative=False)."""
     output_dir = Path(output_dir)
-    seqs: Dict[str, int] = {}
-    try:
-        for entry in _read_chain(output_dir / "ascmhl_chain.xml"):
-            seqs[entry.mhl_name] = entry.sequence
-    except Exception:
-        pass
+    chain_path = output_dir / "ascmhl_chain.xml"
+    if chain_path.exists():
+        entries = _read_chain(chain_path)  # unreadable chain → raises (fail closed)
+        return [(output_dir / e.mhl_name, True) for e in sorted(entries, key=lambda e: e.sequence)]
     found = []
     for child in output_dir.glob("*.mhl"):
         match = MHL_FILENAME_RE.match(child.name)
-        seq = seqs.get(child.name, int(match.group(1)) if match else 0)
-        found.append((seq, child.name, child))
-    return [p for _, _, p in sorted(found)]
+        found.append((int(match.group(1)) if match else 0, child.name, child))
+    return [(p, False) for _, _, p in sorted(found)]
 
 
 # OS bookkeeping macOS / Windows write onto a DESTINATION drive by mounting or
@@ -572,12 +590,19 @@ def changed_against_history(current_mhl: Path) -> List[Tuple[str, str]]:
     on the first record keeps it failing until a human resolves it."""
     current_mhl = Path(current_mhl)
     baseline: Dict[str, Tuple[Dict[str, str], str]] = {}
-    for gen in _generations(current_mhl.parent):
+    try:
+        generations = _generations(current_mhl.parent)
+    except Exception as exc:
+        raise RuntimeError("mhl chain unreadable in {0} ({1}: {2}); cannot verify chain "
+                           "of custody".format(current_mhl.parent, type(exc).__name__, exc))
+    for gen, authoritative in generations:
         if gen.name == current_mhl.name:
             continue
         try:
             files, _ = _manifest_entries(_parse_manifest(gen))
         except Exception as exc:
+            if not authoritative:
+                continue  # chain-less legacy folder: best effort
             # Fail closed: skipping an unreadable generation silently moved the
             # baseline to a later one — possibly one that already recorded the
             # tampered hash (dual-track audit of #497).
