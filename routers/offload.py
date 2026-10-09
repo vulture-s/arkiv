@@ -16,6 +16,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 import config
+import orphan_guard
 from auth import require_scopes
 from config import BASE_DIR
 from webguard import _assert_offload_dst_safe
@@ -139,7 +140,10 @@ def offload_run(
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 encoding="utf-8", errors="replace",
-                bufsize=1, cwd=str(state_cwd))
+                bufsize=1, cwd=str(state_cwd),
+                # orphan_guard: the offload stops (resumably) if this server is
+                # SIGKILLed instead of copying on, invisible, after app quit.
+                env=orphan_guard.child_env())
             for line in proc.stdout:
                 try:  # JSON parse (not substring) so a filename can't false-positive
                     if _json.loads(line).get("type") == "done":
