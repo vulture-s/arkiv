@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import db
 import scenes
+import search_syntax
 from mcp.server.fastmcp import FastMCP
 from pathres import _display_path
 
@@ -132,6 +133,31 @@ def search_media_impl(
         return []
     limit = max(1, min(100, limit))
 
+    # `camera:a7s3 tag:海邊 shot:2025-10 …` → typed filters; `query` keeps the
+    # free text. Same parser and SQL as the app's search box (search_syntax).
+    try:
+        query, conditions = search_syntax.parse(query)
+    except search_syntax.QueryError as exc:
+        raise ValueError("search filter: {0}".format(exc))
+    cond_ids: Optional[set] = None
+    if conditions:
+        with db.get_conn() as conn:
+            cond_ids = search_syntax.matching_ids(conn, conditions)
+        if not query:
+            # Filters only: the matching set is the answer, newest first.
+            out = []
+            for mid in sorted(cond_ids, reverse=True)[:limit]:
+                rec = db.get_record_by_id(mid)
+                if rec:
+                    item = _light(rec)
+                    item["tags"] = _tag_names(mid)
+                    out.append(item)
+            return out
+
+    # With filters, candidates are cut down AFTER retrieval — so retrieve as wide
+    # as the app's search box does (routers/media.py SEARCH_CAP), not limit*3.
+    candidates = limit * 3 if cond_ids is None else 2000
+
     enriched: List[Dict[str, Any]] = []
     seen: set = set()
 
@@ -149,9 +175,9 @@ def search_media_impl(
 
     if vdb is not None:
         try:
-            for r in vdb.search(query, n_results=limit * 3):
+            for r in vdb.search(query, n_results=candidates):
                 mid = int(r["media_id"])
-                if mid in seen:
+                if mid in seen or (cond_ids is not None and mid not in cond_ids):
                     continue
                 rec = db.get_record_by_id(mid)
                 if not rec:
@@ -188,12 +214,12 @@ def search_media_impl(
                 rows = conn.execute(
                     "SELECT * FROM media WHERE filename LIKE ? OR transcript LIKE ? "
                     "ORDER BY id LIMIT ?",
-                    (like, like, limit),
+                    (like, like, limit if cond_ids is None else candidates),
                 ).fetchall()
                 for row in rows:
                     rec = dict(row)
                     mid = rec["id"]
-                    if mid in seen:
+                    if mid in seen or (cond_ids is not None and mid not in cond_ids):
                         continue
                     seen.add(mid)
                     item = _light(rec)
@@ -343,10 +369,22 @@ def _j(obj: Any) -> str:
 
 @mcp.tool()
 def search_media(query: str, limit: int = 20) -> str:
-    """Search the local media library by natural-language query.
+    """Search the local media library by natural-language query, with optional filters.
 
     Semantic search over transcripts + vision tags, falling back to
-    filename/transcript text match. Returns a JSON list of lightweight records:
+    filename/transcript text match.
+
+    Filters go in the same string as `key:value` (quote values with spaces):
+      tag:海邊          clip has a tag containing this
+      camera:a7s3       camera model contains this
+      lang:zh           transcript language
+      rating:good       good / review / ng / unrated
+      type:video        video / audio / image
+      shot:2025-10      the day the camera rolled: YYYY, YYYY-MM, YYYY-MM-DD,
+                        or a range 2025-10-01..2025-10-15 (NOT the ingest date)
+    e.g. `"格爾木氧氣" camera:a7s3 shot:2025-10`. Filters alone (no text) list
+    every matching clip, newest first. An invalid filter value is an error, not
+    silently ignored; any other `word:word` is treated as plain text. Returns a JSON list of lightweight records:
     {id, filename, path, score, excerpt, tags, lang, duration_s}.
     If semantic search is degraded (e.g. embedding index needs a rebuild), the
     response is instead {items, search_degraded: true, warning}.
