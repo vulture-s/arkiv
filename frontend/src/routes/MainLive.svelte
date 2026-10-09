@@ -1279,7 +1279,7 @@
         onRate={rate}
         inPoint={detailLive ? detailLive.in_point : null}
         outPoint={detailLive ? detailLive.out_point : null}
-        onInOut={selected ? (inS, outS) => saveInOut(selected.id, inS, outS) : null}
+        onInOut={selected ? (inS, outS, id) => saveInOut(id ?? selected.id, inS, outS) : null}
       />
     {/if}
   </div>
