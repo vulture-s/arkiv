@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -92,23 +93,34 @@ def _clean_rule(raw: Dict) -> Optional[Dict]:
     }
 
 
-def load_rules() -> List[Dict]:
-    """Read + validate rules from ``corrections.json``. Missing / corrupt → []
-    (non-fatal, matching ``vocabulary.txt`` tolerance)."""
+def load_rules_checked() -> Tuple[List[Dict], Optional[str]]:
+    """Like :func:`load_rules`, but also says WHY the list is empty when the file
+    exists and could not be used. A missing file is a genuinely empty dictionary
+    (error None); an unreadable / corrupt one is not, and an editor that shows it
+    as empty invites the user to save over it (audit 2026-10-09 K1)."""
     path = corrections_path()
+    if not path.exists():
+        return [], None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+    except (OSError, ValueError) as exc:
+        return [], "corrections.json 無法讀取（{0}: {1}）".format(type(exc).__name__, exc)
     raw_rules = data.get("rules") if isinstance(data, dict) else data
     if not isinstance(raw_rules, list):
-        return []
+        return [], "corrections.json 格式不符：找不到 rules 清單"
     out = []
     for raw in raw_rules:
         rule = _clean_rule(raw)
         if rule is not None:
             out.append(rule)
-    return out
+    return out, None
+
+
+def load_rules() -> List[Dict]:
+    """Read + validate rules from ``corrections.json``. Missing / corrupt → []
+    (non-fatal, matching ``vocabulary.txt`` tolerance — the ingest/hotword path
+    must not fail on a bad dictionary). Editors use :func:`load_rules_checked`."""
+    return load_rules_checked()[0]
 
 
 def save_rules(rules: Iterable[Dict]) -> List[Dict]:
@@ -117,6 +129,11 @@ def save_rules(rules: Iterable[Dict]) -> List[Dict]:
     cleaned = [r for r in (_clean_rule(x) for x in rules) if r is not None]
     path = corrections_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Keep the previous dictionary (byte-for-byte, even if corrupt) one save
+    # back: a PUT replaces the WHOLE file, so an editor that loaded the wrong
+    # thing would otherwise destroy curated rules with no way back.
+    if path.exists():
+        shutil.copy2(str(path), str(path.with_name(path.name + ".bak")))
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps({"version": 1, "rules": cleaned}, ensure_ascii=False, indent=2),
