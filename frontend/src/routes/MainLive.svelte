@@ -6,6 +6,7 @@
 <script>
   import { onMount } from 'svelte'
   import * as api from '../lib/api.js'
+  import { describeDelete } from '../lib/deleteOutcome.js'
   import TopBar from '../lib/TopBar.svelte'
   import PoolSidebar from '../lib/PoolSidebar.svelte'
   import MediaCard from '../lib/MediaCard.svelte'
@@ -204,21 +205,19 @@
   async function confirmDelete() {
     if (!confirmDel) return
     const ids = confirmDel.ids
-    const set = new Set(ids)
     delBusy = true
     try {
-      if (confirmDel.kind === 'single') {
-        const r = await api.deleteMedia(ids[0], true)
-        if (r && r.external) pushToast(`外部檔案僅移除資料：${r.message || ''}`)
-        else pushToast(`已移至回收桶 · ${r && r.filename ? r.filename : ids[0]}`)
-      } else {
-        const r = await api.bulkDeleteMedia(ids, true)
-        const n = (r && r.deleted && r.deleted.length) || 0
-        const skipped = (r && r.skipped && r.skipped.length) || 0
-        pushToast(`已刪除 ${n} 支` + (skipped ? ` · 跳過 ${skipped} 支` : ''))
-      }
-      // remove from the grid source so the card/list row disappears immediately
-      items = items.filter((m) => !set.has(m.id))
+      // describeDelete reads what the backend actually returns (file_deleted /
+      // warning / not_trashed) — a metadata-only delete must not be announced as
+      // 「已移至回收桶」 (audit 2026-10-09 K1).
+      const r = confirmDel.kind === 'single'
+        ? await api.deleteMedia(ids[0], true)
+        : await api.bulkDeleteMedia(ids, true)
+      const out = describeDelete(confirmDel.kind, r, confirmDel.label, ids)
+      pushToast(out.msg, out.kind)
+      // remove only the rows that are actually gone; a hard per-item error keeps its card
+      const gone = new Set(out.removeIds)
+      items = items.filter((m) => !gone.has(m.id))
       if (confirmDel.kind === 'single' && selectedId === ids[0]) selectedId = null
       clearPicks()
       confirmDel = null
@@ -1039,14 +1038,14 @@
     if (!selected) return
     const backendVal = RATING_MAP[uiRating] ?? null
     const id = selected.id
-    // preserve any existing rating_note (backend PATCH overwrites both fields →
-    // omitting note would silently delete it). Codex review P2.
-    const note = detailLive && detailLive.id === id ? detailLive.rating_note ?? null : null
+    // Rating only — no note. The backend is PATCH (omitted = untouched), and the
+    // UI has no note editor; sending `detailLive?.rating_note ?? null` wiped the
+    // stored note whenever the detail had not loaded yet (audit 2026-10-09 K1).
     // optimistic: reflect immediately in grid + inspector (which both read item.rating)
     const prev = selected.rating
     items = items.map((m) => (m.id === id ? { ...m, rating: uiRating } : m))
     try {
-      await api.setRating(id, backendVal, note)
+      await api.setRating(id, backendVal)
     } catch (e) {
       // revert on failure
       items = items.map((m) => (m.id === id ? { ...m, rating: prev } : m))
@@ -1280,7 +1279,7 @@
         onRate={rate}
         inPoint={detailLive ? detailLive.in_point : null}
         outPoint={detailLive ? detailLive.out_point : null}
-        onInOut={selected ? (inS, outS) => saveInOut(selected.id, inS, outS) : null}
+        onInOut={selected ? (inS, outS, id) => saveInOut(id ?? selected.id, inS, outS) : null}
       />
     {/if}
   </div>

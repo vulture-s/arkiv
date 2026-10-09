@@ -119,27 +119,41 @@ def _frames_to_timecode(frames: int, fps: float, drop_frame: bool) -> str:
         mm, ss = divmod(remainder, 60)
         return "%02d:%02d:%02d:%02d" % (hh, mm, ss, ff)
 
+    # Textbook SMPTE drop-frame: re-insert the skipped label numbers, then read
+    # the result as a plain nominal-rate count. The previous version added the
+    # whole block's 9*d skips to the remainder before dividing, which mislabelled
+    # all but a handful of frames (frame 2 → ;20) — audit N1.
     frames_per_10_minutes = nominal_fps * 60 * 10 - drop_frames * 9
     frames_per_minute = nominal_fps * 60 - drop_frames
     frames = max(frames, 0)
     ten_chunks, remainder = divmod(frames, frames_per_10_minutes)
-    minutes = ten_chunks * 10
-
-    if remainder >= drop_frames:
-        remainder += drop_frames * 9
-        extra_minutes, remainder = divmod(remainder, frames_per_minute)
-        minutes += extra_minutes
-    hours, minutes = divmod(minutes, 60)
-    seconds, ff = divmod(remainder, nominal_fps)
+    frames += drop_frames * 9 * ten_chunks
+    if remainder > drop_frames:
+        frames += drop_frames * ((remainder - drop_frames) // frames_per_minute)
+    ff = frames % nominal_fps
+    seconds = (frames // nominal_fps) % 60
+    minutes = (frames // (nominal_fps * 60)) % 60
+    hours = frames // (nominal_fps * 3600)
     return "%02d:%02d:%02d;%02d" % (hours, minutes, seconds, ff)
 
 
 def _format_timecode_out(start_tc: Optional[str], duration_s: Optional[float], fps: float, tc_format: str) -> str:
+    """TC Out = camera start TC + duration, as a label.
+
+    tc_format "auto" (the default) renders it in the SAME format as the camera's
+    TC In — `;` → drop-frame, `:` → non-drop — so the two columns of one row
+    describe the same TC track. The old default ("ndf") rendered a DF camera's
+    TC Out as an NDF label next to a DF TC In: 01:00:00;00 + 10s came out
+    01:00:06:12 (audit N1). Explicit "df" / "ndf" are still honoured."""
     if not start_tc:
         return ""
     frames = _timecode_to_frames(start_tc, fps)
     frames += int(round(float(duration_s or 0.0) * fps))
-    return _frames_to_timecode(frames, fps, tc_format == "df")
+    if tc_format == "auto":
+        drop = ";" in str(start_tc)
+    else:
+        drop = tc_format == "df"
+    return _frames_to_timecode(frames, fps, drop)
 
 
 def _first_regex_match(pattern_text: Optional[str], filename: str) -> str:
@@ -321,7 +335,7 @@ def build_camera_report_rows(
     project: Optional[str] = None,
     dp: Optional[str] = None,
     include_summary: bool = True,
-    tc_format: str = "ndf",
+    tc_format: str = "auto",
     scene_pattern: Optional[str] = None,
     take_pattern: Optional[str] = None,
 ):
@@ -397,7 +411,7 @@ def render_camera_report_csv(
     project: Optional[str] = None,
     dp: Optional[str] = None,
     include_summary: bool = True,
-    tc_format: str = "ndf",
+    tc_format: str = "auto",
     scene_pattern: Optional[str] = None,
     take_pattern: Optional[str] = None,
 ):
@@ -422,7 +436,7 @@ def write_camera_report(
     project: Optional[str] = None,
     dp: Optional[str] = None,
     include_summary: bool = True,
-    tc_format: str = "ndf",
+    tc_format: str = "auto",
     scene_pattern: Optional[str] = None,
     take_pattern: Optional[str] = None,
 ):
@@ -467,9 +481,9 @@ def build_parser():
     )
     parser.add_argument(
         "--tc-format",
-        choices=("ndf", "df"),
-        default="ndf",
-        help="Timecode output format",
+        choices=("auto", "ndf", "df"),
+        default="auto",
+        help="TC Out format (auto = same as each clip's camera TC: ';' drop-frame, ':' non-drop)",
     )
     parser.add_argument("--scene-pattern", default="", help="Regex for scene extraction from filename")
     parser.add_argument("--take-pattern", default="", help="Regex for take extraction from filename")
