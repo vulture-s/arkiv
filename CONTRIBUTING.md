@@ -137,6 +137,26 @@ is to stop a route quietly migrating to the wrong module. A red one means your r
 somewhere the split did not expect — usually that is fine and the test just needs your pair,
 but it is worth a second look at whether the route belongs in that router.
 
+### Recurring bug classes (and the test that stops the next one)
+
+These classes each hit arkiv more than once (2026-10 audit round, PRs #497–#508). The
+structural guards in `tests/test_bug_class_guards.py` scan the **whole** app, not the one
+call site that was fixed; where main still has known violations they are baseline ratchets
+(the `KNOWN_*` sets may only shrink — a fixed entry also goes red until you delete it).
+
+| Class | Guard / regression test |
+| --- | --- |
+| Write route reachable cross-site or via DNS rebinding (no same-site / Host check) | `test_bug_class_guards.py` A — every POST/PUT/PATCH/DELETE must call `_assert_same_site` or sit behind the global `SameSiteWriteGuard` (#498, `tests/test_api_host_guard.py`) |
+| media id used as identity — SQLite **reuses** ids after a delete | `test_bug_class_guards.py` B — every `media_id` column cascades or is justified; behaviour: `tests/test_resolve_plugin_duplicate_names.py` (#505), `tests/test_media_identity_guards.py` + `tests/test_bins_delete_sync.py` (#507) |
+| Non-atomic write of a canonical file (truncate-then-write; crash leaves it empty) | `test_bug_class_guards.py` C — `open(..,"w")`/`write_text` must be paired with `os.replace` |
+| Read failure treated as "empty", then saved over the real data | `tests/test_corrections_load_guard.py`, `frontend/tests/vocabLoad.test.mjs` (#502) |
+| UI reports success when the request failed | `frontend/tests/deleteOutcome.test.mjs`, `setRating.test.mjs`, `binCopy.test.mjs` (#501) |
+| Timecode / drop-frame / fps conversion | `tests/test_export_timecode_correctness.py` (#503) |
+| Child processes outliving the app | `tests/test_orphan_guard.py` (#506) |
+
+New write route, new table holding a media id, new file writer: the guard tells you what
+to do in its failure message. Do not add to a `KNOWN_*` set without a one-line reason.
+
 `pytest -q` locally catches every one of these before CI does. If you cannot run the suite,
 say so in the PR — that is a perfectly good answer, and we will run it for you.
 
