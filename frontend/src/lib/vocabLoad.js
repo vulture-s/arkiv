@@ -19,7 +19,7 @@ export function vocabLoadState(res, err) {
     return {
       rules,
       canSave: true,
-      msg: `⚠ ${res.load_error} — 畫面上不是原本的規則；儲存會改寫字典，舊檔會留成 corrections.json.bak`,
+      msg: `⚠ ${res.load_error} — 畫面上不是原本的規則；儲存會改寫字典，舊檔會留成 corrections.json.bak，無法解析的原檔另存 corrections.json.corrupt-<時間>（之後再存也不會被蓋掉）`,
     }
   }
   return { rules, canSave: true, msg: '' }

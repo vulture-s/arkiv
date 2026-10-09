@@ -23,6 +23,7 @@ test('backend load_error is shown; saving stays allowed (server keeps a .bak)', 
   assert.equal(s.canSave, true)
   assert.match(s.msg, /無法讀取/)
   assert.match(s.msg, /\.bak/)
+  assert.match(s.msg, /\.corrupt-/)
 })
 
 test('clean load: rules through, no message', () => {

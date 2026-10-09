@@ -133,6 +133,14 @@ def save_rules(rules: Iterable[Dict]) -> List[Dict]:
     # back: a PUT replaces the WHOLE file, so an editor that loaded the wrong
     # thing would otherwise destroy curated rules with no way back.
     if path.exists():
+        # `.bak` is one generation deep, so a file that does not parse (a hand
+        # edit with a stray comma — the case the editor warns about and still
+        # lets you save over) would be lost on the SECOND save. Park it under a
+        # name no later save overwrites (Claude review 1009 R1).
+        if load_rules_checked()[1] is not None:
+            from datetime import datetime
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            shutil.copy2(str(path), str(path.with_name(path.name + ".corrupt-" + stamp)))
         shutil.copy2(str(path), str(path.with_name(path.name + ".bak")))
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(

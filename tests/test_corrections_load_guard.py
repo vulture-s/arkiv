@@ -46,3 +46,20 @@ def test_save_keeps_previous_file_as_bak(tmp_path, monkeypatch, fastapi_client):
     bak = path.with_name(path.name + ".bak")
     assert bak.exists(), "previous dictionary must survive a save"
     assert bak.read_text(encoding="utf-8") == original
+
+
+def test_corrupt_original_survives_a_second_save(tmp_path, monkeypatch, fastapi_client):
+    """Claude review (1009 R1): `.bak` is one generation deep. The UI still lets
+    the user save over a corrupt file (with a warning) — save #1 parks the hand-
+    edited original in .bak, save #2 overwrites .bak with save #1's output, and
+    the only copy of the curated-but-corrupt dictionary is gone. A file that
+    does not parse is kept under its own never-overwritten name."""
+    path = _env(tmp_path, monkeypatch)
+    original = '{"version": 1, "rules": [{"from": "臺", "to": "台"},]}'
+    path.write_text(original, encoding="utf-8")
+    for n in ("one", "two", "three"):
+        r = fastapi_client.put("/api/corrections", json={"rules": [{"from": n, "to": n.upper()}]})
+        assert r.status_code == 200
+    kept = sorted(path.parent.glob(path.name + ".corrupt-*"))
+    assert len(kept) == 1, list(path.parent.iterdir())
+    assert kept[0].read_text(encoding="utf-8") == original
