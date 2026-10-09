@@ -4,7 +4,7 @@
 # source. The built dist is copied into the app stage below.
 # Digest-pinned for reproducible rebuilds (Wave C); the tag stays for readability,
 # the digest is authoritative. Refresh via dependabot (docker ecosystem).
-FROM node:25-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS ui
+FROM node:26-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503 AS ui
 WORKDIR /ui
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
