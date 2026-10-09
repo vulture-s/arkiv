@@ -298,13 +298,17 @@ def _render_hash_values(values: Sequence[HashValue], indent: str) -> List[str]:
     return lines
 
 
-def _render_file_record(record: FileRecord, indent_level: int) -> List[str]:
+def _render_file_record(record: FileRecord, indent_level: int, previous_path: Optional[str] = None) -> List[str]:
     indent = "  " * indent_level
     lines = [f"{indent}<hash>"]
     path_attrs = [f'size="{record.size}"', f'lastmodificationdate="{_xml_text(_format_iso(record.mtime))}"']
     lines.append(
         f"{indent}  <path {' '.join(path_attrs)}>{_xml_text(_posix_path(record.rel_path))}</path>"
     )
+    if previous_path:
+        # ASC MHL v2 <previouspath>: the clip was written under a different name
+        # than its card layout (offload same-name conflict, renamed by the user).
+        lines.append(f"{indent}  <previouspath>{_xml_text(_posix_path(previous_path))}</previouspath>")
     lines.extend(_render_hash_values(record.hashes, indent + "  "))
     lines.append(f"{indent}</hash>")
     return lines
@@ -331,6 +335,7 @@ def _render_manifest(
     root_hashes: Dict[str, Tuple[str, str]],
     manifest_entries: Sequence[Tuple[str, object]],
     op: str,
+    previous_paths: Optional[Dict[str, str]] = None,
 ) -> str:
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<hashlist version="2.0" xmlns="urn:ASC:MHL:v2.0">']
     lines.append("  <creatorinfo>")
@@ -366,7 +371,8 @@ def _render_manifest(
 
     for kind, record in manifest_entries:
         if kind == "hash":
-            lines.extend(_render_file_record(record, 2))
+            lines.extend(_render_file_record(
+                record, 2, (previous_paths or {}).get(_posix_path(record.rel_path))))
         else:
             lines.extend(_render_directory_record(record, 2))
 
@@ -446,6 +452,7 @@ def create_manifest(
     primary_hash: str = DEFAULT_HASH_ALGO,
     secondary_hash: Optional[str] = None,
     op: str = "ingest",
+    previous_paths: Optional[Dict[str, str]] = None,
 ) -> Tuple[Path, Path]:
     source = source.resolve()
     if not source.exists() or not source.is_dir():
@@ -461,7 +468,7 @@ def create_manifest(
     root_hashes = _compute_directory_hashes(source, "", algos, file_records, directory_records, manifest_entries)
 
     creator_time = _local_now().replace(microsecond=0)
-    manifest_xml = _render_manifest(creator_time, root_hashes, manifest_entries, op)
+    manifest_xml = _render_manifest(creator_time, root_hashes, manifest_entries, op, previous_paths)
     _atomic_write_text(mhl_path, manifest_xml)
 
     chain_entries = _read_chain(chain_path)
@@ -687,7 +694,7 @@ def _manifest_entries(root) -> Tuple[List[FileRecord], List[DirectoryRecord]]:
             size = int(path_node.attrib.get("size", "0"))
             hashes_values: List[HashValue] = []
             for child in list(node):
-                if child.tag.split("}", 1)[-1] == "path":
+                if child.tag.split("}", 1)[-1] in ("path", "previouspath"):
                     continue
                 hashes_values.append(
                     HashValue(
@@ -824,6 +831,7 @@ def verify_manifest(mhl_path: Path, chain: bool = False, strict: bool = False) -
             "hash",
             "directoryhash",
             "path",
+            "previouspath",
             "content",
             "structure",
             "process",

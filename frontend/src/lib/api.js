@@ -296,6 +296,13 @@ export async function offloadRun(body, { signal } = {}) {
   return res
 }
 
+// POST /api/offload/resolve {src, dst, rel, action:"rename"|"skip", new_name?, confirm?}
+// → {status, summary, file}. Settles ONE same-name conflict of a finished
+// offload: copy that clip under a new name (hash-verified, never overwrites) or —
+// confirmed — skip it (NOT backed up; the card can then never read as done).
+export const offloadResolve = (body, opts) =>
+  req('/api/offload/resolve', { method: 'POST', body, ...opts })
+
 // /api/media?limit&offset&projects&tag&rating  → {items, total, search}
 export const getMedia = (params = {}, opts) => req(`/api/media${qs(params)}`, opts)
 // /api/media/facets/shoot-date → {years:[{year,count}], unknown, total}

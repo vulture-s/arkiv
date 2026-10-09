@@ -30,6 +30,7 @@ def test_router_owns_offload_routes_and_slot():
     assert pairs == {
         ("/api/offload/preview", "POST"),
         ("/api/offload", "POST"),
+        ("/api/offload/resolve", "POST"),  # same-name conflict → rename / skip (Hevin 10-09)
         ("/dit", "GET"),
     }
     for name in ("OffloadPreviewRequest", "OffloadRequest",

@@ -101,12 +101,15 @@ def test_second_card_same_name_never_overwrites_backup(scratch, monkeypatch):
     assert (dst / "PRIVATE/M4ROOT/CLIP/C0001.MP4").read_bytes() == b"DAY1 interview take"
     assert (dst / "PRIVATE/M4ROOT/CLIP/C0002.MP4").read_bytes() == b"DAY2 second clip"
     s = summary[str(dst.resolve())]
-    assert s["failed_files"] == 1 and s["verified_files"] == 1
+    # Hevin 2026-10-09 23:14: a name conflict is not a copy failure — it waits
+    # for a new name (needs_rename, see test_offload_needs_rename.py).
+    assert s["failed_files"] == 0 and s["verified_files"] == 1
+    assert s["status"] == "needs_rename" and len(s["needs_rename"]) == 1
     state = json.loads(Path(state_path).read_text(encoding="utf-8"))
     rec = [f for f in state["files"] if f["rel"].endswith("C0001.MP4")][0]
     ds = rec["destinations"][str(dst.resolve())]
-    assert ds["status"] == "conflict"
-    assert "already exists" in ds["error"]
+    assert ds["status"] == "needs_rename"
+    assert "not overwritten" in ds["error"]
     assert not list(dst.rglob("*.partial"))
 
 
@@ -292,7 +295,7 @@ def test_api_second_card_same_mount_same_dst_reports_conflict(fastapi_client, tm
     assert (dst / "PRIVATE/M4ROOT/CLIP/C0001.MP4").read_bytes() == b"card A clip1"
     assert (dst / "PRIVATE/M4ROOT/CLIP/C0002.MP4").read_bytes() == b"card B clip2 NEW"
     conflicts = [e for e in events if e.get("type") == "file" and e.get("reason") == "conflict"]
-    assert len(conflicts) == 1 and conflicts[0]["status"] == "failed"  # old UIs count it as FAIL
+    assert len(conflicts) == 1 and conflicts[0]["status"] == "needs_rename"
     assert done["summary"][str(dst.resolve())]["conflict_files"] == ["PRIVATE/M4ROOT/CLIP/C0001.MP4"]
 
 

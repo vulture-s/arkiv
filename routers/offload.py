@@ -195,6 +195,52 @@ def offload_run(
     return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 
+class OffloadResolveRequest(BaseModel):
+    src: str
+    dst: str
+    rel: str  # the clip's card-layout path, as reported in the run's needs_rename list
+    action: str  # "rename" | "skip"
+    new_name: Optional[str] = None
+    confirm: bool = False  # required for "skip": that clip is then NOT backed up
+    include_heic: bool = False
+
+
+@router.post("/api/offload/resolve")
+def offload_resolve(
+    body: OffloadResolveRequest,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
+    """Settle one same-name conflict of a finished offload (Hevin 2026-10-09
+    23:14): copy that single clip under the user's new name (hash-verified, never
+    overwrites, MHL records the original path) or — confirmed — skip it, leaving
+    the card NOT done. The state file is found exactly like /api/offload finds it
+    (same card → same state), so the card must still be mounted; the engine
+    re-checks the clip against the state before copying."""
+    import offload as _offload
+    src = Path(body.src).expanduser().resolve()
+    if not src.exists():
+        raise HTTPException(400, "來源路徑不存在（卡片要插著才能補拷）")
+    _assert_offload_dst_safe(body.dst)
+    state_cwd = config.THUMBNAILS_DIR.parent
+    try:
+        state_path = _offload_state_path(state_cwd, src, body.include_heic)
+    except OSError as exc:
+        raise HTTPException(400, "無法讀取來源：{0}".format(exc))
+    if not state_path.exists():
+        raise HTTPException(400, "找不到這張卡的轉存紀錄 — 請先跑一次 offload")
+    slot_key = str(src)
+    if not _acquire_offload_slot(slot_key):
+        raise HTTPException(409, "此來源的轉存正在進行中，請稍候")
+    try:
+        return _offload.resolve_conflict(
+            state_path, body.dst, body.rel, body.action,
+            new_name=body.new_name, confirm=body.confirm)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        _release_offload_slot(slot_key)
+
+
 @router.get("/dit")
 def serve_dit():
     """Legacy DIT path — the standalone dit-offload.html island was ported into
