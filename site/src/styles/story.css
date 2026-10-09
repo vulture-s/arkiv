@@ -1,0 +1,109 @@
+/* Homepage scroll story (StoryScroll.astro). Default = data-motion="off":
+   a plain column of chapters, each with its own finished snapshot. Only
+   [data-motion=on] (set by the script on big screens without reduced
+   motion) pins the shared card. No 3D, no transforms on scroll beyond a
+   few pixels of settle. */
+.ss-sec{--hdr:57px;--g:#3fb950;--y:#e3b341;--o:#f0883e}
+.ss-lede{margin:-12px 0 8px;max-width:60ch;font-size:15.5px}
+
+.ss-chapters{list-style:none}
+.ss-ch{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:40px;align-items:start;padding:40px 0;border-top:1px solid var(--rule)}
+.ss-ch:first-child{border-top:0}
+.ss-n{font-family:var(--ak-mono);font-size:12px;letter-spacing:.14em;color:var(--quiet);margin-bottom:10px}
+.ss-n span{color:var(--cyan);margin-right:10px}
+.ss-txt h3{font-size:clamp(20px,2.6vw,24px);font-weight:700;line-height:1.35;color:var(--ink);margin-bottom:14px}
+.ss-txt p{font-size:15px;line-height:1.75;max-width:52ch}
+.ss-txt b{color:var(--ink)}
+.ss-txt .ss-ev{margin-top:14px;font-family:var(--ak-mono);font-size:12.5px;line-height:1.6;color:var(--quiet);overflow-wrap:anywhere}
+.ss-stage-col{display:none}
+
+/* ---- the card ------------------------------------------------------- */
+.sc{display:grid;gap:12px;background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:18px;font-size:13px;color:var(--ink-2);min-width:0}
+.sc-q{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--cyan);border-radius:10px;padding:9px 14px;color:var(--ink);font-size:14px}
+.sc-q-ico{width:12px;height:12px;border:1.5px solid var(--cyan);border-radius:50%;position:relative;flex:0 0 auto}
+.sc-q-ico::after{content:"";position:absolute;right:-5px;bottom:-4px;width:6px;height:1.5px;background:var(--cyan);transform:rotate(45deg)}
+.sc-q-hint{margin-left:auto;font-family:var(--ak-mono);font-size:11.5px;color:var(--quiet)}
+.sc-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-family:var(--ak-mono);font-size:11px;letter-spacing:.12em;color:var(--quiet)}
+.sc-dst{color:var(--ink-2);letter-spacing:.04em}
+.sc-files{list-style:none;display:grid;gap:4px;font-family:var(--ak-mono);font-size:12px}
+.sc-files li{position:relative;display:flex;align-items:center;gap:10px;padding:5px 8px;border:1px solid var(--rule);border-radius:5px;min-width:0}
+.sc-files .sc-more{border-style:dashed;color:var(--quiet)}
+.sc-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc-ok{margin-left:auto;display:inline-flex}
+.sc-ok svg{width:12px;height:12px;fill:none;stroke:var(--cyan);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.sc-hitmark,.sc-ir-hit{position:absolute;inset:-1px;border:1.5px solid var(--cyan);border-radius:5px;pointer-events:none}
+.sc-mhl{font-family:var(--ak-mono);font-size:11.5px;color:var(--cyan)}
+.sc-ir{position:relative;display:grid;gap:2px;border-top:1px solid var(--rule);padding-top:10px}
+.sc-ir-row{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:10px;align-items:baseline;padding:5px 8px;border-radius:5px}
+.sc-ir-row.is-hit{position:relative}
+.sc-tc{font-family:var(--ak-mono);font-size:11px;color:var(--quiet);white-space:nowrap}
+.sc-tag{font-family:var(--ak-mono);font-size:10.5px;color:var(--ink-2);border:1px solid var(--rule-hi);border-radius:3px;padding:0 6px;white-space:nowrap}
+.sc-dim{color:var(--quiet)}
+.sc-bin{display:grid;gap:6px;border:1px dashed var(--rule-hi);border-radius:8px;padding:10px 12px;font-family:var(--ak-mono);font-size:11.5px}
+.sc-bin-path{color:var(--quiet);letter-spacing:.04em}
+.sc-clip{display:flex;align-items:center;gap:8px;color:var(--ink);min-width:0;overflow:hidden;white-space:nowrap}
+.sc-clip i{flex:0 0 auto;width:26px;height:16px;border-radius:3px;background:linear-gradient(to top,var(--g) 0 3px,var(--surface-2) 3px)}
+.sc-marker{color:var(--cyan);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ---- motion on: pinned card follows the chapters --------------------- */
+[data-motion=on] .ss-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:64px}
+[data-motion=on] .ss-snap{display:none}
+[data-motion=on] .ss-ch{display:block;border-top:0;padding:0;
+  min-height:calc(var(--len) * 100vh);min-height:calc(var(--len) * 100svh)}
+[data-motion=on] .ss-txt{position:sticky;top:calc(var(--hdr) + 22vh);padding-bottom:40px;opacity:.35;transition:opacity .3s}
+[data-motion=on][data-chapter="1"] [data-ch="1"] .ss-txt,
+[data-motion=on][data-chapter="2"] [data-ch="2"] .ss-txt,
+[data-motion=on][data-chapter="3"] [data-ch="3"] .ss-txt,
+[data-motion=on][data-chapter="4"] [data-ch="4"] .ss-txt,
+[data-motion=on][data-chapter="5"] [data-ch="5"] .ss-txt{opacity:1}
+[data-motion=on] .ss-stage-col{display:block}
+[data-motion=on] .ss-stage{position:sticky;top:var(--hdr);display:flex;flex-direction:column;justify-content:center;gap:16px;padding:24px 0;
+  height:calc(100vh - var(--hdr));height:calc(100svh - var(--hdr))}
+.ss-nav{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px}
+.ss-nav a{color:var(--quiet);text-decoration:none;padding-bottom:3px}
+.ss-nav a span{font-family:var(--ak-mono);font-size:11px;margin-right:6px}
+.ss-nav a[aria-current=step]{color:var(--ink);box-shadow:inset 0 -2px 0 var(--cyan)}
+/* Layer N: earlier layers fully on, layer N at the chapter's progress, later
+   layers off. --c and --p come from the script. */
+.ss-stage [data-step]{--o:clamp(0, calc(var(--c, 1) - var(--s) + var(--p, 0)), 1);opacity:var(--o);transform:translateY(calc((1 - var(--o)) * 6px))}
+/* Chapter 01 is the problem itself: the raw card is there from the start. */
+.ss-stage [data-step="1"]{--o:1}
+
+/* ---- mini cards (moved from the old features.css) -------------------- */
+.feat-tier{margin:72px 0 22px;font-size:clamp(19px,2.4vw,22px);font-weight:700;color:var(--ink)}
+.card-group{margin-bottom:36px}
+.card-group-h{font-size:14px;font-weight:600;color:var(--quiet);letter-spacing:.04em;margin-bottom:12px}
+.card-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.mini{display:flex;flex-direction:column;gap:6px;padding:14px 14px 16px;background:var(--surface);border:1px solid var(--rule);border-radius:10px;transition:border-color .2s,transform .3s cubic-bezier(.34,1.56,.64,1)}
+.mini:hover{border-color:var(--rule-hi);transform:translateY(-3px)}
+.mini-art{width:100%;height:auto;aspect-ratio:160/90;display:block;margin-bottom:8px;border-radius:6px;background:var(--bg);
+  fill:none;stroke:var(--ink-2);stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;color:var(--ink-2)}
+.mini-art .a{stroke:var(--cyan)}
+.mini-art .fill{fill:var(--cyan);stroke:none}
+.mini-art .dash{stroke-dasharray:4 3}
+.mini-art .t{fill:var(--ink-2);stroke:none;font-family:var(--ak-mono);font-size:9.5px}
+.mini-art .t.a{fill:var(--cyan)}
+.mini-art .t.x{text-decoration:line-through;fill:var(--quiet)}
+.mini-art .t.big{font-size:30px;fill:var(--ink-2)}
+.mini h5{font-size:15px;font-weight:600;color:var(--ink);line-height:1.4}
+.mini p{font-size:13px;line-height:1.65;color:var(--ink-2);flex:1}
+.mini .more-where{align-self:flex-start;margin:4px 0 0}
+.more-where{display:inline-block;font-family:var(--ak-mono);font-size:11px;color:var(--quiet);border:1px solid var(--rule-hi);border-radius:3px;padding:0 6px;line-height:1.7;white-space:nowrap}
+.more-where.tag-cli{color:var(--ink-2)}
+.more-where.tag-pro{color:var(--cyan);border-color:var(--cyan)}
+.next-note{margin:-12px 0 16px;font-size:13.5px;color:var(--quiet)}
+.mini-next{border-style:dashed}
+.feat-note{margin-top:36px;font-size:13px;color:var(--quiet)}
+
+@media (max-width:1000px){.card-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){
+  .ss-ch{grid-template-columns:minmax(0,1fr);gap:20px;padding:32px 0}
+  .card-row{grid-template-columns:1fr}
+  .sc{padding:14px}
+  .sc-ir-row{grid-template-columns:auto minmax(0,1fr)}
+  .sc-ir-row .sc-tag{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .mini{transition:none}.mini:hover{transform:none}
+  .ss-txt{transition:none}
+}
