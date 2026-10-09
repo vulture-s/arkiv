@@ -282,8 +282,13 @@ def scan(rules: Optional[List[Dict]] = None) -> Dict:
 
 
 def _write_backup(rows: List[Dict], rules: List[Dict]) -> str:
-    """Persist pre-correction state of the affected rows. Returns backup name."""
+    """Persist pre-correction state of the affected rows. Returns backup name.
+
+    Each row also records the clip's stored `path`. `media.id` has no
+    AUTOINCREMENT, so a deleted clip's id is handed to the next ingest; without
+    the path, `revert` would write this clip's transcript onto that newcomer."""
     import time
+    rows = _with_paths(rows)
     name = "recorrect-{0}.json".format(time.strftime("%Y%m%dT%H%M%S", time.gmtime()))
     bdir = _backups_dir()
     bdir.mkdir(parents=True, exist_ok=True)
@@ -300,6 +305,29 @@ def _write_backup(rows: List[Dict], rules: List[Dict]) -> str:
         n += 1
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path.name
+
+
+def _with_paths(rows: List[Dict]) -> List[Dict]:
+    """Fill in `path` for rows that lack it (retranscribe-all passes id-only rows)."""
+    missing = [r["id"] for r in rows if isinstance(r, dict) and "id" in r and not r.get("path")]
+    if not missing:
+        return rows
+    import db
+    with db.get_conn() as conn:
+        found = {}
+        for i in range(0, len(missing), 500):
+            chunk = missing[i:i + 500]
+            for r in conn.execute(
+                "SELECT id, path FROM media WHERE id IN ({0})".format(",".join("?" * len(chunk))),
+                chunk,
+            ).fetchall():
+                found[r[0]] = r[1]
+    out = []
+    for r in rows:
+        if isinstance(r, dict) and "id" in r and not r.get("path") and found.get(r["id"]):
+            r = dict(r, path=found[r["id"]])
+        out.append(r)
+    return out
 
 
 def apply(rules: Optional[List[Dict]] = None) -> Dict:
@@ -376,15 +404,33 @@ def revert(backup_name: Optional[str] = None) -> Dict:
     # none, instead of nulling/guessing it (codex footgun). retranscribe-all backups
     # now carry lang; correction-apply backups don't (apply never changes lang), so
     # COALESCE leaves lang untouched there — correct in both cases.
-    rows = [
-        (m.get("transcript"), m.get("segments_json"), m.get("words_json"), m.get("lang"), m["id"])
-        for m in media if isinstance(m, dict) and "id" in m
-    ]
-    if rows:
-        with db.get_conn() as conn:
+    entries = [m for m in media if isinstance(m, dict) and "id" in m]
+    rows = []
+    skipped = []
+    with db.get_conn() as conn:
+        current = {}
+        ids = [m["id"] for m in entries]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for r in conn.execute(
+                "SELECT id, path FROM media WHERE id IN ({0})".format(",".join("?" * len(chunk))),
+                chunk,
+            ).fetchall():
+                current[r[0]] = r[1]
+        for m in entries:
+            # A backup that recorded the clip's path only restores onto that same
+            # clip: the id alone may now belong to a different one (no AUTOINCREMENT).
+            # Backups from before paths were recorded can't be checked and keep the
+            # old id-only behaviour rather than becoming un-revertable.
+            if m.get("path") and current.get(m["id"]) != m["path"]:
+                skipped.append(m["id"])
+                continue
+            rows.append((m.get("transcript"), m.get("segments_json"), m.get("words_json"),
+                         m.get("lang"), m["id"]))
+        if rows:
             conn.executemany(
                 "UPDATE media SET transcript=?, segments_json=?, words_json=?, "
                 "lang=COALESCE(?, lang) WHERE id=?",
                 rows,
             )
-    return {"restored": len(rows), "backup": name}
+    return {"restored": len(rows), "backup": name, "skipped": skipped}

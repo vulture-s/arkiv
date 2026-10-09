@@ -227,16 +227,43 @@ def remove_sample() -> dict:
     except Exception:  # noqa: BLE001
         marker = {}
     media_ids = marker.get("media_ids", [])
+    # The marker's clip list is written empty first and filled after the copies
+    # (load_prebuilt), so also accept the bundled clip names.
+    names = set(marker.get("clips") or [])
+    try:
+        names.update(p.name for p in _CLIPS_SRC.glob("*.mp4"))
+    except OSError:
+        pass
+    sample_paths = {"clips/{0}".format(name) for name in names}
 
     removed = 0
+    skipped = []
     for mid in media_ids:
+        # `media.id` has no AUTOINCREMENT: a sample clip the user already deleted by
+        # hand gives its id to the next thing they ingest. Only delete a row that is
+        # still a sample clip (media.path = clips/<name>, see load_prebuilt) — never
+        # whatever now happens to hold the id.
+        rec = db.get_record_by_id(mid)
+        if rec is None:
+            continue
+        if not _is_sample_row(rec, sample_paths):
+            skipped.append(mid)
+            continue
         r = media_delete.delete_media_full(mid, allow_file_delete=True, token_info=None)
         if r is not None:
             removed += 1
 
     _loaded_marker().unlink(missing_ok=True)
     _dismissed_marker().write_text("")
-    return {"ok": True, "removed": removed}
+    out = {"ok": True, "removed": removed}
+    if skipped:
+        out["skipped_not_sample"] = skipped
+    return out
+
+
+def _is_sample_row(rec, sample_paths) -> bool:
+    stored = (rec.get("path") or "").replace("\\", "/")
+    return stored in sample_paths
 
 
 def maybe_autoseed() -> dict:
