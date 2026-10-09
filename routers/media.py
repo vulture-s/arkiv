@@ -1132,8 +1132,16 @@ def bulk_delete_media(
 ):
     """Delete several media records at once. Returns the ids that were deleted,
     skipped (e.g. not found), and any hard errors — matching the designed
-    {deleted, skipped, errors} contract."""
+    {deleted, skipped, errors} contract.
+
+    Audit 2026-10-09 K1: `deleted` alone cannot tell a recoverable trash move
+    from a metadata-only delete (clip outside PROJECT_ROOT/ARKIV_MEDIA_ROOTS, or
+    a failed move) — and the UI promised 「可從回收桶還原」 for both. Each
+    delete's outcome is kept: `not_trashed` lists rows whose original did NOT
+    go into the recycle bin (their tags/rating/transcript are unrecoverable),
+    `warnings` carries every per-item warning delete_media_full produced."""
     deleted, skipped, errors = [], [], []
+    not_trashed, warnings = [], []
     for mid in body.ids:
         try:
             mid = int(mid)
@@ -1145,9 +1153,20 @@ def bulk_delete_media(
         )
         if r is None:
             skipped.append(mid)
-        else:
-            deleted.append(mid)
-    return {"ok": True, "deleted": deleted, "skipped": skipped, "errors": errors}
+            continue
+        deleted.append(mid)
+        if not r.get("file_deleted"):
+            not_trashed.append({"media_id": mid, "warning": r.get("warning")})
+        if r.get("warning"):
+            warnings.append({"media_id": mid, "warning": r["warning"]})
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "skipped": skipped,
+        "errors": errors,
+        "not_trashed": not_trashed,
+        "warnings": warnings,
+    }
 
 
 class PruneMissingBody(BaseModel):
