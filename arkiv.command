@@ -40,4 +40,6 @@ open "http://localhost:$PORT" 2>/dev/null &
 # exposing the API to the LAN. Override with ARKIV_HOST=0.0.0.0 only when you
 # deliberately want tailnet/LAN access, and only after minting a token with a
 # tight --ip-allowlist (see arkiv_token.py).
-uvicorn server:app --host "${ARKIV_HOST:-127.0.0.1}" --port "$PORT"
+# --no-proxy-headers: arkiv terminates its own connections; uvicorn's default
+# would let any loopback peer forge its IP via X-Forwarded-For (audit 2026-10-09).
+uvicorn server:app --host "${ARKIV_HOST:-127.0.0.1}" --port "$PORT" --no-proxy-headers
