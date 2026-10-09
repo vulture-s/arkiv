@@ -12,7 +12,7 @@ chromadb>=1.0,<2
 # without mcp present. Do NOT let it ride on mcp's transitive pull: on 3.9 the
 # MCP marker is excluded, so python-multipart silently disappears.
 python-multipart>=0.0.9
-requests>=2.28
+requests>=2.34.2
 xxhash>=3.8.1
 nanoid>=2.0.0
 # (pandas removed — it was an unused ~70 MB dependency, imported nowhere.)
