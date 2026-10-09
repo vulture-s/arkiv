@@ -720,12 +720,17 @@ def _split_long_segments(timed_segments: list, max_units: float = _MAX_SEGMENT_U
 
 
 def _mean_no_speech(segments: list) -> float:
-    """Duration-weighted mean of no_speech_prob over the batch (Guard 1).
+    """Batch no_speech score for Guard 1 = min(count mean, duration mean).
 
-    Weighting by segment *count* let three 1 s BGM tails outvote 30 s of clear
-    speech (mean 0.725 > 0.6) and wipe the whole transcript. When every segment
-    has a positive duration (start/end), weight by it; otherwise fall back to the
-    plain mean, which is the only thing the data supports. Mirrors
+    Guard 1 wipes the WHOLE transcript, so it must fire only when the batch is
+    silent by both measures. By segment *count* alone, three 1 s BGM tails
+    outvoted 30 s of clear speech (0.725 > 0.6). By *duration* alone, 40 s of
+    interview followed by 80 s of ambience that Whisper fills with three long
+    hallucinated segments scored 0.62 and the interview was wiped (dual-track
+    audit). min() keeps the BGM-tail fix and never rejects a batch the old
+    count gate passed; long silent segments are still dropped one by one by
+    Guard 2. Without usable timing (any segment lacking a positive start/end)
+    it is the plain mean. Mirrors
     whisper-guard's ``WhisperGuard._mean_no_speech`` (vulture-s/whisper-guard#1);
     arkiv keeps its own copy because ``_postprocess`` does not route through
     ``WhisperGuard.process``.
@@ -746,9 +751,10 @@ def _mean_no_speech(segments: list) -> float:
         durations.append(duration)
 
     probs = [s.get("no_speech_prob", 0) for s in segments]
+    plain = sum(probs) / len(probs)
     if durations:
-        return sum(p * d for p, d in zip(probs, durations)) / sum(durations)
-    return sum(probs) / len(probs)
+        return min(plain, sum(p * d for p, d in zip(probs, durations)) / sum(durations))
+    return plain
 
 
 def _postprocess(text: str, lang: str, segments: list, language: str,
@@ -760,7 +766,7 @@ def _postprocess(text: str, lang: str, segments: list, language: str,
     if not segments:
         return text, lang, [], words or []
 
-    # Guard 1: the batch is mostly silence (by DURATION, not segment count)
+    # Guard 1: the batch is mostly silence by BOTH segment count and duration
     # → no speech. See _mean_no_speech for why count-weighting was wrong.
     if _mean_no_speech(segments) > NO_SPEECH_THRESHOLD:
         return "", lang, [], []

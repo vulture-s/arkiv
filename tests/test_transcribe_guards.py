@@ -233,18 +233,28 @@ def test_postprocess_keeps_speech_with_short_bgm_tails(monkeypatch):
     assert [t["text"] for t in timed] == ["這是一段三十秒的正常講話內容"]
 
 
-def test_postprocess_still_rejects_mostly_silent_by_duration(monkeypatch):
-    """Converse: most segments are speech by COUNT, but most of the TIME is
-    silence -> still rejected as a whole. Plain mean 0.4125 (< 0.6, the old
-    code let it through); duration-weighted ~0.727 (> 0.6)."""
+def test_postprocess_long_ambient_tail_does_not_wipe_interview(monkeypatch):
+    """40 s of interview (8 x 5 s) then 80 s of ambience that Whisper fills with
+    three long hallucinated segments. Duration-weighted alone = 0.62 > 0.6 and
+    wiped the interview; the count mean (0.28) kept it. Guard 1 uses the min."""
     transcribe = importlib.import_module("transcribe")
     monkeypatch.setattr(transcribe, "LLM_POLISH", False)
     seg = {"avg_logprob": -0.2, "compression_ratio": 1.0}
-    segs = [
-        dict(seg, text="短句一", no_speech_prob=0.3, start=0.0, end=1.0),
-        dict(seg, text="短句二", no_speech_prob=0.3, start=1.0, end=2.0),
-        dict(seg, text="短句三", no_speech_prob=0.3, start=2.0, end=3.0),
-        dict(seg, text="長靜音", no_speech_prob=0.75, start=3.0, end=60.0),
-    ]
+    segs = [dict(seg, text="第%d句正常回答" % i, no_speech_prob=0.05, start=5.0 * i, end=5.0 * i + 5)
+            for i in range(8)]
+    segs += [dict(seg, text="Thank you for watching.", no_speech_prob=0.9, start=40.0, end=67.0),
+             dict(seg, text="Thank you.", no_speech_prob=0.9, start=67.0, end=94.0),
+             dict(seg, text="Bye.", no_speech_prob=0.9, start=94.0, end=120.0)]
+    cleaned, _, timed, _ = transcribe._postprocess("原始文字", "zh", segs, "zh")
+    assert [t["text"] for t in timed] == ["第%d句正常回答" % i for i in range(8)]
+
+
+def test_postprocess_still_rejects_silent_by_count_and_duration(monkeypatch):
+    transcribe = importlib.import_module("transcribe")
+    monkeypatch.setattr(transcribe, "LLM_POLISH", False)
+    seg = {"avg_logprob": -0.2, "compression_ratio": 1.0}
+    segs = [dict(seg, text="短句", no_speech_prob=0.3, start=0.0, end=1.0)]
+    segs += [dict(seg, text="長靜音", no_speech_prob=0.75, start=1.0 + 20 * i, end=21.0 + 20 * i)
+             for i in range(3)]
     cleaned, _, timed, words = transcribe._postprocess("原始文字", "zh", segs, "zh")
     assert (cleaned, timed, words) == ("", [], [])
