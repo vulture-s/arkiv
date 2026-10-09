@@ -6,7 +6,7 @@
 fastapi>=0.140.6
 uvicorn>=0.52.1
 pydantic>=2.0,<3
-chromadb>=1.0,<2
+chromadb>=1.5.9,<2
 # upload endpoint (routers/ingest.py: UploadFile = File(...)) needs this at
 # import/collection time — a fresh install without it dies on import even
 # without mcp present. Do NOT let it ride on mcp's transitive pull: on 3.9 the
