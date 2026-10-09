@@ -332,7 +332,11 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                             text=True, encoding="utf-8", errors="replace",
                                             bufsize=1, env=ingest_env,
-                                            cwd=str(dest_root / ".arkiv"))
+                                            cwd=str(dest_root / ".arkiv"),
+                                            # own process group (as /api/ingest), so
+                                            # orphan_guard's killpg reaches ffmpeg /
+                                            # whisper children too (Claude review)
+                                            start_new_session=(os.name == "posix"))
                     try:
                         for line in proc.stdout:
                             yield _json.dumps({"type": "log", "line": line.rstrip("\n")}, ensure_ascii=False) + "\n"

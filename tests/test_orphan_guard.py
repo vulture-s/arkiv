@@ -137,3 +137,67 @@ def test_worker_entry_points_arm_the_guard_first(monkeypatch, module, argv):
         with pytest.raises(SystemExit):
             mod.main(["--help"])
     assert calls == [1]
+
+
+# ── Claude review (1009 R1): the guard can only take the tree down if the worker
+# leads its own process group. `/api/ingest` spawns with start_new_session, but
+# the bins-copy ingest and the offload worker did not — so on a server SIGKILL
+# orphan_guard fell back to `os._exit` of the worker alone, and its ffmpeg /
+# exiftool children (same group as the dead SERVER) ran on as orphans.
+
+class _RecPopen:
+    def __init__(self, calls):
+        self.calls = calls
+
+    def __call__(self, cmd, **kw):
+        import io
+        self.calls.append(kw)
+        inst = _RecPopen(self.calls)
+        inst.returncode = 0
+        inst.stdout = io.StringIO('{"type": "done", "code": 0, "summary": {}}\n')
+        return inst
+
+    def wait(self, timeout=None):
+        self.returncode = 0
+
+    def terminate(self):
+        pass
+
+    kill = terminate
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX")
+def test_offload_worker_leads_its_own_group(fastapi_client, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _RecPopen(calls))
+    card = tmp_path / "card"; card.mkdir()
+    (card / "A.MP4").write_bytes(b"a")
+    dst = tmp_path / "dst"; dst.mkdir()
+    r = fastapi_client.post("/api/offload", json={"src": str(card), "dst": [str(dst)]})
+    assert r.status_code == 200, r.text
+    assert calls and calls[0].get("start_new_session") is True, calls
+    assert calls[0]["env"].get("ARKIV_PARENT_PID") == str(os.getpid())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX")
+def test_bin_copy_ingest_leads_its_own_group(fastapi_client, tmp_path, monkeypatch):
+    import importlib
+    monkeypatch.setenv("ARKIV_BINS_PATH", str(tmp_path / "bins.json"))
+    monkeypatch.setenv("ARKIV_PROJECTS_REGISTRY", str(tmp_path / "registry.json"))
+    monkeypatch.delenv("ARKIV_PROJECT_ROOTS", raising=False)
+    bins = importlib.import_module("bins")
+    src = tmp_path / "src" / "clip.mp4"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"v")
+    monkeypatch.setattr(bins, "resolve_source", lambda p, m, expect_filename=None: {
+        "status": "ok", "absolute_path": str(src), "filename": "clip.mp4"})
+    b = bins.create_bin("grp")
+    bins.add_items(b.id, [{"project_name": "libA", "media_id": "1", "filename": "clip.mp4"}])
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _RecPopen(calls))
+    r = fastapi_client.post("/api/bins/{0}/copy".format(b.id), json={
+        "dest": str(tmp_path / "np"), "create_new": True, "dest_name": "群組案", "mode": "reference",
+        "skip_vision": True, "no_embed": True})
+    assert r.status_code == 200, r.text
+    assert calls and calls[0].get("start_new_session") is True, calls
+    assert calls[0]["env"].get("ARKIV_PARENT_PID") == str(os.getpid())
