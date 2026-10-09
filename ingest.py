@@ -2062,6 +2062,10 @@ def _run_apply_aliases(args):
 
 
 def main():
+    # Server-spawned? Then die with the server if it is SIGKILLed (desktop app
+    # quit) instead of running on as an orphan — inert for CLI runs (audit N1).
+    import orphan_guard
+    orphan_guard.install()
     # Windows: the console codepage (cp950 on zh-TW) can't encode chars the CLI
     # prints (⚠, →, emoji) → UnicodeEncodeError crashes mid-run. Force UTF-8 on
     # stdout/stderr so progress output is robust on every platform.

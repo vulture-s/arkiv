@@ -7,6 +7,7 @@ single-flight primitives (_offload_lock / _offload_active / _acquire_offload_slo
 handlers. `BASE_DIR` (config) replaces server.ROOT for locating offload.py. Imports
 auth + config + webguard (dst denylist) + offload — no server import, no cycle.
 """
+import os
 import threading
 from pathlib import Path
 from typing import List, Optional
@@ -16,6 +17,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 import config
+import orphan_guard
 from auth import require_scopes
 from config import BASE_DIR
 from webguard import _assert_offload_dst_safe
@@ -139,7 +141,14 @@ def offload_run(
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 encoding="utf-8", errors="replace",
-                bufsize=1, cwd=str(state_cwd))
+                bufsize=1, cwd=str(state_cwd),
+                # orphan_guard: the offload stops (resumably) if this server is
+                # SIGKILLed instead of copying on, invisible, after app quit.
+                env=orphan_guard.child_env(),
+                # Own process group, so the guard's killpg also takes exiftool &
+                # co. — outside it, the guard can only _exit the worker itself and
+                # its children run on in the dead server's group (Claude review).
+                start_new_session=(os.name == "posix"))
             for line in proc.stdout:
                 try:  # JSON parse (not substring) so a filename can't false-positive
                     if _json.loads(line).get("type") == "done":

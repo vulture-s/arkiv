@@ -818,6 +818,10 @@ def build_parser():
 
 
 def main(argv=None):
+    # Server-spawned? Then stop (resumably) with the server instead of copying
+    # on as an orphan after a SIGKILL — inert for CLI runs (audit N1).
+    import orphan_guard
+    orphan_guard.install()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.watch:

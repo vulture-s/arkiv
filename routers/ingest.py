@@ -36,6 +36,7 @@ import config
 import db
 import ingest_budget
 import mediatypes
+import orphan_guard
 import settings as settings_store
 from auth import require_scopes
 from config import BASE_DIR
@@ -734,7 +735,8 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
         start_new_session=(os.name == "posix"),
         # brick 3: drive the structured per-stage progress protocol (own-line JSON
         # events) instead of parsing the compact inline `>probe` human markers.
-        env={**os.environ, "ARKIV_STAGE_EVENTS": "1"},
+        # ARKIV_PARENT_PID (orphan_guard): die with this server if it is SIGKILLed.
+        env=orphan_guard.child_env({**os.environ, "ARKIV_STAGE_EVENTS": "1"}),
         # audit M3: a single stdout line beyond the default 64KB reader limit
         # raises inside the read loop; give pathological log lines 1MB headroom.
         limit=2 ** 20,
