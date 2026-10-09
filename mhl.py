@@ -534,23 +534,23 @@ def changed_since(previous_mhl: Path, current_mhl: Path) -> List[str]:
 def _generations(output_dir: Path) -> List[Tuple[Path, bool]]:
     """Manifests in an ascmhl folder, oldest first → [(path, authoritative)].
 
-    When the chain exists it is the authority: only the generations it lists
-    count, and a listed one that is missing or unreadable must fail the check
-    (authoritative=True). A ``.mhl`` the chain does not list is an orphan — e.g.
-    a run killed between writing the manifest and appending the chain — and is
-    ignored, so one interrupted offload can't turn the drive red forever
-    (dual-track audit of #497). Without a chain (legacy/foreign folder) fall
-    back to the filename sequence, best effort (authoritative=False)."""
+    Generations the chain lists are authoritative: missing or unreadable → the
+    check fails closed. Every other ``*.mhl`` in the folder (a run killed between
+    writing the manifest and appending the chain, or a folder whose chain was
+    deleted/recreated) is still used as history when it parses, and skipped when
+    it doesn't — so one interrupted offload can't turn the drive red forever,
+    and deleting the chain does not erase the earlier baseline either
+    (dual-track audit of #497). An unreadable chain fails closed."""
     output_dir = Path(output_dir)
     chain_path = output_dir / "ascmhl_chain.xml"
-    if chain_path.exists():
-        entries = _read_chain(chain_path)  # unreadable chain → raises (fail closed)
-        return [(output_dir / e.mhl_name, True) for e in sorted(entries, key=lambda e: e.sequence)]
-    found = []
+    found: Dict[str, Tuple[int, Path, bool]] = {}
     for child in output_dir.glob("*.mhl"):
         match = MHL_FILENAME_RE.match(child.name)
-        found.append((int(match.group(1)) if match else 0, child.name, child))
-    return [(p, False) for _, _, p in sorted(found)]
+        found[child.name] = (int(match.group(1)) if match else 0, child, False)
+    if chain_path.exists():
+        for entry in _read_chain(chain_path):  # unreadable chain → raises
+            found[entry.mhl_name] = (entry.sequence, output_dir / entry.mhl_name, True)
+    return [(p, auth) for _, p, auth in sorted(found.values(), key=lambda v: (v[0], v[1].name))]
 
 
 # OS bookkeeping macOS / Windows write onto a DESTINATION drive by mounting or
@@ -602,7 +602,7 @@ def changed_against_history(current_mhl: Path) -> List[Tuple[str, str]]:
             files, _ = _manifest_entries(_parse_manifest(gen))
         except Exception as exc:
             if not authoritative:
-                continue  # chain-less legacy folder: best effort
+                continue  # unlisted orphan (interrupted run): best effort
             # Fail closed: skipping an unreadable generation silently moved the
             # baseline to a later one — possibly one that already recorded the
             # tampered hash (dual-track audit of #497).

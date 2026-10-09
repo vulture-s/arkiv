@@ -446,3 +446,17 @@ def test_cli_resume_with_pre_sampling_state_is_refused(scratch, monkeypatch):
     st.write_text(json.dumps(data))
     with pytest.raises(ValueError):
         offload.run_offload(card, [scratch / "dst"], resume=st, emit_mhl=False)
+
+
+def test_deleting_the_chain_does_not_erase_the_baseline(scratch, monkeypatch):
+    offload = _load_offload(scratch, monkeypatch)
+    monkeypatch.chdir(scratch)
+    dst = scratch / "dst"
+    c1 = _card(scratch / "card1", {"A/C0001.MP4": b"day1"})
+    assert offload.run_offload(c1, [dst])[0] == 0
+    (dst / "ascmhl" / "ascmhl_chain.xml").unlink()
+    (dst / "A/C0001.MP4").write_bytes(b"tampered")
+    c2 = _card(scratch / "card2", {"B/C0001.MP4": b"day2"})
+    assert offload.run_offload(c2, [dst])[0] != 0
+    c3 = _card(scratch / "card3", {"C/C0001.MP4": b"day3"})
+    assert offload.run_offload(c3, [dst])[0] != 0  # stays red
