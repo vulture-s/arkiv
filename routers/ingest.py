@@ -630,17 +630,22 @@ def _ws_authorized(ws: WebSocket, scope: str) -> bool:
     # host/port, incl. remote + HTTPS reverse proxy) or in the static dev/Tauri
     # allowlist. A cross-site page (different authority) is rejected. Non-browser
     # clients (no Origin) fall through to token auth.
+    # Same rule as webguard.same_site_violation: Origin == Host only counts as
+    # same-origin when that Host can't be a DNS-rebinding name, or the handshake
+    # brings its own ?token= (audit 2026-10-09).
+    raw = (ws.query_params.get("token") or "").strip()
     origin = ws.headers.get("origin")
-    if origin is not None:
-        origin_authority = origin.split("://", 1)[-1]
+    if origin is not None and origin not in _ALLOWED_ORIGINS:
         host_header = ws.headers.get("host", "")
-        if origin_authority != host_header and origin not in _ALLOWED_ORIGINS:
+        if origin.split("://", 1)[-1] != host_header:
+            return False
+        if not raw and not auth._host_is_trusted(host_header):
             return False
     host = ws.client.host if ws.client is not None else ""
-    if auth._trust_loopback() and host in auth._LOOPBACK_HOSTS and not auth._looks_proxied(ws):
+    if auth.loopback_trusted(host, ws.headers):
         return True
     try:
-        tok = auth.resolve_raw_token((ws.query_params.get("token") or "").strip(), host)
+        tok = auth.resolve_raw_token(raw, host, forwarded=auth._looks_proxied(ws))
     except Exception:
         return False
     return scope in tok.get("scopes", ())

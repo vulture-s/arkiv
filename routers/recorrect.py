@@ -32,8 +32,12 @@ class RevertBody(BaseModel):
 
 @router.get("/api/corrections")
 def get_corrections(_tok: dict = Depends(require_scopes("projects_read"))):
-    """The active project's correction dictionary (.arkiv/corrections.json)."""
-    return {"rules": corrections.load_rules()}
+    """The active project's correction dictionary (.arkiv/corrections.json).
+
+    `load_error` is non-null when the file exists but could not be read — the
+    editor must not present that as an empty dictionary (audit 2026-10-09 K1)."""
+    rules, load_error = corrections.load_rules_checked()
+    return {"rules": rules, "load_error": load_error}
 
 
 @router.put("/api/corrections")

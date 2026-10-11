@@ -286,7 +286,7 @@ python offload.py --watch --dst /Volumes/Backup # 插卡自動轉存
 
 # 自動監看資料夾（匯入）
 python watch.py /path/to/footage
-python watch.py ~/Movies/rushes --interval 10
+python watch.py ~/Movies/rushes --poll-interval 10
 
 # API 搜尋（需要 server 運行中）
 # Linux / macOS / Git Bash

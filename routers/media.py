@@ -25,13 +25,14 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
+import commands
 import config
 import corrections
 import db
-import embed
 import media_delete
 import mediatypes
 import progress
+import search_syntax
 import tag_quality
 import transcript_compare
 from auth import require_scopes
@@ -280,7 +281,22 @@ def list_media(
         for rec in records:
             rec["tags"] = tags_by_id.get(rec["id"], [])
         return {"items": records, "total": len(records), "search": True}
+    # `camera:a7s3 tag:海邊 …` in the search box → typed filters (search_syntax).
+    # `q` is narrowed to the free text; the filters become one SQL predicate that
+    # both legs below must satisfy, so they cannot drift apart.
+    conditions: list = []
+    cond_ids = None
+    parsed = None
     if q:
+        try:
+            q, conditions = search_syntax.parse(q)
+        except search_syntax.QueryError as exc:
+            raise HTTPException(422, str(exc))
+        parsed = search_syntax.describe(q, conditions)
+        if conditions:
+            with db.get_conn() as conn:
+                cond_ids = search_syntax.matching_ids(conn, conditions)
+    if q or conditions:
         search_warning = None
         import vectordb as vdb
         # audit M19: search MUST paginate correctly. `total` is the STABLE number
@@ -291,6 +307,8 @@ def list_media(
         SEARCH_CAP = 2000
 
         def _passes_filters(rec: dict) -> bool:
+            if cond_ids is not None and rec["id"] not in cond_ids:
+                return False
             # Applied to the ENRICHED record (which has real lang/rating), not the
             # raw vector hit — vectordb results carry no `rating`, so filtering on
             # them dropped every semantic hit under `rating=good` and silently fell
@@ -337,7 +355,8 @@ def list_media(
         # scores + excerpt). May be empty on degradation (search_warning set).
         semantic: dict = {}
         try:
-            raw = vdb.search(q, n_results=SEARCH_CAP)
+            # Filters only, no text: nothing to rank by meaning.
+            raw = vdb.search(q, n_results=SEARCH_CAP) if q else []
             seen = set()
             for r in raw:
                 mid = int(r["media_id"])
@@ -388,22 +407,26 @@ def list_media(
             filter_sql += " AND " + shot_sql
             filter_params.extend(shot_params)
         lexical_ids: list = []
-        with db.get_conn() as conn:
-            rows = conn.execute(
-                "SELECT id FROM media "
-                "WHERE (filename LIKE ? OR transcript LIKE ?)" + filter_sql +
-                " ORDER BY id LIMIT ?",
-                (like, like, *filter_params, SEARCH_CAP),
-            ).fetchall()
-            lexical_ids = [dict(r)["id"] for r in rows]
-            tag_rows = conn.execute(
-                "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
-                (like, SEARCH_CAP),
-            ).fetchall()
-        for tr in tag_rows:
-            tid = dict(tr)["media_id"]
-            if tid not in lexical_ids:
-                lexical_ids.append(tid)
+        if q:
+            with db.get_conn() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM media "
+                    "WHERE (filename LIKE ? OR transcript LIKE ?)" + filter_sql +
+                    " ORDER BY id LIMIT ?",
+                    (like, like, *filter_params, SEARCH_CAP),
+                ).fetchall()
+                lexical_ids = [dict(r)["id"] for r in rows]
+                tag_rows = conn.execute(
+                    "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
+                    (like, SEARCH_CAP),
+                ).fetchall()
+            for tr in tag_rows:
+                tid = dict(tr)["media_id"]
+                if tid not in lexical_ids:
+                    lexical_ids.append(tid)
+        else:
+            # Filters only, no text: the matching set IS the result, newest first.
+            lexical_ids = sorted(cond_ids, reverse=True)[:SEARCH_CAP]
 
         # Stable, offset-independent ordering: semantic hits by score desc, then
         # lexical hits in id order, de-duplicated. Capped at SEARCH_CAP.
@@ -438,6 +461,8 @@ def list_media(
         for rec in items:
             rec["tags"] = tags_by_id.get(rec["id"], [])
         resp = {"items": items, "total": total, "search": True}
+        if parsed is not None:
+            resp["parsed"] = parsed
         if search_warning:
             resp["search_degraded"] = True
             resp["warning"] = search_warning
@@ -699,6 +724,12 @@ def get_media_chapters(
     return {"media_id": media_id, "format": format, "chapters": text, "count": count}
 
 
+def _sent(body: BaseModel) -> dict:
+    """Only the fields the client actually sent — the PATCH contract that
+    commands.py's setters take (omitted = untouched, explicit null = clear)."""
+    return {field: getattr(body, field) for field in body.model_fields_set}
+
+
 @router.patch("/api/media/{media_id}/rating")
 def update_rating(
     media_id: int,
@@ -711,27 +742,11 @@ def update_rating(
     untouched; an explicit null clears it. PATCH {rating:'good'} used to
     silently wipe the stored note (PUT semantics in a PATCH endpoint).
     """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        out = commands.set_rating(media_id, _sent(body), _tok)
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    provided = body.model_fields_set  # audit M20: omitted vs explicit-null
-    sets, params = [], []
-    if "rating" in provided:
-        sets.append("rating = ?")
-        params.append(body.rating)
-    if "note" in provided:
-        sets.append("rating_note = ?")
-        params.append(body.note)
-    if sets:
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
-                (*params, media_id),
-            )
-    new_rating = body.rating if "rating" in provided else rec.get("rating")
-    new_note = body.note if "note" in provided else rec.get("rating_note")
-    return {"ok": True, "rating": new_rating, "note": new_note}
-
+    return {"ok": True, **out}
 
 @router.patch("/api/media/{media_id}/inout")
 def update_inout(
@@ -747,31 +762,13 @@ def update_inout(
     sub-clips. PATCH semantics (same as rating): an OMITTED field is left untouched;
     an explicit null clears that mark.
     """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        out = commands.set_inout(media_id, _sent(body), _tok)
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    provided = body.model_fields_set
-    new_in = body.in_point if "in_point" in provided else rec.get("in_point")
-    new_out = body.out_point if "out_point" in provided else rec.get("out_point")
-    # An inverted window (in ≥ out) exports an empty/negative range downstream —
-    # reject it rather than silently persisting a range that yields nothing.
-    if new_in is not None and new_out is not None and new_in >= new_out:
-        raise HTTPException(422, "in_point 必須小於 out_point")
-    sets, params = [], []
-    if "in_point" in provided:
-        sets.append("in_point = ?")
-        params.append(body.in_point)
-    if "out_point" in provided:
-        sets.append("out_point = ?")
-        params.append(body.out_point)
-    if sets:
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
-                (*params, media_id),
-            )
-    return {"ok": True, "in_point": new_in, "out_point": new_out}
-
+    except commands.Invalid as e:
+        raise HTTPException(422, str(e))
+    return {"ok": True, **out}
 
 @router.patch("/api/media/{media_id}/camera")
 def update_camera(
@@ -787,27 +784,11 @@ def update_camera(
     inout/rating): an OMITTED field is left untouched; an explicit null (or blank)
     clears it. Kept out of _ALLOWED_COLS so a re-ingest never overwrites the mark.
     """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        out = commands.set_camera(media_id, _sent(body), _tok)
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    provided = body.model_fields_set
-    sets, params = [], []
-    if "camera_id" in provided:
-        sets.append("camera_id = ?")
-        params.append(body.camera_id)
-    if "angle" in provided:
-        sets.append("angle = ?")
-        params.append(body.angle)
-    if sets:
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
-                (*params, media_id),
-            )
-    new_camera_id = body.camera_id if "camera_id" in provided else rec.get("camera_id")
-    new_angle = body.angle if "angle" in provided else rec.get("angle")
-    return {"ok": True, "camera_id": new_camera_id, "angle": new_angle}
-
+    return {"ok": True, **out}
 
 @router.get("/api/media/{media_id}/tags")
 def get_tags(
@@ -823,15 +804,11 @@ def add_tag(
     body: TagCreate,
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
-    rec = db.get_record_by_id(media_id)
-    if not rec:
-        raise HTTPException(404, "找不到")
-    db.add_tag(media_id, body.name, body.source)
     try:
-        embed.reindex_media(media_id)
-    except Exception as e:
-        print("[warn] reindex after add_tag failed (non-fatal):", e)
-    return {"ok": True, "tags": db.get_tags(media_id)}
+        tags = commands.add_tag(media_id, body.name, body.source, _tok)
+    except commands.NotFound:
+        raise HTTPException(404, "找不到")
+    return {"ok": True, "tags": tags}
 
 
 @router.delete("/api/media/{media_id}/tags/{tag_name}")
@@ -840,12 +817,7 @@ def remove_tag(
     tag_name: str,
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
-    db.remove_tag(media_id, tag_name)
-    try:
-        embed.reindex_media(media_id)
-    except Exception as e:
-        print("[warn] reindex after remove_tag failed (non-fatal):", e)
-    return {"ok": True, "tags": db.get_tags(media_id)}
+    return {"ok": True, "tags": commands.remove_tag(media_id, tag_name, _tok)}
 
 
 @router.get("/api/media/{media_id}/remotion-props")
@@ -1185,8 +1157,16 @@ def bulk_delete_media(
 ):
     """Delete several media records at once. Returns the ids that were deleted,
     skipped (e.g. not found), and any hard errors — matching the designed
-    {deleted, skipped, errors} contract."""
+    {deleted, skipped, errors} contract.
+
+    Audit 2026-10-09 K1: `deleted` alone cannot tell a recoverable trash move
+    from a metadata-only delete (clip outside PROJECT_ROOT/ARKIV_MEDIA_ROOTS, or
+    a failed move) — and the UI promised 「可從回收桶還原」 for both. Each
+    delete's outcome is kept: `not_trashed` lists rows whose original did NOT
+    go into the recycle bin (their tags/rating/transcript are unrecoverable),
+    `warnings` carries every per-item warning delete_media_full produced."""
     deleted, skipped, errors = [], [], []
+    not_trashed, warnings = [], []
     for mid in body.ids:
         try:
             mid = int(mid)
@@ -1198,13 +1178,25 @@ def bulk_delete_media(
         )
         if r is None:
             skipped.append(mid)
-        else:
-            deleted.append(mid)
-    return {"ok": True, "deleted": deleted, "skipped": skipped, "errors": errors}
+            continue
+        deleted.append(mid)
+        if not r.get("file_deleted"):
+            not_trashed.append({"media_id": mid, "warning": r.get("warning")})
+        if r.get("warning"):
+            warnings.append({"media_id": mid, "warning": r["warning"]})
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "skipped": skipped,
+        "errors": errors,
+        "not_trashed": not_trashed,
+        "warnings": warnings,
+    }
 
 
 class PruneMissingBody(BaseModel):
     dry_run: bool = True
+    force: bool = False  # override the ">= 90% of a storage looks missing" hold-back
 
 
 @router.post("/api/media/prune-missing")
@@ -1218,23 +1210,84 @@ def prune_missing_media(
     data-integrity operation (delete_media_full over ghost rows), not a token
     /admin one (R5-25 route ownership)."""
     missing = db.iter_missing()
-    if body.dry_run:
-        return {
-            "scanned": len(missing),
-            "pruned": 0,
-            "pruned_ids": [],
-            "dry_run": True,
-        }
-    pruned_ids = []
+    # Audit 2026-10-09 (MED): a file is only "missing" if the storage it lives on
+    # is actually there. An unmounted NAS / external drive made EVERY row on it
+    # look deleted, and a real run dropped the whole library (tags, ratings,
+    # transcripts — CASCADE, no trash row) with no way back.
+    #  1. rows whose volume is not mounted are excluded (db.storage_status);
+    #  2. second net for storage we can't classify (an NFS/SMB share mounted at an
+    #     arbitrary path leaves an ordinary empty folder when it drops): if the
+    #     rows under one nearest-existing folder would lose >= 90% (and >= 10
+    #     rows), they are held back unless the caller passes force=true.
+    # Every skipped row is reported (`skipped`, capped) so nothing is silent.
+    prunable_by_root, unavailable, skipped = {}, {}, []
+    status_cache = {}
     for m in missing:
+        try:
+            resolved = db.resolve_path(m["path"])
+        except ValueError:
+            resolved = m["path"]
+        parent = str(Path(resolved).parent)
+        if parent not in status_cache:
+            status_cache[parent] = db.storage_status(resolved)
+        st = status_cache[parent]
+        if not st["available"]:
+            unavailable[st["root"]] = unavailable.get(st["root"], 0) + 1
+            skipped.append({"id": m["id"], "path": m["path"], "root": st["root"], "reason": st["reason"]})
+            continue
+        # Group by the nearest EXISTING folder, not the mount: on a single-disk
+        # machine the mount is "/" and would lump the whole library together.
+        prunable_by_root.setdefault(st.get("anchor") or st["root"], []).append(m)
+
+    held_back = []
+    prunable = []
+    if prunable_by_root:
+        def _under(rp, root):
+            try:
+                Path(rp).relative_to(root)
+                return True
+            except ValueError:
+                return False
+
+        totals = {}
+        with db.get_conn() as conn:
+            for r in conn.execute("SELECT path FROM media").fetchall():
+                try:
+                    rp = db.resolve_path(r["path"])
+                except ValueError:
+                    continue
+                # deepest matching anchor wins (anchors may nest)
+                hits = [root for root in prunable_by_root if _under(rp, root)]
+                if hits:
+                    best = max(hits, key=len)
+                    totals[best] = totals.get(best, 0) + 1
+        for root, rows in sorted(prunable_by_root.items()):
+            total = max(totals.get(root, len(rows)), len(rows))
+            if not body.force and len(rows) >= 10 and len(rows) >= 0.9 * total:
+                held_back.append({"root": root, "count": len(rows), "total": total})
+                for m in rows:
+                    skipped.append({"id": m["id"], "path": m["path"], "root": root,
+                                    "reason": "held back: {0}/{1} rows on this storage look missing "
+                                              "(pass force=true if they really were deleted)".format(len(rows), total)})
+                continue
+            prunable.extend(rows)
+
+    unavailable_roots = [{"root": r, "count": n} for r, n in sorted(unavailable.items())]
+    report = {
+        "scanned": len(missing),
+        "prunable": len(prunable),
+        "unavailable_roots": unavailable_roots,
+        "held_back": held_back,
+        "skipped_count": len(skipped),
+        "skipped": skipped[:200],
+    }
+    if body.dry_run:
+        return dict(report, pruned=0, pruned_ids=[], dry_run=True)
+    pruned_ids = []
+    for m in prunable:
         r = media_delete.delete_media_full(
             m["id"], allow_file_delete=False, token_info=_tok
         )
         if r is not None:
             pruned_ids.append(m["id"])
-    return {
-        "scanned": len(missing),
-        "pruned": len(pruned_ids),
-        "pruned_ids": pruned_ids,
-        "dry_run": False,
-    }
+    return dict(report, pruned=len(pruned_ids), pruned_ids=pruned_ids, dry_run=False)

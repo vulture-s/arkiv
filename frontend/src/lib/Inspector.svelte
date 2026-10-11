@@ -5,6 +5,8 @@
   import Thumb from './Thumb.svelte'
   import Waveform from './Waveform.svelte'
   import { diagnosePlaybackFailure, playbackFailureMessage } from './streamDiag.js'
+  import { onDestroy } from 'svelte'
+  import { createInOutWriter } from './inoutWriter.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -103,12 +105,19 @@
   // once more if the detail lands after the switch), but never clobber an edit the
   // user already made on this clip (tracked by _ioTouched). Keyed on media.id so a
   // clip-switch resets, fixing the old bug where marks leaked across clips / were lost.
+  // The clip id and values are bound when the write is scheduled (not when the
+  // timer fires) — see inoutWriter.js for the cross-clip clobber this prevents.
+  const _ioWriter = createInOutWriter(350)
+  onDestroy(() => _ioWriter.flush())
   let _ioLoadedId = null
   let _ioTouched = false
   $: _hydrateInOut(media && media.id, inPoint, outPoint)
   function _hydrateInOut(id, ip, op) {
     if (id == null) return
     if (id !== _ioLoadedId) {
+      // Land any still-debounced mark on the clip it was made on BEFORE the
+      // marks are reset for the new clip (audit N1).
+      _ioWriter.flush()
       _ioLoadedId = id
       _ioTouched = false
       inSec = ip ?? null
@@ -120,12 +129,10 @@
   }
   // Debounced persist — waveform marker drags fire onTrim rapidly, so coalesce the
   // writes; marking the clip as touched locks out further auto-hydration.
-  let _ioTimer = null
   function _persistInOut() {
     _ioTouched = true
     if (!onInOut) return
-    if (typeof clearTimeout !== 'undefined') clearTimeout(_ioTimer)
-    _ioTimer = setTimeout(() => onInOut(inSec, outSec), 350)
+    _ioWriter.schedule(onInOut, media && media.id, inSec, outSec)
   }
   // When frameExact, mark at the exact frame boundary (curFrame from rVFC),
   // expressed back in seconds so the ?in_s/out_s export contract is unchanged —

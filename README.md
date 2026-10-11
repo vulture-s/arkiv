@@ -351,7 +351,7 @@ python offload.py --watch --dst /Volumes/Backup # auto-offload on card insert
 
 # Auto-watch a folder for new media (ingest)
 python watch.py /path/to/footage
-python watch.py ~/Movies/rushes --interval 10
+python watch.py ~/Movies/rushes --poll-interval 10
 
 # API search (requires server running)
 # Linux / macOS / Git Bash

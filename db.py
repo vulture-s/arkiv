@@ -1442,7 +1442,17 @@ def list_trash() -> list:
             "SELECT id, media_id, filename, original_path, trash_path, "
             "deleted_at, expires_at FROM trash ORDER BY deleted_at DESC"
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        # size_bytes lets the purge confirmation say how much is about to be
+        # permanently deleted (None when the original is gone / metadata-only).
+        try:
+            d["size_bytes"] = Path(d["trash_path"]).stat().st_size if d.get("trash_path") else None
+        except OSError:
+            d["size_bytes"] = None
+        out.append(d)
+    return out
 
 
 def purge_trash(ttl_days: int = 30) -> int:
@@ -1451,6 +1461,11 @@ def purge_trash(ttl_days: int = 30) -> int:
     import datetime as _dt
     import os as _os
     import shutil as _shutil
+    # A negative TTL put the cutoff in the FUTURE — i.e. "purge everything",
+    # spelled in a way nobody would read as that (audit 2026-10-09). 0 is the
+    # explicit "everything" and the UI asks for confirmation first.
+    if ttl_days is None or int(ttl_days) < 0:
+        raise ValueError("ttl_days must be >= 0 (0 = purge everything)")
     cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=ttl_days)).isoformat()
     purged = 0
     with get_conn() as conn:
@@ -1471,6 +1486,64 @@ def purge_trash(ttl_days: int = 30) -> int:
             conn.execute("DELETE FROM trash WHERE id=?", (r["id"],))
             purged += 1
     return purged
+
+
+_REMOVABLE_PREFIXES = ("/Volumes/", "/mnt/", "/media/", "/run/media/")
+
+
+def _ismount(path) -> bool:
+    import os as _os
+    try:
+        return _os.path.ismount(_os.path.realpath(str(path)))  # /Volumes/Macintosh HD → /
+    except OSError:
+        return False
+
+
+def storage_status(resolved: str) -> dict:
+    """Is the storage a (missing) media file lives on actually present?
+
+    Walks up to the nearest EXISTING ancestor, then up to the mount point that
+    holds it — no fixed path depth (#499 review C1: the old /media/<user>/<name>
+    rule turned the repo's own docker-compose layout, media bind-mounted at
+    /media, into "never prunable", and missed /mnt/nas/share-style mounts).
+
+    → {"root": str, "available": bool, "reason": str|None}
+      * unavailable "volume not mounted": the path sits under /Volumes, /mnt,
+        /media or /run/media but its nearest existing ancestor lives on the
+        system root mount — i.e. the volume is missing, or only a stale empty
+        mount-point folder is left (macOS leaves /Volumes/NAS behind).
+      * unavailable "drive not present": no ancestor exists at all (a Windows
+        drive letter / UNC share that is gone).
+      * available otherwise; root = the mount point, anchor = the nearest
+        existing ancestor folder (used by prune's mass-missing hold-back)."""
+    import os as _os
+    p = Path(resolved)
+    ancestor = p.parent
+    while not ancestor.exists():
+        if ancestor.parent == ancestor:
+            return {"root": p.anchor or str(ancestor), "available": False, "reason": "drive not present"}
+        ancestor = ancestor.parent
+    mount = ancestor
+    while not _ismount(mount) and mount.parent != mount:
+        mount = mount.parent
+    posix = p.as_posix()
+    prefix = next((pre for pre in _REMOVABLE_PREFIXES if posix.startswith(pre)), None)
+    if prefix is not None:
+        system_root = Path(_os.path.realpath(mount)) == Path(_os.path.realpath("/"))
+        if system_root:
+            # Report the volume-level path: first component under the prefix,
+            # one deeper for the per-user layouts (/run/media/<user>/<vol>, and
+            # desktop /media/<user>/<vol> when that user folder exists).
+            parts = p.parts
+            n = len(Path(prefix).parts) + 1
+            if prefix == "/run/media/" or (
+                    prefix == "/media/" and len(parts) > n + 1
+                    and Path(*parts[:n]).is_dir() and not _ismount(Path(*parts[:n]))
+                    and any(Path(*parts[:n]).iterdir())):
+                n += 1
+            root = str(Path(*parts[:n])) if len(parts) > n else str(p.parent)
+            return {"root": root, "available": False, "reason": "volume not mounted"}
+    return {"root": str(mount), "available": True, "reason": None, "anchor": str(ancestor)}
 
 
 def iter_missing() -> list:
@@ -1510,9 +1583,20 @@ def restore_trash(trash_id: int) -> str:
         src = row["trash_path"]
         if not src or not Path(src).exists():
             raise ValueError("trashed file missing: %s" % src)
-        dest_dir = Path(row["original_path"]).parent
-        if not dest_dir.exists():
-            dest_dir = PROJECT_ROOT / "media-in"
+        # Audit 2026-10-09 (HIGH): original_path is stored RELATIVE for in-root
+        # media (ingest's to_relative), so `Path(original_path).parent` resolved
+        # against the process cwd — which in the Tauri app is the bundled backend
+        # dir, not the project. The fallback then hit an undefined `PROJECT_ROOT`
+        # (this module only has `_config`) → NameError → 500 on every restore.
+        # Resolve through resolve_path (same as stream/delete) and always hand the
+        # caller an ABSOLUTE destination for the re-ingest.
+        try:
+            original = Path(resolve_path(row["original_path"] or ""))
+        except ValueError:
+            original = None  # escapes the root (poisoned row) → media-in
+        dest_dir = original.parent if (original is not None and row["original_path"]) else None
+        if dest_dir is None or not dest_dir.is_absolute() or not dest_dir.exists():
+            dest_dir = Path(_config.PROJECT_ROOT).resolve() / "media-in"
             dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / row["filename"]
         # don't clobber an existing file with the same name
