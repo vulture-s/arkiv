@@ -5,7 +5,7 @@
 # silently break a fresh install. Bump deliberately after testing.
 fastapi>=0.140.6
 uvicorn>=0.52.1
-pydantic>=2.0,<3
+pydantic>=2.13.5,<3
 chromadb>=1.0,<2
 # upload endpoint (routers/ingest.py: UploadFile = File(...)) needs this at
 # import/collection time — a fresh install without it dies on import even
