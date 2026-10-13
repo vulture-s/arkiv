@@ -248,6 +248,46 @@ def shoot_date_facets(
     return db.get_shoot_date_facets()
 
 
+def _attach_match_times(items, semantic, q):
+    """Set ``match_start_s`` on each page item whose hit lives in the transcript:
+    where the matched chunk begins (semantic) or where the query first appears
+    (keyword). Absent when the hit is in tags/frames/filename, or the time cannot
+    be placed with confidence — the UI then just opens the clip at 0, as before.
+    One query for the page; never fails the search."""
+    wanted = {}
+    for rec in items:
+        sem = semantic.get(rec["id"])
+        if sem is not None:
+            if sem.get("chunk_type") == "transcript" and sem.get("excerpt"):
+                wanted[rec["id"]] = sem["excerpt"]
+        elif q:
+            wanted[rec["id"]] = q
+    if not wanted:
+        return
+    try:
+        import transcript_time
+        ids = list(wanted)
+        with db.get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, transcript, segments_json FROM media WHERE id IN ({0})".format(
+                    ",".join("?" * len(ids))),
+                ids,
+            ).fetchall()
+        times = {}
+        for row in rows:
+            r = dict(row)
+            t = transcript_time.locate_text(r.get("transcript") or "", r.get("segments_json"),
+                                            wanted[r["id"]])
+            if t is not None:
+                times[r["id"]] = round(t, 2)
+    except Exception as exc:  # a timestamp is a convenience; the results must still return
+        _logging.getLogger(__name__).warning("match time lookup failed: %s", exc)
+        return
+    for rec in items:
+        if rec["id"] in times:
+            rec["match_start_s"] = times[rec["id"]]
+
+
 @router.get("/api/media")
 def list_media(
     offset: int = 0,
@@ -363,7 +403,8 @@ def list_media(
                 if mid in seen:
                     continue
                 seen.add(mid)
-                semantic[mid] = {"score": r.get("score", 0), "excerpt": r.get("excerpt", "")}
+                semantic[mid] = {"score": r.get("score", 0), "excerpt": r.get("excerpt", ""),
+                                 "chunk_type": r.get("chunk_type")}
         except vdb.EmbeddingDimensionMismatch as exc:
             # Don't silently SQL-degrade a dim mismatch — log it and surface a hint
             # so the operator knows semantic search is off until they rebuild.
@@ -460,6 +501,7 @@ def list_media(
         tags_by_id = _get_tags_bulk([rec["id"] for rec in items])
         for rec in items:
             rec["tags"] = tags_by_id.get(rec["id"], [])
+        _attach_match_times(items, semantic, q)
         resp = {"items": items, "total": total, "search": True}
         if parsed is not None:
             resp["parsed"] = parsed

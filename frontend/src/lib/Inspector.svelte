@@ -7,6 +7,7 @@
   import { diagnosePlaybackFailure, playbackFailureMessage } from './streamDiag.js'
   import { onDestroy } from 'svelte'
   import { createInOutWriter } from './inoutWriter.js'
+  import { pendingSeek } from './matchTime.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -189,7 +190,20 @@
   function onLoadedMeta() {
     if (playerEl && playerEl.duration) mediaDuration = playerEl.duration
     if (frameExact) { curFrame = 0; trackFrame() }
+    applyStartAt()
   }
+  // Deep-link from a search hit: {id, t} — open the clip at the matched second.
+  // Seeks only (no autoplay), once per link, and only for that clip.
+  export let startAt = null
+  let startApplied = null
+  function applyStartAt() {
+    const s = pendingSeek(startAt, media && media.id, startApplied)
+    if (!s || !playerEl || !playerEl.duration) return
+    playerEl.currentTime = Math.min(s.t, playerEl.duration)
+    startApplied = s.key
+  }
+  // the clip may already be loaded when the link arrives (same clip re-opened)
+  $: if (startAt && media) applyStartAt()
   const _tc = (s) => {
     if (s == null) return '—'
     s = Math.max(0, Math.round(s))
