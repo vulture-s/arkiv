@@ -1015,6 +1015,94 @@ _VISION_CONSECUTIVE_HALT = 20
 _INGEST_CONSECUTIVE_HALT = int(os.getenv("ARKIV_INGEST_HALT_STREAK", "5") or 0)
 
 
+# issue #393: a batch silently lost one file and still exited 0 — the only way to
+# notice was `comm` between the disk listing and `media.filename`. The exit code
+# answers "did it crash", not "did it finish", and BENCHMARK SUMMARY only lists the
+# files that WERE processed, so a file that fell through every counter left no
+# trace at all. This report closes that gap with output only: every queued file
+# must land in exactly one bucket, and every file we claim is in the library is
+# checked against the DB itself rather than against our own counters.
+# NB: deliberately does NOT change the exit code — that is a behaviour change for
+# cron / watch.py callers and is left for a separate decision.
+_RECONCILE_BUCKETS = ("ingested", "already-indexed", "moved", "failed")
+_RECONCILE_NAME_CAP = 50
+
+
+def _reconcile_report(queued, outcomes, known_paths, not_reached=(),
+                      deferred=0, prefiltered_known=0, frame_skips=(),
+                      skip_failed=False, name_cap=_RECONCILE_NAME_CAP):
+    """Return the end-of-ingest reconciliation as a list of printable lines.
+
+    queued            : the files the Phase-1 loop was given (Path objects)
+    outcomes          : {str(path): bucket} for every file the loop finished with
+    known_paths       : set of `media.path` values read from the DB AFTER the run
+    not_reached       : files after an [INGEST HALTED] break
+    deferred          : files found but left out by --limit
+    prefiltered_known : already-indexed files dropped before the loop (--limit path)
+    frame_skips       : [(filename, n_failed, n_frames)] from Phase-2 vision
+    skip_failed       : whether --skip-failed was on (labels the frame-skip list)
+
+    Pure: no I/O, so it can be tested without running a batch.
+    """
+    counts = {b: 0 for b in _RECONCILE_BUCKETS}
+    by_bucket = {b: [] for b in _RECONCILE_BUCKETS}
+    unaccounted, missing_in_db = [], []
+    not_reached_set = {str(p) for p in not_reached}
+    for p in queued:
+        key = str(p)
+        bucket = outcomes.get(key)
+        if bucket is None:
+            if key not in not_reached_set:
+                unaccounted.append(p)
+            continue
+        counts[bucket] = counts.get(bucket, 0) + 1
+        by_bucket.setdefault(bucket, []).append(p)
+        # A counter is our own claim; the DB row is the fact. Check every file we
+        # say is in the library — including SKIP and MOVED, whose "already there"
+        # verdict came from a snapshot taken before the batch started.
+        if bucket != "failed" and not any(
+                v in known_paths for v in db.dedup_path_variants(key)):
+            missing_in_db.append(p)
+
+    scanned = len(queued) + deferred + prefiltered_known
+    head = ("Reconcile: scanned={0}  ingested={1}  already-indexed={2}  moved={3}  "
+            "failed={4}").format(scanned, counts["ingested"],
+                                 counts["already-indexed"] + prefiltered_known,
+                                 counts["moved"], counts["failed"])
+    if not_reached:
+        head += "  not-reached={0}".format(len(not_reached))
+    if deferred:
+        head += "  deferred(--limit)={0}".format(deferred)
+    problems = len(unaccounted) + len(missing_in_db) + counts["failed"] + len(not_reached)
+    head += "  →  " + ("✓ every file accounted for" if problems == 0
+                         else "⚠ {0} file(s) need attention".format(problems))
+    lines = [head]
+
+    def _names(label, paths):
+        if not paths:
+            return
+        lines.append("  {0} ({1}):".format(label, len(paths)))
+        for p in paths[:name_cap]:
+            lines.append("    {0}".format(Path(p).name))
+        if len(paths) > name_cap:
+            lines.append("    … and {0} more".format(len(paths) - name_cap))
+
+    _names("⚠ unaccounted — scanned but in no bucket", unaccounted)
+    _names("⚠ counted as in the library but no DB row", missing_in_db)
+    _names("failed", by_bucket["failed"])
+    _names("not reached (ingest halted)", list(not_reached))
+    if frame_skips:
+        label = ("--skip-failed skipped vision frames in" if skip_failed
+                 else "vision frames left empty in")
+        lines.append("  {0} {1} file(s) (re-run --vision-only to retry):".format(
+            label, len(frame_skips)))
+        for fn, n, tot in list(frame_skips)[:name_cap]:
+            lines.append("    {0}: {1}/{2} frames".format(fn, n, tot))
+        if len(frame_skips) > name_cap:
+            lines.append("    … and {0} more".format(len(frame_skips) - name_cap))
+    return lines
+
+
 def _ingest_halt_decision(consecutive_failed, threshold=None):
     """Decide whether Phase 1 should halt after `consecutive_failed` whole files
     failed in a row. Returns (should_halt, reason); reason is "" when continuing.
@@ -1222,10 +1310,14 @@ def _run_vision_only(args):
     if failed_files:
         total = sum(n for _, n, _ in failed_files)
         print(f"\n⚠ {total} frame(s) across {len(failed_files)} file(s) left empty (re-run --vision-only to retry just those):")
-        for fn, n, tot in failed_files[:20]:
+        # issue #393: when --skip-failed is what let the run continue past these,
+        # every name is printed — a skipped file must be findable from the log
+        # alone, not only the first 20 of them.
+        _cap = len(failed_files) if skip_failed else 20
+        for fn, n, tot in failed_files[:_cap]:
             print(f"    {fn}: {n}/{tot}")
-        if len(failed_files) > 20:
-            print(f"    … and {len(failed_files) - 20} more file(s)")
+        if len(failed_files) > _cap:
+            print(f"    … and {len(failed_files) - _cap} more file(s)")
     if not halted:
         suffix = f", {len(failed_files)} with skipped frames." if failed_files else "."
         print(f"\nVision-only done. {ok} file(s) fully patched{suffix}")
@@ -2310,13 +2402,19 @@ def main():
         # Windows (backslash) DB row isn't re-ingested as a duplicate (round-5 #9).
         return any(v in _known_paths for v in db.dedup_path_variants(str(p)))
 
+    # issue #393 reconciliation: files the --limit path drops before the loop
+    # still have to be counted, or "scanned" would silently shrink to the queue.
+    prefiltered_known, deferred = 0, 0
     if args.limit and not args.refresh:
         # Filter out already-processed files before applying limit
         new_files = [f for f in files if not _is_known(f)]
         skipped_count = total - len(new_files)
         files = new_files[:args.limit]
+        prefiltered_known = skipped_count
+        deferred = len(new_files) - len(files)
         print(f"Found {total} media files ({skipped_count} already indexed). Processing {len(files)}...\n")
     elif args.limit:
+        deferred = max(0, len(files) - args.limit)
         files = files[:args.limit]
         print(f"Found {total} media files. Processing {len(files)}...\n")
     else:
@@ -2325,6 +2423,8 @@ def main():
     import time as _time
 
     ok, skipped, failed, moved = 0, 0, 0, 0
+    outcomes = {}  # issue #393: str(path) -> bucket, one entry per file the loop finished
+    not_reached = []  # files after an [INGEST HALTED] break
     consecutive_ingest_fail = 0  # whole-file failures in a row → drive-gone halt
     refreshed_ids = set()  # already-indexed ids re-processed this run → force re-embed
     bench_log = []  # per-file benchmark records
@@ -2342,6 +2442,7 @@ def main():
         if already and not args.refresh:
             print(f"[{i}/{len(files)}] SKIP {f.name}")
             skipped += 1
+            outcomes[str(f)] = "already-indexed"
             consecutive_ingest_fail = 0  # a readable skip proves the drive is alive
             continue
 
@@ -2360,6 +2461,7 @@ def main():
                     db.repoint_media_path(mrow["id"], str(f))
                     print(f"[{i}/{len(files)}] MOVED {f.name} → re-pointed id={mrow['id']}")
                     moved += 1
+                    outcomes[str(f)] = "moved"
                     consecutive_ingest_fail = 0  # a readable move proves the drive is alive
                     continue
 
@@ -2455,14 +2557,17 @@ def main():
                 })
                 print(f"  [{file_elapsed:.1f}s | {dur/max(file_elapsed,1):.1f}x RT]")
                 ok += 1
+                outcomes[str(f)] = "ingested"
                 consecutive_ingest_fail = 0  # a healthy read resets the drive-gone streak
                 _emit_progress({"t": "file", "index": i, "total": len(files), "file": f.name, "status": "phase1_done"})
             else:
                 failed += 1
+                outcomes[str(f)] = "failed"
                 consecutive_ingest_fail += 1
         except Exception as e:
             print(f" [ERROR: {e}]")
             failed += 1
+            outcomes[str(f)] = "failed"
             consecutive_ingest_fail += 1
 
         # Phase-1 counterpart to the vision halt: an unbroken run of whole-file
@@ -2477,6 +2582,7 @@ def main():
                 "and re-run — already-indexed files skip.".format(
                     _reason, ok, failed, len(files) - i)
             )
+            not_reached = list(files[i:])
             break
 
     # ── Phase 2: Vision (unload LLM first to free VRAM) ───────────────────
@@ -2651,6 +2757,20 @@ def main():
     _moved_suffix = f"  moved={moved}" if moved else ""
     print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}{_moved_suffix}")
     print(f"DB: {db.get_db_path()}")
+    # issue #393: one line that says whether every scanned file is accounted for,
+    # checked against the DB as it is NOW (not the pre-batch snapshot). Output only:
+    # the exit code below is unchanged. A failure to read the DB must not turn a
+    # finished ingest into a crash, so it degrades to a visible note.
+    try:
+        with db.get_conn() as conn:
+            _known_after = {r[0] for r in conn.execute("SELECT path FROM media").fetchall()}
+        for _line in _reconcile_report(
+                files, outcomes, _known_after, not_reached=not_reached,
+                deferred=deferred, prefiltered_known=prefiltered_known,
+                frame_skips=vision_failed_files, skip_failed=skip_failed):
+            print(_line)
+    except Exception as exc:  # noqa: BLE001 — report-only; never fail the run on it
+        print(f"Reconcile: unavailable ({type(exc).__name__}: {exc})")
 
     # Auto-build the vector index so semantic search + chat work immediately.
     # ingest writes SQLite records; embeddings live in ChromaDB and were a
