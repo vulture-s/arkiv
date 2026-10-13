@@ -357,7 +357,7 @@ def _extract_scene_persistent(
     cmd = [
         config.FFMPEG_PATH, "-i", video_path,
         "-vf", "select='gt(scene,0.3)',showinfo",
-        "-vsync", "vfr", "-f", "null", "-"
+        "-fps_mode", "vfr", "-f", "null", "-"
     ]
     # Full-file scene-detect pass scales with clip length — bound it so one
     # bad file can't hang the whole batch; timeout falls back to fixed frames
