@@ -477,7 +477,7 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 ## For developers
 
-[ARCHITECTURE.md](ARCHITECTURE.md) (architecture overview) · [docs/api.md](docs/api.md) (API + Chat) · [docs/pipeline.md](docs/pipeline.md) (full pipeline) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
+[ARCHITECTURE.md](ARCHITECTURE.md) (architecture overview) · [docs/api.md](docs/api.md) (API + Chat) · [docs/pipeline.md](docs/pipeline.md) (full pipeline) · [BENCHMARK.md](BENCHMARK.md) (transcription speed, Mac MLX vs PC CUDA) · [docs/adr/](docs/adr/) (architecture decision records) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
