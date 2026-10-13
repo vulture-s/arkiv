@@ -15,6 +15,7 @@
   import Thumb from '../lib/Thumb.svelte'
   import { pushToast } from '../lib/toast.js'
   import { resolvedTheme } from '../lib/prefs.js'
+  import { resultHref, fmtMatchTime } from '../lib/matchTime.js'
 
   $: theme = $resolvedTheme
   let query = ''
@@ -155,6 +156,8 @@
       dur: fmtDur(it.duration_s),
       score: typeof it.score === 'number' ? it.score : null,
       matchType: it.match_type || null, // 'semantic' | 'text' — Direction 2 visibility
+      // where in the clip the hit is (transcript hits only); null → open at 0 as before
+      matchStart: typeof it.match_start_s === 'number' ? it.match_start_s : null,
       excerpt: it.excerpt || it.transcript || '',
       lang: it.lang || '',
       thumb: api.thumbUrlFromPath(it.thumbnail_path),
@@ -414,7 +417,7 @@
                 <svelte:element
                   this={g.openable ? 'a' : 'div'}
                   class="rrow" class:first={i === 0} class:readonly={!g.openable}
-                  href={g.openable ? `#/main-live?sel=${r.id}` : undefined}
+                  href={g.openable ? resultHref(r.id, r.matchStart) : undefined}
                 >
                   <div class="rthumb">
                     {#if r.thumb}
@@ -439,7 +442,7 @@
                         {#if !g.openable && r.lang}<span class="rtag">{r.lang}</span>{/if}
                       </div>
                     </div>
-                    {#if r.excerpt}<div class="snippet">{p.b}<span class="mark">{p.m}</span>{p.a}</div>{/if}
+                    {#if r.excerpt}<div class="snippet">{#if r.matchStart != null && r.matchStart >= 1}<span class="mtime" title="開啟後跳到這個時間點">▶ {fmtMatchTime(r.matchStart)}</span>{/if}{p.b}<span class="mark">{p.m}</span>{p.a}</div>{/if}
                   </div>
                    <div class="rscore">
                     {#if r.matchType}
@@ -506,6 +509,7 @@
   .rtop { display: flex; align-items: baseline; gap: 8px; }
   .rtags { display: flex; gap: 4px; }
   .rtag { font-family: var(--ak-mono); font-size: 9px; padding: 1px 4px; border: 1px solid var(--rule); color: var(--quiet); line-height: 1.2; }
+  .mtime { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--cyan); margin-right: 6px; }
   .snippet { margin-top: 3px; font-size: 12.5px; color: var(--ink-2); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mark { background: var(--invert); color: var(--invert-ink); padding: 0 2px; }
   .rscore { text-align: right; }
