@@ -411,7 +411,7 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 
 ## 開發者資訊
 
-[ARCHITECTURE.md](ARCHITECTURE.md)（架構總覽） · [docs/api.zh-TW.md](docs/api.zh-TW.md)（API + Chat） · [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)（完整 pipeline） · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
+[ARCHITECTURE.md](ARCHITECTURE.md)（架構總覽） · [docs/api.zh-TW.md](docs/api.zh-TW.md)（API + Chat） · [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)（完整 pipeline） · [BENCHMARK.md](BENCHMARK.md)（轉錄速度實測，Mac MLX vs PC CUDA） · [docs/adr/](docs/adr/)（架構決策紀錄） · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
 
 ## 授權
 
