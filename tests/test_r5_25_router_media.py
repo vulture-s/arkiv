@@ -24,6 +24,9 @@ _EXPECTED_ROUTES = {
     ("/api/media/facets/shoot-date", "GET"),
     ("/api/media", "GET"),
     ("/api/media/{media_id}", "GET"),
+    ("/api/media/{media_id}", "DELETE"),
+    ("/api/media/bulk-delete", "POST"),
+    ("/api/media/prune-missing", "POST"),
     ("/api/media/{media_id}/waveform", "GET"),
     ("/api/media/{media_id}/scenes", "GET"),
     ("/api/media/{media_id}/segments", "GET"),
@@ -50,7 +53,7 @@ def test_media_router_is_a_leaf_module():
     assert not re.search(r"^\s*from\s+server\b", src, re.M)
 
 
-def test_router_owns_exactly_the_22_media_routes():
+def test_router_owns_all_the_media_routes():
     import routers.media as rm
     pairs = {
         (r.path, m)
@@ -104,3 +107,28 @@ def test_media_routes_mounted_and_auth_guarded(server_module):
         assert c.get("/api/media/pool").status_code == 401
         # a bogus sibling path is a genuine 404 (nothing is over-matching)
         assert c.get("/api/mediazz").status_code == 404
+
+
+def test_media_detail_returns_manual_and_auto_tags(fastapi_client, sample_record, tmp_db):
+    """Regression: get_media_detail must surface BOTH manual (user-added) and
+    auto (vision) tags. The old code filtered every tag against the auto
+    frame-tag top-N set, which silently dropped manual tags (and any auto tag
+    not in the top-N) from the inspector."""
+    import db as dbmod
+
+    rec = sample_record()
+    dbmod.upsert(rec)
+    with dbmod.get_conn() as conn:
+        mid = conn.execute(
+            "SELECT id FROM media WHERE path=?", (rec["path"],)
+        ).fetchone()["id"]
+    dbmod.add_tag(mid, "manual_tag", source="manual")
+    dbmod.add_tag(mid, "auto_tag", source="auto")
+
+    r = fastapi_client.get(f"/api/media/{mid}")
+    assert r.status_code == 200
+    tags = r.json().get("tags", [])
+    sources = {t.get("source") for t in tags}
+    # Both a hand-added (manual) and a vision (auto) tag must reach the UI.
+    assert "manual" in sources
+    assert "auto" in sources

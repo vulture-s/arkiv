@@ -84,3 +84,33 @@ def test_the_windows_only_code_is_actually_compiled_somewhere():
     ci = _CI.read_text(encoding="utf-8")
     assert "tauri-check-windows" in ci
     assert "runs-on: windows-latest" in ci
+
+
+# ── exit cleanup ─────────────────────────────────────────────────────────────
+# Found by actually quitting the packaged app rather than reading the code: with
+# only `ExitRequested`, an Apple Event quit (⌘Q, `osascript -e 'quit app "arkiv"'`)
+# never reached the cleanup at all, and every such quit left a uvicorn holding its
+# port. Measured before the fix: `pgrep` finds the backend after the app is gone.
+
+
+def test_cleanup_runs_on_both_exit_events():
+    """`Exit` is the last event before the process ends and fires on every path;
+    `ExitRequested` alone misses the Apple Event route."""
+    src = _src()
+    assert "RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit" in src, (
+        "the quit path that leaves orphans is the one not handled"
+    )
+
+
+def test_the_children_are_reaped_not_just_signalled():
+    """kill() without wait() leaves a zombie for the life of the parent."""
+    src = _src()
+    tail = src.split(".run(|app_handle, event|", 1)[1]
+    assert tail.count("child.kill()") == 2
+    assert tail.count("child.wait()") == 2
+
+
+def test_taking_the_child_out_of_state_keeps_it_idempotent():
+    """Both events can fire on one quit; the second must find nothing to kill."""
+    tail = _src().split(".run(|app_handle, event|", 1)[1]
+    assert tail.count(".lock().unwrap().take()") == 2

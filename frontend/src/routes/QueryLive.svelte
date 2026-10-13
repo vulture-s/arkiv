@@ -24,7 +24,7 @@
     { key: 'content_type', label: 'Content type', ops: ['contains', 'eq'], kind: 'text' },
     { key: 'lang', label: 'Language', ops: ['eq'], kind: 'text' },
     { key: 'rating', label: 'Rating（評分）', ops: ['eq'], kind: 'enum', options: ['good', 'ng', 'review', 'unrated'] },
-    { key: 'media_type', label: 'Media type', ops: ['eq'], kind: 'enum', options: ['video', 'audio'] },
+    { key: 'media_type', label: 'Media type', ops: ['eq'], kind: 'enum', options: ['video', 'audio', 'image'] },
     { key: 'duration', label: 'Duration（秒）', ops: ['range'], kind: 'range' },
     { key: 'iso', label: 'ISO', ops: ['range'], kind: 'range' },
     { key: 'date', label: 'Processed date', ops: ['range'], kind: 'daterange' },

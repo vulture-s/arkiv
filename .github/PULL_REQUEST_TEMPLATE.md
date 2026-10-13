@@ -7,6 +7,11 @@
 <!-- e.g. `pytest -q` locally, ingested a file and searched, checked the UI at 1440px.
      Screenshots welcome for anything visual. -->
 
+<!-- Paste the last line of `pytest -q` here if you ran it (e.g. "1788 passed, 8 skipped").
+     Couldn't run it? Say that instead — it's a fine answer and we'll run it for you.
+     Heads-up: adding a route/setting/version string trips a structural invariant test —
+     see CONTRIBUTING.md "Structural invariants". -->
+
 ## Checklist
 
 - [ ] I've read the [contributor terms](../CONTRIBUTING.md#contributor-terms) and my

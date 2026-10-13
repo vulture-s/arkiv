@@ -25,6 +25,8 @@
   // { name, path, items:[…], count, openable, live }
   let groups = []
   let total = 0
+  let offset = 0 // current-project search cursor (how many rows already loaded)
+  let fedPerLimit = 50 // federation per-project cap; "Show more" raises it
   $: shown = groups.reduce((a, g) => a + g.items.length, 0)
   // Derived from the project registry when available; neutral label otherwise,
   // so results outside the demo project aren't mislabeled (Codex review P3).
@@ -92,6 +94,7 @@
     { key: 'video', label: 'Video' },
     { key: 'audio', label: 'Audio' },
   ]
+  const PAGE = 200 // rows per search page; "Show more" loads the next page via offset
 
   const fmtDur = (s) => {
     s = Math.round(s || 0)
@@ -140,52 +143,76 @@
   // rows. Each run captures its seq and bails on assignment if superseded.
   let _searchSeq = 0
 
-  async function runCurrent(q, mySeq) {
-    const params = { q, limit: 40 }
+  async function runCurrent(q, mySeq, append = false) {
+    const params = { q, limit: PAGE, offset: append ? offset : 0 }
     if (mediaType !== 'all') params.media_type = mediaType
     const r = await api.getMedia(params)
     if (mySeq !== _searchSeq) return  // superseded by a newer search
-    total = r.total ?? (r.items || []).length
-    const items = (r.items || []).map((it) => ({
+    const page = r.items || []
+    const items = page.map((it) => ({
       id: it.id,
       name: it.filename || `#${it.id}`,
       dur: fmtDur(it.duration_s),
       score: typeof it.score === 'number' ? it.score : null,
+      matchType: it.match_type || null, // 'semantic' | 'text' — Direction 2 visibility
       excerpt: it.excerpt || it.transcript || '',
       lang: it.lang || '',
       thumb: api.thumbUrlFromPath(it.thumbnail_path),
       tags: (it.tags || []).map((t) => t.name).slice(0, 4),
     }))
-    groups = [{ name: projectName, path: '', items, count: total, openable: true, live: true }]
+    total = r.total ?? (offset + items.length)
+    if (append) offset += items.length
+    else offset = items.length
+    if (append && groups.length) {
+      const g = groups[0]
+      g.items = [...g.items, ...items]
+      groups = [...groups]
+    } else {
+      groups = [{ name: projectName, path: '', items, count: total, openable: true, live: true }]
+    }
     fedErrors = []
     projectsQueried = 0
     projectsFailed = 0
   }
 
   // Federated search (/api/search/all) → one group per project, read-only rows.
-  async function runFederated(q, mySeq) {
-    const r = await api.search(q, { limit: 40 })
+  // Federation has no offset, so "Show more" raises per_project_limit (capped) and
+  // re-fans-out — simpler than incremental cursors across N remote DBs.
+  async function runFederated(q, mySeq, append = false) {
+    const perLimit = append ? Math.min(fedPerLimit + 50, 100) : fedPerLimit
+    const r = await api.search(q, { limit: 200, per_project_limit: perLimit })
     if (mySeq !== _searchSeq) return  // superseded by a newer search
     total = r.total_results ?? (r.items || []).length
+    if (append) fedPerLimit = Math.min(fedPerLimit + 50, 100)
     projectsQueried = r.projects_queried ?? 0
     projectsFailed = r.projects_failed ?? 0
     // The "no matching projects" preflight error means an empty registry — surface
     // it as guidance, not as a per-project failure row.
     fedErrors = (r.errors || []).filter((e) => e.stage !== 'preflight' || e.project_name)
-    const byProject = new Map()
-    for (const it of r.items || []) {
-      const name = it.project_name || '（未命名專案）'
-      if (!byProject.has(name)) byProject.set(name, { name, path: it.project_path || '', items: [], count: 0, openable: false, live: false })
-      byProject.get(name).items.push({
-        id: it.media_id,
-        name: it.filename || `#${it.media_id}`,
-        dur: fmtDur(it.duration_s),
-        score: typeof it.score === 'number' ? it.score : null,
-        excerpt: it.excerpt || '',
-        lang: it.lang || '',
-        thumb: null, // cross-project: this server can't serve another project's thumbs
-        tags: [],
-      })
+    const incoming = (r.items || []).map((it) => ({
+      id: it.media_id,
+      name: it.filename || `#${it.media_id}`,
+      dur: fmtDur(it.duration_s),
+      score: typeof it.score === 'number' ? it.score : null,
+      matchType: it.match_type || null,
+      project_name: it.project_name || '（未命名專案）',
+      excerpt: it.excerpt || '',
+      lang: it.lang || '',
+      thumb: null, // cross-project: this server can't serve another project's thumbs
+      tags: [],
+    }))
+    let byProject
+    if (append && groups.length) {
+      byProject = new Map(groups.map((g) => [g.name, g]))
+    } else {
+      byProject = new Map()
+    }
+    for (const it of incoming) {
+      if (!byProject.has(it.project_name)) {
+        byProject.set(it.project_name, { name: it.project_name, path: it.project_path || '', items: [], count: 0, openable: false, live: false })
+        if (!groups.some((g) => g.name === it.project_name)) groups = [...groups, byProject.get(it.project_name)]
+      }
+      byProject.get(it.project_name).items.push(it)
     }
     for (const g of byProject.values()) g.count = g.items.length
     groups = [...byProject.values()]
@@ -194,6 +221,8 @@
   async function runSearch() {
     const q = query.trim()
     if (!q) { _searchSeq++; state = 'idle'; groups = []; total = 0; fedErrors = []; return }
+    offset = 0
+    fedPerLimit = 50
     const mySeq = ++_searchSeq  // round-5 #36: claim this run's sequence
     state = 'loading'
     syncHash()
@@ -203,6 +232,26 @@
       else await runCurrent(q, mySeq)
       if (mySeq !== _searchSeq) return  // a newer search superseded us — don't flip state
       elapsedMs = Math.round(performance.now() - t0)
+      state = 'ok'
+    } catch (e) {
+      if (mySeq !== _searchSeq) return
+      state = 'error'
+      err = e.message + (e.body ? ' · ' + JSON.stringify(e.body) : '')
+    }
+  }
+
+  // "Show more" — load the next page without disturbing the live search seq
+  // guard (a stale in-flight run still bails on assignment). Reuses the same
+  // monotonic seq so a new typed query can't be clobbered by this fetch either.
+  async function loadMore() {
+    const q = query.trim()
+    if (!q || state === 'loading' || shown >= total) return
+    const mySeq = ++_searchSeq
+    state = 'loading'
+    try {
+      if (crossProject) await runFederated(q, mySeq, true)
+      else await runCurrent(q, mySeq, true)
+      if (mySeq !== _searchSeq) return
       state = 'ok'
     } catch (e) {
       if (mySeq !== _searchSeq) return
@@ -392,7 +441,10 @@
                     </div>
                     {#if r.excerpt}<div class="snippet">{p.b}<span class="mark">{p.m}</span>{p.a}</div>{/if}
                   </div>
-                  <div class="rscore">
+                   <div class="rscore">
+                    {#if r.matchType}
+                      <Mono dim style="font-size:9px;display:block;letter-spacing:0.06em;{r.matchType === 'semantic' ? 'color:var(--ink-2);' : 'color:var(--cyan);'}">{r.matchType === 'semantic' ? '語意' : '關鍵字'}</Mono>
+                    {/if}
                     {#if r.score != null}
                       <Mono style="font-size:13px;font-weight:600;color:var(--ink);">{r.score.toFixed(2)}</Mono>
                       <Mono dim style="font-size:9px;display:block;margin-top:1px;letter-spacing:0.08em;">SCORE</Mono>
@@ -406,6 +458,12 @@
             </div>
           </section>
         {/each}
+      {/if}
+
+      {#if state === 'ok' && shown < total}
+        <div class="loadmorewrap">
+          <button class="ak-btn" on:click={loadMore}>顯示更多（{shown}/{total}）</button>
+        </div>
       {/if}
     </div>
   </div>
@@ -451,6 +509,8 @@
   .snippet { margin-top: 3px; font-size: 12.5px; color: var(--ink-2); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mark { background: var(--invert); color: var(--invert-ink); padding: 0 2px; }
   .rscore { text-align: right; }
+  .loadmorewrap { display: flex; justify-content: center; padding: 18px 0 8px; }
+  .loadmorewrap .ak-btn { padding: 8px 18px; font-size: 12px; }
   .raction { display: flex; justify-content: flex-end; }
   .openbtn { padding: 5px 9px; }
 </style>

@@ -67,6 +67,68 @@ def _frame_vf_args(video_path: str) -> List[str]:
     return ["-vf", _NORMAL_SCALE]
 
 
+_animated_gif_cache: dict = {}
+
+
+def _is_animated_gif(video_path: str) -> bool:
+    """True for a `.gif` carrying more than one frame.
+
+    `.gif` is the one extension in STILL_RASTER_EXT that does not decide the
+    question. png/jpg/webp are stills; a gif is a still or a short silent movie
+    and only the file knows which. Same shape as `_is_360_dualfisheye`: ext gate,
+    then ffprobe, cached by (path, mtime, size) so a replaced file re-probes and a
+    failed probe is not cached.
+
+    Falls back to "not animated" on any probe failure — that is the old
+    behaviour, so a broken ffprobe degrades to the single-frame path instead of
+    seeking into something that might not support it.
+    """
+    if Path(video_path).suffix.lower() != ".gif":
+        return False
+    try:
+        st = os.stat(video_path)
+        key = (os.path.abspath(video_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return False
+    if key in _animated_gif_cache:
+        return _animated_gif_cache[key]
+    try:
+        out = subprocess.run(
+            [config.FFPROBE_PATH, "-v", "error", "-select_streams", "v:0",
+             "-count_frames", "-show_entries", "stream=nb_read_frames",
+             "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        if out.returncode != 0:
+            return False  # transient/failed probe — don't cache, retry next time
+        animated = int((out.stdout.strip() or "0").splitlines()[0]) > 1
+    except Exception:
+        return False  # don't cache transient failure
+    _animated_gif_cache[key] = animated
+    return animated
+
+
+def _is_still_raster(video_path: str) -> bool:
+    """True for a single-frame raster still (png/jpg/jpeg/webp/gif), which must be
+    read whole rather than seeked into.
+
+    Deliberately keyed on the extension, NOT on the probed duration: ffprobe hands
+    back `duration=0.040000` for a `.jpg` (mjpeg, one frame at an assumed 25fps)
+    and `N/A` → 0.0 for `.png` / `.webp`, so the old `duration_s <= 0` test called
+    every JPEG a video.
+
+    🔴 With one carve-out. The extension answers the question for every member of
+    the set except `.gif`, and treating an ANIMATED gif as a still collapsed it to
+    a single frame at t=0 — one thumbnail, one visual-tag pass, and a 30-frame
+    clip indexed as though it were its own first frame. Measured: `-ss` works
+    perfectly well on an animated gif (three seek positions, three different
+    frames), so nothing about gif ever needed this path. The original defect was
+    mjpeg-specific; `.gif` was swept in with it.
+    """
+    if Path(video_path).suffix.lower() not in mediatypes.STILL_RASTER_EXT:
+        return False
+    return not _is_animated_gif(video_path)
+
+
 def _safe_stem(video_path: str) -> str:
     """Thumbnail filename stem scoped by a hash of the absolute source path.
 
@@ -140,8 +202,19 @@ def _extract_frame_to(video_path: str, t: float, out: Path) -> bool:
     # ("Unable to choose an output format"). The <pid> keeps concurrent refreshes of
     # the same output from clobbering each other's temp.
     tmp = out.with_name("{0}.tmp.{1}{2}".format(out.stem, os.getpid(), out.suffix))
+    # A still has exactly one frame, so there is nothing to seek to. The seek is
+    # not merely redundant, it is destructive: `-ss` before `-i` on a single-frame
+    # mjpeg makes ffmpeg exit 0 having encoded nothing ("Output file is empty"),
+    # which _run_ffmpeg then correctly rejects as a 0-byte result. It happens even
+    # at `-ss 0`, so no choice of `t` rescues it. That is why every .jpg big enough
+    # to be a real photo used to land with no thumbnail and no frames while
+    # .png / .webp came through fine. Omit the seek entirely for stills.
+    seek = [] if _is_still_raster(video_path) else ["-ss", str(t)]
+    # -noautorotate must precede -i: it is a demuxer option, so after the input
+    # it is silently ignored and the frame still comes out rotated.
+    norot = ["-noautorotate"] if getattr(config, "IGNORE_ROTATION", False) else []
     cmd = (
-        [config.FFMPEG_PATH, "-ss", str(t), "-i", video_path]
+        [config.FFMPEG_PATH] + norot + seek + ["-i", video_path]
         + _frame_vf_args(video_path)
         + ["-frames:v", "1", str(tmp), "-y"]
     )
@@ -150,6 +223,21 @@ def _extract_frame_to(video_path: str, t: float, out: Path) -> bool:
         return True
     tmp.unlink(missing_ok=True)
     return False
+
+
+_EOF_MARGIN_S = 0.05
+
+
+def _thumbnail_seek(duration_s: float) -> float:
+    """Seek position for the poster frame. Pure function, so it is testable
+    without ffmpeg or a real file.
+
+    Mid-point, floored at 1s (so short clips don't all show frame 0) and then
+    capped just short of EOF (so the floor can't push the seek past the end).
+    EOF_MARGIN keeps us off the exact last timestamp, which some containers
+    refuse to decode.
+    """
+    return min(max(duration_s * 0.5, 1.0), max(duration_s - _EOF_MARGIN_S, 0.0))
 
 
 def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -> Optional[str]:
@@ -167,7 +255,22 @@ def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -
     if not force and out.exists() and out.stat().st_size > 0:
         return str(out)
 
-    t = max(duration_s * 0.5, 1.0)
+    # Stills sample their only frame; videos get the mid-point (clamped to >=1s so
+    # very short clips don't all hit t=0). The still test is by extension, not by
+    # duration — see _is_still_raster for why a .jpg reports 0.04s.
+    #
+    # The >=1s floor needs an upper clamp too, or it seeks past EOF on sub-second
+    # clips: a 0.5s file computes 0.25s, gets raised to 1.0s, and ffmpeg returns
+    # "Nothing was written into output file" — so every clip shorter than ~1s had
+    # no thumbnail at all. Measured on A7520260906_0116.MP4 (0.5s): seek 1.0s →
+    # zero bytes, seek 0.25s → a normal 239 KB JPEG.
+    #
+    # Note this only ever bit the thumbnail path: _adaptive_frame_count already
+    # special-cases duration_s < 2 (returns 1 frame), so visual tags looked fine
+    # while the poster was silently missing. Two code paths, two different
+    # assumptions about very short media.
+    t = 0.0 if (_is_still_raster(video_path) or duration_s <= 0) \
+        else _thumbnail_seek(duration_s)
     return str(out) if _extract_frame_to(video_path, t, out) else None
 
 
@@ -219,7 +322,13 @@ def _extract_fixed_persistent(
     n_frames: int = 3,
     force: bool = False,
 ) -> List[Dict]:
-    positions = [float(i) / float(n_frames + 1) for i in range(1, n_frames + 1)]
+    # One frame at t=0 for a still: sampling "50% of 0.04s" would both record a
+    # meaningless timestamp and, before the seek fix in _extract_frame_to, extract
+    # nothing at all.
+    if _is_still_raster(video_path):
+        positions = [0.0]
+    else:
+        positions = [float(i) / float(n_frames + 1) for i in range(1, n_frames + 1)]
     results = []
     for i, pct in enumerate(positions):
         t = duration_s * pct

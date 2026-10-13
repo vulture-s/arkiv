@@ -43,7 +43,7 @@ docs/* 除本 handover 對應的 CODEX_RESULT.md 之外
 
 ## Context
 
-per `~/.claude/plans/roadmap-cuddly-goblet.md` Feature A.1a，arkiv 現況 42 routes 零 auth (`server.py:58` CORS-only)，5-machine fleet (PC / M2 Max / mini-relay / Chloe / NAS-OpenClaw) 共用 arkiv backend 但 read/write 權限應分。借鏡 Edit Mind `apps/background-jobs/src/middleware/accessTokenAuth.ts` + Prisma `AccessToken` model pattern。
+per `~/.claude/plans/roadmap-cuddly-goblet.md` Feature A.1a，arkiv 現況 42 routes 零 auth (`server.py:58` CORS-only)，5-machine fleet (a Windows desktop, two Mac laptops, a Mac mini relay host, and a NAS) 共用 arkiv backend 但 read/write 權限應分。借鏡 Edit Mind `apps/background-jobs/src/middleware/accessTokenAuth.ts` + Prisma `AccessToken` model pattern。
 
 A.1a 是三段 sub-dispatch 中的第一段：建 DB schema + middleware 核心 + 基礎 test。後續 A.1b 套到 42 routes、A.1c 加 CLI。
 

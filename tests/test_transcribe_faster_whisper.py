@@ -150,13 +150,35 @@ def test_dispatcher_routes_to_faster_whisper_on_non_mac(monkeypatch, hermetic):
     assert len(segments) == 1 and len(words) == 1
 
 
-def test_dispatcher_no_speech_returns_empty(monkeypatch, hermetic):
-    """VAD finding no speech short-circuits to the empty contract."""
+def test_dispatcher_no_speech_decodes_anyway(monkeypatch, hermetic):
+    """VAD finding no speech is NOT the end of the road any more.
+
+    ⚠️ This test used to be `test_dispatcher_no_speech_returns_empty` and asserted
+    the opposite — that `(None, None)` short-circuited to `("", "", [], [])`.
+    That contract was the defect, not a feature: on a 200-clip location shoot
+    (2026-09-07) Silero called "no speech" on 85 clips and **54 of them had
+    speech** — and the empty tuple it returned was byte-identical to the one a
+    genuinely silent clip produces, so nothing downstream could tell them apart.
+
+    The dispatcher now falls back to decoding the full file and lets hallucination
+    guards 1-4 rule on it. See `transcribe._vad_or_full` for the measurements,
+    including why lowering the VAD threshold and why the normalisation path both
+    fail to fix it.
+
+    Truly-empty output is still reachable — it just has to come from the decode
+    plus the guards, not from VAD's opinion alone."""
     monkeypatch.setattr(transcribe, "_USE_MLX", False)
     monkeypatch.setattr(transcribe, "_to_wav", lambda p: "/fake_to.wav")
     monkeypatch.setattr(transcribe, "_vad_filter", lambda w: (None, None))  # no speech
+    segs = [FakeSegment("其實有人聲", 0.0, 1.0,
+                        words=[FakeWord("其實有人聲", 0.0, 1.0, 0.8)])]
+    monkeypatch.setattr(transcribe, "_fw_model", FakeModel(segs, FakeInfo("zh")))
 
-    assert transcribe.transcribe("/clip.mp4", language="zh") == ("", "", [], [])
+    text, lang, segments, words = transcribe.transcribe("/clip.mp4", language="zh")
+
+    assert "其實有人聲" in text, "VAD 說沒人聲就放棄 ⇒ 又回到靜默漏字"
+    assert lang == "zh"
+    assert len(segments) == 1 and len(words) == 1
 
 
 # ── custom vocabulary: env + file merge (FatSub-style hotword wordlist) ───────

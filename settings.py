@@ -10,20 +10,76 @@ malicious/garbage PUT can't poison arbitrary state. Each key carries a type
 that PUT coerces + validates against; an out-of-range / wrong-type value is
 rejected (422) rather than silently stored.
 
+**"global" is already per-library, and that is the thing to know before reaching
+for the project layer.** The `settings` table lives in the library's own database
+(`PROJECT_ROOT/.arkiv/project.db`), and one server process serves one library — so
+a `global` row is already scoped to this library and nothing else. The project
+layer means something DIFFERENT only when several `ARKIV_PROJECT_ROOT`s are
+pointed at one `ARKIV_DB_PATH`, which the env vars allow and which nobody was
+found doing: on 2026-08-27, all thirteen libraries across four machines kept their
+settings in their own `.arkiv/project.db`, and no two shared a file.
+
+Consequence, written down because two of us have now walked up to it from the
+other side: **a per-project SETTING does not need the project scope.** Put it in
+the schema, set it in the library, done — the library IS the project. The scope
+layer is for the shared-database configuration, not for "this library's value".
+`test_the_default_database_lives_inside_the_project_root` holds the premise, so if
+the default ever moves the DB out of the library this paragraph goes red instead of
+quietly becoming false.
+
 Discipline note (no-fake): a setting only belongs here if something actually
-consumes it. The pipeline / export paths read these via effective(); the
-frontend pre-fills its pickers from the same values. We do NOT add a control
-that has no downstream effect.
+consumes it, AT THE SCOPE IT IS OFFERED AT. The pipeline / export paths read
+these through `for_project()` or a typed accessor, so a project override reaches
+them; the frontend pre-fills its pickers from the same values. We do NOT add a
+control that has no downstream effect — and "writable, displayed, never read" is
+that same non-effect wearing a source label, which is what the project layer was
+until 2026-08-27.
 """
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import config
 import db
 
 GLOBAL_SCOPE = "global"
+
+
+def canonical_scope(scope: Optional[str]) -> Optional[str]:
+    """One spelling per project, so that a row written is a row found.
+
+    A scope key is a filesystem path, and a path has more than one spelling:
+    `~/lib`, `/Users/me/lib`, a symlink pointing at it, and a trailing slash are
+    four strings for one project. Measured: with `ARKIV_PROJECT_ROOT` set to a
+    symlink, `str(config.PROJECT_ROOT)` and its resolved form differ —
+    `_validate_writable_path` computes the canonical form only to check it against
+    the system-directory denylist and then returns the path it was given. Meanwhile
+    `routers/settings.py` accepts either that string or the registry's own
+    spelling. So a row written under one and read under the other simply misses,
+    and misses in silence.
+
+    `normcase` rather than a bare `resolve`: on Windows `C:\\x` and `c:\\x` are the
+    same directory and would otherwise be two rows. It is a no-op on POSIX, which
+    is where two paths differing only in case really are two directories.
+
+    `GLOBAL_SCOPE` and None are not paths and pass through untouched.
+    """
+    if not scope or scope == GLOBAL_SCOPE:
+        return scope
+    return os.path.normcase(str(Path(scope).expanduser().resolve(strict=False)))
+
+
+def current_scope() -> str:
+    """The scope key for the library this process is serving.
+
+    Read at call time, not at import: `config.PROJECT_ROOT` is what a test rebinds
+    to point at a temp library, and a value frozen at import would make every such
+    test read the developer's own project.
+    """
+    return canonical_scope(str(config.PROJECT_ROOT))
 
 
 class SettingError(ValueError):
@@ -81,6 +137,16 @@ def _schema() -> Dict[str, Dict[str, Any]]:
             "max": 40,
         },
         # --- Ingest defaults ---
+        # A single str rather than a new list type: adding one would ripple through
+        # _coerce / _stored_to_typed / _typed_to_stored and the settings UI, for a
+        # value that is a handful of short strings. Format is documented in the
+        # label because that label IS the UI for editing it.
+        "ingest.source_presets": {
+            "group": "ingest",
+            "label": "Ingest source shortcuts — 標籤|路徑，以分號分隔（例：CARD|/Volumes/CARD/DCIM; NAS|/Volumes/home/影片專案）",
+            "type": "str",
+            "default": lambda: "",
+        },
         "ingest.recursive": {
             "group": "ingest",
             "label": "Recurse into sub-folders by default",
@@ -149,6 +215,7 @@ def _typed_to_stored(value: Any) -> str:
 
 
 def _rows_for(scope: str) -> Dict[str, str]:
+    scope = canonical_scope(scope)
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT key, value FROM settings WHERE scope = ?", (scope,)
@@ -171,21 +238,103 @@ def effective(key: str, project: Optional[str] = None) -> Any:
     return value
 
 
+def for_project(key: str, project: Optional[str] = None) -> Any:
+    """The effective value for the library this process is serving.
+
+    `effective(key)` with no project answers "the library-wide default", which is
+    the right answer for the settings UI and the wrong one for the pipeline. That
+    difference was not theoretical: the project layer was writable through the API
+    and displayed by `describe()`, and **not one production read passed a project**
+    — so a project override could be set, could be shown as `source: "project"`,
+    and would never change anything. Measured before this: a project row of 30 for
+    `export.subtitle_max_cjk` while the exporter kept using 14.
+
+    Every production read goes through this or a typed helper below, so a new call
+    site cannot quietly get the global-only answer by forgetting an argument —
+    `effective()` now has exactly one caller outside the tests, and it is this
+    function. (The settings UI does not use it either: `describe()` reads the two
+    layers directly so it can report which one won.)
+
+    `project` names a DIFFERENT library; None means this one, not "no project".
+    """
+    return effective(key, project=current_scope() if project is None else project)
+
+
 def subtitle_max_cjk(project: Optional[str] = None) -> int:
     """Effective caption line width. Equals config.SUBTITLE_MAX_CJK when unset, so
     every subtitle export is unchanged until an operator actually moves it."""
-    return effective("export.subtitle_max_cjk", project=project)
+    return for_project("export.subtitle_max_cjk", project)
 
 
 def vision_model(project: Optional[str] = None) -> str:
     """Effective vision model for an ingest run. Equals config.VISION_MODEL when
     unset, so wiring this in is behavior-preserving until an operator overrides."""
-    return effective("vision.model", project=project)
+    return for_project("vision.model", project)
 
 
 def vision_num_ctx(project: Optional[str] = None) -> int:
     """Effective vision num_ctx. Equals config.OLLAMA_VISION_NUM_CTX when unset."""
-    return effective("vision.num_ctx", project=project)
+    return for_project("vision.num_ctx", project)
+
+
+# The remaining four keys had no typed accessor and were read with a bare
+# `effective()` at their call sites — which is exactly how they ended up
+# global-only. Giving every key one accessor is what makes "production never
+# reads at the wrong scope" a property of the module rather than of whoever
+# writes the next call site.
+
+def transcription_default_mode(project: Optional[str] = None) -> int:
+    """Effective whisper-guard mode for an ingest run."""
+    return for_project("transcription.default_mode", project)
+
+
+def transcription_default_language(project: Optional[str] = None) -> str:
+    """Effective forced language; "" means auto-detect."""
+    return for_project("transcription.default_language", project)
+
+
+def ingest_source_presets(project: Optional[str] = None) -> str:
+    """The raw shortcut string. Thin and scope-aware like every other accessor —
+    parsing lives in `source_preset_list` so this one keeps the uniform
+    "write a value, read that value back" contract the schema coverage test locks."""
+    return str(for_project("ingest.source_presets", project) or "")
+
+
+def source_preset_list(project: Optional[str] = None) -> List[Dict[str, str]]:
+    """[{label, path}] for the ingest source shortcut buttons.
+
+    Deliberately forgiving: a malformed entry is dropped rather than raising.
+    This value is typed by hand into a settings field, and a stray semicolon must
+    not be able to break the ingest screen — losing one shortcut is recoverable,
+    a screen that will not render is not.
+    """
+    raw = ingest_source_presets(project)
+    out: List[Dict[str, str]] = []
+    seen = set()
+    for chunk in str(raw).split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        label, sep, path = chunk.partition("|")
+        label, path = label.strip(), path.strip()
+        if not sep:            # no "|" — treat the whole thing as a path
+            label, path = "", chunk
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        out.append({"label": label or path.rstrip("/").split("/")[-1] or path,
+                    "path": path})
+    return out
+
+
+def ingest_recursive(project: Optional[str] = None) -> bool:
+    """Effective "recurse into sub-folders" default for the ingest dialog."""
+    return for_project("ingest.recursive", project)
+
+
+def export_default_dir(project: Optional[str] = None) -> str:
+    """Effective export destination; "" means "ask the browser to download"."""
+    return for_project("export.default_dir", project)
 
 
 def describe(project: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -228,6 +377,7 @@ def put(values: Dict[str, Any], scope: str = GLOBAL_SCOPE) -> List[str]:
     """
     if not isinstance(values, dict) or not values:
         raise SettingError("values must be a non-empty object")
+    scope = canonical_scope(scope)
     coerced = {k: _coerce(k, v) for k, v in values.items()}  # validates all first
     with db.get_conn() as conn:
         for key, val in coerced.items():
@@ -246,6 +396,7 @@ def reset(key: str, scope: str = GLOBAL_SCOPE) -> None:
     """Drop an override so the key falls back to the next layer down."""
     if key not in SETTINGS_SCHEMA:
         raise SettingError(f"unknown setting key: {key}")
+    scope = canonical_scope(scope)
     with db.get_conn() as conn:
         conn.execute("DELETE FROM settings WHERE scope = ? AND key = ?", (scope, key))
         conn.commit()

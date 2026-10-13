@@ -19,8 +19,8 @@ Exit code: 0
 
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0 -- /Users/vulturemacmini/code/arkiv/.venv/bin/python3.11
-rootdir: /Users/vulturemacmini/code/arkiv
+platform darwin -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0 -- <repo>/.venv/bin/python3.11
+rootdir: <repo>
 configfile: pytest.ini
 plugins: asyncio-1.4.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
@@ -46,11 +46,11 @@ tests/test_chat.py::test_chat_full_flow_compilation_to_refinement PASSED [100%]
 
 =============================== warnings summary ===============================
 tests/test_chat.py: 34 warnings
-  /Users/vulturemacmini/code/arkiv/server.py:157: DeprecationWarning:
+  <repo>/server.py:157: DeprecationWarning:
           on_event is deprecated, use lifespan event handlers instead.
 
 tests/test_chat.py: 34 warnings
-  /Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/fastapi/applications.py:4598: DeprecationWarning:
+  <repo>/.venv/lib/python3.11/site-packages/fastapi/applications.py:4598: DeprecationWarning:
           on_event is deprecated, use lifespan event handlers instead.
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
@@ -86,7 +86,7 @@ Exit code: 1
 
 ```text
 Traceback (most recent call last):
-  File "/Users/vulturemacmini/code/arkiv/health.py", line 373, in <module>
+  File "<repo>/health.py", line 373, in <module>
 
 ═══ arkiv Health Check (pc / macos) ═══
 
@@ -107,12 +107,12 @@ Traceback (most recent call last):
 -- Whisper --
     sys.exit(main())
              ^^^^^^
-  File "/Users/vulturemacmini/code/arkiv/health.py", line 260, in main
+  File "<repo>/health.py", line 260, in main
     import mlx_whisper  # noqa: F401
     ^^^^^^^^^^^^^^^^^^
-  File "/Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/mlx_whisper/__init__.py", line 3, in <module>
+  File "<repo>/.venv/lib/python3.11/site-packages/mlx_whisper/__init__.py", line 3, in <module>
     from . import audio, decoding, load_models
-  File "/Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/mlx_whisper/decoding.py", line 250, in <module>
+  File "<repo>/.venv/lib/python3.11/site-packages/mlx_whisper/decoding.py", line 250, in <module>
     @mx.compile
      ^^^^^^^^^^
 RuntimeError: [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.
@@ -129,7 +129,7 @@ Exit code: 1
 
 ── Environment ──
 Traceback (most recent call last):
-  File "/Users/vulturemacmini/code/arkiv/health.py", line 373, in <module>
+  File "<repo>/health.py", line 373, in <module>
 
 ═══ arkiv Health Check (pc / macos) ═══
 
@@ -150,12 +150,12 @@ Traceback (most recent call last):
 -- Whisper --
     sys.exit(main())
              ^^^^^^
-  File "/Users/vulturemacmini/code/arkiv/health.py", line 260, in main
+  File "<repo>/health.py", line 260, in main
     import mlx_whisper  # noqa: F401
     ^^^^^^^^^^^^^^^^^^
-  File "/Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/mlx_whisper/__init__.py", line 3, in <module>
+  File "<repo>/.venv/lib/python3.11/site-packages/mlx_whisper/__init__.py", line 3, in <module>
     from . import audio, decoding, load_models
-  File "/Users/vulturemacmini/code/arkiv/.venv/lib/python3.11/site-packages/mlx_whisper/decoding.py", line 250, in <module>
+  File "<repo>/.venv/lib/python3.11/site-packages/mlx_whisper/decoding.py", line 250, in <module>
     @mx.compile
      ^^^^^^^^^^
 RuntimeError: [metal::load_device] No Metal device available. This typically occurs in headless, sandboxed, or virtualized macOS sessions where the GPU is not accessible.
@@ -186,8 +186,8 @@ RuntimeError: [metal::load_device] No Metal device available. This typically occ
 - ⚠️ REVIEW: `health.py` fails in this headless/sandboxed macOS session because Ollama is not running and `mlx_whisper` cannot access a Metal device.
 - ⚠️ REVIEW: `smoke-test.sh` fails because no local server is running on `localhost:8501`; it also inherits the same `health.py` Metal/Ollama failure.
 - ⚠️ REVIEW: The AGENTS.md hevin-ai-os paths are missing in this environment, so I could not read or update:
-  - `/Users/vulturemacmini/Desktop/hevin-ai-os/references/plans/arkiv/arkiv-roadmap.md`
-  - `/Users/vulturemacmini/Desktop/hevin-ai-os/references/project-logs/arkiv/dev-log.md`
+  - `<os-repo>/references/plans/arkiv/arkiv-roadmap.md`
+  - `<os-repo>/references/project-logs/arkiv/dev-log.md`
 
 ## Not Completed
 

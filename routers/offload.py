@@ -138,6 +138,7 @@ def offload_run(
         try:
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                encoding="utf-8", errors="replace",
                 bufsize=1, cwd=str(state_cwd))
             for line in proc.stdout:
                 try:  # JSON parse (not substring) so a filename can't false-positive

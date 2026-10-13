@@ -13,13 +13,18 @@ no cycle.
 import asyncio
 import json
 import os
-from pathlib import Path
-from typing import Optional
+import time
+from datetime import datetime
+from pathlib import Path, PurePosixPath
+from typing import List, Optional
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
+    File,
     HTTPException,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -29,6 +34,7 @@ from pydantic import BaseModel
 import auth
 import config
 import db
+import ingest_budget
 import mediatypes
 import settings as settings_store
 from auth import require_scopes
@@ -71,7 +77,8 @@ class ScanRequest(BaseModel):
 MEDIA_EXTS = mediatypes.MEDIA_EXT
 VIDEO_EXTS = mediatypes.VIDEO_EXT
 AUDIO_EXTS = mediatypes.AUDIO_EXT
-assert VIDEO_EXTS | AUDIO_EXTS == MEDIA_EXTS  # the two must partition MEDIA_EXTS
+IMAGE_EXTS = mediatypes.IMAGE_EXT
+assert VIDEO_EXTS | AUDIO_EXTS | IMAGE_EXTS == MEDIA_EXTS  # the three must partition MEDIA_EXTS
 # camera raw / stills the ingest pipeline does not process — surfaced in the scan
 # manifest as "skipped" so the redesign's setup dialog (op-01) can show what will
 # not be ingested (e.g. a card of .mov clips + .crw stills).
@@ -88,6 +95,7 @@ def _build_scan_manifest(files: list, unsupp: dict) -> dict:
     return {
         "video": cat(VIDEO_EXTS),
         "audio": cat(AUDIO_EXTS),
+        "image": cat(IMAGE_EXTS),
         "unsupported": {"count": sum(unsupp.values()), "by_ext": dict(sorted(unsupp.items()))},
         "total_size_mb": round(sum(f["size_mb"] for f in files), 1),
     }
@@ -115,24 +123,103 @@ def ingest_engines(
     # effective model so the active selection shows even if detection missed it
     # (or Ollama is down).
     import vision as _vision
-    cur_vision = settings_store.effective("vision.model")
+    cur_vision = settings_store.vision_model()
     vision_models = _vision.list_vision_models()
     if cur_vision and cur_vision not in vision_models:
         vision_models = sorted(set(vision_models) | {cur_vision})
     # Phase 9.7 G5③: the dialog's defaults come from the persisted settings
     # (library default), falling back to config. These are genuinely consumed —
     # IngestSetup pre-fills its pickers from them, and the vision model/num_ctx
-    # are what an ingest run actually uses (ingest.py reads settings.effective).
+    # are what an ingest run actually uses (ingest.py reads the same accessors).
+    # Read at PROJECT scope: these are the defaults for THIS library, and a
+    # bare effective() answered with the global layer no matter what the
+    # project row said.
     return {
         "whisper_modes": modes,
-        "default_mode": settings_store.effective("transcription.default_mode"),
-        "default_language": settings_store.effective("transcription.default_language"),
-        "default_recursive": settings_store.effective("ingest.recursive"),
+        "default_mode": settings_store.transcription_default_mode(),
+        "default_language": settings_store.transcription_default_language(),
+        "default_recursive": settings_store.ingest_recursive(),
         "vision_model": cur_vision,
         "vision_models": vision_models,
-        "vision_num_ctx": settings_store.effective("vision.num_ctx"),
+        "vision_num_ctx": settings_store.vision_num_ctx(),
         "languages": _INGEST_LANGUAGES,
+        # Source shortcuts. The browser build has no folder picker at all
+        # (canPickFolder() needs window.__TAURI__), so on the web UI the only way
+        # to reach a long NAS path is to retype it every time.
+        "source_presets": settings_store.source_preset_list(),
     }
+
+
+# ffprobe over a NAS measured 0.13s/file; /api/ingest/scan probes the folder to
+# show an ETA and then the run probes THE SAME FILES AGAIN to derive its budget.
+# A clip's duration cannot change without its size or mtime changing, so this
+# memoises on exactly that. Bounded so a long-lived server cannot grow it without
+# limit; the eviction is crude because a wrong eviction only costs one re-probe.
+_PROBE_CACHE: dict = {}
+_PROBE_CACHE_MAX = 20000
+
+
+def _probe_key(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (str(path), st.st_size, int(st.st_mtime))
+
+
+def _probe_durations(paths, max_probe: int = 500):
+    """Duration per file, in the order given; None where it could not be read.
+
+    Bounded on two axes so a huge or a wedged folder cannot hang the scan:
+    at most `max_probe` files are actually probed, and each ffprobe gets its own
+    short timeout. A probe that fails yields None rather than 0 — treating
+    "unknown" as "zero seconds" would shrink the budget, and a too-small budget
+    kills healthy imports.
+
+    The `max_probe` sample is taken EVENLY across the list, not off the head.
+    `stall_seconds` scales the silence threshold by `max(known)`, and whisper is
+    silent for the whole decode of a single clip — so the one number that must
+    not be missed is the longest clip. Probing the alphabetical first 500 of a
+    2000-clip folder makes the 40-minute interview at position 1200 invisible,
+    and the stall watchdog then kills a healthy import in the middle of
+    transcribing it. An even stride costs nothing and samples the whole folder.
+    """
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(path):
+        key = _probe_key(path)
+        if key is not None and key in _PROBE_CACHE:
+            return _PROBE_CACHE[key]
+        try:
+            r = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(path)],
+                capture_output=True, text=True, timeout=15,
+                encoding="utf-8", errors="replace")
+            val = float((r.stdout or "").strip())
+        except Exception:
+            return None  # not cached: a failure can be transient (NAS asleep)
+        if key is not None:
+            if len(_PROBE_CACHE) >= _PROBE_CACHE_MAX:
+                _PROBE_CACHE.clear()
+            _PROBE_CACHE[key] = val
+        return val
+
+    n = len(paths)
+    if not n:
+        return []
+    if n <= max_probe:
+        idxs = list(range(n))
+    else:
+        stride = n / float(max_probe)
+        idxs = sorted({min(n - 1, int(i * stride)) for i in range(max_probe)})
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        probed = list(ex.map(_one, [paths[i] for i in idxs]))
+    out = [None] * n
+    for i, d in zip(idxs, probed):
+        out[i] = d
+    return out
 
 
 @router.post("/api/ingest/scan")
@@ -156,19 +243,131 @@ def scan_media(
             files.append({"name": f.name, "size_mb": round(f.stat().st_size / 1048576, 1), "path": str(f), "already": already})
         elif ext in UNSUPPORTED_STILL_EXTS:
             unsupp[ext] = unsupp.get(ext, 0) + 1
+    # Probe durations so the caller can be told how long this will take BEFORE it
+    # starts, and so the run's budget is derived from the actual material instead
+    # of a fixed number. ffprobe over a NAS measured 0.13s/file serially; a small
+    # pool brings 200 files to ~8s, which is worth it for an honest ETA.
+    pending = [f for f in files if not f["already"]]
+    durations = _probe_durations([f["path"] for f in pending])
+    for f, d in zip(pending, durations):
+        f["duration_s"] = d
+    est = ingest_budget.estimate_seconds(durations, n_files=len(pending))
+    known = [d for d in durations if d]
     return {
         "total": len(files),
-        "new": sum(1 for f in files if not f["already"]),
+        "new": len(pending),
         "manifest": _build_scan_manifest(files, unsupp),
         "files": files,
+        # Advisory only — the UI shows it, nothing is killed on it. What actually
+        # bounds the run is `budget_s` (and the stall watchdog, which this cannot see).
+        "estimate": {
+            "seconds": round(est),
+            # 同一個 max_duration 要餵進去，否則 UI 顯示的「上限 X 分」
+            # 跟實際執行時 _ingest_limits 算出來的不是同一個數字。
+            "budget_s": round(ingest_budget.budget_seconds(
+                est, max_duration_s=(max(known) if known else 0))),
+            "stall_s": round(ingest_budget.stall_seconds(max(known) if known else 0)),
+            "probed": len(known),
+            "of": len(pending),
+        },
     }
+
+
+def _unprocessed(paths):
+    """The paths ingest.py will actually touch — already-indexed ones dropped.
+
+    Best-effort: if the DB cannot be read we return the input unchanged, because
+    an over-wide budget is only as wrong as it already was, whereas raising here
+    would take down a request that has nothing to do with budgets.
+    """
+    try:
+        import db as _db
+        with _db.get_conn() as conn:
+            done = {r[0] for r in conn.execute("SELECT path FROM media")}
+    except Exception:
+        return list(paths)
+    return [p for p in paths if p not in done]
+
+
+def _unprocessed_first(paths):
+    """Order-preserving variant: unprocessed first, processed after. Kept because
+    a caller that must not lose entries needs the reordering, not the filter."""
+    try:
+        import db as _db
+        with _db.get_conn() as conn:
+            done = {r[0] for r in conn.execute("SELECT path FROM media")}
+    except Exception:
+        return paths
+    return [p for p in paths if p not in done] + [p for p in paths if p in done]
+
+
+def _ingest_limits(target: Path, limit: int = 0):
+    """(stall_seconds, budget_seconds) for this folder, from its own material.
+
+    Probing is best-effort: a folder we cannot read yields the floors, which are
+    the old behaviour plus a stall watchdog. Never let the estimate step be able
+    to fail the import it is only advising on.
+    """
+    try:
+        paths = []
+        for f in sorted(target.rglob("*")):
+            if f.is_file() and f.suffix.lower() in MEDIA_EXTS:
+                paths.append(str(f))
+        # ingest.py SKIPs anything already indexed, in both modes. Budgeting the
+        # full listing therefore prices work that will never happen — and it made
+        # /api/ingest/scan's comment ("同一個 max_duration 要餵進去，否則 UI 顯示
+        # 的『上限 X 分』跟實際執行時算出來的不是同一個數字") false for the
+        # limit=0 path the UI actually uses: scan estimates over `pending`, this
+        # estimated over everything. Re-importing into a 5000-clip library showed
+        # an ETA from the 3 new files and ran on a budget from all 5000.
+        pending = _unprocessed(paths)
+        if limit and limit > 0:
+            # ingest.py --limit N processes the first N *unprocessed* files, so
+            # slicing the full listing budgets for the wrong set: a folder whose
+            # first 400 clips are already indexed 10-second takes and whose last
+            # 100 are 30-minute interviews gets a budget derived from the takes,
+            # then spends it on the interviews and is killed mid-run.
+            pending = pending[:limit]
+        paths = pending
+        durations = _probe_durations(paths)
+        est = ingest_budget.estimate_seconds(durations, n_files=len(paths))
+        known = [d for d in durations if d]
+        mx = max(known) if known else 0
+        return (ingest_budget.stall_seconds(mx),
+                ingest_budget.budget_seconds(est, max_duration_s=mx))
+    except Exception:
+        return (config.INGEST_STALL_FLOOR_SECONDS, config.INGEST_BUDGET_FLOOR_SECONDS)
+
+
+def _timeout_detail(e) -> str:
+    mins = lambda s: int((s or 0) // 60)
+    if getattr(e, "kind", None) == "stall":
+        return ("匯入停滯：已 {0} 分鐘沒有任何進度輸出（門檻 {1} 分鐘），"
+                "研判卡住，已停止整個處理程序。已完成的素材都已寫進素材庫，"
+                "重跑會從中斷處接續。").format(mins(e.idle), mins(e.timeout))
+    return ("匯入超過預估時間的上限（{0} 分鐘）並被停止 —— 它當時仍在輸出進度，"
+            "所以多半只是估值偏低而非卡住。已完成的素材都已寫進素材庫，"
+            "重跑會從中斷處接續。").format(mins(e.timeout))
+
 
 @router.post("/api/ingest")
 def ingest_media(
     body: IngestRequest,
     _tok: dict = Depends(require_scopes("ingest_write")),
 ):
-    """Trigger ingest from the web UI — runs ingest.py as subprocess."""
+    """Trigger ingest — runs ingest.py as a subprocess and blocks until it ends.
+
+    ⚠️ Not the UI's path (the SPA uses POST /api/ingest/ws + the /ws/ingest
+    stream). This one is for MCP/CLI callers, and it is synchronous in three
+    senses at once, for as long as `budget_s` — which is derived from the
+    material and was 94 minutes for the 200-clip field run: it holds one anyio
+    threadpool worker, one HTTP connection, and the single-flight ingest slot.
+    A caller whose own timeout is shorter gets nothing back AND cannot retry
+    (409) until the run it can no longer see finishes. Nothing here can detect
+    that disconnect — a sync route has no equivalent of the offload stream's
+    GeneratorExit. Long imports belong on the WS route; this stays for small,
+    scripted ones.
+    """
     import subprocess, sys
     target = Path(body.path).expanduser().resolve()
     if not target.is_dir():
@@ -181,10 +380,15 @@ def ingest_media(
     if not _acquire_ingest_slot():  # audit H3
         raise HTTPException(409, "已有匯入任務進行中，請稍候")
     try:
-        # run_tree, not subprocess.run: on timeout the whole ingest.py→ffmpeg/whisper
-        # tree is killed, not just the direct child (fable-audit round-5 #2 / #12).
+        # run_tree_watched, not a single wall-clock cap: the old fixed 1800s could
+        # not finish a 200-clip import (measured 94 minutes) yet was still too long
+        # to notice a wedged child. Two limits derived from the material itself —
+        # `stall` catches "hung", `budget` catches "estimate was wrong". Both kill
+        # the whole ingest.py→ffmpeg/whisper tree (fable-audit round-5 #2 / #12).
         import proctree
-        result = proctree.run_tree(cmd, timeout=1800, cwd=str(BASE_DIR))
+        stall_s, budget_s = _ingest_limits(target, body.limit)
+        result = proctree.run_tree_watched(
+            cmd, stall_timeout=stall_s, total_timeout=budget_s, cwd=str(BASE_DIR))
         payload = {
             "ok": result.returncode == 0,
             "stdout": result.stdout[-2000:] if result.stdout else "",
@@ -196,8 +400,12 @@ def ingest_media(
             # status-code monitors see it.
             return JSONResponse(status_code=500, content=payload)
         return payload
+    except proctree.TreeTimeout as e:
+        # The two kinds need different words: "stalled" means go look at the box,
+        # "over budget" means it was probably still working and can be resumed.
+        raise HTTPException(504, _timeout_detail(e))
     except subprocess.TimeoutExpired:
-        raise HTTPException(504, "匯入逾時（>30 分鐘）")  # audit L11: was 200 + ok:false
+        raise HTTPException(504, "匯入逾時")  # audit L11: was 200 + ok:false
     finally:
         _release_ingest_slot()
 
@@ -260,6 +468,154 @@ def reingest_media(
         _release_ingest_slot()
 
 
+# ── Upload (HTTP multipart → media-in → auto ingest) ──────────────────────────
+# Phase 14 addendum: let MCP clients / browsers push media without manually
+# copying into the bind mount. Files land in the ingest source (media-in) and a
+# background ingest picks them up. Filenames are constrained to a basename (no
+# path traversal) and only known media extensions are accepted.
+
+_UPLOAD_DIR = (
+    Path(os.environ.get("ARKIV_UPLOAD_DIR", "")).expanduser()
+    if os.environ.get("ARKIV_UPLOAD_DIR")
+    else (config.PROJECT_ROOT / "media-in")
+)
+_UPLOAD_MAX_BYTES = int(os.environ.get("ARKIV_UPLOAD_MAX_MB", "4096")) * 1024 * 1024
+# Phase 14 addendum: cap concurrent upload handlers so a burst of large files
+# can't exhaust the worker pool / saturate disk. Waiters queue up to
+# _UPLOAD_SEM_TIMEOUT seconds for a slot, then get 429. (Background ingest is
+# already single-flight via the shared slot in state.py.)
+_UPLOAD_MAX_CONCURRENT = max(1, int(os.environ.get("ARKIV_UPLOAD_MAX_CONCURRENT", "3")))
+_UPLOAD_SEM_TIMEOUT = float(os.environ.get("ARKIV_UPLOAD_MAX_QUEUE_SEC", "300"))
+_upload_sem = asyncio.Semaphore(_UPLOAD_MAX_CONCURRENT)
+
+
+def _safe_upload_dir() -> Path:
+    d = _UPLOAD_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _save_upload_file(uf: UploadFile, dest: Path, max_bytes: int) -> None:
+    """Blocking: stream one UploadFile to dest, enforcing the per-file size cap.
+    Runs inside asyncio.to_thread so it never pins the event loop."""
+    written = 0
+    with dest.open("wb") as out:
+        while True:
+            chunk = uf.file.read(1024 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > max_bytes:
+                out.close()
+                dest.unlink(missing_ok=True)
+                raise HTTPException(
+                    413,
+                    f"檔案超過上傳上限（{max_bytes // (1024 * 1024)} MB）：{getattr(uf, 'filename', '?')}",
+                )
+            out.write(chunk)
+
+
+@router.post("/api/ingest/upload")
+async def ingest_upload(
+    files: List[UploadFile] = File(...),
+    background_tasks: BackgroundTasks = None,
+    _tok: dict = Depends(require_scopes("ingest_write")),
+):
+    """Accept multipart media uploads and store them under the ingest source
+    (media-in). A background ingest of that directory is triggered so the new
+    clips become searchable. Concurrency is capped by _upload_sem so a burst of
+    large uploads can't exhaust workers/disk; filename is constrained to a
+    basename (no path traversal) and only known media extensions are accepted."""
+    acquired = False
+    try:
+        await asyncio.wait_for(_upload_sem.acquire(), timeout=_UPLOAD_SEM_TIMEOUT)
+        acquired = True
+    except asyncio.TimeoutError:
+        raise HTTPException(429, "上傳並發已達上限，請稍後再試")
+    try:
+        upload_dir = await asyncio.to_thread(_safe_upload_dir)
+        saved = []
+        renamed = []
+        for uf in files:
+            raw = uf.filename or ""
+            name = PurePosixPath(raw).name
+            if not name or name in (".", "..") or "/" in name or "\\" in name:
+                raise HTTPException(400, f"非法檔名：{raw}")
+            ext = Path(name).suffix.lower()
+            if ext not in MEDIA_EXTS:
+                raise HTTPException(400, f"不支援的檔案類型：{ext}（僅允許媒體格式）")
+            # Collision-safe name: never overwrite an existing file on disk, nor a
+            # media row already indexed at this path. A same-name re-upload is
+            # renamed (<stem>__<YYYYMMDD-HHMMSS><ext>) so both clips survive instead
+            # of the original being clobbered + then SKIPped by ingest (data loss).
+            stem = Path(name).stem
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            cand = name
+            n = 0
+            while True:
+                c = upload_dir / cand
+                if not c.exists() and not db.path_is_indexed(str(c)):
+                    break
+                n += 1
+                cand = "{0}__{1}{2}{3}".format(
+                    stem, ts, ("_" + str(n)) if n > 1 else "", ext
+                )
+            dest = upload_dir / cand
+            # basename guarantees containment, but assert defensively
+            if dest.resolve() != (upload_dir.resolve() / cand):
+                raise HTTPException(400, f"非法路徑：{raw}")
+            await asyncio.to_thread(_save_upload_file, uf, dest, _UPLOAD_MAX_BYTES)
+            saved.append(cand)
+            if cand != name:
+                renamed.append({"from": name, "to": cand})
+        if not saved:
+            raise HTTPException(400, "沒有收到任何檔案")
+        if background_tasks is not None:
+            background_tasks.add_task(_bg_ingest, str(upload_dir))
+        return JSONResponse(
+            status_code=202,
+            content={
+                "ok": True,
+                "saved": saved,
+                "renamed": renamed,
+                "upload_dir": str(upload_dir),
+                "ingest": "triggered" if background_tasks is not None else "skipped",
+            },
+        )
+    finally:
+        if acquired:
+            _upload_sem.release()
+
+
+def _bg_ingest(dir_path: str) -> None:
+    """Run ingest.py over the upload directory in the background, serialised
+    through the shared single-flight slot (audit H3 — no concurrent whisper)."""
+    import subprocess, sys, proctree
+
+    deadline = time.time() + 1800
+    while time.time() < deadline:
+        if _acquire_ingest_slot():
+            try:
+                # Same two limits as the interactive route. This path swallows
+                # its exceptions (it is a background task with nobody to tell),
+                # so without a stall watchdog a wedged upload-ingest would hold
+                # the single-flight slot for the full budget and block every
+                # later import with a 409.
+                stall_s, budget_s = _ingest_limits(Path(dir_path))
+                proctree.run_tree_watched(
+                    [sys.executable, str(BASE_DIR / "ingest.py"), "--dir", dir_path],
+                    stall_timeout=stall_s,
+                    total_timeout=budget_s,
+                    cwd=str(BASE_DIR),
+                )
+            except Exception:
+                pass
+            finally:
+                _release_ingest_slot()
+            return
+        time.sleep(5)
+
+
 # ── WebSocket: Ingest Progress ───────────────────────────────────────────
 
 def _ws_authorized(ws: WebSocket, scope: str) -> bool:
@@ -274,17 +630,22 @@ def _ws_authorized(ws: WebSocket, scope: str) -> bool:
     # host/port, incl. remote + HTTPS reverse proxy) or in the static dev/Tauri
     # allowlist. A cross-site page (different authority) is rejected. Non-browser
     # clients (no Origin) fall through to token auth.
+    # Same rule as webguard.same_site_violation: Origin == Host only counts as
+    # same-origin when that Host can't be a DNS-rebinding name, or the handshake
+    # brings its own ?token= (audit 2026-10-09).
+    raw = (ws.query_params.get("token") or "").strip()
     origin = ws.headers.get("origin")
-    if origin is not None:
-        origin_authority = origin.split("://", 1)[-1]
+    if origin is not None and origin not in _ALLOWED_ORIGINS:
         host_header = ws.headers.get("host", "")
-        if origin_authority != host_header and origin not in _ALLOWED_ORIGINS:
+        if origin.split("://", 1)[-1] != host_header:
+            return False
+        if not raw and not auth._host_is_trusted(host_header):
             return False
     host = ws.client.host if ws.client is not None else ""
-    if auth._trust_loopback() and host in auth._LOOPBACK_HOSTS and not auth._looks_proxied(ws):
+    if auth.loopback_trusted(host, ws.headers):
         return True
     try:
-        tok = auth.resolve_raw_token((ws.query_params.get("token") or "").strip(), host)
+        tok = auth.resolve_raw_token(raw, host, forwarded=auth._looks_proxied(ws))
     except Exception:
         return False
     return scope in tok.get("scopes", ())
@@ -330,6 +691,29 @@ def _on_ingest_ws_done(task: "asyncio.Task") -> None:
         )
 
 
+def _kill_ingest_tree(proc) -> None:
+    """Kill the ingest subprocess AND its descendants (ffmpeg / whisper / ollama
+    client). `proc.kill()` alone leaves them running and holding the GPU.
+
+    Delegates to proctree._kill_tree rather than reimplementing it. This *was* a
+    third hand-rolled copy whose non-POSIX branch fell straight through to
+    proc.kill() — no taskkill /F /T — so on Windows the watchdog reaped ingest.py
+    and orphaned its ffmpeg/whisper grandchildren. proctree's own docstring
+    predicted exactly this ("the Windows branch in particular is easy to fix on
+    one side only"); the drift arrived in the same change that wrote it.
+    """
+    try:
+        import proctree
+        proctree._kill_tree(proc)
+        return
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+
+
 async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = None):
     """Run ingest as a single subprocess, parse stdout for progress."""
     import re, sys
@@ -348,6 +732,11 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR),
+        # Own session so the watchdog below can kill the WHOLE tree. Without it
+        # `proc.kill()` reaps ingest.py and orphans its ffmpeg/whisper children —
+        # the exact bug run_tree exists to prevent (fable-audit round-5 #2 / #12),
+        # which this path never had because it never had a timeout at all.
+        start_new_session=(os.name == "posix"),
         # brick 3: drive the structured per-stage progress protocol (own-line JSON
         # events) instead of parsing the compact inline `>probe` human markers.
         env={**os.environ, "ARKIV_STAGE_EVENTS": "1"},
@@ -355,6 +744,46 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
         # raises inside the read loop; give pathological log lines 1MB headroom.
         limit=2 ** 20,
     )
+
+    # Two limits derived from the material (see ingest_budget). This path had NO
+    # timeout at all: a wedged child produced no EOF, so the read loop waited
+    # forever, the UI sat on its last event, and the single-flight slot stayed held.
+    stall_s, budget_s = await asyncio.to_thread(_ingest_limits, target, limit)
+    beat = {"at": time.monotonic()}
+    halted = {"reason": None}
+
+    async def _watchdog():
+        started = time.monotonic()
+        while True:
+            await asyncio.sleep(1.0)
+            if proc.returncode is not None:
+                return
+            now = time.monotonic()
+            idle, elapsed = now - beat["at"], now - started
+            if idle > stall_s:
+                halted["reason"] = "stall"
+            elif elapsed > budget_s:
+                halted["reason"] = "budget"
+            else:
+                continue
+            # Re-check immediately before acting: the broadcast below is an
+            # await, and a run that finishes during it would otherwise be
+            # reported as HALTED *and* have its already-reaped pid passed to
+            # killpg — which on pid reuse signals an unrelated process group.
+            # The final phase (embedding / index rebuild) is silent, so this is
+            # precisely when a healthy run looks stalled.
+            if proc.returncode is not None:
+                halted.pop("reason", None)
+                return
+            _kill_ingest_tree(proc)
+            await ingest_ws.broadcast({
+                "type": "halted", "reason": halted["reason"],
+                "idle_s": round(idle), "elapsed_s": round(elapsed),
+                "stall_s": round(stall_s), "budget_s": round(budget_s),
+            })
+            return
+
+    watchdog = asyncio.create_task(_watchdog())
 
     ok, skipped, failed = 0, 0, 0
     last_total = limit or 0
@@ -373,6 +802,9 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
     # concurrent ingest. Always kill the subprocess on the way out.
     try:
         async for line in proc.stdout:
+            # Any byte counts as liveness. ingest.py flushes a marker at every
+            # stage, so silence really is "not progressing", not "buffered".
+            beat["at"] = time.monotonic()
             text = line.decode("utf-8", errors="replace").strip()
             if not text:
                 continue
@@ -453,8 +885,9 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
 
         await proc.wait()
     finally:
+        watchdog.cancel()
         if proc.returncode is None:  # audit M3: loop exited abnormally — reap child
-            proc.kill()
+            _kill_ingest_tree(proc)
             await proc.wait()
     # Derive failed from the observed total (not `limit`, which is 0 for "all"
     # and overstates when it exceeds the real file count) and surface the exit
@@ -465,7 +898,11 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
 
     await ingest_ws.broadcast({
         "type": "complete", "ok": ok, "skipped": skipped, "failed": failed,
-        "returncode": rc
+        "returncode": rc,
+        # Carried on `complete` as well as the earlier `halted`: a client that
+        # connected late, or missed the event, must still learn this run was cut
+        # short rather than read a partial result as a finished one.
+        "halted": halted["reason"],
     })
 
 

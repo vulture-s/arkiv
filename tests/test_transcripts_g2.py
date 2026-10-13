@@ -115,3 +115,41 @@ def test_activate_unknown_language_404(langclient):
     mid = _seed()
     r = langclient.post(f"/api/media/{mid}/transcript/activate", json={"lang": "fr"})
     assert r.status_code == 404
+
+
+# ── 語氣詞 reading on the endpoint (feeds the inspector's transcript header) ──
+
+def _long_zh(markers=4, filler=396):
+    """A transcript over DENSITY_MIN_CHARS so a percentage is reported."""
+    return "啦" * markers + "甲" * filler
+
+
+def test_reading_accompanies_each_language(langclient):
+    mid = _seed(transcript=_long_zh(), lang="zh")
+
+    row = langclient.get(f"/api/media/{mid}/transcripts").json()["transcripts"][0]
+
+    assert row["particle_count"] == 4
+    assert row["particle_density"] == pytest.approx(1.0)
+
+
+def test_a_short_transcript_gets_a_count_and_no_percentage(langclient):
+    """The common case — arkiv clips average ~42 characters. The count is honest at
+    that length and the percentage is not, so the endpoint says so rather than
+    letting the UI render a number that moves 2.4 points per character."""
+    mid = _seed(transcript="那我們就這樣做啦齁", lang="zh")
+
+    row = langclient.get(f"/api/media/{mid}/transcripts").json()["transcripts"][0]
+
+    assert row["particle_count"] == 2
+    assert row["particle_density"] is None
+
+
+def test_a_non_cjk_transcript_gets_no_reading_at_all(langclient):
+    """Not zero — absent. Every marker is CJK, so 0.0% here would be a fact about
+    the alphabet dressed up as a fact about the engine."""
+    mid = _seed(transcript="an english transcript, of quite ordinary length", lang="en")
+
+    row = langclient.get(f"/api/media/{mid}/transcripts").json()["transcripts"][0]
+
+    assert row["particle_count"] is None and row["particle_density"] is None

@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).parent
 # Backend product version. Keep in sync with the release tag + frontend
 # version.js at release time. Served by GET /api/version and included in
 # GET /api/health so a user/support can identify the build.
-VERSION = "1.1.2"
+VERSION = "1.4.0"
 
 # Codex Round-2 audit (J3): without bounds, ARKIV_PROXIES_DIR=/etc would have
 # arkiv write generated proxy mp4 files into /etc on every HEVC ingest. Same
@@ -93,6 +93,20 @@ THUMBNAILS_DIR = _validate_writable_path(
 PROXIES_DIR = _validate_writable_path(
     Path(os.getenv("ARKIV_PROXIES_DIR", str(_ARKIV_DIR / "proxies"))), "ARKIV_PROXIES_DIR"
 )
+# Phase 14.5: trash (recycle bin) for deleted media originals — a destructive
+# delete moves the source file here instead of unlinking, so a mistaken removal
+# is recoverable for ARKIV_TRASH_TTL_DAYS days.
+TRASH_DIR = _ARKIV_DIR / "trash"
+# Extra filesystem roots the delete endpoint is permitted to physically remove
+# files from (comma-separated). Empty by default → only PROJECT_ROOT is allowed,
+# so offload cold-storage / external-absolute / federated paths are metadata-only.
+MEDIA_ROOTS = [
+    p.strip() for p in os.getenv("ARKIV_MEDIA_ROOTS", "").split(",") if p.strip()
+]
+TRASH_TTL_DAYS = int(os.getenv("ARKIV_TRASH_TTL_DAYS", "30"))
+# Waveform cache lives under BASE_DIR/waveforms (see routers/media.py waveform);
+# kept here so delete + prune can clean it by media id.
+WAVEFORMS_DIR = BASE_DIR / "waveforms"
 # Reviewed library tag alias map (tag_aliases.py) + its proposal staging file.
 # Plain JSON in the project data dir — reviewable, version-controllable, per-project.
 TAG_ALIASES_PATH = _ARKIV_DIR / "tag_aliases.json"
@@ -200,6 +214,38 @@ def _read_subtitle_max_cjk() -> int:
 
 
 SUBTITLE_MAX_CJK = _read_subtitle_max_cjk()
+
+
+# Quiet recordings lose whole passages before whisper ever sees them: VAD reads a
+# low-level track as silence and drops it. Normalising was supposed to fix that,
+# gated on a measured level so healthy audio is left alone.
+#
+# **Measured 2026-08-28 on 13 clips that all sit below the gate — and it does not
+# do that. Default is now OFF.**
+#
+#   8 identical with and without · 5 WORSE with it · 0 better
+#
+# The three quietest clips in the sample (-55.0, -39.9, -39.7 dB) — precisely
+# where recovering lost speech was the whole point — produced nothing either way.
+# Where it changed the answer it added text rather than recovering it: one clip
+# went from 3 segments to 10 by repeating the same sentence three times, another
+# grew a segment sitting at 0.04 of the clip's peak, and one produced a DIFFERENT
+# transcript on two runs of the same input (`謝謝大家` then `感謝觀看` — the model
+# generating, not transcribing) while the un-normalised run was identical both
+# times. One clip lost a real line to it.
+#
+# The mechanism is the one the old comment already named as the risk: dynaudnorm
+# lifts the noise floor, VAD then keeps far more audio (measured 7% → 22% on one
+# clip), and whisper hallucinates over the extra. The -30 dB gate does not prevent
+# that, because the material this fires on IS mostly noise floor — in one library
+# 42 of 51 clips sit below the gate, so it was the common path, not a rescue.
+#
+# The code stays and the env var turns it back on: 13 clips from two libraries is
+# not every kind of audio, and the premise may hold for material this sample does
+# not contain. What is not defensible is shipping it ON by default on evidence
+# that never showed a single recovery.
+AUDIO_NORMALISE = os.getenv("ARKIV_AUDIO_NORMALISE", "0").strip().lower() not in ("0", "false", "no", "off")
+AUDIO_NORMALISE_BELOW_DB = float(os.getenv("ARKIV_AUDIO_NORMALISE_BELOW_DB", "-30"))
 
 def _detect_exiftool() -> str:
     """Resolve ExifTool binary path via fallback chain.
@@ -325,6 +371,21 @@ def _detect_ffmpeg_tool(tool: str, env_var: str) -> str:
 
 
 FFMPEG_PATH = _detect_ffmpeg_tool("ffmpeg", "ARKIV_FFMPEG_PATH")
+
+# Ignore the container's rotation metadata (display matrix / tags.rotate).
+#
+# Cameras write that flag from an orientation sensor, and the sensor can be
+# wrong — a body on a gimbal, or pointed steeply up/down, can record a 90°
+# flag over footage that is already correctly framed landscape. Honouring it
+# then rotates good footage into a sideways, pillarboxed mess, and because the
+# swap happens at ingest every downstream artifact inherits it: stored
+# width/height, thumbnails, the frames vision reads, and proxies. Nothing
+# errors — the vision descriptions come back plausible-sounding for a sideways
+# image, so the damage is invisible in the data.
+#
+# Off by default: genuinely vertical footage exists and its flag is correct.
+# Turn it on per-ingest for a shoot you have confirmed is mis-flagged.
+IGNORE_ROTATION = os.getenv("ARKIV_IGNORE_ROTATION", "0").lower() in ("1", "true", "yes")
 FFPROBE_PATH = _detect_ffmpeg_tool("ffprobe", "ARKIV_FFPROBE_PATH")
 
 import platform as _plat
@@ -339,6 +400,10 @@ _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
 # so encode stays libx264). Defaults on for arm64 macOS, off elsewhere; the encoder
 # retries in software if a source's codec/pix_fmt isn't hardware-decodable.
 PROXY_HEIGHT = int(os.getenv("ARKIV_PROXY_HEIGHT", "720"))
+# Editing proxy (editor_proxy.py): ProRes Proxy written to <source dir>/Proxy/ for
+# the NLE. Separate from PROXY_HEIGHT on purpose — the browser proxy wants small,
+# an editing proxy wants enough picture to cut on. Never upscales.
+EDITOR_PROXY_HEIGHT = int(os.getenv("ARKIV_EDITOR_PROXY_HEIGHT", "1080"))
 _hwd = os.getenv("ARKIV_PROXY_HWDECODE", "auto").strip().lower()
 PROXY_HWDECODE_DEFAULT = _IS_MLX if _hwd in ("", "auto") else _hwd in ("1", "true", "yes", "on")
 
@@ -563,5 +628,47 @@ ARKIV_PG_DSN = os.getenv("ARKIV_PG_DSN", "").strip()
 if VECTOR_BACKEND == "pg" and not ARKIV_PG_DSN:
     raise ValueError(
         "ARKIV_VECTOR_BACKEND=pg requires ARKIV_PG_DSN "
-        "(e.g. postgresql://rag:PASSWORD@100.64.154.6:5433/rag)"
+        "(e.g. postgresql://rag:PASSWORD@100.64.0.10:5433/rag)"
     )
+
+# ── Ingest 的兩道截止線（見 ingest_budget.py 的完整推導）─────────────────────
+# 係數來自 2026-09-06 的 200 支現場實測迴歸（n=33）：單檔秒 ≈ 5.0 + 5.6 × 幀數，
+# R² = 0.88。⚠️ M2 Max + qwen2.5vl:7b 上量的，換機器要重新量 —— 所以可用環境變數覆寫。
+def _ingest_num(name, default, lo=None):
+    """Read a tuning constant without letting a typo take down the process.
+
+    These are bare `float(os.getenv(...))` at import time, and every module in
+    the codebase imports config — so `ARKIV_INGEST_BUDGET_FLOOR=30m` does not
+    produce a bad budget, it produces an API that will not start, with a
+    ValueError from config.py as the only clue. This file already solves that
+    three other ways (see _read_vision_num_ctx / _read_subtitle_max_cjk / the
+    GPU_MEM_THRESHOLD try-except); this matches them.
+
+    `lo` also guards the values that are nonsense rather than unparseable:
+    a BUDGET_FACTOR below 1.0 makes the budget smaller than the estimate it is
+    supposed to be a safety margin over.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        print("[config] {0}={1!r} is not a number — using {2}".format(name, raw, default))
+        return default
+    if lo is not None and v < lo:
+        print("[config] {0}={1} below the {2} floor — using {2}".format(name, v, lo))
+        return lo
+    return v
+
+
+INGEST_PER_FILE_SECONDS = _ingest_num("ARKIV_INGEST_PER_FILE_SECONDS", 5.0, lo=0.0)
+INGEST_PER_FRAME_SECONDS = _ingest_num("ARKIV_INGEST_PER_FRAME_SECONDS", 5.6, lo=0.0)
+# 預算 = 估值 × 這個係數。估值不是死線，這個乘積才是。
+INGEST_BUDGET_FACTOR = _ingest_num("ARKIV_INGEST_BUDGET_FACTOR", 2.0, lo=1.0)
+# 下限：模型暖機一次就 ~100 秒，沒有下限的話最小的匯入反而最容易被誤殺。
+INGEST_BUDGET_FLOOR_SECONDS = _ingest_num("ARKIV_INGEST_BUDGET_FLOOR", 1800, lo=0.0)
+# 可以沉默多久才算卡住。whisper 解碼期間完全不出聲，而最慢的路徑
+# （faster-whisper large-v3 在 CPU 上）實測 RTF 1.22 —— 門檻要隨最長的素材放大。
+INGEST_STALL_FLOOR_SECONDS = _ingest_num("ARKIV_INGEST_STALL_FLOOR", 600, lo=0.0)
+INGEST_STALL_RTF = _ingest_num("ARKIV_INGEST_STALL_RTF", 1.3, lo=0.0)

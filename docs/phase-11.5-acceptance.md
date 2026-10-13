@@ -1,6 +1,6 @@
 # Phase 11.5 — Live-GPU acceptance (deferred from overnight)
 
-The overnight run (2026-06-03, on `mini-relay`) shipped + verified the
+The overnight run (2026-06-03, on the Apple-silicon host) shipped + verified the
 mock-testable core of Phase 11.5: `resource_probe.py`, the SQLite job queue,
 the probe-driven vision warm-up/backpressure wiring, and `arkiv status`. 49 new
 tests green; full suite 296 passed / 3 skipped; probe verified live against the
@@ -76,7 +76,7 @@ timeout).
 **Result**: ✅ **PASS** — confirmed on two machines, `2026-06-09`:
 - **PC (RTX 4070, NVIDIA)** — 10 iphone clips / **52 frames**, both A/B legs
   (par=1 and par=2): **0 NULL** each. This is the stronger sample (n=10).
-- **mini-relay (M2 Pro, 16GB, Apple)** — 3 NAS clips (C4606/C4609/C4611, 2023
+- **Mac (M2 Pro, 16GB, Apple)** — 3 NAS clips (C4606/C4609/C4611, 2023
   Tokyo, ~134MB each): 0 NULL. The original directional run.
 
 ```
@@ -140,6 +140,6 @@ production default `OLLAMA_NUM_PARALLEL=1` is now backed by a real A/B, not just
 the contention argument.
 
 *Stub created 2026-06-03 by the overnight run. B+C filled 2026-06-09 from a
-scoped GPU run (3 NAS clips) on mini-relay. Anchor A closed 2026-06-09 by a full
+scoped GPU run (3 NAS clips) on the Mac. Anchor A closed 2026-06-09 by a full
 parallel=1-vs-2 A/B (10 iphone clips / 52 frames) on PC (RTX 4070); B also
 re-confirmed there at n=10.*

@@ -585,26 +585,70 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
 
         dst_state["verified_files"] = len(verified_rel_paths)
         dst_state["failed_files"] = failed
-        dst_state["status"] = "done" if failed == 0 else "partial"
+        # The copy is done; the CARD is not. `status` stays "running" through the
+        # MHL passes below — writing "done" here is what let a run cancelled during
+        # those passes persist a state that says finished with `mhl_path: null`,
+        # which is indistinguishable from a real completion. For a DIT the manifest
+        # IS the deliverable (chain of custody), so "copied" must not read as "done".
+        final_status = "done" if failed == 0 else "partial"
         _save_state(state_path, state)
 
         mhl_path = None
+        mhl_error = None
         if emit_mhl and verified_rel_paths:
-            mhl_path = _write_mhl(dst_root, hash_algo, op="offload")
-            dst_state["mhl_path"] = str(mhl_path)
-            _save_state(state_path, state)
-            if verify:
-                verify_result = _verify_emitted_mhl(dst_root, mhl_path)
-                if verify_result is not None and verify_result != 0:
-                    raise RuntimeError("mhl verify failed for {0}: exit code {1}".format(mhl_path, verify_result))
+            # Two full re-reads of every byte happen below (write, then verify) and
+            # neither emits anything on its own. Without these markers the UI sits
+            # on "file N/N" for as long as the hashing takes — 35 minutes for 89 GB
+            # in the 2026-09-06 field run — and looks hung while it is working.
+            #
+            # A manifest failure is scoped to THIS destination. It used to raise
+            # straight out of the `for dst_root` loop, which cost three things at
+            # once: (1) every REMAINING destination was skipped, so a hash mismatch
+            # on drive 1 silently cancelled the drive-2 copy — and the second copy
+            # is the entire point of a two-drive offload; (2) `summary[dst_key]` was
+            # never assigned, so the router synthesised `{"type":"done","summary":{}}`
+            # and the UI showed "exit 1" with no row saying which drive or why —
+            # the RuntimeError text went to the merged stdout, where the ndjson
+            # reader's `JSON.parse` dropped it; (3) `dst_state["status"]` stayed
+            # "running", which is the same state a user-cancelled run leaves behind.
+            # A verify failure IS the chain-of-custody event this tool exists to
+            # report, so it must be the loudest thing in the summary, not the
+            # quietest. Mirrors the `_check_destination_mount` path above.
+            try:
+                _emit(progress, {"type": "phase", "dst": dst_key, "phase": "mhl_write",
+                                 "files": len(verified_rel_paths)})
+                mhl_path = _write_mhl(dst_root, hash_algo, op="offload")
+                dst_state["mhl_path"] = str(mhl_path)
+                _save_state(state_path, state)
+                if verify:
+                    _emit(progress, {"type": "phase", "dst": dst_key, "phase": "mhl_verify",
+                                     "files": len(verified_rel_paths)})
+                    verify_result = _verify_emitted_mhl(dst_root, mhl_path)
+                    if verify_result is not None and verify_result != 0:
+                        raise RuntimeError("mhl verify failed for {0}: exit code {1}".format(mhl_path, verify_result))
+            except Exception as exc:
+                mhl_error = "{0}: {1}".format(type(exc).__name__, exc)
+                final_status = "failed"
+                dst_state["error"] = mhl_error
+                _emit(progress, {"type": "phase", "dst": dst_key, "phase": "mhl_failed",
+                                 "files": len(verified_rel_paths), "error": mhl_error})
+
+        dst_state["status"] = final_status
+        _save_state(state_path, state)
 
         summary[dst_key] = {
             "verified_files": len(verified_rel_paths),
             "failed_files": failed,
             "mhl_path": str(mhl_path) if mhl_path else None,
             "status": dst_state["status"],
+            "error": mhl_error,
         }
-        if failed == 0:
+        # A manifest failure counts as a failed destination even though every byte
+        # copied and verified: without the manifest there is no chain of custody,
+        # and `any_ok` is what decides whether the run exits 1 (partial) or 2 (all
+        # bad). Reporting a manifest-less drive as OK is the failure this whole
+        # branch exists to prevent.
+        if failed == 0 and mhl_error is None:
             any_ok = True
         else:
             all_ok = False

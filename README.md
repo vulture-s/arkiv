@@ -23,7 +23,7 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 - **AI editing tools only understand footage with someone talking** → arkiv runs vision analysis + transcription on every clip, so B-roll and dialogue-free footage stay searchable and manageable.
 - **Your library has to feed any downstream edit** → manual, automated, or script-driven: native Resolve plugin, EDL / FCPXML export, API / MCP interface.
 
-> **License in one line:** arkiv is free to use for **any** purpose, commercial work included (source-available); what you make with it is **100% yours**. The only thing off-limits is turning arkiv into a product that competes with it.
+> **License in one line:** arkiv is free to use for **any** purpose, commercial work included (source-available); what you make with it is **100% yours**. Off-limits: turning arkiv into a product that competes with it, and modifying it to get past the free-tier allowance.
 >
 > **Proven at scale:** fully indexed a **1,506-clip real production library** (1,161 of them dialogue-free B-roll) on a single RTX 4070.
 
@@ -141,6 +141,33 @@ automation, or let Claude/OpenClaw query your library.
 
 → **[API auth, token scopes, and the library Chat (RAG) endpoint: docs/api.md](docs/api.md)**
 
+### MCP over the LAN
+
+The default MCP server speaks **stdio**, which needs a local process and local access to
+the database — neither of which crosses a network. `mcp_http_server.py` serves the same
+read-only tools over **HTTP/SSE** so a client on another machine can query the library:
+
+```bash
+ARKIV_MCP_BIND=0.0.0.0 \
+ARKIV_MCP_ALLOWED_HOSTS=192.168.1.50:8502 \
+python mcp_http_server.py            # or: the arkiv-mcp service in docker compose
+```
+
+With docker compose, the ports are published on `127.0.0.1` by default. Start it with
+`ARKIV_BIND_HOST=0.0.0.0 docker compose up -d` to make them reachable from other machines.
+
+Point your MCP client at `http://<host>:8502/sse` with an `Authorization: Bearer <token>`
+header. Tokens are the same ones the REST API uses, so revoking one revokes it everywhere.
+
+> 🔴 **`ARKIV_MCP_ALLOWED_HOSTS` is not optional for LAN use.** The MCP SDK ships DNS
+> rebinding protection with a loopback-only allow-list, so a request arriving as
+> `Host: 192.168.1.50:8502` is refused with **421 Misdirected Request** before arkiv sees
+> it. List the address your clients dial. Values are *added* to the loopback defaults, so
+> `localhost` keeps working; `*` switches the host check off entirely.
+>
+> The bind address defaults to `127.0.0.1` — publishing an MCP endpoint to the network is
+> a decision, not a default.
+
 ## Quick Start
 
 ### Download the app (macOS Apple Silicon · Windows x64)
@@ -232,11 +259,33 @@ $env:PYTHONUTF8=1; python health.py
 ```bash
 git clone https://github.com/vulture-s/arkiv.git
 cd arkiv
-docker compose up -d
+
+# Point ARKIV_MEDIA_DIR at your footage — a NAS share, an external drive,
+# anything. It is mounted at /media inside the container, which is the path
+# you give arkiv when you add a library. Defaults to ./media.
+ARKIV_MEDIA_DIR=/path/to/your/footage docker compose up -d
 # Open http://localhost:8501
 ```
 
 > Models are pulled automatically inside the Ollama container on first run (may take a few minutes).
+
+Uploads through the web UI land in `./media-in` on the host. Both that and your
+library are bind-mounted, so nothing you add survives only inside the container.
+
+#### Split-host: arkiv here, Ollama on the GPU box
+
+The default file runs arkiv and Ollama together. If the machine with the GPU is a
+different one on your LAN, use the sibling file instead — Ollama on that machine
+needs `OLLAMA_HOST=0.0.0.0` and the models pulled first:
+
+```bash
+ARKIV_OLLAMA_URL=http://192.168.1.50:11434 \
+ARKIV_MEDIA_DIR=/Volumes/footage \
+docker compose -f docker-compose.remote-ollama.yml up -d
+```
+
+Full notes, including why this is a separate file rather than an override, are at
+the top of [`docker-compose.remote-ollama.yml`](docker-compose.remote-ollama.yml).
 
 <details>
 <summary>Upgrading from an old version (v0.3.0 → v0.3.1 storage layout migration)</summary>
@@ -302,7 +351,7 @@ python offload.py --watch --dst /Volumes/Backup # auto-offload on card insert
 
 # Auto-watch a folder for new media (ingest)
 python watch.py /path/to/footage
-python watch.py ~/Movies/rushes --interval 10
+python watch.py ~/Movies/rushes --poll-interval 10
 
 # API search (requires server running)
 # Linux / macOS / Git Bash
@@ -323,9 +372,9 @@ Copy `.env.example` to `.env` and customize:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ARKIV_DB_PATH` | `./media.db` | SQLite database path |
-| `ARKIV_CHROMA_PATH` | `./chroma_db` | ChromaDB vector store |
-| `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | Thumbnail output dir |
+| `ARKIV_DB_PATH` | `<PROJECT_ROOT>/.arkiv/project.db` | SQLite database path |
+| `ARKIV_CHROMA_PATH` | `<PROJECT_ROOT>/.arkiv/chroma_db` | ChromaDB vector store |
+| `ARKIV_THUMBNAILS_DIR` | `<PROJECT_ROOT>/.arkiv/thumbnails` | Thumbnail output dir |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `ARKIV_EMBED_MODEL` | `bge-m3` | Embedding model — **do not change after indexing** (see note below) |
 | `ARKIV_VISION_MODEL` | `qwen2.5vl:7b` | Vision model for frame descriptions. **2.5-VL is the deliberate default over qwen3-vl:8b**: Qwen3-VL's vision path is ~10× slower under Ollama (measured ~60s/frame vs ~8s/frame) — 30h vs 3.5h across 2000 frames, at comparable tag quality. Set `ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b` for the higher ceiling |
@@ -432,17 +481,17 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 ## License
 
-PolyForm Perimeter License 1.0.1 — see [LICENSE](LICENSE).
+PolyForm Perimeter License 1.0.1 plus Additional Terms — see [LICENSE](LICENSE).
 
-Using arkiv is free for **any** purpose, commercial work included: paid client jobs, studio use, funded productions. Videos, timelines and exports you produce with it are yours, with no restriction from the license. The one thing that is not permitted is providing others with a product that competes with arkiv — forking it into a rival asset manager, wrapping it as a hosted indexing service sold to third parties, or reimplementing its functionality as a substitute product, including free of charge.
+Using arkiv is free for **any** purpose, commercial work included: paid client jobs, studio use, funded productions. Videos, timelines and exports you produce with it are yours, with no restriction from the license. Two things are not permitted. **Modifying arkiv to exceed the free-tier allowance or to switch on Pro functionality** — this applies to your own use too (Additional Terms 1–2; installations in use before 1.1.0 keep their exemption). And **providing others with a product that competes with arkiv** — forking it into a rival asset manager, wrapping it as a hosted indexing service sold to third parties, or reimplementing its functionality as a substitute product, including free of charge.
 
 The line is what your customer is buying: a deliverable you produced with arkiv is ordinary tool use; arkiv's functionality itself, sold as a product or service, competes.
 
 ## Pro add-on
 
-The free core covers up to **3 projects**. The optional **Pro add-on** — a separate closed-source component — unlocks unlimited projects and cross-project aggregation (search and collections spanning projects) for **NT$3,000, one time, perpetual**. No subscription, no activation server, no phone-home. Terms: [docs/pro-addon-license.md](docs/pro-addon-license.md).
+The free core covers up to **3 projects**. The optional **Pro add-on** — a separately licensed paid tier, enabled by a signed licence file — unlocks unlimited projects and cross-project aggregation (search and collections spanning projects) for **NT$3,000, one time, perpetual**. No subscription, no activation server, no phone-home. Terms: [docs/pro-addon-license.md](docs/pro-addon-license.md).
 
-> Not yet on sale — the purchase path is still being built. The terms page is published so you can read them before that happens.
+> On sale since 2026-10-03 through the Waffle House store — see the [product page](https://vulture-s.github.io/arkiv/).
 
 ## Public-Interest Program
 

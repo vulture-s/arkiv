@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import bisect
 import json
+import math
 import os
 import subprocess
 import tempfile
 import threading
 import time
 import platform
+import re
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +33,8 @@ from config import (
     OLLAMA_CHAT_MODEL,
     FFMPEG_PATH,
     DIARIZATION_ENABLED,
+    AUDIO_NORMALISE,
+    AUDIO_NORMALISE_BELOW_DB,
     PYANNOTE_TOKEN,
     VAD_THRESHOLD,
 )
@@ -71,6 +75,18 @@ def _non_mac_backend() -> str:
     DLLs fail to load on the CUDA box. Set ARKIV_TRANSCRIBE_BACKEND=whisperx to
     force the legacy path."""
     return os.getenv("ARKIV_TRANSCRIBE_BACKEND", "faster-whisper").strip().lower()
+
+
+# Whisper compute device. Defaults to "cuda" (the GPU dev box). On a GPU-less
+# host — e.g. the remote-Ollama Docker deploy running on a CPU-only machine —
+# faster-whisper would otherwise try CUDA and crash with "CUDA driver version
+# is insufficient for CUDA runtime version". Set ARKIV_WHISPER_DEVICE=cpu there.
+WHISPER_DEVICE = os.getenv("ARKIV_WHISPER_DEVICE", "cuda").strip().lower()
+
+# float16 is only efficient on CUDA. On CPU, faster-whisper/ctranslate2 reject
+# it ("target device or backend do not support efficient float16 computation"),
+# so fall back to int8 — same accuracy for transcription, ~2x slower but it runs.
+WHISPER_COMPUTE_TYPE = "int8" if WHISPER_DEVICE == "cpu" else "float16"
 
 # ── Model Singletons ────────────────────────────────────────────────────────
 WHISPER_GUARD_ACTIVE_MODE = WHISPER_GUARD_DEFAULT_MODE
@@ -305,17 +321,56 @@ def warm_up():
             import whisperx
             _whisperx_model = whisperx.load_model(
                 WHISPER_MODEL,
-                "cuda",
-                compute_type="float16",
+                WHISPER_DEVICE,
+                compute_type=WHISPER_COMPUTE_TYPE,
             )
             print("  [whisperx on cuda]", flush=True)
         else:
             from faster_whisper import WhisperModel
-            _fw_model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
+            _fw_model = WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
             print("  [faster-whisper on cuda]", flush=True)
 
         _whisper_loaded = True
         print("  [whisper model loaded]", flush=True)
+
+
+def _vad_or_full(wav_path: str):
+    """`_vad_filter`, but "no speech" is never the terminal answer.
+
+    🔴 Silero's no-speech verdict is wrong most of the time on location audio.
+    Measured 2026-09-07 on a 200-clip shoot (PA system + crowd): 85 clips came
+    back with an empty transcript, and re-running them with VAD bypassed
+    recovered speech in **54 of them** — a 64% false-negative rate. One 50s clip
+    yielded 180 characters of continuous presenter dialogue.
+
+    It is not a sensitivity problem, so don't "fix" it by lowering the threshold:
+    a sweep at 0.5 / 0.35 / 0.2 / 0.1 kept 0% / 0% / 3% / 8% of the failing
+    files. Nor is it low level — that audio is hot (RMS 0.133, mean -17.5 dBFS),
+    which is why the PR #376→#394 normalisation path does nothing for it (13
+    clips tested, 0 improved; that path ships disabled). The working hypothesis
+    is simply that a live PA plus crowd noise sits outside Silero's training
+    distribution.
+
+    The old behaviour returned `("", "", [], [])` right here — **the same value a
+    genuinely silent file produces**. A wrong verdict and a right one were
+    byte-identical downstream, so nobody could ever tell which clips had been
+    dropped. That indistinguishability is the actual defect; the false-negative
+    rate only sets its size.
+
+    So: fall back to decoding the whole file and let hallucination guards 1-4
+    make the call. They already exist to reject "whisper invented text from
+    silence", which is exactly the risk this reintroduces. Cost is one extra
+    decode on files that really are silent (~4s each, measured); the thing it
+    buys is that no clip is ever silently skipped.
+    """
+    vad_wav, offset_map = _vad_filter(wav_path)
+    if vad_wav is not None:
+        return vad_wav, offset_map
+    # Loud on purpose: the old failure was invisible, so the fallback must not be.
+    print("  [vad] no speech detected — decoding the full file anyway "
+          "(Silero false-negatives on location audio; guards 1-4 decide)",
+          flush=True)
+    return wav_path, None
 
 
 def transcribe(media_path: str, language=None) -> tuple:
@@ -324,7 +379,10 @@ def transcribe(media_path: str, language=None) -> tuple:
     Returns (transcript_text, language, segments_list, words_list).
     segments_list: [{"start": float, "end": float, "text": str}, ...]
     words_list: [{"word": str, "start": float, "end": float, "score": float}, ...]
-    Returns ("", "", [], []) if no speech detected.
+    Returns ("", "", [], []) when nothing survives — either the wav could not
+    be extracted, or the decode produced no text that the hallucination guards
+    accepted. VAD reporting "no speech" is NOT one of those cases; see
+    `_vad_or_full` for why that verdict is not trusted on its own.
     """
     if language is None:
         language = WHISPER_LANGUAGE_HINT or DEFAULT_LANGUAGE
@@ -342,9 +400,7 @@ def transcribe(media_path: str, language=None) -> tuple:
     try:
         if _USE_MLX:
             progress.report(stage="vad")
-            vad_wav, offset_map = _vad_filter(wav)
-            if vad_wav is None:
-                return "", "", [], []
+            vad_wav, offset_map = _vad_or_full(wav)
             try:
                 progress.report(stage="decoding")
                 result = _transcribe_mlx(vad_wav, language)
@@ -356,9 +412,7 @@ def transcribe(media_path: str, language=None) -> tuple:
             result = _transcribe_whisperx(wav, language)
         else:
             progress.report(stage="vad")
-            vad_wav, offset_map = _vad_filter(wav)
-            if vad_wav is None:
-                return "", "", [], []
+            vad_wav, offset_map = _vad_or_full(wav)
             try:
                 progress.report(stage="decoding")
                 result = _transcribe_faster_whisper(vad_wav, language)
@@ -537,14 +591,14 @@ def _transcribe_whisperx(wav: str, language: str) -> tuple:
 
     align_model, align_meta = whisperx.load_align_model(
         language_code=lang,
-        device="cuda",
+        device=WHISPER_DEVICE,
     )
     result = whisperx.align(
         result["segments"],
         align_model,
         align_meta,
         audio,
-        "cuda",
+        WHISPER_DEVICE,
         return_char_alignments=False,
     )
 
@@ -666,6 +720,48 @@ def _split_long_segments(timed_segments: list, max_units: float = _MAX_SEGMENT_U
     return out
 
 
+def _mean_no_speech(segments: list) -> float:
+    """Batch no_speech score for Guard 1 = min(count mean, duration mean).
+
+    Guard 1 wipes the WHOLE transcript, so it must fire only when the batch is
+    silent by both measures. By segment *count* alone, three 1 s BGM tails
+    outvoted 30 s of clear speech (0.725 > 0.6). By *duration* alone, 40 s of
+    interview followed by 80 s of ambience that Whisper fills with three long
+    hallucinated segments scored 0.62 and the interview was wiped (dual-track
+    audit). min() keeps the BGM-tail fix and never rejects a batch the old
+    count gate passed; long silent segments are still dropped one by one by
+    Guard 2. Without usable timing (any segment lacking a positive start/end)
+    it is the plain mean. Mirrors
+    whisper-guard's ``WhisperGuard._mean_no_speech`` (vulture-s/whisper-guard#1);
+    arkiv keeps its own copy because ``_postprocess`` does not route through
+    ``WhisperGuard.process``.
+    """
+    durations = []
+    for seg in segments:
+        if "start" not in seg or "end" not in seg:
+            durations = None
+            break
+        start, end = seg["start"], seg["end"]
+        # Only finite real numbers: numeric *strings* were float()-ed here, passed
+        # Guard 1, then crashed Guard 2 (`"30" - "0"`) — the plain mean had
+        # rejected that batch first (Codex audit of whisper-guard#1).
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                   and math.isfinite(v) for v in (start, end)):
+            durations = None
+            break
+        duration = float(end) - float(start)
+        if duration <= 0:
+            durations = None
+            break
+        durations.append(duration)
+
+    probs = [s.get("no_speech_prob", 0) for s in segments]
+    plain = sum(probs) / len(probs)
+    if durations:
+        return min(plain, sum(p * d for p, d in zip(probs, durations)) / sum(durations))
+    return plain
+
+
 def _postprocess(text: str, lang: str, segments: list, language: str,
                  words: list = None, wav_path: str = None) -> tuple:
     """Shared post-processing: anti-hallucination + LLM polish (+ optional A4
@@ -675,9 +771,9 @@ def _postprocess(text: str, lang: str, segments: list, language: str,
     if not segments:
         return text, lang, [], words or []
 
-    # Guard 1: ALL segments are silence → no speech
-    avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
-    if avg_no_speech > NO_SPEECH_THRESHOLD:
+    # Guard 1: the batch is mostly silence by BOTH segment count and duration
+    # → no speech. See _mean_no_speech for why count-weighting was wrong.
+    if _mean_no_speech(segments) > NO_SPEECH_THRESHOLD:
         return "", lang, [], []
 
     # Guard 2: Per-segment filtering
@@ -892,12 +988,53 @@ def _llm_polish_batched(text: str, language: str = "zh") -> str:
     return " ".join(out)
 
 
+def _mean_volume_db(media_path: str):
+    """Mean audio level in dBFS, or None when ffmpeg can't say.
+
+    One cheap pass — `volumedetect` decodes to null, so nothing is written and no
+    re-encode happens. Cheap enough to run per clip, and the alternative is
+    guessing whether a track needs help.
+    """
+    cmd = [FFMPEG_PATH, "-i", media_path, "-map", "a:0",
+           "-af", "volumedetect", "-f", "null", "-"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    err = (r.stderr or b"").decode("utf-8", "replace")
+    match = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?) dB", err)
+    return float(match.group(1)) if match else None
+
+
 def _to_wav(media_path: str):
     _fd, out = tempfile.mkstemp(suffix=".wav"); os.close(_fd)
+    filters = []
+    if AUDIO_NORMALISE:
+        # OFF by default since 2026-08-28 — see the measurement in config.py. The
+        # gate below is still here and still right in shape; what the numbers say
+        # is that passing it does not help. Kept because 13 clips from two
+        # libraries is not every kind of audio, and someone whose material this
+        # sample does not resemble can turn it back on with ARKIV_AUDIO_NORMALISE.
+        #
+        # Gated, not unconditional. A quiet track loses whole passages before
+        # whisper sees them — VAD reads low level as silence and drops it. But
+        # normalising raises the noise floor in exactly the quiet stretches where
+        # hallucinations start, and on this material that is what actually
+        # happened: VAD went from keeping 7% to keeping 22%, and whisper filled
+        # the extra with invention.
+        mean_db = _mean_volume_db(media_path)
+        if mean_db is not None and mean_db < AUDIO_NORMALISE_BELOW_DB:
+            print("  [audio] mean {0:.1f} dB < {1:.0f} dB — normalising".format(
+                mean_db, AUDIO_NORMALISE_BELOW_DB), flush=True)
+            filters.append("dynaudnorm")
     cmd = [
         FFMPEG_PATH, "-i", media_path,
         "-ac", "1", "-ar", "16000",
         "-map", "a:0",
+    ]
+    if filters:
+        cmd += ["-af", ",".join(filters)]
+    cmd += [
         "-loglevel", "error",
         out, "-y"
     ]

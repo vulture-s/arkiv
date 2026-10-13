@@ -6,11 +6,30 @@ Pins that whole-library retranscribe now shares the H3 single-flight ingest slot
 """
 import importlib
 
+import pytest
+
 
 def _seed_audio_row(sample_record):
     db = importlib.import_module("db")
     db.upsert(sample_record(path="/tmp/ghost-audio.mp3", filename="ghost-audio.mp3",
                             ext=".mp3", has_audio=1))
+
+
+@pytest.fixture(autouse=True)
+def _skip_media_preflight(monkeypatch):
+    """These tests pin the LOCKS, and their media row is a deliberate ghost path.
+
+    `/api/retranscribe-all` gained a media-capability preflight that (correctly)
+    refuses a batch whose files are all missing — which is what a ghost path is.
+    Stubbing it keeps these tests about the thing they are named for; the
+    preflight has its own tests, including one that asserts a refusal here would
+    NOT leak the very guard these tests measure.
+    """
+    mediaprobe = importlib.import_module("mediaprobe")
+    monkeypatch.setattr(
+        mediaprobe, "probe",
+        lambda paths, **kw: {"sampled": 0, "of": len(list(paths)), "files": [],
+                             "by_codec": {}})
 
 
 def test_retranscribe_all_409_when_ingest_slot_busy(fastapi_client, sample_record):

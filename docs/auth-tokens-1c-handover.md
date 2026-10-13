@@ -395,7 +395,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:8501/api/media
 - New dep: `nanoid>=2.0.0`.
 
 ### Driving incident
-5-machine fleet (PC / M2 Max / mini-relay / Chloe / NAS-OpenClaw) all need to call arkiv API but should have different read/write permissions. Pre-v0.4.1 = zero auth, anyone on Tailscale could `DELETE /api/projects/{name}` or `POST /api/ingest`. v0.4.1 closes this with scope-based per-machine tokens + IP allowlist.
+5-machine fleet (a Windows desktop, two Mac laptops, a Mac mini relay host, and a NAS) all need to call arkiv API but should have different read/write permissions. Pre-v0.4.1 = zero auth, anyone on Tailscale could `DELETE /api/projects/{name}` or `POST /api/ingest`. v0.4.1 closes this with scope-based per-machine tokens + IP allowlist.
 
 ---
 ```

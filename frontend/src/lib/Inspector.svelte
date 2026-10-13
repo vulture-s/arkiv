@@ -4,6 +4,9 @@
   import Mono from './Mono.svelte'
   import Thumb from './Thumb.svelte'
   import Waveform from './Waveform.svelte'
+  import { diagnosePlaybackFailure, playbackFailureMessage } from './streamDiag.js'
+  import { onDestroy } from 'svelte'
+  import { createInOutWriter } from './inoutWriter.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -24,7 +27,8 @@
   // IN/OUT marks snap to exact frame boundaries and frame stepping is enabled.
   // null → the old second-based behaviour (audio, or fps unknown) is unchanged.
   export let fps = null
-  $: useVideo = !!videoSrc && !is360 && !!media && media.kind !== 'audio'
+  $: useImage = !!videoSrc && !!media && media.kind === 'image'
+  $: useVideo = !!videoSrc && !is360 && !!media && media.kind !== 'audio' && media.kind !== 'image'
   $: useAudio = !!videoSrc && !!media && media.kind === 'audio'
   // Frame features only make sense for a video with a known, sane fps.
   $: frameExact = useVideo && typeof fps === 'number' && fps > 0
@@ -101,12 +105,19 @@
   // once more if the detail lands after the switch), but never clobber an edit the
   // user already made on this clip (tracked by _ioTouched). Keyed on media.id so a
   // clip-switch resets, fixing the old bug where marks leaked across clips / were lost.
+  // The clip id and values are bound when the write is scheduled (not when the
+  // timer fires) — see inoutWriter.js for the cross-clip clobber this prevents.
+  const _ioWriter = createInOutWriter(350)
+  onDestroy(() => _ioWriter.flush())
   let _ioLoadedId = null
   let _ioTouched = false
   $: _hydrateInOut(media && media.id, inPoint, outPoint)
   function _hydrateInOut(id, ip, op) {
     if (id == null) return
     if (id !== _ioLoadedId) {
+      // Land any still-debounced mark on the clip it was made on BEFORE the
+      // marks are reset for the new clip (audit N1).
+      _ioWriter.flush()
       _ioLoadedId = id
       _ioTouched = false
       inSec = ip ?? null
@@ -118,12 +129,10 @@
   }
   // Debounced persist — waveform marker drags fire onTrim rapidly, so coalesce the
   // writes; marking the clip as touched locks out further auto-hydration.
-  let _ioTimer = null
   function _persistInOut() {
     _ioTouched = true
     if (!onInOut) return
-    if (typeof clearTimeout !== 'undefined') clearTimeout(_ioTimer)
-    _ioTimer = setTimeout(() => onInOut(inSec, outSec), 350)
+    _ioWriter.schedule(onInOut, media && media.id, inSec, outSec)
   }
   // When frameExact, mark at the exact frame boundary (curFrame from rVFC),
   // expressed back in seconds so the ?in_s/out_s export contract is unchanged —
@@ -198,6 +207,12 @@
   export let viewLang = null
   export let onViewLang = null // (lang) => void — view a language (no activate)
   export let onActivateLang = null // (lang) => void — make it the active transcript
+  // Spoken-texture reading for the language being viewed: {count, density}.
+  // Server-computed (one definition of the marker set, in transcript_compare) —
+  // `density` is null when the transcript is too short for a percentage to be
+  // anything but noise, and the count is shown alone. A count is honest at any
+  // length; a percentage needs a denominator.
+  export let particleStat = null
   export let frameDescriptions = null // string[]; when set, render a Vision block
   // Richer per-frame vision metadata for the scene timeline. When set, supersedes
   // frameDescriptions. [{tc?, description, content_type, atmosphere, energy,
@@ -220,6 +235,9 @@
   export let onChapters = null
   export let onRemotion = null
   export let onReveal = null
+  // Live delete. onDelete = () => void; when set, a "刪除素材" button appears. The
+  // parent owns the confirm dialog + the API call (so it can also drive bulk delete).
+  export let onDelete = null
   // Live tag editing. tags = [{id,name,source}] → renders the editable Tags block;
   // null → no block (mock screens unchanged). onAddTag/onRemoveTag wire the writes.
   export let tags = null
@@ -246,6 +264,24 @@
   export let languages = null // [{code,label}] for the retranscribe picker
   export let mediaLang = null // current clip language → default selection
   let imgFailed = false
+  // Reset per clip: a failure that stuck would make the NEXT clip look broken
+  // too, which is worse than the black pane it replaces.
+  let videoFailed = false
+  // What actually went wrong, asked of the endpoint. `null` = not known yet, and
+  // the panel says nothing specific until it is — claiming "此編碼播不了" before
+  // we have the status is exactly the guess this replaces.
+  let videoDiag = null
+  $: if (media) { videoFailed = false; videoDiag = null }
+
+  async function onVideoError() {
+    videoFailed = true
+    videoDiag = null
+    if (!videoSrc) return
+    const asked = videoSrc
+    const d = await diagnosePlaybackFailure(videoSrc)
+    // A slow probe must not relabel a clip the user has already moved past.
+    if (asked === videoSrc) videoDiag = d
+  }
   let showMore = false // reveal the ancillary (成品輔助) export group
   let tagInput = ''
   function submitTag() {
@@ -316,6 +352,19 @@
   // stay populated for reference.
   export let live = false
   $: lines = live ? (transcriptLines ?? []) : (transcriptLines ?? MOCK_TRANSCRIPT)
+  // 語氣詞 readout, appended to the segment count rather than given its own row —
+  // it is a footnote on the transcript, not a headline about the clip.
+  $: particleLabel = particleStat
+    ? ` · 語氣 ${particleStat.count}` +
+      (particleStat.density != null ? ` · ${particleStat.density.toFixed(1)}%` : '')
+    : ''
+  $: particleTitle = !particleStat
+    ? undefined
+    : particleStat.density != null
+      ? '語氣詞密度：每 100 字裡的語氣詞（啦齁嘛蛤欸咧吼唷呴）。' +
+        '高＝保留了口說語氣，低＝被整理成書面語。' +
+        '這是相對指標 —— 比同一段聲音的兩份逐字稿有意義；跨片比較比到的是講話的人，不是引擎。'
+      : '這份逐字稿太短，百分比會被單一個字左右，所以只給個數。'
   $: pathStr = live
     ? (pathLabel ?? media.name)
     : (pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`)
@@ -327,7 +376,7 @@
 <aside class="inspector">
   <div class="header">
     <Eyebrow style="margin-bottom:8px;">
-      Inspector · {media.kind === 'audio' ? 'AUDIO' : `${media.fps}p · ${media.res}`}
+      Inspector · {media.kind === 'image' ? 'IMAGE' : media.kind === 'audio' ? 'AUDIO' : `${media.fps}p · ${media.res}`}
     </Eyebrow>
     <div class="fname">{media.name}</div>
     <Mono dim style="font-size:10.5px;margin-top:4px;letter-spacing:0.04em;">
@@ -335,12 +384,31 @@
     </Mono>
   </div>
 
-  <div class="preview" class:hasplayer={useVideo || useAudio}>
+  <div class="preview" class:hasplayer={useVideo || useAudio || useImage}>
     {#if is360 && thumbUrl && !imgFailed}
       {#if Pano360}<svelte:component this={Pano360} src={thumbUrl} />{:else}<div class="panoload"><Mono dim style="font-size:11px;">360 · loading…</Mono></div>{/if}
+    {:else if useImage}
+      <img class="previmg" src={videoSrc} alt={media.name} on:error={() => (imgFailed = true)} />
+    {:else if useVideo && videoFailed}
+      <!-- The stream endpoint answers 409 {need_proxy} for a codec no browser
+           decodes, but a <video> has no way to show a JSON body: it just fails
+           to load and leaves a black pane. Without this the 409 is invisible
+           and the clip reads as broken rather than as needing one click (#420).
+           🔴 `on:error` fires for EVERY load failure though — 401, 404, backend
+           down — so this panel used to send those users to build a proxy for a
+           file they cannot read. The status is asked for now, and the button
+           appears only when the endpoint itself says a proxy is the fix. -->
+      <div class="playfail">
+        <Mono dim style="font-size:11px;">{playbackFailureMessage(videoDiag)}</Mono>
+        {#if onReprocess && videoDiag && videoDiag.canProxy}
+          <button class="ak-btn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
+            {reBusy === 'proxy' ? '排入中…' : '建立 proxy 後可播放'}
+          </button>
+        {/if}
+      </div>
     {:else if useVideo}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+      <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} on:error={onVideoError} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
     {:else if useAudio}
       {#if thumbUrl && !imgFailed}
         <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
@@ -351,7 +419,7 @@
     {:else}
       <Thumb seed={media.id} kind={media.kind} {theme} />
     {/if}
-    {#if !useVideo && !useAudio && !live}
+    {#if !useVideo && !useAudio && !useImage && !live}
       <!-- design-mock only: fake scrubber overlay. In live (no player available)
            the poster shows alone — no faked playback chrome. -->
       <div class="scrim"></div>
@@ -454,7 +522,7 @@
   <div class="block transcript">
     <div class="blockhead">
       <Eyebrow>Transcript</Eyebrow>
-      <Mono dim style="font-size:9.5px;">{lines.length} 段</Mono>
+      <Mono dim style="font-size:9.5px;" title={particleTitle}>{lines.length} 段{particleLabel}</Mono>
     </div>
     {#if transcriptLangs && transcriptLangs.length}
       <div class="langtabs">
@@ -556,6 +624,12 @@
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
           {reBusy === 'proxy' ? '排入中…' : '建立 proxy'}
         </button>
+        <!-- ProRes Proxy into <source dir>/Proxy/<name>.mov, with source TC and
+             every audio track, so Resolve can relink it. Not the button above:
+             that one is the 720p H.264 the browser plays. -->
+        <button class="ak-btn rebtn" disabled={!!reBusy} title="ProRes Proxy 寫到原始檔旁的 Proxy/，保留 TC 與全部音軌；不覆蓋既有檔" on:click={() => doReprocess('editor-proxy')}>
+          {reBusy === 'editor-proxy' ? (reProgress ? `生成中… ${reProgress}` : '生成中…') : '剪輯用 proxy'}
+        </button>
       </div>
       {#if reMsg}<Mono dim style="font-size:10px;line-height:1.45;display:block;">{reMsg}</Mono>{/if}
     </div>
@@ -601,6 +675,9 @@
     {#if onReveal}
       <button class="ak-btn reveal" on:click={onReveal} title="在 Finder / 檔案總管中顯示原始檔">⊙ 在 Finder 顯示</button>
     {/if}
+    {#if onDelete}
+      <button class="ak-btn del" on:click={onDelete} title="刪除素材（移至回收桶，可還原）">刪除素材</button>
+    {/if}
   </div>
 </aside>
 
@@ -623,6 +700,8 @@
     border-bottom: 1px solid var(--rule);
   }
   .reveal { font-size: 11px; padding: 4px 10px; margin-top: 8px; width: 100%; }
+  .del { font-size: 11px; padding: 4px 10px; margin-top: 8px; width: 100%; color: #d9534f; border-color: #d9534f; }
+  .del:hover { background: #d9534f; color: #fff; }
   /* ancillary export disclosure (成品輔助) — visually secondary to the primary row */
   .moreexp { display: inline-block; margin-top: 8px; font-size: 10.5px; color: var(--quiet); cursor: pointer; }
   .moreexp:hover { color: var(--ink); }
@@ -637,7 +716,15 @@
   .previmg { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* the real player: contain (don't crop footage) on black; audio sits at the bottom */
   video.previmg { object-fit: contain; background: #000; }
-  .prevaudio { position: absolute; left: 12px; right: 12px; bottom: 12px; width: auto; }
+  /* The native control bar renders light-on-white by default, which in this
+     dark inspector reads as a broken white box rather than a play control
+     (#420). `color-scheme` is what tells the engine to draw its own widgets
+     dark — restyling the bar by hand would mean rebuilding play/scrub/time. */
+  .prevaudio { position: absolute; left: 12px; right: 12px; bottom: 12px; width: auto; color-scheme: dark; }
+  .playfail {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; background: #000;
+  }
   .panoload { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--surface-2); }
   .scrim {
     position: absolute; left: 0; right: 0; bottom: 0; height: 40%;

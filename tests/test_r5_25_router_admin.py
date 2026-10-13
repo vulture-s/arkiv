@@ -20,7 +20,7 @@ def test_admin_router_is_a_leaf_module():
     assert not re.search(r"^\s*from\s+server\b", src, re.M)
 
 
-def test_router_owns_the_four_token_routes():
+def test_router_owns_the_admin_routes():
     import routers.admin as ra
     # one (path, method) pair per handler, ignoring the auto-added HEAD on GET
     pairs = {
@@ -34,6 +34,9 @@ def test_router_owns_the_four_token_routes():
         ("/api/admin/tokens", "GET"),
         ("/api/admin/tokens/{token_id}", "GET"),
         ("/api/admin/tokens/{token_id}", "DELETE"),
+        ("/api/admin/trash", "GET"),
+        ("/api/admin/trash/purge", "POST"),
+        ("/api/admin/trash/restore/{trash_id}", "POST"),
     }
     # the body model moved WITH the router
     assert hasattr(ra, "CreateTokenRequest")

@@ -7,11 +7,13 @@ sanitisers (fable-audit #22: absolute roots only leak to admin-scoped callers)
 are projects-local and move here. Imports auth + projects + pathres — no server
 import, no cycle.
 """
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
+import config
 import projects as project_registry
 from auth import require_scopes
 from pathres import _basename_safe
@@ -61,6 +63,36 @@ def _sanitize_project_paths(projects: list, tok: dict) -> list:
     return projects
 
 
+def _mark_current(projects: list) -> list:
+    """Flag the registry entry that IS the library this install currently has open.
+
+    The frontend cannot work this out for itself. `/api/stats` reports the library
+    by folder name (`.arkiv`) while the registry stores a chosen project name
+    (`九月分鏡課promo`) against an absolute path; those two never match, so a UI
+    that tried would either guess wrong or give up. The backend already holds
+    `config.PROJECT_ROOT`, so the answer belongs here — the same reasoning as #343,
+    where an entitlement verdict was wrong precisely because the code could not see
+    the library it was itself serving.
+
+    🔴 Must run BEFORE `_sanitize_project_paths`: that replaces `path` with a
+    basename for non-admin callers, and a basename cannot be compared to a root.
+    """
+    try:
+        here = project_registry._normalize_key(config.PROJECT_ROOT)
+    except Exception:  # noqa: BLE001 — an unresolvable root is "no entry is current"
+        here = None
+    for p in projects:
+        marked = False
+        raw = p.get("path")
+        if here and raw:
+            try:
+                marked = project_registry._normalize_key(Path(raw)) == here
+            except Exception:  # noqa: BLE001 — one bad row must not blank the rest
+                marked = False
+        p["is_current"] = marked
+    return projects
+
+
 @router.get("/api/projects")
 def list_projects(
     _tok: dict = Depends(require_scopes("projects_read")),
@@ -71,6 +103,7 @@ def list_projects(
         projects = [project.to_dict() for project in project_registry.list_registry_projects()]
     except project_registry.RegistryError as exc:
         raise HTTPException(status_code=500, detail="project registry unreadable: {0}".format(exc))
+    _mark_current(projects)
     _sanitize_project_paths(projects, _tok)
     return {"projects": projects, "total": len(projects)}
 

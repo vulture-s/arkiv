@@ -5,7 +5,8 @@
   import { PROJECTS, TAGS } from './mockData.js'
   import { DAY_CAP } from './shotYear.js'
   // Live overrides — all default to mock so mock screens stay byte-identical.
-  export let liveProjects = null // [{id,name,count,active,health?}]
+  export let liveProjects = null // [{id,name,count,active,health?}]; count null = unknown
+  export let entitlement = null // /api/entitlements; null -> the line is omitted entirely
   export let livePools = null // [[label, count], ...]
   export let liveTags = null // [{name, count}]
   export let onTag = null // (name) => void; live tag-click → filter
@@ -34,6 +35,16 @@
     ['No transcript', 12],
   ]
   $: projects = liveProjects ?? PROJECTS
+  // Says what the install is actually entitled to, from the endpoint that enforces
+  // it. Omitted when unknown rather than guessed: a wrong tier label is worse than
+  // no label, and the refusal itself already explains the cap when someone hits it.
+  $: tierLine = !entitlement
+    ? null
+    : entitlement.grandfathered
+      ? '此安裝永久解除專案上限'
+      : entitlement.pro
+        ? 'Pro · 無限專案'
+        : `${entitlement.projects_used} / ${entitlement.free_project_limit} 個免費專案`
   $: pools = livePools ?? MOCK_POOLS
   $: tags = liveTags ?? TAGS
   // Cap the cloud so a long tail (74+ on a real library) doesn't bury the useful
@@ -64,13 +75,18 @@
 
 <aside class="pool">
   <section>
-    <Eyebrow style="margin-bottom:10px;">Projects · {projects.length}</Eyebrow>
+    <Eyebrow style="margin-bottom:{tierLine ? '3px' : '10px'};">Projects · {projects.length}</Eyebrow>
+    {#if tierLine}
+      <Mono dim style="font-size:9.5px;letter-spacing:0.06em;display:block;margin-bottom:9px;">{tierLine}</Mono>
+    {/if}
     <div class="col">
       {#each projects as p (p.id)}
         <div class="proj" class:active={p.active} style="opacity:{p.health ? 0.6 : 1};">
           <div class="projrow">
             <span class="projname" class:activename={p.active}>{p.name}</span>
-            <Mono dim style="font-size:10px;flex:0 0 auto;">{p.count}</Mono>
+            {#if p.count != null}
+              <Mono dim style="font-size:10px;flex:0 0 auto;">{p.count}</Mono>
+            {/if}
           </div>
           {#if p.health}
             <Mono dim style="font-size:9.5px;letter-spacing:0.06em;display:block;margin-top:1px;">◇ {p.health}</Mono>

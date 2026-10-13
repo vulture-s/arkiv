@@ -1,0 +1,801 @@
+#!/usr/bin/env python3
+"""
+arkiv — DaVinci Resolve Plugin (LAN variant)
+Search arkiv media library and import selected files into the current Resolve project.
+
+This is the remote/LAN build: it defaults to http://localhost:8501 and sends a
+media_read + videos_read token (ARKIV_TOKEN) on every request, because the
+server only trusts loopback (localhost) as admin WITHOUT a token. Import
+downloads each clip via /api/stream/{id} to a local temp dir first — the
+server's internal media-in/... path is NOT reachable from a different machine
+on the LAN, so passing it straight to Resolve would create an empty
+"media-in" bin and import zero clips. Use this copy when arkiv runs on
+another machine on the LAN. The localhost / no-token version is
+arkiv_resolve.py.
+
+Install (macOS):
+    cp arkiv_resolve_lan.py ~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/
+Install (Windows):
+    copy arkiv_resolve_lan.py "%APPDATA%\\Blackmagic Design\\DaVinci Resolve\\Support\\Fusion\\Scripts\\Utility\\"
+
+Usage:
+    In DaVinci Resolve → Workspace → Scripts → arkiv_resolve_lan
+"""
+import json
+import os
+import shutil
+import tempfile
+import urllib.request
+import urllib.parse
+from pathlib import Path
+
+# Resolve API base from env so users running arkiv on a non-default port (or on
+# a remote host they Tailscale into) can point the plugin without a code edit.
+# ARKIV_API takes precedence; fallback composes from ARKIV_HOST + ARKIV_PORT to
+# match the env vars used by config.py / server.py.
+def _validate_arkiv_api(url):
+    """Reject schemes / hosts that turn the plugin into an SSRF gadget.
+
+    Codex Round-2 audit (J4): a malicious ARKIV_API like
+    http://169.254.169.254/latest/meta-data/ would have the plugin pull cloud
+    metadata on every search / import. Plugin runs inside operator's Resolve, so
+    treat env override as untrusted-ish — http/https only, no link-local."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"ARKIV_API 必須是 http/https scheme：{url!r}")
+    host = parsed.hostname or ""
+    if host.startswith("169.254.") or host == "0.0.0.0":
+        raise ValueError(
+            f"ARKIV_API 不可指向 link-local / cloud metadata 位址：{url!r}"
+        )
+    return url
+
+
+ARKIV_API = _validate_arkiv_api(
+    os.environ.get("ARKIV_API") or "http://{host}:{port}".format(
+        host=os.environ.get("ARKIV_HOST", "localhost"),
+        port=os.environ.get("ARKIV_PORT", "8501"),
+    )
+)
+
+# LAN build: the server only trusts loopback (localhost) as admin WITHOUT a
+# token. A non-localhost host (e.g. a LAN IP) MUST present a token with the
+# media_read scope, or every request 401s. The token is read from the
+# ARKIV_TOKEN environment variable (set it in your .env / shell) — it is
+# intentionally NOT hardcoded in this file.
+ARKIV_TOKEN = os.environ.get("ARKIV_TOKEN")
+if not ARKIV_TOKEN:
+    raise RuntimeError(
+        "ARKIV_TOKEN is not set. Export it (or add to your .env) from your "
+        "arkiv server's token admin before using the LAN plugin."
+    )
+
+
+def _api_request(url, data=None, headers=None):
+    """Build a Request with the LAN bearer token attached."""
+    h = {"Authorization": "Bearer {0}".format(ARKIV_TOKEN)}
+    if headers:
+        h.update(headers)
+    return urllib.request.Request(url, data=data, headers=h)
+
+
+_DOWNLOAD_DIR = os.path.join(tempfile.gettempdir(), "arkiv_import")
+
+
+def _download_media(media_id, filename):
+    """Download a media file from arkiv to a local temp dir.
+
+    The LAN build runs on a DIFFERENT machine from the arkiv server, so the
+    library's internal (relative) path — e.g. ``media-in/foo.mp4`` — is not
+    reachable from Resolve. We pull the bytes via /api/stream/{id} (which
+    resolves the file server-side) and hand Resolve a local path it can import
+    by reference. Returns the local path, or None on failure.
+    """
+    # Keep the ORIGINAL filename (in a per-id folder so two cards' C0001.MP4
+    # don't collide): the metadata CSV matches clips by File Name, and an
+    # "{id}_C0001.MP4" rename made every row miss (audit N1).
+    base = os.path.basename(str(filename or "clip").replace("\\", "/")) or "clip"
+    folder = os.path.join(_DOWNLOAD_DIR, str(int(media_id)))
+    os.makedirs(folder, exist_ok=True)
+    dest = os.path.join(folder, base)
+    partial = dest + ".partial"
+    url = "{0}/api/stream/{1}".format(ARKIV_API, media_id)
+    try:
+        # Stream to disk — resp.read() held the whole clip (tens of GB for
+        # ProRes) in Resolve's embedded Python. Write to .partial and rename so
+        # an interrupted download never leaves a truncated file at `dest`.
+        with urllib.request.urlopen(_api_request(url), timeout=600) as resp:
+            with open(partial, "wb") as f:
+                shutil.copyfileobj(resp, f, 1024 * 1024)
+        os.replace(partial, dest)
+        print(f"[arkiv] 已下載 {filename} → {dest}")
+        return dest
+    except Exception as e:
+        try:
+            os.remove(partial)
+        except OSError:
+            pass
+        print(f"[arkiv] 下載失敗 (id={media_id}, {filename}): {e}")
+        return None
+
+
+def download_metadata_csv(dest_path=None, media_ids=None):
+    """Phase 7.6d + audit Batch E F5: fetch DaVinci metadata CSV and write to disk.
+
+    Returns the destination path on success, None on failure. The CSV maps
+    each clip's filename to Description / Keywords / Comments / Scene so the
+    user can run File → Import Metadata From → CSV in Resolve immediately.
+
+    media_ids: 給 list 時走 batch-scoped 路徑（?ids=1,2,3），CSV 只含這幾支
+    剛 import 的 clip；不給 → 整庫（既有行為，CLI / 整庫匯出走這條）。
+    """
+    if dest_path is None:
+        cache_dir = Path(tempfile.gettempdir()) / "arkiv"
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            cache_dir = Path(tempfile.gettempdir())
+        dest_path = cache_dir / "davinci_metadata.csv"
+    try:
+        url = f"{ARKIV_API}/api/export/metadata-csv"
+        if media_ids:
+            ids_str = ",".join(str(int(i)) for i in media_ids)
+            url += "?" + urllib.parse.urlencode({"ids": ids_str})
+        with urllib.request.urlopen(_api_request(url), timeout=30) as resp:
+            data = resp.read()
+        Path(dest_path).write_bytes(data)
+        return str(dest_path)
+    except Exception as e:
+        print(f"[arkiv] Metadata CSV 下載失敗：{e}")
+        return None
+
+
+def get_resolve():
+    """Get the DaVinci Resolve scripting object."""
+    import sys
+    import os
+    # Set up Resolve scripting module paths
+    if sys.platform == "darwin":
+        modules_path = "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting/Modules"
+        if modules_path not in sys.path:
+            sys.path.append(modules_path)
+    elif sys.platform == "win32":
+        script_api = os.environ.get(
+            "RESOLVE_SCRIPT_API",
+            r"C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting"
+        )
+        modules_path = os.path.join(script_api, "Modules")
+        if modules_path not in sys.path:
+            sys.path.append(modules_path)
+    try:
+        import DaVinciResolveScript as dvr
+        resolve = dvr.scriptapp("Resolve")
+        if resolve is None:
+            print("[arkiv] DaVinciResolveScript 已載入但 Resolve 未回應")
+        return resolve
+    except ImportError as e:
+        print(f"[arkiv] 無法匯入 DaVinciResolveScript：{e}")
+        return None
+
+
+def search_media(query, limit=50):
+    """Search arkiv API for media matching query."""
+    params = urllib.parse.urlencode({"q": query, "limit": limit})
+    url = f"{ARKIV_API}/api/media?{params}"
+    try:
+        req = _api_request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+            return data.get("items", [])
+    except Exception as e:
+        print(f"[arkiv] 搜尋錯誤：{e}")
+        return []
+
+
+def list_media(limit=50, rating=None):
+    """List media from arkiv API."""
+    params = {"limit": limit, "sort": "date"}
+    if rating:
+        params["rating"] = rating
+    url = f"{ARKIV_API}/api/media?{urllib.parse.urlencode(params)}"
+    try:
+        req = _api_request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+            return data.get("items", [])
+    except Exception as e:
+        print(f"[arkiv] 列表錯誤：{e}")
+        return []
+
+
+RATING_COLORS = {
+    "good": "Green",
+    "ng": "Orange",
+    "review": "Yellow",
+}
+
+
+def _norm_path(p):
+    return os.path.normcase(os.path.normpath(str(p).replace("\\", "/")))
+
+
+def _lookup_by_clip(mpi, mapping):
+    """Value in `mapping` (keyed by the imported file path) for one imported
+    MediaPoolItem. Exact source-path match first (Resolve's "File Path" clip
+    property); else a basename match only when it is UNAMBIGUOUS. Two cards'
+    C0001.MP4 must never borrow each other's rating/tags (audit N1)."""
+    if not mapping:
+        return None
+    try:
+        src = mpi.GetClipProperty("File Path")
+    except Exception:
+        src = None
+    if isinstance(src, str) and src:
+        want = _norm_path(src)
+        for path, val in mapping.items():
+            if _norm_path(path) == want:
+                return val
+    name = mpi.GetName() or ""
+    hits = [val for path, val in mapping.items()
+            if name and os.path.basename(str(path).replace("\\", "/")) == name]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _row_key(item):
+    """Results-tree key: the media id (filenames repeat across cards/days)."""
+    mid = item.get("id")
+    return str(mid) if mid is not None else "name:" + str(item.get("filename", ""))
+
+
+def _get_camera_folder(path):
+    """Extract camera/source folder name from file path."""
+    parts = path.replace("\\", "/").rstrip("/").split("/")
+    folder = parts[-2] if len(parts) >= 2 else ""
+    if folder.lower() in ("reels", "clips", "raw", "media", "footage"):
+        folder = parts[-3] if len(parts) >= 3 else folder
+    return folder
+
+
+def _get_or_create_bin(media_pool, root_folder, bin_name):
+    """Get existing Bin or create new one under root_folder."""
+    # Check existing sub-folders
+    for sub in root_folder.GetSubFolderList():
+        if sub.GetName() == bin_name:
+            return sub
+    # Create new bin
+    media_pool.SetCurrentFolder(root_folder)
+    new_bin = media_pool.AddSubFolder(root_folder, bin_name)
+    if new_bin:
+        print(f"[arkiv] 建立 Bin：{bin_name}")
+    return new_bin
+
+
+def import_to_resolve(resolve, file_paths, ratings=None, tags=None, media_ids=None, bin_name=None):
+    """Import files into the current Resolve project's Media Pool.
+    Auto-creates Bin folders by camera/source under Master.
+    ratings: dict mapping file_path -> rating string (good/ng/review)
+    tags: dict mapping file_path -> list of tag name strings
+    media_ids: list of arkiv media ids being imported — passed through to
+        download_metadata_csv() so the resulting CSV is batch-scoped to just
+        these clips, not the entire library (audit Batch E F5).
+    """
+    if not resolve:
+        print("[arkiv] Resolve 未連線")
+        return False
+    pm = resolve.GetProjectManager()
+    if not pm:
+        return False
+    project = pm.GetCurrentProject()
+    if not project:
+        return False
+    media_pool = project.GetMediaPool()
+    if not media_pool:
+        return False
+
+    root_folder = media_pool.GetRootFolder()
+
+    # Group files. On the LAN build files are downloaded to a flat temp dir
+    # (see on_import / _download_media), so an explicit bin_name keeps them out
+    # of a meaningless "media-in" bin; otherwise derive a camera/source folder.
+    groups = {}
+    if bin_name:
+        groups[bin_name] = list(file_paths)
+    else:
+        for p in file_paths:
+            folder = _get_camera_folder(p)
+            if folder not in groups:
+                groups[folder] = []
+            groups[folder].append(p)
+
+    total_imported = 0
+    all_imported_clips = []
+
+    for folder_name, paths in groups.items():
+        # Create or get Bin for this camera
+        if folder_name:
+            target_bin = _get_or_create_bin(media_pool, root_folder, folder_name)
+            if target_bin:
+                media_pool.SetCurrentFolder(target_bin)
+            else:
+                media_pool.SetCurrentFolder(root_folder)
+        else:
+            media_pool.SetCurrentFolder(root_folder)
+
+        result = media_pool.ImportMedia(paths)
+        if result:
+            all_imported_clips.extend(result)
+            total_imported += len(result)
+            print(f"[arkiv] {folder_name or 'Master'}: 匯入 {len(result)} 個片段")
+
+    # Reset to root
+    media_pool.SetCurrentFolder(root_folder)
+
+    if all_imported_clips:
+        # Apply clip colors based on rating
+        # Matched by the clip's source FILE PATH, not a substring of its name:
+        # `clip_name in path` gave C0001.MP4 the rating of whichever C0001.MP4
+        # (or AC0001.MP4) came first in the dict (audit N1).
+        if ratings:
+            for mpi in all_imported_clips:
+                clip_name = mpi.GetName()
+                rating = _lookup_by_clip(mpi, ratings)
+                color = RATING_COLORS.get(rating) if rating else None
+                if color:
+                    mpi.SetClipColor(color)
+                    print(f"[arkiv]   {clip_name} → {color} ({rating})")
+        # Set tags as metadata (Keywords + Comments for Smart Bin filtering)
+        if tags:
+            for mpi in all_imported_clips:
+                clip_name = mpi.GetName()
+                tag_list = _lookup_by_clip(mpi, tags)
+                if tag_list:
+                    tag_str = ", ".join(tag_list)
+                    mpi.SetMetadata("Keywords", tag_str)
+                    mpi.SetMetadata("Comments", f"[arkiv] {tag_str}")
+                    print(f"[arkiv]   {clip_name} → Tags: {tag_str}")
+        print(f"[arkiv] 完成：共匯入 {total_imported} 個片段到 {len(groups)} 個 Bin")
+
+        # Phase 7.6d: auto-download metadata CSV and tell the user how to import.
+        # arkiv 的 SetMetadata API 對 Keywords/Comments 在新版 Resolve 不寫入，
+        # 改走 CSV import 路線；這裡幫使用者把檔下載好，貼路徑就能用。
+        # batch-scoped (audit F5): 只下載剛 import 的這幾支的 metadata，不是整庫。
+        csv_path = download_metadata_csv(media_ids=media_ids)
+        if csv_path:
+            print("[arkiv] ─────────────────────────────────────────")
+            print(f"[arkiv] Metadata CSV 已就緒：{csv_path}")
+            print("[arkiv] 在 Resolve 選 File → Import Metadata From → CSV，")
+            print("[arkiv] 開啟上面那個檔即可填入 Description / Keywords / Comments / Scene。")
+            print("[arkiv] ─────────────────────────────────────────")
+
+        return True
+    else:
+        print("[arkiv] 匯入失敗")
+        return False
+
+
+def get_media_detail(media_id):
+    """Fetch single media detail with frames from arkiv API."""
+    url = f"{ARKIV_API}/api/media/{media_id}"
+    try:
+        req = _api_request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"[arkiv] 詳情取得錯誤：{e}")
+        return None
+
+
+def add_markers_to_timeline(resolve, media_items):
+    """Add frame analysis markers as clip markers on matching timeline items."""
+    if not resolve:
+        print("[arkiv] Resolve 未連線")
+        return 0
+
+    pm = resolve.GetProjectManager()
+    project = pm.GetCurrentProject() if pm else None
+    timeline = project.GetCurrentTimeline() if project else None
+    if not timeline:
+        print("[arkiv] 未開啟時間線 — 請先開啟時間線")
+        return 0
+
+    # Get timeline FPS
+    fps_str = timeline.GetSetting("timelineFrameRate")
+    try:
+        fps = float(fps_str)
+    except (TypeError, ValueError):
+        fps = 30.0
+    print(f"[arkiv] 時間線 FPS：{fps}")
+
+    # Build a map of filename -> timeline_item for all video tracks
+    clip_map = {}
+    track_count = timeline.GetTrackCount("video")
+    for t in range(1, track_count + 1):
+        for ti in timeline.GetItemListInTrack("video", t):
+            name = ti.GetName()
+            if name:
+                clip_map[name] = ti
+    print(f"[arkiv] 在時間線上找到 {len(clip_map)} 個片段")
+
+    colors = ["Blue", "Cyan", "Green", "Yellow", "Red", "Pink", "Purple"]
+    total_added = 0
+
+    for item in media_items:
+        media_id = item.get("id")
+        filename = item.get("filename", "")
+        if not media_id:
+            continue
+
+        # Find matching clip on timeline
+        ti = clip_map.get(filename)
+        if not ti:
+            # Try without extension
+            stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+            # exact stem only — `startswith` matched C0001 to C00012.MP4 (audit N1)
+            for k, v in clip_map.items():
+                if (k.rsplit(".", 1)[0] if "." in k else k) == stem:
+                    ti = v
+                    break
+        if not ti:
+            print(f"[arkiv] 片段「{filename}」未在時間線上找到 — 請先匯入並放置")
+            continue
+
+        detail = get_media_detail(media_id)
+        if not detail:
+            continue
+
+        frames = detail.get("frames") or []
+        if not frames:
+            print(f"[arkiv] 無 {filename} 的幀資料")
+            continue
+
+        print(f"[arkiv] 正在為 {filename} 新增 {len(frames)} 個片段標記")
+        for i, fr in enumerate(frames):
+            ts = fr.get("timestamp_s", 0)
+            frame_offset = round(ts * fps)
+            desc = fr.get("description") or f"Frame {fr.get('frame_index', i) + 1}"
+            color = colors[i % len(colors)]
+
+            if desc.startswith("```") or not desc.strip():
+                continue
+
+            # AddMarker on timeline_item = clip marker (frame offset from clip start)
+            success = ti.AddMarker(
+                frame_offset,
+                color,
+                desc[:50],
+                desc,
+                1,
+            )
+            if success:
+                total_added += 1
+            else:
+                print(f"[arkiv]   ！在幀 {frame_offset} 處標記失敗")
+
+    return total_added
+
+
+def format_duration(seconds):
+    """Format seconds to MM:SS."""
+    if not seconds:
+        return "00:00"
+    m = int(seconds) // 60
+    s = int(seconds) % 60
+    return f"{m:02d}:{s:02d}"
+
+
+def create_ui(resolve):
+    """Create the arkiv search UI using Fusion's UIManager."""
+    fusion = resolve.Fusion() if resolve else None
+    if not fusion:
+        print("[arkiv] 無法存取 Fusion UIManager")
+        print("[arkiv] 提示：確保 DaVinci Resolve 正在執行且從工作區 → 指令碼啟動")
+        return None
+
+    ui = fusion.UIManager
+    disp = bmd.UIDispatcher(ui)  # noqa: F821 — bmd is injected by Resolve
+
+    # ── Build Window ──
+    win = disp.AddWindow(
+        {
+            "ID": "ArkivWin",
+            "WindowTitle": "arkiv — 媒體搜尋",
+            "Geometry": [200, 200, 700, 500],
+        },
+        [
+            ui.VGroup(
+                {"Spacing": 5},
+                [
+                    # Search bar
+                    ui.HGroup(
+                        {"Spacing": 5},
+                        [
+                            ui.LineEdit(
+                                {
+                                    "ID": "SearchField",
+                                    "PlaceholderText": "搜尋媒體...（語義搜尋）",
+                                    "Weight": 3,
+                                }
+                            ),
+                            ui.Button({"ID": "SearchBtn", "Text": "搜尋", "Weight": 0.5}),
+                            ui.Button({"ID": "ResetBtn", "Text": "全部", "Weight": 0.3}),
+                            ui.Button({"ID": "GoodBtn", "Text": "僅 GOOD", "Weight": 0.5}),
+                            ui.Button({"ID": "ExcludeNGBtn", "Text": "排除 NG", "Weight": 0.5}),
+                        ],
+                    ),
+                    # Results tree
+                    ui.Tree(
+                        {
+                            "ID": "ResultTree",
+                            "SortingEnabled": True,
+                            "SelectionMode": "ExtendedSelection",
+                            "HeaderHidden": False,
+                            "Weight": 5,
+                        }
+                    ),
+                    # Status + Actions
+                    ui.HGroup(
+                        {"Spacing": 5},
+                        [
+                            ui.Label({"ID": "StatusLabel", "Text": "準備就緒", "Weight": 3}),
+                            ui.Button(
+                                {
+                                    "ID": "ImportBtn",
+                                    "Text": "匯入到媒體庫",
+                                    "Weight": 1,
+                                }
+                            ),
+                            ui.Button(
+                                {
+                                    "ID": "MarkerBtn",
+                                    "Text": "新增標記",
+                                    "Weight": 0.7,
+                                }
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        ],
+    )
+
+    # Setup tree columns
+    tree = win.Find("ResultTree")
+    hdr = tree.NewItem()
+    hdr.Text[0] = "檔名"
+    hdr.Text[1] = "長度"
+    hdr.Text[2] = "評級"
+    hdr.Text[3] = "語言"
+    hdr.Text[4] = "得分"
+    hdr.Text[5] = "id"
+    tree.SetHeaderItem(hdr)
+    tree.ColumnCount = 6
+    tree.ColumnWidth[0] = 280
+    tree.ColumnWidth[1] = 70
+    tree.ColumnWidth[2] = 60
+    tree.ColumnWidth[3] = 60
+    tree.ColumnWidth[4] = 60
+    tree.ColumnWidth[5] = 0  # hidden: media id, the row key (filenames repeat)
+
+    # Store results for import
+    results_map = {}
+    good_filter_on = [False]
+    exclude_ng_on = [False]
+
+    def populate_tree(items):
+        tree.Clear()
+        results_map.clear()
+        for item in items:
+            row = tree.NewItem()
+            fname = item.get("filename", "")
+            row.Text[0] = fname
+            row.Text[1] = format_duration(item.get("duration_s"))
+            row.Text[2] = (item.get("rating") or "—").upper()
+            row.Text[3] = item.get("lang") or "?"
+            row.Text[4] = f"{round(item.get('score', 0) * 100)}%" if item.get("score") else ""
+            key = _row_key(item)
+            row.Text[5] = key
+            tree.AddTopLevelItem(row)
+            results_map[key] = item
+        win.Find("StatusLabel").Text = f"找到 {len(items)} 個結果"
+
+    def on_search(ev):
+        query = win.Find("SearchField").Text.strip()
+        if not query:
+            on_reset(ev)
+            return
+        win.Find("StatusLabel").Text = "搜尋中..."
+        try:
+            items = search_media(query)
+            populate_tree(items)
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"搜尋失敗：{e}"
+
+    def on_reset(ev):
+        win.Find("SearchField").Text = ""
+        win.Find("StatusLabel").Text = "載入所有媒體..."
+        good_filter_on[0] = False
+        exclude_ng_on[0] = False
+        win.Find("GoodBtn").Text = "僅 GOOD"
+        win.Find("ExcludeNGBtn").Text = "排除 NG"
+        try:
+            items = list_media(limit=500)
+            populate_tree(items)
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"載入失敗：{e}"
+
+    def on_good(ev):
+        good_filter_on[0] = not good_filter_on[0]
+        exclude_ng_on[0] = False
+        win.Find("ExcludeNGBtn").Text = "排除 NG"
+        try:
+            if good_filter_on[0]:
+                win.Find("GoodBtn").Text = "顯示全部"
+                win.Find("StatusLabel").Text = "載入 GOOD 素材..."
+                items = list_media(rating="good")
+            else:
+                win.Find("GoodBtn").Text = "僅 GOOD"
+                win.Find("StatusLabel").Text = "載入所有媒體..."
+                items = list_media(limit=500)
+            populate_tree(items)
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"載入失敗：{e}"
+
+    def on_exclude_ng(ev):
+        exclude_ng_on[0] = not exclude_ng_on[0]
+        good_filter_on[0] = False
+        win.Find("GoodBtn").Text = "僅 GOOD"
+        try:
+            if exclude_ng_on[0]:
+                win.Find("ExcludeNGBtn").Text = "顯示全部"
+                win.Find("StatusLabel").Text = "排除 NG 素材..."
+                all_items = list_media(limit=500)
+                items = [i for i in all_items if i.get("rating") != "ng"]
+            else:
+                win.Find("ExcludeNGBtn").Text = "排除 NG"
+                win.Find("StatusLabel").Text = "載入所有媒體..."
+                items = list_media(limit=500)
+            populate_tree(items)
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"載入失敗：{e}"
+
+    def on_import(ev):
+        selected = tree.SelectedItems()
+        if not selected:
+            win.Find("StatusLabel").Text = "未選擇任何項目"
+            return
+        try:
+            paths = []
+            ratings = {}
+            tags = {}
+            media_ids = []
+            for sel_id in selected:
+                row = selected[sel_id]
+                item_data = results_map.get(row.Text[5])
+                if not item_data or not item_data.get("id"):
+                    continue
+                # LAN: download the file locally, then import the local copy
+                # (the library's media-in/... path is unreachable from here).
+                local = _download_media(
+                    item_data["id"],
+                    item_data.get("filename") or "clip_{0}".format(item_data["id"]),
+                )
+                if not local:
+                    continue
+                paths.append(local)
+                media_ids.append(item_data["id"])
+                if item_data.get("rating"):
+                    ratings[local] = item_data["rating"]
+                item_tags = item_data.get("tags", [])
+                if item_tags:
+                    tags[local] = [t["name"] for t in item_tags]
+            if paths:
+                success = import_to_resolve(
+                    resolve, paths, ratings, tags,
+                    media_ids=media_ids or None, bin_name="Arkiv",
+                )
+                if success:
+                    # Phase 7.6d: import_to_resolve 已下載 CSV 並 print 路徑到
+                    # console；StatusLabel 受字數限制，改用 chevron 提示去看 console。
+                    win.Find("StatusLabel").Text = (
+                        f"已匯入 {len(paths)} 個片段 → 詳見 console 的 Metadata CSV 路徑"
+                    )
+                else:
+                    win.Find("StatusLabel").Text = "匯入失敗 — 請檢查媒體庫"
+            else:
+                win.Find("StatusLabel").Text = "找不到有效的檔案路徑"
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"匯入錯誤：{e}"
+
+    def on_markers(ev):
+        selected = tree.SelectedItems()
+        if not selected:
+            win.Find("StatusLabel").Text = "未選擇任何項目"
+            return
+        try:
+            items = []
+            for sel_id in selected:
+                row = selected[sel_id]
+                item_data = results_map.get(row.Text[5])
+                if item_data:
+                    items.append(item_data)
+            if not items:
+                win.Find("StatusLabel").Text = "找不到有效的項目"
+                return
+            win.Find("StatusLabel").Text = "新增標記中..."
+            count = add_markers_to_timeline(resolve, items)
+            win.Find("StatusLabel").Text = f"已在時間線上新增 {count} 個標記"
+        except Exception as e:
+            win.Find("StatusLabel").Text = f"標記錯誤：{e}"
+
+    def on_close(ev):
+        disp.ExitLoop()
+
+    win.On.SearchBtn.Clicked = on_search
+    win.On.ResetBtn.Clicked = on_reset
+    win.On.GoodBtn.Clicked = on_good
+    win.On.ExcludeNGBtn.Clicked = on_exclude_ng
+    win.On.ImportBtn.Clicked = on_import
+    win.On.MarkerBtn.Clicked = on_markers
+    win.On.ArkivWin.Close = on_close
+    win.On.SearchField.ReturnPressed = on_search
+
+    # Load initial list
+    items = list_media(limit=500)
+    populate_tree(items)
+
+    win.Show()
+    disp.RunLoop()
+    win.Hide()
+
+
+def run_cli_mode(resolve):
+    """Fallback CLI mode when UIManager is not available."""
+    print("\n=== arkiv 媒體搜尋（CLI 模式）===\n")
+    while True:
+        query = input("搜尋（輸入 'q' 離開，'good' 顯示 GOOD 素材）：").strip()
+        if query.lower() == "q":
+            break
+        if query.lower() == "good":
+            items = list_media(rating="good")
+        else:
+            items = search_media(query)
+
+        if not items:
+            print("找不到結果。\n")
+            continue
+
+        for i, item in enumerate(items):
+            rating = (item.get("rating") or "—").upper()
+            dur = format_duration(item.get("duration_s"))
+            print(f"  [{i}] {item['filename']}  ({dur})  [{rating}]  {item.get('lang', '?')}")
+
+        sel = input("\n輸入編號匯入（逗號分隔，或 'skip' 跳過）：").strip()
+        if sel.lower() == "skip":
+            continue
+        try:
+            indices = [int(x.strip()) for x in sel.split(",")]
+            valid = [items[i] for i in indices if 0 <= i < len(items)]
+            paths = []
+            media_ids = []
+            for it in valid:
+                mid = it.get("id")
+                if not mid:
+                    continue
+                local = _download_media(mid, it.get("filename") or "clip_{0}".format(mid))
+                if local:
+                    paths.append(local)
+                    media_ids.append(mid)
+            if paths and resolve:
+                import_to_resolve(resolve, paths, media_ids=media_ids or None, bin_name="Arkiv")
+        except (ValueError, IndexError) as e:
+            print(f"無效選擇：{e}")
+        print()
+
+
+if __name__ == "__main__":
+    resolve = get_resolve()
+    if resolve:
+        print("[arkiv] 已連線到 DaVinci Resolve")
+    else:
+        print("[arkiv] DaVinci Resolve 未執行 — 僅限 CLI 模式")
+    create_ui(resolve)

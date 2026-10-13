@@ -10,6 +10,7 @@ Usage:
 """
 from __future__ import annotations
 import argparse
+import json
 import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple
@@ -52,7 +53,27 @@ def get_records_by_ids(ids: List[int]) -> List[Dict]:
                 batch,
             ).fetchall()
             records.extend(dict(r) for r in rows)
+    _attach_search_tags(records)
     return records
+
+
+def _attach_search_tags(records: List[Dict]) -> None:
+    """Normalize canonical_tags (JSON→list) and attach manual_tags (source='manual')
+    onto each record so build_doc_text/build_tag_doc/content_hash include them in
+    the index (arkiv handover: user tags must be searchable)."""
+    if not records:
+        return
+    ids = [r["id"] for r in records]
+    manual_map = db.get_manual_tags_by_ids(ids)
+    for rec in records:
+        ct = rec.get("canonical_tags")
+        if ct and isinstance(ct, str):
+            try:
+                ct = json.loads(ct)
+            except Exception:
+                ct = []
+        rec["canonical_tags"] = ct if isinstance(ct, (list, tuple)) else []
+        rec["manual_tags"] = manual_map.get(rec["id"], [])
 
 
 def get_indexed_media_ids(col) -> set[str]:
@@ -73,23 +94,35 @@ def get_content_signatures() -> Dict[str, Tuple[str, str]]:
     """{str(media_id): (stored_embed_hash, current_content_hash)} for every media.
 
     current_content_hash = vectordb.content_hash over the row's CURRENT source text
-    (build_doc_text). Comparing it to the stored media.embed_hash is how run_embed
-    detects a row whose description/transcript changed AFTER it was embedded — the
-    "向量索引靜默過期" bug — without depending on the caller passing force_ids.
+    (build_doc_text, which now folds in manual + canonical tags). Comparing it to the
+    stored media.embed_hash is how run_embed detects a row whose description/transcript
+    OR tags changed AFTER it was embedded — "向量索引靜默過期" bug — without depending on
+    the caller passing force_ids.
 
-    Pulls ONLY the columns build_doc_text needs (filename, transcript, frame_tags) +
-    embed_hash — deliberately NOT the heavy words_json/segments_json (audit M25: don't
-    load the whole library's heavy columns just to diff freshness)."""
+    Pulls ONLY the columns build_doc_text needs (filename, transcript, frame_tags,
+    canonical_tags) + embed_hash — deliberately NOT the heavy words_json/segments_json
+    (audit M25). manual tags are bulk-fetched separately."""
     sigs: Dict[str, Tuple[str, str]] = {}
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, filename, transcript, frame_tags, embed_hash FROM media"
+            "SELECT id, filename, transcript, frame_tags, canonical_tags, embed_hash FROM media"
         ).fetchall()
+    ids = [r["id"] for r in rows]
+    manual_map = db.get_manual_tags_by_ids(ids)
     for r in rows:
+        ct = r["canonical_tags"]
+        if ct and isinstance(ct, str):
+            try:
+                ct = json.loads(ct)
+            except Exception:
+                ct = []
+        ct = ct if isinstance(ct, (list, tuple)) else []
         rec = {
             "filename": r["filename"],
             "transcript": r["transcript"],
             "frame_tags": r["frame_tags"],
+            "canonical_tags": ct,
+            "manual_tags": manual_map.get(r["id"], []),
         }
         sigs[str(r["id"])] = (r["embed_hash"], vdb.content_hash(rec))
     return sigs
@@ -226,6 +259,22 @@ def run_embed(rebuild: bool = False, force_ids=None, prune: bool = True) -> dict
             "new": len(new_ids), "stale": len(stale_ids),
             "unverified": len(unverified_ids), "forced": len(forced),
             "stale_detected": stale_detected}
+
+
+def reindex_media(media_id: int) -> None:
+    """Re-embed a single media after a tag/canonical change (best-effort). Rebuilds
+    its chunks and stamps embed_hash so search reflects the new tag immediately
+    without waiting for a full library re-embed (arkiv handover)."""
+    recs = get_records_by_ids([media_id])
+    if not recs:
+        return
+    rec = recs[0]
+    col = vdb.get_collection()
+    vdb.upsert_record(col, rec)
+    try:
+        db.set_embed_state(rec["id"], vdb.content_hash(rec), _now_iso())
+    except Exception as se:
+        print("[warn] reindex_media embed_hash stamp failed:", se)
 
 
 def run_search(query: str):

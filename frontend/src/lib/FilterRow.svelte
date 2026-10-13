@@ -2,7 +2,7 @@
 <script>
   export let activeFilter = 'all'
   export let activeRating = null
-  const filters = [['all', 'All'], ['video', 'Video'], ['audio', 'Audio']]
+  const filters = [['all', 'All'], ['video', 'Video'], ['audio', 'Audio'], ['image', 'Image']]
   const ratings = [['good', 'Good'], ['rev', 'Review'], ['ng', 'N·G']]
 </script>
 

@@ -14,9 +14,11 @@ def test_video_set_includes_360():
     assert mediatypes.VIDEO_360_EXT <= mediatypes.VIDEO_EXT
 
 
-def test_media_partitions_into_video_and_audio():
-    assert mediatypes.VIDEO_EXT | mediatypes.AUDIO_EXT == mediatypes.MEDIA_EXT
+def test_media_partitions_into_video_audio_and_image():
+    assert mediatypes.VIDEO_EXT | mediatypes.AUDIO_EXT | mediatypes.IMAGE_EXT == mediatypes.MEDIA_EXT
     assert mediatypes.VIDEO_EXT.isdisjoint(mediatypes.AUDIO_EXT)
+    assert mediatypes.VIDEO_EXT.isdisjoint(mediatypes.IMAGE_EXT)
+    assert mediatypes.AUDIO_EXT.isdisjoint(mediatypes.IMAGE_EXT)
 
 
 def test_mxf_is_indexable_video_not_a_pro_unsupported_format():
@@ -54,16 +56,19 @@ def test_every_module_references_the_shared_set():
     # moved to routers/ingest.py with the /api/ingest family; still the shared object.
     assert ri.VIDEO_EXTS is mediatypes.VIDEO_EXT
     assert ri.AUDIO_EXTS is mediatypes.AUDIO_EXT
+    assert ri.IMAGE_EXTS is mediatypes.IMAGE_EXT
     assert ri.MEDIA_EXTS is mediatypes.MEDIA_EXT
     # R5-25 #51: _VIDEO_EXTS/_AUDIO_EXTS (list_media's search-branch filter buckets)
     # moved to routers/media.py with the media route group; still the shared object.
     assert rm._VIDEO_EXTS is mediatypes.VIDEO_EXT
     assert rm._AUDIO_EXTS is mediatypes.AUDIO_EXT
+    assert rm._IMAGE_EXTS is mediatypes.IMAGE_EXT
 
     assert watch.MEDIA_EXTS is mediatypes.MEDIA_EXT
 
     assert query_builder._VIDEO_EXTS is mediatypes.VIDEO_EXT
     assert query_builder._AUDIO_EXTS is mediatypes.AUDIO_EXT
+    assert query_builder._IMAGE_EXTS is mediatypes.IMAGE_EXT
 
     assert frames._FISHEYE_360_EXT is mediatypes.VIDEO_360_EXT
 
@@ -82,6 +87,12 @@ def test_db_video_filter_now_includes_360():
     audio_clause, _ = db._build_filter_clause(media_type="audio")
     assert ".insv" not in audio_clause
     assert ".mp3" in audio_clause
+
+    image_clause, _ = db._build_filter_clause(media_type="image")
+    for ext in mediatypes.IMAGE_EXT:
+        assert "'{0}'".format(ext) in image_clause
+    assert ".mp4" not in image_clause
+    assert ".mp3" not in image_clause
 
 
 def test_sql_in_literal_shape():

@@ -25,6 +25,24 @@ def _seed_audio(tmp_path, transcript=None):
 _seed_audio.n = 0
 
 
+@pytest.fixture(autouse=True)
+def _skip_media_preflight(monkeypatch):
+    """These tests pin the BATCH (queue, status, single-flight, H1 guard); their
+    media rows are one-byte stand-ins.
+
+    `/api/retranscribe-all` gained a media-capability preflight that correctly
+    refuses a batch whose files ffmpeg cannot read as media — which a one-byte
+    file is. Stubbing it keeps these about what they are named for. The preflight
+    has its own tests, and they run without ffmpeg installed so CI (which does not
+    install it) exercises them for real.
+    """
+    mediaprobe = importlib.import_module("mediaprobe")
+    monkeypatch.setattr(
+        mediaprobe, "probe",
+        lambda paths, **kw: {"sampled": 0, "of": len(list(paths)), "files": [],
+                             "by_codec": {}})
+
+
 @pytest.fixture
 def srv(server_module, tmp_path, monkeypatch):
     """batch-retranscribe router module (the worker + the shared single-flight

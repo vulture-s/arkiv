@@ -2,7 +2,263 @@
 
 ## Unreleased
 
-## v1.1.2 - 2026-08-24
+## v1.4.0 - 2026-10-11
+
+**你開著 arkiv 的時候，你瀏覽的任何一個網頁都可能替你按下刪除鍵。這一版把它關上。**
+
+arkiv 對從本機（127.0.0.1）來的請求一律信任 —— 那是「自己的電腦上不用輸 token」的由來。
+但一個惡意網頁可以把**它自己的網域**重新解析到 127.0.0.1（DNS rebinding）：
+瀏覽器認為那是同源，請求的來源又確實是本機，於是那個網頁拿到的是全部 12 種權限，
+包括批次刪除、清空回收桶、以及發一把 admin token 給自己。
+
+現在本機信任多看一件事：請求的 `Host`。只有 IP、`localhost`／`*.localhost`、
+以及你自己列在 `ARKIV_ALLOWED_HOSTS` 的名字才算本機；所有寫入路由（原本只有 13／52 支）
+都套上同站檢查。順帶修掉三個同一輪審計找到的 MED：轉送標頭不能再拿來繞過 token 的 IP 白名單、
+WebSocket 的 `?token=` 不再明文寫進 `backend.log`、`/api/logs/tail` 輸出前會再遮一次。
+
+### 升級前要知道
+
+- 🔴 **如果你用 `localhost` 或 IP 以外的名字開 arkiv**（例如 `mymac.local`、tailnet 的 MagicDNS 名稱、
+  反向代理的網域），升級後會拿到 401，訊息會直接指向這個設定：
+  `ARKIV_ALLOWED_HOSTS=mymac.local,arkiv.example.com`（逗號分隔，附加在內建清單之後）。
+- **放在反向代理後面的**：uvicorn 現在一律以 `--no-proxy-headers` 啟動，帶轉送標頭的請求
+  不能使用有 IP 白名單的 token。確定代理是你的，才設 `ARKIV_TRUST_PROXY_HEADERS=1`。
+- **Docker 的對外埠預設只綁本機**、**Pro 改為簽章授權檔**：見下面兩段。
+
+**Pro 授權改為簽章驗證 —— 手寫的授權檔不再解鎖。**
+以前 `~/.arkiv/pro-license.json` 只要寫了 `licensee` 和 `key` 兩個欄位就算 Pro，任何人自己寫一個就有。
+現在授權檔必須帶授權方的 Ed25519 簽章，由 arkiv 以內建公鑰**離線**驗證（`pro_licence.py`，純 Python，
+不需要額外套件）：不連網、不會過期、沒有啟用伺服器。
+
+- **1.1.0 前就在使用的安裝不受影響**：無限專案與跨專案聚合照舊，不需要任何授權檔（附加條款第 3 點）。
+- 授權檔在、但不算數時，`/api/entitlements` 的 `licence_problem` 會說原因（未簽章／簽章不符／未知金鑰／已撤銷）。
+- 名為 `arkiv_pro` 的模組不再「存在就算 Pro」，必須透過 `has_valid_license()` 回報。
+- 2026-10-08 之前沒有售出任何 Pro；當時發出的授權已改發簽章版。
+
+**授權：PolyForm Perimeter 1.0.1 加上「附加條款」—— 修改核心來繞過免費額度或開啟 Pro 功能，不被允許（自己用也一樣）。**
+原本的條款只禁止「提供他人競爭產品」，而 PolyForm 允許為任何允許的目的修改程式；
+免費額度又刻意不做技術鎖（`entitlements.py`：善意承諾，不是 DRM）。兩者疊起來，
+自己改掉上限自用在條款上很可能是允許的 —— 這次補上。PolyForm 原文一字不改，
+附加條款放在它前面；1.1.0 前就在使用的安裝永久保留無限專案與跨專案聚合（附加條款第 3 點）。法律本身允許的修改（如著作權法第 59 條）與 Fair Use 不受影響。只適用於含這段文字的版本。
+
+順帶：README 的「尚未開賣」改成實況（2026-10-03 起販售）。
+
+**新增：剪輯用 proxy —— 寫到原始檔旁邊的 `Proxy/<原檔名>.mov`，Resolve 可以直接連結。**
+Inspector 的 proxy 給不了剪輯軟體用：它叫 `{id}_{hash}.mp4`（Resolve 靠檔名配對 proxy）、
+沒有 timecode、只留一條雙聲道、720p H.264，而且只在瀏覽器播不了的編碼才會產生。
+這次**另外加一份選用輸出**，Inspector 的 proxy 一個字都沒動：
+
+- ProRes 422 Proxy、保留原始 timecode、**保留全部音軌**，最高 1080p 且不放大（`ARKIV_EDITOR_PROXY_HEIGHT`）
+- **絕不覆蓋**：`Proxy/` 裡已經有同名 `.mov`／`.mp4`／`.mxf`（剪輯師自己做的）就跳過；編碼途中有人放進來也是對方贏
+- 先寫隱藏暫存檔，成功才搬到定位；失敗會清掉暫存檔，以及這次才建立的空 `Proxy/` 資料夾
+- 用法：`python editor_proxy.py <media_id>…` 或 `--all`；API `POST /api/proxy/editor`（`{"ids": […]}`，`ingest_write`）、
+  `GET /api/proxy/editor/status`、`GET /api/proxy/editor/{media_id}`
+
+- Inspector 的 Reprocess 區多一顆「剪輯用 proxy」：按下去會等到做完，直接顯示寫到哪裡、已經有同名檔所以沒覆蓋、或失敗的原因
+
+⚠️ 它會**寫進你的素材資料夾**（這正是重點，剪輯軟體才找得到）。唯讀的素材碟會回 `failed`，不會改寫別處。
+
+**Docker：對外埠改成預設只綁本機（127.0.0.1）。**
+原本 `docker-compose.yml` 把 8501（API）、8502（MCP）、11434（Ollama）開在所有網卡上，
+同一個區網的人拿到 token 就能讀素材庫，Ollama 則是誰都能用。
+
+🔴 **如果你是從別台機器連 Docker 裡的 arkiv**（例如區網 MCP、另一台電腦開網頁），
+升級後要加一個環境變數才連得到：`ARKIV_BIND_HOST=0.0.0.0 docker compose up -d`。
+只在同一台電腦上用的人不受影響。
+
+### Fixed
+
+- **現場收音被 VAD 判成「沒人聲」，逐字稿是空的，而且沒有任何訊息。**
+  一場 200 支的現場素材（PA ＋ 人群）有 85 支逐字稿為空，繞過 VAD 重跑後 54 支解出人聲。
+  現在 VAD 說沒人聲時會改餵整段給 Whisper，再交給既有的幻覺防護判斷，並且印出
+  `[vad] no speech detected — decoding the full file anyway`。
+  ⚠️ **已經是空逐字稿的素材不會自己好**：在 Inspector 對它們按「重新轉錄」。
+- **轉錄的整批靜音判斷被幾段短配樂拖垮。** 三段 1 秒的 BGM 尾巴可以讓 30 秒清楚的人聲整份清空；
+  現在同時看段數平均與時長加權平均，取較不激進的那個。
+- **匯出：相機 timecode 換算錯。** 23.976 的相機起始 TC 01:00:00:00 被匯成 00:59:56:10，
+  EDL／FCPXML 的 source 落在素材第一格之前。DF／NDF 改看相機 TC 本身的分隔符，
+  單支 FCPXML 錨在相機 TC，`src` 會做 URL 編碼（空白／`#`／`%` 讓剪輯軟體找錯檔），
+  camera report 的 DF 標籤也修好了。**之前匯出的 EDL／FCPXML 請重新匯出。**
+- **Windows 上讀 Mac 寫的路徑（`/Volumes/…`）被當成相對路徑**，接在專案根目錄後面然後報錯。
+- **繁中 Windows 上，git／ffmpeg／ffprobe 的輸出被用 cp950 解碼**，失敗時 `returncode` 仍是 0、輸出卻是 `None`。
+- **1 秒以下的素材永遠沒有縮圖**（取格時間被推過檔尾）。
+- **相機的旋轉旗標錯了會毀掉整條下游**（寬高對調、縮圖直式、視覺模型看側躺畫面）。
+  ingest 現在會印出偵測到的旋轉；確定旗標是錯的那一批，用 `ARKIV_IGNORE_ROTATION=1` 匯入。
+- **播放失敗一律說成「編碼問題」。** 401、404、後端沒開也被叫去建 proxy；現在會說真正的原因。
+- **`/api/stream` 叫你去建 proxy、proxy builder 卻不建**的那幾種編碼（dnxhd／qtrle／mjpeg／cinepak），現在建得出來。
+- **字幕：gap pass 把原本合格的 cue 削短，merge pass 再把它併進下一句**，讓下一句的字最多提早 0.88 秒出現。
+- **刪除、評分、精選集複製會假裝成功。** 只刪了 metadata 不再顯示「已移至回收桶」；
+  評分不再順手清掉評分備註；複製失敗以錯誤提示呈現。
+- **Inspector 標完 IN／OUT 後 350 毫秒內切到下一支**，會清掉下一支已存的範圍。
+- **回收桶還原**在桌面 App 裡幾乎必定 500；「清空全部」改成要確認（列出件數與容量）；
+  未掛載的儲存不再被當成「檔案不見了」清掉。
+- **校正字典讀取失敗被當成空字典**，存檔時把整份覆蓋掉。現在會警告，存檔前留 `.bak`。
+- **Resolve 外掛**：不同卡的同名 `C0001.MP4` 勾第一列卻匯入最後一支；評分／標籤改依來源路徑比對；
+  LAN 版下載保留原檔名並串流寫入，不再整支讀進記憶體。
+- **過卡（offload）**：拷完到真正完成之間的兩趟雜湊沒有任何進度（實測 35 分鐘）；
+  一顆碟的 MHL 失敗會讓第二顆碟根本沒被拷，畫面還只顯示「exit 1」。
+- **匯入**：長素材在健康轉錄時被判超時、Windows 上 watchdog 留下 ffmpeg／whisper 孤兒行程、
+  跑完的匯入被回報成「已停止」、一個非 UTF-8 位元組讓匯入被誤殺、
+  打錯一個調校用環境變數會讓整個 API 起不來。
+- **Projects 頁沒說你現在開的是哪個庫**，註冊表看起來像切換器（它不是）。
+- **CLI 的 `--all-projects` 沒有套用跟 API 一樣的跨專案授權檢查。**
+
+### Added
+
+- **搜尋框的 `tag:`／`camera:`／`lang:`／`rating:`／`type:`／`shot:` 真的會篩了**，「所有專案」搜尋也一樣。
+  以前整串被當成文字丟進語意搜尋，`格爾木氧氣 camera:a7s3` 會回 0 支或回整個庫。
+- **匯入的時間上限拆成「靜默多久」與「總共多久」**，停下來時會說是哪一道；
+  原本寫死 30 分鐘（實測 200 支要 94 分鐘），而 UI 實際走的那條路根本沒有上限。
+  掃描時就顯示預估時間。
+- **瀏覽器版的匯入頁有常用來源捷徑**（瀏覽器沒有選資料夾的能力，以前每次都得手打路徑）。
+- **索引過期看得見**：`GET /api/embed/status`，匯入頁的「重建索引」底下顯示幾支待更新／尚未索引。
+- **剪輯欄位的修改紀錄**：評等、IN／OUT、camera、標籤每次真的改動，都會在
+  `.arkiv/audit/edits.jsonl` 記一行修改前後的值。
+- **健康檢查會抓「前端是舊的」**：`frontend/dist` 比最後一次前端原始碼的 commit 舊時回報失敗。
+
+### Changed
+
+- 官網改成多頁站（首頁、安裝、文件、FAQ、更新紀錄），首頁功能區改成會動的介面示意；購買 Pro 改成實心按鈕。
+- Pro 條款定稿：數位內容交付後不退款、管轄法院為臺灣臺北地方法院。
+- `PUBLIC-INTEREST.md`、README、FAQ 裡過期的說明更新為現況（專案上限 1.1.0 起已實施、環境變數預設路徑等）。
+
+## v1.3.0 - 2026-09-05
+
+**如果你的素材庫裡有 JPEG，它們一直是半盲的。**
+每一張進庫的 JPEG 都沒有縮圖、沒有格、沒有視覺標籤 —— 而且沒有任何錯誤訊息。
+
+ffprobe 把 `.jpg` 報成 `mjpeg` 且 duration `0.040000`（單格，假設 25fps），
+所以「這是不是靜圖」的舊判準 `duration_s <= 0` 把每一張 JPEG 當成影片，
+送進「跳到中間點再取一格」的路徑。而 `-ss` 放在 `-i` 之前對單格 mjpeg
+**即使 `-ss 0` 也編不出東西**（ffmpeg 回 exit 0，訊息是 "Output file is empty"）。
+`.png` 與 `.webp` 報 `duration=N/A` → 0.0，所以它們一直是好的 —— 只有 JPEG 壞。
+
+看得見的損失不是那張缺席的縮圖。零格代表 `ingest.py` 的
+`if not skip_vision and frame_data:` 從來沒有成立過，**視覺模型一張 JPEG 都沒看過**：
+沒有場景描述、沒有自動標籤，而且用內容搜尋找不到它。
+
+🔴 **既有素材庫要把那些 JPEG 重新 ingest 才會補上。** 缺的是衍生檔與標籤、不是原始檔，
+所以重跑就會好，不需要重新轉錄。
+
+缺陷由外部使用者 pixb 回報（issue #418）。他報的是圖片預覽，
+實際去 ingest 一張圖驗證時才發現 PNG 沒事、**JPEG 全壞**。
+
+### Fixed
+
+- **每一張 JPEG 都沒有縮圖／格／視覺標籤**（上述）。
+- **跨行程寫入之後，搜尋看不到新素材，而 `count()` 一直是對的。**
+  ChromaDB 的 `count()` 讀 SQLite、`query()` 讀行程內的 HNSW 索引，
+  所以「筆數對、但搜尋不到」不是矛盾，是兩個資料來源。
+  典型情境：CLI ingest 完成，開著的 UI 搜尋不到那批新素材，直到重啟服務。
+- **刪掉的素材卡在每一個精選集裡，而那個編號會被下一支素材重用。**
+  `media.id` 是 `INTEGER PRIMARY KEY` 沒有 `AUTOINCREMENT`，SQLite 會把刪掉的編號
+  發給下一次匯入。所以殘留的精選集條目不是永遠顯示「已從庫刪除」——
+  它只停在那裡到下一次匯入為止，之後就乾乾淨淨地指向**你從沒放進去的素材**，
+  而精選集正是跨專案複製的來源。
+  刪除現在會同步清掉所有精選集裡的引用；**已經殘留的舊條目**則靠檔名比對抓出來，
+  標成「已換成別支」而不是靜靜地指向別人。
+- **瀏覽器播不動的編碼一律回 409，而不是只有 hevc 與 prores 兩種。**
+  先前 mjpeg／qtrle／dnxhd／cinepak／rawvideo 都是把原始 bytes 直接交給播放器：
+  一片黑、沒有錯誤訊息、也沒有辦法要求 proxy。改為 allow-list —— 瀏覽器**能**播的
+  編碼是一份短而穩定的清單，播不動的則是無窮無盡的。
+- **`docker compose` 掛了 arkiv 產生的東西，卻從來沒掛使用者的素材。**
+  跨庫精選集與專案 registry 也會持久化了（先前 `down` 或重建映像會靜默清空）。
+- 打包版離開時，backend 與我們啟動的 ollama 沒有被收掉。
+
+### Added
+
+- **字幕有了時間維度。** 先前只有行寬與斷點規則，沒有任何東西在管
+  「一句字停多久」「兩句之間有沒有呼吸」。
+  ⚠️ 規格是量出來的：拿一個 34 支、312 段的真實素材庫實測，
+  **CPS（字/秒）中位數 4.7、只有 1.3% 超過 9** —— 原本假設的「字太快」不成立。
+  真正的缺陷是 **28 個過短的 cue 與 256 個零間隙**（字接字，沒有喘息）。
+  依實測加上最短／最長顯示時間、最小間隙、目標 CPS 三道 pass，
+  違規率 **10.2% → 1.7%**。既有素材庫不需重新轉錄，排版是算繪時套用的。
+- **MCP 走 HTTP/SSE，LAN 上的 client 連得到**（先前只有 stdio，等於只有本機）。
+  唯讀工具，沿用 HTTP API 同一套 token store、IP 白名單與到期時間，
+  另需 `videos_read` scope。**預設仍綁 `127.0.0.1`**，要開給 LAN 得自己改；
+  真正的關卡是 Host 白名單而不是綁定位址。
+- **media pool 與素材卡片顯示拍攝日**，不是入庫日。
+  （62 支的測試庫裡，56 支有日期的素材中有 55 支兩者的年份不同。）
+
+### Changed
+
+- 落地頁的 hero 從「承諾」換成「機制」：講 arkiv 實際做什麼
+  （有畫面的分析畫面、有聲音的轉錄），而不是講一句每個競品都說得出口的話。
+
+## v1.2.0 - 2026-09-02
+
+**每一份在 Mac 上產生的逐字稿，時間碼都是錯的 —— 而且錯得沿著片子越走越大。**
+這一版修好它。如果你用 arkiv 做過訪談或字幕，這是你要的那一版。
+
+缺陷由一位外部使用者回報：點逐字稿的時間碼跳轉，會對不上、或跑回 00:00。
+那不是她的環境問題 —— 而且她連修法都一起寄來了，設計與本版採用的相同。
+致謝見 `ACKNOWLEDGEMENTS.md`（具名方式待她本人回覆，本專案先問過再寫）。轉錄前 arkiv 會跑 VAD 把靜音切掉、把語音接成一段沒有空隙的
+音檔再送進 whisper —— 而那個函式算完「每一段語音原本在哪裡」之後只回傳了檔案路徑，
+對照表就此遺失，裁切檔幾行後被刪除。於是 whisper 報回來的每一個時間都是
+「無空隙語音時間」，而 arkiv 裡其他每一個時鐘（畫格、波形、播放器、EDL 來源 TC）
+都是媒體時間。誤差等於那句話之前被移除的靜音總和，**所以它沿著片子累積遞增**。
+
+影響 `_transcribe_mlx`（**所有 Mac**）與 `_transcribe_faster_whisper`（非 Mac 預設）；
+`_transcribe_whisperx` 讀原始 wav 不受影響 —— 三個後端對「3.5 秒」的定義並不一致。
+
+🔴 **既有素材庫必須重新轉錄才會拿到正確時間碼。** 沒有「只補 offset」的捷徑：
+stamps 被消費即丟，來源 wav 是當場刪除的暫存檔，只能整支重跑。重跑請帶 `backup=True`。
+
+### Fixed
+
+- **VAD 時間碼偏移**（上述）。`_vad_filter()` 現在回傳 `(path, offset_map)`，
+  以 `bisect` 將 segment 與逐字時間碼在下游看到之前就映射回媒體時間。
+- **使用者從 UI 下載的每一份 SRT/VTT，從來沒經過排版引擎。** `subtitle.py`（CJK 行寬、
+  斷點規則、雙語 cue）全樹只有 CLI 與它自己的測試在 import；UI 那三條路各自走手寫的
+  cue emitter。三條路現在共用同一個 seam。
+- **mlx 後端向 whisper 要了逐字時間碼，然後把它丟掉** —— 每一支在 Mac 上 ingest 的素材，
+  `words_json` 都是 NULL。
+- **潤稿在長逐字稿上靜默逾時**，然後把未標點的原文當成結果回傳，零 log。現在切塊處理、
+  每塊逾時、並有整體預算；到點就把剩下的原樣回傳並記錄。
+- **單支重轉錄完全不拿 ingest 鎖** —— 批次跑到一半點單支重轉，等於兩個 whisper 同時解碼。
+- 畫一條波形要去解 4K 原檔；剪接室既有的 proxy 現在會被優先採用。
+- `.mts` 探測出來是 h264 但瀏覽器播不了；ProRes 原檔配 ProRes proxy 不能算「能播」。
+- 舊 library 的「在 Finder 顯示」永遠回 403。
+- 視覺標籤與結構化欄位仍會把簡體字漏進索引。
+- ⌘Q 離開時，backend 與我們啟動的 ollama 都沒有被收掉。
+- **側欄那份「Projects」清單其實從來不是專案清單**，是你當下開著的那個庫的資料夾名，
+  而且從未呼叫 `/api/projects`。現在讀 registry，並顯示這個安裝的免費額度用量。
+
+### Added
+
+- **靜態圖片成為一等公民**（PNG／JPG／WebP／GIF／SVG）：與影片同庫、同樣可搜尋與篩選。
+- **回收桶**：刪除改為移入 `.arkiv/trash` 而非 unlink，可還原；刪除時同步從跨庫精選集
+  移除該筆，精選集計數不再指向已消失的素材。
+- **第二條 ASR 引擎**，走 OpenAI 相容的 `/audio/transcriptions` 介面（QwenASR、Groq、
+  Cloudflare、whisper.cpp 皆同協定，一個轉接層通到全部）。同一段聲音跑兩次、把兩份稿的
+  差異變成產出：對齊按字元流而非 segment 邊界。
+  **台語濃的素材上兩個引擎是系統性分歧**（一致率 49%），對系統性差異用 diff 是拿錯工具 ——
+  改以句尾語氣詞密度判斷哪一份稿保留了較多口語質地，一份稿一個數字，不需對齊也不需人耳。
+  這是**引擎選擇的輔助訊號，不是台語轉錄功能**。
+- **媒體能力探針**：批次開始前先問「這台機器解得開這個庫嗎」（存在／讀得到／有音軌／
+  解得開四道閘），而不是只問「ffmpeg 裝了嗎」。只有全部不可用才拒絕。
+- 手動與正規化 tag、以及視覺 tag 全部進向量索引；改 tag 會被新鮮度檢查視為 stale 而自動重嵌。
+- 匯出**不含時間碼的純文字稿**（server 早就支援，UI 從來沒提供入口）。
+- 轉錄階段的進度回報（只有階段，沒有假百分比）。
+- per-project 設定真的會被讀到 —— 解析鏈早就完整，但 production 八個消費點沒有一個帶 `project=`。
+- `docker compose` 現在會持久化跨庫精選集與專案 registry；先前 `down` 或重建映像會靜默清空。
+
+### Changed
+
+- **低電平素材的正規化預設關閉。** 13 支實測：8 支結果相同、5 支變差、**0 支變好**。
+  正規化會把底噪抬起來，VAD 因此多留三倍音訊，whisper 就在噪音上產生幻覺。
+- 字幕只保留 `，！？`，停頓交給 cue 時間；標點政策只在算繪時套用，不動儲存 ——
+  `.txt` 仍完整，既有素材庫不必重新轉錄。
+- 字幕行寬收進 `export.subtitle_max_cjk`，先前硬編在四處。
+- 打包的 app 現在會啟動 Ollama 並找得到 ffmpeg。
+
+### 本版同時包含先前標為 1.1.2 但從未發佈的內容
+
+`v1.1.2` 有 CHANGELOG 段落與版號，但**從未打過 tag、也沒有 release**。
+其內容（出貨守衛改清單驅動、tauri-cli 快取、Pro add-on 介面合約測試）併入本版。
+
+## v1.1.2 - 2026-08-24（已備妥，未發佈）
 
 **Nothing in this release changes what arkiv does.** It exists so that three changes to the
 build and packaging path get exercised by a real release instead of waiting for the next one
@@ -236,7 +492,7 @@ Smart Collections, shoot-year faceting and storage-migration work.
 
   **Four Windows traps, three of which only fire outside CI.** `robocopy` reports success as exit 0-7, so treating it like a normal command fails the script on a successful copy and leaves `$LASTEXITCODE` dirty for whatever reads it next. `curl`/`tar` must be resolved from System32 by absolute path — launched from a Git Bash shell, `tar` otherwise hits Git's MSYS twin, which reads the `C:\...` destination as a remote `host:path` and dies with "Cannot connect to C: resolve failed". The src copy excludes the gitignored runtime-scratch dirs, because the offload tests leave `temp\arkiv-offload-*` behind with ACLs the user can no longer enumerate — 20 of them, which robocopy counts as failed directories. And the `.ps1` is pinned to **pure ASCII**: Windows PowerShell 5.1 reads a BOM-less file as the machine's ANSI codepage rather than UTF-8, so a multi-byte character is re-split under cp950/cp1252, and when that re-split swallows a quote the script dies at *parse* time with errors pointing at unrelated lines — only on machines with that codepage. A sibling script written the same way did exactly this here. A CI runner checks out clean and runs a Latin codepage, so all but the robocopy one bite only a real workstation: the machine that also does a local release build.
 
-  Verified by installing the built `.exe` on Win11 / i7-13700 rather than by inspecting the build log: window titled `arkiv`, backend up on a negotiated port, SPA and every asset 200, `/api/collections` `/api/media` `/api/stats` `/api/bins` `/api/media/4/transcripts` all 200 with the pre-indexed sample library rendering, zero tracebacks in `backend.log`, zero python processes holding a window handle, and no orphan uvicorn after close.
+  Verified by installing the built `.exe` on a real Win11 workstation rather than by inspecting the build log: window titled `arkiv`, backend up on a negotiated port, SPA and every asset 200, `/api/collections` `/api/media` `/api/stats` `/api/bins` `/api/media/4/transcripts` all 200 with the pre-indexed sample library rendering, zero tracebacks in `backend.log`, zero python processes holding a window handle, and no orphan uvicorn after close.
 - **Per-project Smart Collections — `.arkiv/collections.json` + `ingest --propose-collections` / `--apply-collections`.** PR #92 deleted the shipped topical collections (食材特寫 / 店內空景) because a hardcoded food vocabulary mis-filed a cable-making shoot through the shared `切割` tag; the source comment has said "topical/auto-derived and per-project collections are deferred (B + C)" ever since. The lesson was not that topical collections are bad — it was that a *shipped default* carries one shoot's vocabulary into every other project, which a per-project file structurally cannot do. So a project can now define its own, by hand or by derivation, and the file is the UI: plain JSON in the project data dir, the same contract as `tag_aliases.json` and `corrections.json`, reversible by deleting it. Treated as untrusted input throughout — missing, unparseable or wrong-version degrades to the shipped defaults, one malformed entry costs that entry and not the file, and a file entry's `predicate` is always `None`, which is a security property rather than a limitation since a config file must never be able to inject a callable into the classifier. Built-ins can be hidden via a `disable` list but never redefined by key: they carry predicates JSON cannot express, so an override would leave a collection that can never match anything. **Derivation** (`--propose-collections`) prunes the tag cloud, clusters what was shot together by co-occurrence Jaccard, has the LLM name each theme, then measures real membership with the production scorer before proposing anything — member counts are measured, never predicted. Review the proposal, then `--apply-collections`; `--collection-dry-run` runs the whole pipeline without Ollama. **An empty proposal is a correct answer**: on the reference vinyl library every frequent tag co-occurs with every other, and 252 raw tags reduce to 36 derivable, 7 clusters, and exactly 1 proposal — the 18-tag mega-cluster covering 66% of the library is refused, because a collection holding most of the library is a synonym for the library. What stops #92 recurring is pruning: shot types and generic scene furniture (`特寫`/`操作`/`人物`/`室內`) co-occur with everything, so in a co-occurrence graph they are bridge edges that glue unrelated subjects — the exact role `切割` played. A test proves the counterfactual: put `特寫` back and three clearly separate topics collapse into one cluster. Derived keys hash the *definition* rather than the name or rank, and a re-run diffs against what was already accepted — dropping 3 of 62 clips changed the derived set in five of six trials, so anything keyed on rank would rename or vanish on the next ingest. Unlike `--apply-aliases`, every failure path here exits **non-zero**: that command prints and returns, so a missing or malformed proposal still exits 0 and a script reads it as applied.
 - **Browse footage by the year it was shot — `GET /api/media/facets/shoot-date` + `?shot_year=` (backend half).** The sidebar offers tags and smart collections but no time entry point, so a documentary user rebuilt one herself in her own checkout to find clips by year. Which column to group on was settled by measurement rather than preference: on a real 62-clip library, `creation_date` (EXIF CreateDate / XAVC sidecar) covers 90.3% and spreads across 2022/2025/2026, while `processed_at` covers 100% and puts **every single row in one bucket** — 55 of the 56 dated clips were shot in a different year than they were ingested, so the two are not interchangeable approximations of each other. The facet reports an explicit `unknown` count (6 of those 62) and its buckets reconcile with the library total, because a facet that quietly omits rows reads as "there is nothing there". Grouping had to survive two stored shapes: `ingest.exiftool_extract` writes `str(cdate)` unnormalised, and exiftool yields `2025:10:03 13:56:20` while the XAVC NRT sidecar yields ISO `2025-10-03T13:56:20+08:00`. Both are YYYY-prefixed so year grouping works naively, but ordering does not — `:` sorts above `-` — so everything past "what year" goes through a shared `db.normalise_shot_date` (timezone dropped, not converted: re-basing to UTC would move footage shot near midnight into the neighbouring shoot day). `?shot_year=` is wired into **all three** `/api/media` code paths — SQL list, semantic search, and the degraded SQL text search — since a filter honoured only on the first silently stops applying the moment the user types a query or Ollama goes down, which is exactly the shape of audits H8 and H14; `creation_date` joins `LIGHT_COLS` so the search branch can see it at all. Verified end-to-end against the real library: every bucket's filter count matches its facet count exactly, and none of its 56 distinct date values is rejected by the normaliser. 31 tests, mutation-checked — all 6 HTTP guards fail against the unwired router, both `?q=` variants included. **Frontend deliberately not built yet**: the user who needs this already has a working version, and it is worth seeing hers before shipping a second one.
 

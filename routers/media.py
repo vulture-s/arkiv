@@ -25,12 +25,16 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
+import commands
 import config
 import corrections
 import db
+import media_delete
 import mediatypes
 import progress
+import search_syntax
 import tag_quality
+import transcript_compare
 from auth import require_scopes
 from config import BASE_DIR
 from mediarecords import _get_light_records_by_ids, _get_tags_bulk
@@ -136,6 +140,7 @@ class ActivateLangRequest(BaseModel):
 # both now come from the shared mediatypes source, so they can't drift apart.
 _VIDEO_EXTS = mediatypes.VIDEO_EXT
 _AUDIO_EXTS = mediatypes.AUDIO_EXT
+_IMAGE_EXTS = mediatypes.IMAGE_EXT
 
 
 @router.get("/api/media/position/{media_id}")
@@ -177,10 +182,24 @@ def media_position(
 def media_pool(
     _tok: dict = Depends(require_scopes("videos_read")),
 ):
-    """Lightweight full list for left sidebar media pool — grouped by folder."""
+    """Lightweight full list for left sidebar media pool — grouped by folder.
+
+    Carries `shot_date` (when it was SHOT), not `processed_at` (when it was
+    ingested). The two are not interchangeable and the difference is not
+    academic: measured on a real 62-clip library, 55 of the 56 dated clips were
+    shot in a different year than they were ingested — the same measurement that
+    settled it for the shoot-date facet below. An editor scanning a pool wants
+    the day the camera rolled.
+
+    `shot_date` is already the normalised ISO form of `creation_date`
+    (`db.normalise_shot_date`), and it is None when the date could not be read
+    rather than a plausible-looking guess — so an undated clip stays visibly
+    undated instead of being filed under a year nobody verified.
+    """
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, filename, ext, duration_s, rating, path FROM media ORDER BY path, filename"
+            "SELECT id, filename, ext, duration_s, rating, path, shot_date "
+            "FROM media ORDER BY path, filename"
         ).fetchall()
     items = []
     for r in rows:
@@ -197,6 +216,9 @@ def media_pool(
             "duration_s": r["duration_s"],
             "rating": r["rating"],
             "folder": folder,
+            # None when the clip carries no readable shoot date — the caller
+            # renders that as unknown, it does not fall back to ingest time.
+            "shot_date": r["shot_date"],
         })
     return {"items": items, "total": len(items)}
 
@@ -259,17 +281,34 @@ def list_media(
         for rec in records:
             rec["tags"] = tags_by_id.get(rec["id"], [])
         return {"items": records, "total": len(records), "search": True}
+    # `camera:a7s3 tag:海邊 …` in the search box → typed filters (search_syntax).
+    # `q` is narrowed to the free text; the filters become one SQL predicate that
+    # both legs below must satisfy, so they cannot drift apart.
+    conditions: list = []
+    cond_ids = None
+    parsed = None
     if q:
-        enriched = []
+        try:
+            q, conditions = search_syntax.parse(q)
+        except search_syntax.QueryError as exc:
+            raise HTTPException(422, str(exc))
+        parsed = search_syntax.describe(q, conditions)
+        if conditions:
+            with db.get_conn() as conn:
+                cond_ids = search_syntax.matching_ids(conn, conditions)
+    if q or conditions:
         search_warning = None
         import vectordb as vdb
-        # audit M19: search used to ignore `offset` entirely (page 2 == page 1).
-        # Collect up to offset+limit matches, then slice the requested page.
-        # Capped so a huge ?offset can't inflate n_results / SQL LIMIT (audit
-        # H13-class DoS); search hits past 2000 are noise anyway.
-        needed = min(offset + limit, 2000)
+        # audit M19: search MUST paginate correctly. `total` is the STABLE number
+        # of matches (independent of `offset`), and only the requested page's light
+        # records are returned. SEARCH_CAP bounds the candidate set so a huge
+        # ?offset can't inflate the vector scan / SQL table scan (audit H13-class
+        # DoS); hits past 2000 are noise anyway.
+        SEARCH_CAP = 2000
 
         def _passes_filters(rec: dict) -> bool:
+            if cond_ids is not None and rec["id"] not in cond_ids:
+                return False
             # Applied to the ENRICHED record (which has real lang/rating), not the
             # raw vector hit — vectordb results carry no `rating`, so filtering on
             # them dropped every semantic hit under `rating=good` and silently fell
@@ -288,6 +327,8 @@ def list_media(
             if media_type == "video" and ext not in _VIDEO_EXTS:
                 return False
             if media_type == "audio" and ext not in _AUDIO_EXTS:
+                return False
+            if media_type == "image" and ext not in _IMAGE_EXTS:
                 return False
             # Same class as H8/H14: a filter honoured only on the SQL path silently
             # stops applying the moment the user types a query.
@@ -310,30 +351,19 @@ def list_media(
                     return False
             return True
 
-        # Try semantic search first (requires vectordb with embeddings)
+        # Semantic pass: ALL vector nearest-neighbours up to SEARCH_CAP (ids +
+        # scores + excerpt). May be empty on degradation (search_warning set).
+        semantic: dict = {}
         try:
-            raw = vdb.search(q, n_results=needed * 3)
+            # Filters only, no text: nothing to rank by meaning.
+            raw = vdb.search(q, n_results=SEARCH_CAP) if q else []
             seen = set()
-            ordered_ids = []
-            hit_by_id = {}
             for r in raw:
                 mid = int(r["media_id"])
                 if mid in seen:
                     continue
                 seen.add(mid)
-                ordered_ids.append(mid)
-                hit_by_id[mid] = r
-            # audit H16: one batched LIGHT_COLS fetch instead of per-hit SELECT *
-            for rec in _get_light_records_by_ids(ordered_ids):
-                if not _passes_filters(rec):
-                    continue
-                _resolve_record(rec)
-                hit = hit_by_id[rec["id"]]
-                rec["score"] = hit.get("score", 0)
-                rec["excerpt"] = hit.get("excerpt", "")
-                enriched.append(rec)
-                if len(enriched) >= needed:
-                    break
+                semantic[mid] = {"score": r.get("score", 0), "excerpt": r.get("excerpt", "")}
         except vdb.EmbeddingDimensionMismatch as exc:
             # Don't silently SQL-degrade a dim mismatch — log it and surface a hint
             # so the operator knows semantic search is off until they rebuild.
@@ -347,79 +377,92 @@ def list_media(
             )
             search_warning = "semantic search unavailable (SQL fallback used)"
 
-        # Fallback: SQL text search (filename, transcript, tags) — same lang/rating
-        # filter applied so a degraded search still honors the active filters.
-        if not enriched:
-            seen_ids = set()
-            like = f"%{q}%"
-            # audit H17: push the active filters into WHERE and bound the scan —
-            # the old query LIKE-scanned the whole table, built every matching
-            # record, then threw away everything past `limit`.
-            filter_sql = ""
-            filter_params: list = []
-            if lang:
-                filter_sql += " AND lang = ?"
-                filter_params.append(lang)
-            if rating == "unrated":
-                filter_sql += " AND rating IS NULL"
-            elif rating:
-                filter_sql += " AND rating = ?"
-                filter_params.append(rating)
-            if media_type == "video":
-                filter_sql += " AND ext IN ({0})".format(",".join("?" * len(_VIDEO_EXTS)))
-                filter_params.extend(sorted(_VIDEO_EXTS))
-            elif media_type == "audio":
-                filter_sql += " AND ext IN ({0})".format(",".join("?" * len(_AUDIO_EXTS)))
-                filter_params.extend(sorted(_AUDIO_EXTS))
-            # Third place this filter has to exist. The degraded-search path is the
-            # one users hit when Ollama is down, and a filter that quietly stops
-            # applying exactly then is worse than one that never worked. Built by the
-            # same helper as the list query rather than hand-written twice — the
-            # duplication is what let H8/H14 happen.
-            shot_sql, shot_params = db.shot_window_clause(
-                shot_year=shot_year, shot_date=shot_date
-            )
-            if shot_sql:
-                filter_sql += " AND " + shot_sql
-                filter_params.extend(shot_params)
+        # Lexical pass (Direction 2): literal substring matches in filename /
+        # transcript / tags ALWAYS surface, even when their embedding ranks low by
+        # vector distance — so a clip that literally contains the query term is
+        # never invisible. Bounded by SEARCH_CAP (audit H17); the active filters
+        # are pushed into WHERE so the SQL path honours them too.
+        like = f"%{q}%"
+        filter_sql = ""
+        filter_params: list = []
+        if lang:
+            filter_sql += " AND lang = ?"
+            filter_params.append(lang)
+        if rating == "unrated":
+            filter_sql += " AND rating IS NULL"
+        elif rating:
+            filter_sql += " AND rating = ?"
+            filter_params.append(rating)
+        if media_type == "video":
+            filter_sql += " AND ext IN ({0})".format(",".join("?" * len(_VIDEO_EXTS)))
+            filter_params.extend(sorted(_VIDEO_EXTS))
+        elif media_type == "audio":
+            filter_sql += " AND ext IN ({0})".format(",".join("?" * len(_AUDIO_EXTS)))
+            filter_params.extend(sorted(_AUDIO_EXTS))
+        elif media_type == "image":
+            filter_sql += " AND ext IN ({0})".format(",".join("?" * len(_IMAGE_EXTS)))
+            filter_params.extend(sorted(_IMAGE_EXTS))
+        shot_sql, shot_params = db.shot_window_clause(shot_year=shot_year, shot_date=shot_date)
+        if shot_sql:
+            filter_sql += " AND " + shot_sql
+            filter_params.extend(shot_params)
+        lexical_ids: list = []
+        if q:
             with db.get_conn() as conn:
                 rows = conn.execute(
-                    f"SELECT {db.LIGHT_COLS} FROM media "
+                    "SELECT id FROM media "
                     "WHERE (filename LIKE ? OR transcript LIKE ?)" + filter_sql +
                     " ORDER BY id LIMIT ?",
-                    (like, like, *filter_params, needed),
+                    (like, like, *filter_params, SEARCH_CAP),
                 ).fetchall()
-                for r in rows:
-                    rec = dict(r)
-                    _resolve_record(rec)
-                    enriched.append(rec)
-                    seen_ids.add(rec["id"])
+                lexical_ids = [dict(r)["id"] for r in rows]
+                tag_rows = conn.execute(
+                    "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
+                    (like, SEARCH_CAP),
+                ).fetchall()
+            for tr in tag_rows:
+                tid = dict(tr)["media_id"]
+                if tid not in lexical_ids:
+                    lexical_ids.append(tid)
+        else:
+            # Filters only, no text: the matching set IS the result, newest first.
+            lexical_ids = sorted(cond_ids, reverse=True)[:SEARCH_CAP]
 
-            # Also search by tag name (bounded — audit H17)
-            if len(enriched) < needed:
-                with db.get_conn() as conn:
-                    tag_rows = conn.execute(
-                        "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
-                        (like, needed * 3),
-                    ).fetchall()
-                tag_ids = [tr["media_id"] for tr in tag_rows if tr["media_id"] not in seen_ids]
-                for rec in _get_light_records_by_ids(tag_ids):
-                    if not _passes_filters(rec):
-                        continue
-                    _resolve_record(rec)
-                    enriched.append(rec)
-                    seen_ids.add(rec["id"])
-                    if len(enriched) >= needed:
-                        break
+        # Stable, offset-independent ordering: semantic hits by score desc, then
+        # lexical hits in id order, de-duplicated. Capped at SEARCH_CAP.
+        sem_ids = list(semantic.keys())
+        sem_ids.sort(key=lambda mid: semantic[mid]["score"], reverse=True)
+        seen_sem = set(sem_ids)
+        lex_filtered = [mid for mid in lexical_ids if mid not in seen_sem]
+        ordered_ids = (sem_ids + lex_filtered)[:SEARCH_CAP]
 
-        # audit M19: slice the requested page; total = bounded match count (the
-        # same "items seen so far" semantic for both search sub-paths).
-        items = enriched[offset:offset + limit]
-        # audit H15: one bulk tag query for the returned page only
+        # One bulk fetch of the candidate light records (bounded by SEARCH_CAP),
+        # apply the filters the SQL path can't (semantic hits carry no rating/
+        # lang), then slice the requested page. Tags fetched once for the page.
+        records_by_id: dict = {}
+        for rec in _get_light_records_by_ids(ordered_ids):
+            if not _passes_filters(rec):
+                continue
+            _resolve_record(rec)
+            mid = rec["id"]
+            if mid in semantic:
+                rec["score"] = semantic[mid]["score"]
+                rec["excerpt"] = semantic[mid]["excerpt"]
+                rec["match_type"] = "semantic"
+            else:
+                rec["score"] = None
+                rec["excerpt"] = (rec.get("transcript") or "")[:300] or rec.get("filename") or ""
+                rec["match_type"] = "text"
+            records_by_id[mid] = rec
+        ordered = [records_by_id[mid] for mid in ordered_ids if mid in records_by_id]
+        total = len(ordered)
+        items = ordered[offset:offset + limit]
         tags_by_id = _get_tags_bulk([rec["id"] for rec in items])
         for rec in items:
             rec["tags"] = tags_by_id.get(rec["id"], [])
-        resp = {"items": items, "total": len(enriched), "search": True}
+        resp = {"items": items, "total": total, "search": True}
+        if parsed is not None:
+            resp["parsed"] = parsed
         if search_warning:
             resp["search_degraded"] = True
             resp["warning"] = search_warning
@@ -473,11 +516,13 @@ def get_media_detail(
             rec["frame_tags_parsed"] = json.loads(rec["frame_tags"])
         except Exception:
             rec["frame_tags_parsed"] = []
-    # User-facing tags: screen quality-defect noise + keep only the top-N most
-    # confident (focus-weighted) tags, so a clip doesn't dump 10+ tags on the user.
-    top = set(tag_quality.rank_media_tags(rec.get("frame_tags_parsed") or []))
+    # User-facing tags: show BOTH manual (user-added) and auto (vision) tags.
+    # Only normalize/dedup via filter_tag_records (Simplified↔Traditional +
+    # variant-char collapse + noise-artifact drop) — do NOT cap auto tags by the
+    # top-N frame ranking, or manual tags (which never appear in that set) get
+    # silently dropped from the inspector (regression: manual tags vanished).
     all_tags = tag_quality.filter_tag_records(db.get_tags(media_id))
-    rec["tags"] = [t for t in all_tags if t["name"] in top] if top else all_tags
+    rec["tags"] = all_tags
     # Optional LLM-canonicalized tag list (populated by `ingest.py --canonicalize-tags`).
     # Returned alongside raw tags so the UI can toggle raw ↔ canonical; null until run.
     if rec.get("canonical_tags"):
@@ -679,6 +724,12 @@ def get_media_chapters(
     return {"media_id": media_id, "format": format, "chapters": text, "count": count}
 
 
+def _sent(body: BaseModel) -> dict:
+    """Only the fields the client actually sent — the PATCH contract that
+    commands.py's setters take (omitted = untouched, explicit null = clear)."""
+    return {field: getattr(body, field) for field in body.model_fields_set}
+
+
 @router.patch("/api/media/{media_id}/rating")
 def update_rating(
     media_id: int,
@@ -691,27 +742,11 @@ def update_rating(
     untouched; an explicit null clears it. PATCH {rating:'good'} used to
     silently wipe the stored note (PUT semantics in a PATCH endpoint).
     """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        out = commands.set_rating(media_id, _sent(body), _tok)
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    provided = body.model_fields_set  # audit M20: omitted vs explicit-null
-    sets, params = [], []
-    if "rating" in provided:
-        sets.append("rating = ?")
-        params.append(body.rating)
-    if "note" in provided:
-        sets.append("rating_note = ?")
-        params.append(body.note)
-    if sets:
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
-                (*params, media_id),
-            )
-    new_rating = body.rating if "rating" in provided else rec.get("rating")
-    new_note = body.note if "note" in provided else rec.get("rating_note")
-    return {"ok": True, "rating": new_rating, "note": new_note}
-
+    return {"ok": True, **out}
 
 @router.patch("/api/media/{media_id}/inout")
 def update_inout(
@@ -727,31 +762,13 @@ def update_inout(
     sub-clips. PATCH semantics (same as rating): an OMITTED field is left untouched;
     an explicit null clears that mark.
     """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        out = commands.set_inout(media_id, _sent(body), _tok)
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    provided = body.model_fields_set
-    new_in = body.in_point if "in_point" in provided else rec.get("in_point")
-    new_out = body.out_point if "out_point" in provided else rec.get("out_point")
-    # An inverted window (in ≥ out) exports an empty/negative range downstream —
-    # reject it rather than silently persisting a range that yields nothing.
-    if new_in is not None and new_out is not None and new_in >= new_out:
-        raise HTTPException(422, "in_point 必須小於 out_point")
-    sets, params = [], []
-    if "in_point" in provided:
-        sets.append("in_point = ?")
-        params.append(body.in_point)
-    if "out_point" in provided:
-        sets.append("out_point = ?")
-        params.append(body.out_point)
-    if sets:
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
-                (*params, media_id),
-            )
-    return {"ok": True, "in_point": new_in, "out_point": new_out}
-
+    except commands.Invalid as e:
+        raise HTTPException(422, str(e))
+    return {"ok": True, **out}
 
 @router.patch("/api/media/{media_id}/camera")
 def update_camera(
@@ -767,27 +784,11 @@ def update_camera(
     inout/rating): an OMITTED field is left untouched; an explicit null (or blank)
     clears it. Kept out of _ALLOWED_COLS so a re-ingest never overwrites the mark.
     """
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        out = commands.set_camera(media_id, _sent(body), _tok)
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    provided = body.model_fields_set
-    sets, params = [], []
-    if "camera_id" in provided:
-        sets.append("camera_id = ?")
-        params.append(body.camera_id)
-    if "angle" in provided:
-        sets.append("angle = ?")
-        params.append(body.angle)
-    if sets:
-        with db.get_conn() as conn:
-            conn.execute(
-                "UPDATE media SET {0} WHERE id = ?".format(", ".join(sets)),
-                (*params, media_id),
-            )
-    new_camera_id = body.camera_id if "camera_id" in provided else rec.get("camera_id")
-    new_angle = body.angle if "angle" in provided else rec.get("angle")
-    return {"ok": True, "camera_id": new_camera_id, "angle": new_angle}
-
+    return {"ok": True, **out}
 
 @router.get("/api/media/{media_id}/tags")
 def get_tags(
@@ -803,11 +804,11 @@ def add_tag(
     body: TagCreate,
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
-    rec = db.get_record_by_id(media_id)
-    if not rec:
+    try:
+        tags = commands.add_tag(media_id, body.name, body.source, _tok)
+    except commands.NotFound:
         raise HTTPException(404, "找不到")
-    db.add_tag(media_id, body.name, body.source)
-    return {"ok": True, "tags": db.get_tags(media_id)}
+    return {"ok": True, "tags": tags}
 
 
 @router.delete("/api/media/{media_id}/tags/{tag_name}")
@@ -816,8 +817,7 @@ def remove_tag(
     tag_name: str,
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
-    db.remove_tag(media_id, tag_name)
-    return {"ok": True, "tags": db.get_tags(media_id)}
+    return {"ok": True, "tags": commands.remove_tag(media_id, tag_name, _tok)}
 
 
 @router.get("/api/media/{media_id}/remotion-props")
@@ -957,6 +957,15 @@ def list_transcripts(media_id: int, _tok: dict = Depends(require_scopes("videos_
             r["active"] = True
         else:
             r["active"] = False
+        # 語氣詞 reading for the inspector. Computed here rather than in the
+        # frontend so the marker set has exactly one definition — a copy in JS
+        # would drift the first time the set is corrected, and it has been
+        # corrected twice already. Both fields are None when the module declines
+        # to answer (no CJK), and `particle_density` alone is None when the
+        # transcript is too short for a percentage to be anything but noise.
+        reading = transcript_compare.particle_reading(r.get("transcript"))
+        r["particle_count"] = reading["count"] if reading else None
+        r["particle_density"] = reading["density"] if reading else None
     return {"active_lang": active_lang, "transcripts": rows}
 
 
@@ -1115,3 +1124,170 @@ def retry_vision_status(
     """
     rec = vision_jobs.get(media_id)
     return rec if rec is not None else {"state": "idle"}
+
+
+# ── Unified delete (Phase 14.5) ───────────────────────────────────────────────
+
+class BulkDeleteBody(BaseModel):
+    ids: list
+    allow_file_delete: bool = True
+
+
+@router.delete("/api/media/{media_id}")
+def delete_media(
+    media_id: int,
+    allow_file_delete: bool = True,
+    _tok: dict = Depends(require_scopes("media_delete")),
+):
+    """Delete one media record + all its artefacts. The original source file is
+    moved to the recycle bin (.arkiv/trash), not unlinked; files outside
+    PROJECT_ROOT are metadata-only (see media_delete.delete_media_full)."""
+    result = media_delete.delete_media_full(
+        media_id, allow_file_delete=allow_file_delete, token_info=_tok
+    )
+    if result is None:
+        raise HTTPException(404, "找不到該媒體")
+    return result
+
+
+@router.post("/api/media/bulk-delete")
+def bulk_delete_media(
+    body: BulkDeleteBody,
+    _tok: dict = Depends(require_scopes("media_delete")),
+):
+    """Delete several media records at once. Returns the ids that were deleted,
+    skipped (e.g. not found), and any hard errors — matching the designed
+    {deleted, skipped, errors} contract.
+
+    Audit 2026-10-09 K1: `deleted` alone cannot tell a recoverable trash move
+    from a metadata-only delete (clip outside PROJECT_ROOT/ARKIV_MEDIA_ROOTS, or
+    a failed move) — and the UI promised 「可從回收桶還原」 for both. Each
+    delete's outcome is kept: `not_trashed` lists rows whose original did NOT
+    go into the recycle bin (their tags/rating/transcript are unrecoverable),
+    `warnings` carries every per-item warning delete_media_full produced."""
+    deleted, skipped, errors = [], [], []
+    not_trashed, warnings = [], []
+    for mid in body.ids:
+        try:
+            mid = int(mid)
+        except (TypeError, ValueError):
+            errors.append({"media_id": mid, "error": "bad id"})
+            continue
+        r = media_delete.delete_media_full(
+            mid, allow_file_delete=body.allow_file_delete, token_info=_tok
+        )
+        if r is None:
+            skipped.append(mid)
+            continue
+        deleted.append(mid)
+        if not r.get("file_deleted"):
+            not_trashed.append({"media_id": mid, "warning": r.get("warning")})
+        if r.get("warning"):
+            warnings.append({"media_id": mid, "warning": r["warning"]})
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "skipped": skipped,
+        "errors": errors,
+        "not_trashed": not_trashed,
+        "warnings": warnings,
+    }
+
+
+class PruneMissingBody(BaseModel):
+    dry_run: bool = True
+    force: bool = False  # override the ">= 90% of a storage looks missing" hold-back
+
+
+@router.post("/api/media/prune-missing")
+def prune_missing_media(
+    body: PruneMissingBody,
+    _tok: dict = Depends(require_scopes("media_delete")),
+):
+    """Remove media rows whose source file no longer exists on disk (the ghost
+    records left by manually-deleted files). With dry_run=true (default) nothing
+    is changed — only a count is returned. Moved out of routers/admin.py: a media
+    data-integrity operation (delete_media_full over ghost rows), not a token
+    /admin one (R5-25 route ownership)."""
+    missing = db.iter_missing()
+    # Audit 2026-10-09 (MED): a file is only "missing" if the storage it lives on
+    # is actually there. An unmounted NAS / external drive made EVERY row on it
+    # look deleted, and a real run dropped the whole library (tags, ratings,
+    # transcripts — CASCADE, no trash row) with no way back.
+    #  1. rows whose volume is not mounted are excluded (db.storage_status);
+    #  2. second net for storage we can't classify (an NFS/SMB share mounted at an
+    #     arbitrary path leaves an ordinary empty folder when it drops): if the
+    #     rows under one nearest-existing folder would lose >= 90% (and >= 10
+    #     rows), they are held back unless the caller passes force=true.
+    # Every skipped row is reported (`skipped`, capped) so nothing is silent.
+    prunable_by_root, unavailable, skipped = {}, {}, []
+    status_cache = {}
+    for m in missing:
+        try:
+            resolved = db.resolve_path(m["path"])
+        except ValueError:
+            resolved = m["path"]
+        parent = str(Path(resolved).parent)
+        if parent not in status_cache:
+            status_cache[parent] = db.storage_status(resolved)
+        st = status_cache[parent]
+        if not st["available"]:
+            unavailable[st["root"]] = unavailable.get(st["root"], 0) + 1
+            skipped.append({"id": m["id"], "path": m["path"], "root": st["root"], "reason": st["reason"]})
+            continue
+        # Group by the nearest EXISTING folder, not the mount: on a single-disk
+        # machine the mount is "/" and would lump the whole library together.
+        prunable_by_root.setdefault(st.get("anchor") or st["root"], []).append(m)
+
+    held_back = []
+    prunable = []
+    if prunable_by_root:
+        def _under(rp, root):
+            try:
+                Path(rp).relative_to(root)
+                return True
+            except ValueError:
+                return False
+
+        totals = {}
+        with db.get_conn() as conn:
+            for r in conn.execute("SELECT path FROM media").fetchall():
+                try:
+                    rp = db.resolve_path(r["path"])
+                except ValueError:
+                    continue
+                # deepest matching anchor wins (anchors may nest)
+                hits = [root for root in prunable_by_root if _under(rp, root)]
+                if hits:
+                    best = max(hits, key=len)
+                    totals[best] = totals.get(best, 0) + 1
+        for root, rows in sorted(prunable_by_root.items()):
+            total = max(totals.get(root, len(rows)), len(rows))
+            if not body.force and len(rows) >= 10 and len(rows) >= 0.9 * total:
+                held_back.append({"root": root, "count": len(rows), "total": total})
+                for m in rows:
+                    skipped.append({"id": m["id"], "path": m["path"], "root": root,
+                                    "reason": "held back: {0}/{1} rows on this storage look missing "
+                                              "(pass force=true if they really were deleted)".format(len(rows), total)})
+                continue
+            prunable.extend(rows)
+
+    unavailable_roots = [{"root": r, "count": n} for r, n in sorted(unavailable.items())]
+    report = {
+        "scanned": len(missing),
+        "prunable": len(prunable),
+        "unavailable_roots": unavailable_roots,
+        "held_back": held_back,
+        "skipped_count": len(skipped),
+        "skipped": skipped[:200],
+    }
+    if body.dry_run:
+        return dict(report, pruned=0, pruned_ids=[], dry_run=True)
+    pruned_ids = []
+    for m in prunable:
+        r = media_delete.delete_media_full(
+            m["id"], allow_file_delete=False, token_info=_tok
+        )
+        if r is not None:
+            pruned_ids.append(m["id"])
+    return dict(report, pruned=len(pruned_ids), pruned_ids=pruned_ids, dry_run=False)

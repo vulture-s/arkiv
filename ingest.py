@@ -34,6 +34,13 @@ import vision as vis
 # 360 rigs — see mediatypes for the full rationale.
 SUPPORTED = mediatypes.MEDIA_EXT
 VIDEO_EXT = mediatypes.VIDEO_EXT
+IMAGE_EXT = mediatypes.IMAGE_EXT
+# Raster stills (png/jpg/webp/gif) have a pixel stream ffprobe can read and we can
+# sample a frame from — they get a thumbnail + one frame like video. .svg is
+# vector: no pixel stream, so it records filename/ext only, no pixel assets.
+# Alias kept for readability at the call sites below; the set itself lives in
+# mediatypes so frames.py answers "is this a still?" from the same source.
+RASTER_IMAGE_EXTS = mediatypes.STILL_RASTER_EXT
 # Codecs needing browser-playable proxy — single source of truth in codec.py.
 PROXY_CODECS = codec.PROXY_CODECS
 logger = logging.getLogger(__name__)
@@ -385,7 +392,15 @@ def probe(path: str) -> Optional[Dict]:
                 if "rotation" in sd:
                     try: rot = abs(int(sd["rotation"]))
                     except (ValueError, TypeError): pass
-        if rot in (90, 270):
+        if rot:
+            # Surfacing, not silence: a rotation flag is the one piece of
+            # geometry we take on trust from the file, and when it is wrong
+            # every artifact below it is wrong too with nothing to show for it.
+            print("  [rotation] {0}: metadata says {1}° — {2}".format(
+                os.path.basename(path), rot,
+                "ignored (ARKIV_IGNORE_ROTATION=1)"
+                if getattr(config, "IGNORE_ROTATION", False) else "applied"))
+        if rot in (90, 270) and not getattr(config, "IGNORE_ROTATION", False):
             w, h = h, w
 
     return {
@@ -635,7 +650,10 @@ def build_proxies() -> tuple:
             # stored as "h264", so this branch used to skip it — and the stream
             # endpoint now tells the user to build a proxy for exactly those
             # files. Without this the two halves disagree and the 409 never clears.
-            want_proxy = (stored_codec.lower() in codec.PROXY_CODECS
+            # `is False`, not `not playable`: None means the stored value told us
+            # nothing, and that must keep the old "leave it alone" behaviour rather
+            # than transcoding every row whose codec column is junk.
+            want_proxy = (codec.is_browser_playable_video(stored_codec) is False
                           or codec.container_needs_remux(resolved_path))
         else:
             verdict = codec.needs_proxy(resolved_path)
@@ -810,10 +828,27 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     hashing the file twice; if None it is computed here.
     """
     _stage("probe", "probe")
+    ext = path.suffix.lower()
     meta = probe(str(path))
     if meta is None:
-        print(" [ffprobe failed]")
-        return {}
+        # ffprobe can't demux a still (an .svg has no pixel stream at all, and a
+        # raster .png/.jpg is captured via a coder ffprobe may not read). A
+        # recognised image extension is still a real media asset: keep a record
+        # with filename/ext but no pixel assets, instead of dropping it entirely
+        # (test_image_ingest SVG case: ext must be recorded, no thumbnail/frames).
+        if ext not in IMAGE_EXT:
+            print(" [ffprobe failed]")
+            return {}
+        meta = {
+            "duration_s": 0.0,
+            "size_mb": 0.0,
+            "width": None,
+            "height": None,
+            "fps": None,
+            "has_audio": 0,
+            "start_tc": None,
+            "codec": None,
+        }
 
     exif = exiftool_extract(str(path), fps=meta.get("fps") or (existing.get("fps") if existing else None))
     sidecar = parse_xavc_sidecar(str(path))
@@ -867,9 +902,11 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
         else:
             record["words_json"] = None
 
-    # Thumbnail (video only, always extracted)
-    is_video = path.suffix.lower() in VIDEO_EXT
-    if is_video and meta["duration_s"] > 0:
+    # Thumbnail (video + raster still; both have a pixel stream we can sample).
+    # SVG/vector stills are intentionally excluded — no pixel stream, no thumbnail.
+    is_video = ext in VIDEO_EXT
+    still_raster = ext in RASTER_IMAGE_EXTS
+    if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("thumb", "thumbnail")
         thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh)
         # Only record a thumbnail when extraction succeeded — omitting the key on
@@ -878,8 +915,8 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
         if thumb_path:
             record["thumbnail_path"] = db.to_relative(thumb_path)
 
-    # Frame extraction (video only) — persistent thumbnails + DB records
-    if is_video and meta["duration_s"] > 0:
+    # Frame extraction (video + raster still) — persistent thumbnails + DB records
+    if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("frames", "frames")
         frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh)
         for frame in frame_data:
@@ -2685,6 +2722,7 @@ def detect_gpu() -> str:
             r = subprocess.run(
                 ["system_profiler", "SPDisplaysDataType"],
                 capture_output=True, text=True, timeout=5,
+                encoding="utf-8", errors="replace",
             )
             chipset = metal = None
             for line in r.stdout.splitlines():
@@ -2702,6 +2740,7 @@ def detect_gpu() -> str:
         r = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True, text=True, timeout=5,
+            encoding="utf-8", errors="replace",
         )
         if r.returncode == 0:
             lines = r.stdout.strip().splitlines()

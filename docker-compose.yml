@@ -4,11 +4,56 @@ services:
   arkiv:
     build: .
     ports:
-      - "8501:8501"
+      # Published on 127.0.0.1 only. Docker's default ("8501:8501") binds every host
+      # interface, so anyone on the LAN could reach the library API with a token
+      # (on Linux, Docker's iptables rules also route around ufw). To serve other
+      # machines on purpose, start with ARKIV_BIND_HOST=0.0.0.0 — every published
+      # port in this file follows it. Containers reach each other on the compose network,
+      # not through these host ports, so this changes nothing between them.
+      - "${ARKIV_BIND_HOST:-127.0.0.1}:8501:8501"
     volumes:
       - ./media.db:/app/media.db
       - ./chroma_db:/app/chroma_db
       - ./thumbnails:/app/thumbnails
+      # Cross-library 精選集 (bins.py) persistence. Default storage is
+      # ~/.arkiv-bins.json (=/root/.arkiv-bins.json inside the container),
+      # which lives in the container's ephemeral layer — without this bind mount,
+      # `docker compose down` / image rebuild / `--force-recreate` silently
+      # wipes every bin the user has saved. Mount the *directory*, not the file:
+      # bind-mounting a single file that doesn't exist on the host makes Docker
+      # create a directory at the source path, which pollutes ./arkiv_data.
+      # ARKIV_BINS_PATH pins the file inside the mount; bins.py already honours it.
+      - ./arkiv_data/bins:/root/.arkiv-bins
+      # Project registry (projects.py) persistence. Settings ⇒ Projects ⇒ Add Project
+      # stores the list in ~/.arkiv-projects.json, which inside the container is
+      # /root/.arkiv-projects.json — living in the container's ephemeral layer. Without
+      # this bind mount, `docker compose down` / image rebuild / `--force-recreate`
+      # silently wipes every registered project. Mount the *directory*, not the file:
+      # bind-mounting a single file that doesn't exist on the host makes Docker
+      # create a directory at the source path, which pollutes ./arkiv_data.
+      # ARKIV_PROJECTS_REGISTRY pins the file inside the mount; projects.py already
+      # honours it.
+      - ./arkiv_data/projects:/root/.arkiv-projects
+      # Upload landing zone (#422). `POST /api/ingest/upload` writes to
+      # config.PROJECT_ROOT/"media-in" = /app/media-in and then queues a
+      # background ingest of that directory. Without this mount the endpoint
+      # fails two different ways depending on who the container runs as, and
+      # BOTH were shipping:
+      #   - as root (this image declares no USER): the write SUCCEEDS into the
+      #     container's ephemeral layer, so every uploaded file is silently lost
+      #     on `docker compose down` / rebuild and never appears on the host.
+      #   - under a remapped non-root uid (Synology/QNAP default, and anyone
+      #     setting `user:`): `PermissionError: [Errno 13] ... '/app/media-in'`,
+      #     a 500 on an advertised feature in the canonical install path.
+      # Measured 2026-09-05 on both uid 0 and uid 1000.
+      - ./media-in:/app/media-in
+      # The media library itself. Until now compose mounted arkiv's *derived*
+      # data (db, vectors, thumbnails, bins, projects) but never the media it is
+      # supposed to index — a containerised install had nothing to point at.
+      # Override the host side with ARKIV_MEDIA_DIR (a NAS share, an external
+      # drive) without editing this file:
+      #     ARKIV_MEDIA_DIR=/volume1/video docker compose up -d
+      - ${ARKIV_MEDIA_DIR:-./media}:/media
     environment:
       - ARKIV_DB_PATH=/app/media.db
       - ARKIV_CHROMA_PATH=/app/chroma_db
@@ -30,6 +75,28 @@ services:
       # caller full admin with no token. Keep bridge + port mapping.
       - ARKIV_HOST=0.0.0.0
       - ARKIV_PORT=8501
+      # See the ./arkiv_data/bins volume mount above; keep the path in sync.
+      - ARKIV_BINS_PATH=/root/.arkiv-bins/bins.json
+      # See the ./arkiv_data/projects volume mount above; keep the path in sync.
+      - ARKIV_PROJECTS_REGISTRY=/root/.arkiv-projects/projects.json
+      # Roots /api/ingest/scan and /api/ingest are allowed to walk (webguard
+      # `_allowed_ingest_roots`, Codex J1 — without a bound, any caller could
+      # inventory the whole filesystem). The defaults are PROJECT_ROOT plus
+      # ~/Desktop, ~/Documents, ~/Movies, ~/Pictures and /Volumes/*, none of
+      # which exist in this image, so /app was effectively the only root and a
+      # library mounted anywhere else got rejected.
+      #
+      # 🔴 This variable REPLACES the default list, it does not extend it
+      # (webguard returns early when it is set). /app must stay in it or the
+      # upload flow above breaks: files land in /app/media-in and the follow-up
+      # ingest of that directory would then be refused.
+      - ARKIV_INGEST_ROOTS=/app:/media
+      # Upload limits, surfaced here because they are otherwise invisible: the
+      # values below are the code defaults (routers/ingest.py), repeated so a
+      # deployer can see the knobs exist without reading the source.
+      - ARKIV_UPLOAD_MAX_MB=4096
+      - ARKIV_UPLOAD_MAX_CONCURRENT=3
+      - ARKIV_UPLOAD_MAX_QUEUE_SEC=300
     depends_on:
       ollama:
         condition: service_healthy   # F6: wait for ollama READY, not just container-start
@@ -40,7 +107,7 @@ services:
     # source. Tag kept for readability, digest authoritative; refresh via dependabot.
     image: ollama/ollama:latest@sha256:10c13eb515db310990527d36ca14a136da4bcc0fbf2bf3b15e9c1f111e9d3cd4
     ports:
-      - "11434:11434"
+      - "${ARKIV_BIND_HOST:-127.0.0.1}:11434:11434"  # Ollama has no auth at all; see the arkiv service ports note
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
@@ -61,6 +128,65 @@ services:
     #           count: all
     #           capabilities: [gpu]
     # macOS: GPU passthrough not needed (Ollama uses Metal natively on host)
+    restart: unless-stopped
+
+  # HTTP/SSE MCP for clients on other machines (#417). stdio MCP needs a local
+  # process and a local DB, neither of which crosses a LAN, so an editor on
+  # another Mac cannot reach the library at all without this.
+  #
+  # Same image, same read-only tools, different transport — it imports the tool
+  # definitions from mcp_server rather than re-declaring them, so the two
+  # transports cannot drift apart.
+  arkiv-mcp:
+    build: .
+    command: ["python", "mcp_http_server.py"]
+    ports:
+      - "${ARKIV_BIND_HOST:-127.0.0.1}:8502:8502"  # see the arkiv service ports note
+    volumes:
+      # 🔴 chroma_db is NOT :ro. chromadb 1.5.5 cannot open a read-only persist
+      # dir — it raises `attempt to write a readonly database` — and
+      # mcp_server's search falls through a blanket `except Exception` to a SQL
+      # LIKE scan with NO search_degraded flag (only a dimension mismatch sets
+      # that). Semantic search over MCP would be dead on arrival and look
+      # perfectly healthy. Measured 2026-09-05. The read-only guarantee comes
+      # from the tool surface — all seven tools only read — not from the mount.
+      - ./chroma_db:/app/chroma_db
+      # ⚠️ Single-FILE bind mount hides the host's WAL. SQLite keeps `-wal` /
+      # `-shm` as siblings of the db file; mounting only the file gives this
+      # container its own, so it reads the last CHECKPOINT rather than what
+      # arkiv has committed. Measured with the writer connection held open:
+      #     single-file mount → 1 of 2 rows      directory mount → 2 of 2
+      # The arkiv service has always mounted it this way; with one container it
+      # did not matter, because that container owned the only WAL. A second
+      # container makes it live. Fixing it properly means moving media.db under
+      # a mounted DIRECTORY, which relocates existing users' data — a breaking
+      # change, not a 3am one. Until then: MCP may serve a slightly stale view.
+      - ./media.db:/app/media.db:ro
+      - ./thumbnails:/app/thumbnails:ro
+      - ${ARKIV_MEDIA_DIR:-./media}:/media:ro
+    environment:
+      - ARKIV_DB_PATH=/app/media.db
+      - ARKIV_CHROMA_PATH=/app/chroma_db
+      - ARKIV_THUMBNAILS_DIR=/app/thumbnails
+      - ARKIV_OLLAMA_URL=http://ollama:11434
+      - ARKIV_EMBED_MODEL=bge-m3
+      # 0.0.0.0 INSIDE the container, fenced by the port mapping above — the same
+      # split as ARKIV_HOST on the arkiv service. Running mcp_http_server.py
+      # directly defaults to 127.0.0.1 instead, so publishing it stays a decision.
+      - ARKIV_MCP_BIND=0.0.0.0
+      - ARKIV_MCP_PORT=8502
+      # 🔴 Set this to the address your MCP clients actually dial, or every LAN
+      # request dies with 421 before arkiv sees it. The MCP SDK ships DNS
+      # rebinding protection ON with a loopback-only allow-list; measured on
+      # mcp 1.28.0, `Host: 192.168.1.50:8502` is refused while `127.0.0.1:8502`
+      # passes. Values here are ADDED to the loopback defaults, never swapped
+      # for them, so localhost keeps working while you debug. `*` turns the
+      # host check off entirely — spelled out, so it cannot happen by accident.
+      #   ARKIV_MCP_ALLOWED_HOSTS=192.168.1.50:8502,arkiv.local:8502
+      - ARKIV_MCP_ALLOWED_HOSTS=${ARKIV_MCP_ALLOWED_HOSTS:-}
+    depends_on:
+      ollama:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

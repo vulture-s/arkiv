@@ -14,6 +14,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
@@ -88,6 +89,45 @@ def _check_opencc():
     else:
         check("opencc", False, "(not installed — needed only for Chinese transcripts)",
               required=False)
+
+
+def spa_freshness(root: Path):
+    """(status, detail) for the built SPA under `root`.
+
+    status: "ok" | "missing" | "stale" | "unmeasurable"
+
+    Compares `frontend/dist/index.html`'s mtime against the last COMMIT that
+    touched `frontend/src` — not against the source files' mtimes. A fresh clone
+    stamps every file with checkout time, so an mtime-vs-mtime comparison calls
+    `dist` stale on every new machine, and a check that cries wolf gets ignored.
+
+    "unmeasurable" is deliberately its own state rather than folded into "ok":
+    a packaged install with no git history cannot date its own source, and
+    "I can't tell" must not render as "fresh".
+    """
+    src = root / "frontend" / "src"
+    dist = root / "frontend" / "dist" / "index.html"
+    if not src.is_dir():
+        return "unmeasurable", "no frontend/src — packaged install"
+    if not dist.exists():
+        return "missing", "run `npm run build` in frontend/"
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), "log", "-1", "--format=%ct", "--", "frontend/src"],
+            capture_output=True, text=True, timeout=15,
+            encoding="utf-8", errors="replace")
+        src_commit = int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    except Exception:
+        src_commit = None
+    if src_commit is None:
+        return "unmeasurable", "no git history for frontend/src"
+    built = dist.stat().st_mtime
+    if built >= src_commit:
+        return "ok", "built {0}".format(datetime.fromtimestamp(built).strftime("%Y-%m-%d"))
+    return "stale", "dist built {0}, src changed {1} — {2:.0f} days stale; run `npm run build`".format(
+        datetime.fromtimestamp(built).strftime("%Y-%m-%d"),
+        datetime.fromtimestamp(src_commit).strftime("%Y-%m-%d"),
+        (src_commit - built) / 86400.0)
 
 
 def detect_platform() -> str:
@@ -382,7 +422,8 @@ def main():
         # Windows/Linux PC: NVIDIA
         try:
             result = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                                    capture_output=True, text=True, timeout=5)
+                                    capture_output=True, text=True, timeout=5,
+                                    encoding="utf-8", errors="replace")
             if result.returncode == 0:
                 gpu = result.stdout.strip().split("\n")[0]
                 check("NVIDIA GPU", True, f"({gpu})")
@@ -470,6 +511,26 @@ def main():
         check("uvicorn", True)
     except ImportError:
         check("uvicorn", False, "(pip install uvicorn)")
+
+    # ── Built SPA freshness ─────────────────────────────────────────────
+    # 2026-09-08: the deployed install at ~/.arkiv was serving a `frontend/dist`
+    # built on 7/16 — every UI change in v1.2.0 and v1.3.0 was invisible for
+    # ~2 months. `dist/` is gitignored, so nothing in the repo, the installer or
+    # the upgrade path notices when it falls behind `frontend/src`.
+    #
+    # This is the third face of a shape the fleet already guards twice: DEPLOY
+    # catches "committed but not shipped", CLAUDE.md #8 catches "pulled but not
+    # running". Neither can see "running, but the screen is from July".
+    print("\n-- Built SPA --")
+    _status, _detail = spa_freshness(Path(__file__).resolve().parent)
+    if _status == "ok":
+        check("frontend/dist newer than frontend/src", True, "({0})".format(_detail))
+    elif _status == "unmeasurable":
+        check("frontend/dist freshness", False, "({0})".format(_detail), required=False)
+    elif _status == "missing":
+        check("frontend/dist built", False, "(missing — {0})".format(_detail))
+    else:
+        check("frontend/dist newer than frontend/src", False, "({0})".format(_detail))
 
     # ── Summary ─────────────────────────────────────────────────────────
     total = PASS + FAIL + SKIP

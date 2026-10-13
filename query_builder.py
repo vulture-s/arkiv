@@ -16,7 +16,8 @@ Spec shape::
         {"field": "camera",     "op": "eq",       "value": "ILME-FX30"},
         {"field": "rating",     "op": "eq",       "value": "good"},   # 'unrated' = NULL
         {"field": "duration",   "op": "range",    "value": [10, 120]},  # seconds
-        {"field": "date",       "op": "range",    "value": ["2026-01-01", null]},
+        {"field": "date",       "op": "range",    "value": ["2026-01-01", null]},  # INGEST date
+        {"field": "shot",       "op": "range",    "value": ["2025-10-01", "2025-10-31"]},  # SHOOT day
         {"field": "media_type", "op": "eq",       "value": "video"},
         {"field": "semantic",   "op": "contains", "value": "海邊的日落"}
       ]
@@ -51,6 +52,9 @@ _FIELDS: Dict[str, Tuple[Optional[str], set, str]] = {
     "iso": ("iso", {"range"}, "numeric"),
     "duration": ("duration_s", {"range"}, "numeric"),
     "date": ("processed_at", {"range"}, "daterange"),
+    # The day the camera rolled (media.shot_date, YYYY-MM-DD), not when it was
+    # ingested — the two differ for almost every clip (see db.shot_window_clause).
+    "shot": ("shot_date", {"range"}, "dayrange"),
     "media_type": (None, {"eq"}, "bucket"),
     "semantic": (None, {"contains"}, "semantic"),
 }
@@ -59,6 +63,7 @@ _FIELDS: Dict[str, Tuple[Optional[str], set, str]] = {
 # in sync with server._VIDEO_EXTS / _AUDIO_EXTS).
 _VIDEO_EXTS = mediatypes.VIDEO_EXT
 _AUDIO_EXTS = mediatypes.AUDIO_EXT
+_IMAGE_EXTS = mediatypes.IMAGE_EXT
 
 
 def _one_condition(cond: Dict[str, Any]) -> Tuple[Optional[str], List[Any], Optional[str]]:
@@ -100,8 +105,10 @@ def _one_condition(cond: Dict[str, Any]) -> Tuple[Optional[str], List[Any], Opti
             exts = _VIDEO_EXTS
         elif v == "audio":
             exts = _AUDIO_EXTS
+        elif v == "image":
+            exts = _IMAGE_EXTS
         else:
-            raise QueryError("media_type must be 'video' or 'audio'")
+            raise QueryError("media_type must be 'video', 'audio', or 'image'")
         placeholders = ",".join("?" * len(exts))
         return "LOWER(ext) IN ({0})".format(placeholders), list(exts), None
 
@@ -135,6 +142,21 @@ def _one_condition(cond: Dict[str, Any]) -> Tuple[Optional[str], List[Any], Opti
             # same day-ceiling). date() on the bound (not the column) keeps the
             # processed_at index usable.
             frags.append("{0} < date(?, '+1 day')".format(column))
+            params.append(hi)
+        if not frags:
+            raise QueryError("{0} range needs at least one bound".format(field))
+        return "(" + " AND ".join(frags) + ")", params, None
+
+    if kind == "dayrange":  # shot_date is a bare 'YYYY-MM-DD', so plain >=/<= is exact
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise QueryError("{0} range needs a [start, end] pair".format(field))
+        lo, hi = value
+        frags, params = [], []
+        if lo is not None:
+            frags.append("{0} >= ?".format(column))
+            params.append(lo)
+        if hi is not None:
+            frags.append("{0} <= ?".format(column))
             params.append(hi)
         if not frags:
             raise QueryError("{0} range needs at least one bound".format(field))

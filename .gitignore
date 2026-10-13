@@ -24,6 +24,14 @@ chroma_db/
 thumbnails/
 proxies/
 waveforms/
+# Docker bind-mount defaults (docker-compose.yml): the library and the upload
+# landing zone. Both hold the user's own footage — a `git add -A` in a checkout
+# that has been `docker compose up`'d would otherwise stage it.
+# Anchored with a leading slash: an unanchored `media/` matches a directory of
+# that name at ANY depth, so a future docs/media/ or frontend/src/media/ would
+# be silently untracked. These two only ever exist at the repo root.
+/media/
+/media-in/
 
 # Local project runtime data (SQLite + WAL/SHM, vector store, thumbnails, scratch)
 .arkiv/
@@ -69,6 +77,8 @@ venv/
 .venv-pack/
 *.db-journal
 pages/
+# …but not the Astro site's routes, which the unanchored rule above would swallow.
+!site/src/pages/
 src-tauri/target/
 # Assembled backend bundle (~1.3 GB portable python + site-packages + src).
 # Rebuilt by src-tauri/assemble-backend.sh before `cargo tauri build`. The empty
@@ -86,3 +96,13 @@ OVERNIGHT_UI_BUILD.md
 .testdata/
 frontend/vite.config.tailnet.js
 frontend/vite.config.dev8502.js
+
+# Settings overrides per-install — never commit local state.
+settings.local.json
+
+# impeccable (design skill): keep the surface briefs, DESIGN sidecar and config;
+# screenshots, decision-round payloads and question state are local scratch.
+.impeccable/*
+!.impeccable/surfaces/
+!.impeccable/design.json
+!.impeccable/config.json

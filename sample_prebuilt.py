@@ -34,6 +34,7 @@ from pathlib import Path
 
 import config
 import db
+import media_delete
 
 # The four tables the sample corpus lives in. NOT settings/jobs/chat/tokens — those
 # stay the user's. media must go first (frames/tags/transcripts FK it) and reversed
@@ -215,9 +216,10 @@ def load_prebuilt(force: bool = False) -> dict:
 
 def remove_sample() -> dict:
     """One-click remove: delete exactly the seeded media (rows cascade; vectors +
-    thumbnail files + copied clips cleaned best-effort), then set the dismiss flag so
-    auto-seed does not resurrect it next restart. Only touches the marker's ids — a
-    user's own footage ingested alongside the sample is untouched."""
+    thumbnail/proxy/waveform files + copied clips cleaned via the shared
+    delete_media_full core), then set the dismiss flag so auto-seed does not
+    resurrect it next restart. Only touches the marker's ids — a user's own footage
+    ingested alongside the sample is untouched."""
     if not is_loaded():
         return {"ok": True, "removed": 0, "already": True}
     try:
@@ -225,44 +227,16 @@ def remove_sample() -> dict:
     except Exception:  # noqa: BLE001
         marker = {}
     media_ids = marker.get("media_ids", [])
-    clips = marker.get("clips", [])
-
-    col = None
-    try:
-        import vectordb
-        col = vectordb.get_collection()
-    except Exception:  # noqa: BLE001 — chroma may be absent; DB delete still proceeds
-        col = None
 
     removed = 0
     for mid in media_ids:
-        thumbs = db.delete_media(mid)
-        if thumbs is None:
-            continue
-        removed += 1
-        for rel in thumbs:
-            _unlink_rel(rel)
-        if col is not None:
-            try:
-                vectordb.delete_media(col, mid)
-            except Exception:  # noqa: BLE001
-                pass
-    for name in clips:
-        _unlink_rel(str(Path("clips") / name))
+        r = media_delete.delete_media_full(mid, allow_file_delete=True, token_info=None)
+        if r is not None:
+            removed += 1
 
     _loaded_marker().unlink(missing_ok=True)
     _dismissed_marker().write_text("")
     return {"ok": True, "removed": removed}
-
-
-def _unlink_rel(stored_path: str) -> None:
-    """Unlink a PROJECT_ROOT-relative (or absolute) stored path, best-effort."""
-    try:
-        p = Path(stored_path)
-        target = p if p.is_absolute() else (config.PROJECT_ROOT / p)
-        target.unlink(missing_ok=True)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def maybe_autoseed() -> dict:

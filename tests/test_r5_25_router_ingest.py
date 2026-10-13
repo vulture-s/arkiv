@@ -39,6 +39,7 @@ def test_router_owns_exactly_the_ingest_routes():
         ("/api/ingest/engines", "GET"),
         ("/api/ingest/scan", "POST"),
         ("/api/ingest", "POST"),
+        ("/api/ingest/upload", "POST"),
         ("/api/media/{media_id}/reingest", "POST"),
         ("/ws/ingest", "WS"),
         ("/api/ingest/ws", "POST"),
