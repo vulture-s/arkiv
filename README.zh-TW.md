@@ -67,6 +67,8 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 
 → **完整 pipeline（4 階段、儲存路徑、exit code、maintenance modes）**：[docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md) · 架構總覽 [ARCHITECTURE.md](ARCHITECTURE.md)
 
+→ **給腳本／cron 看的 exit code**：`0` 掃到的檔全部在庫 · `1` 部分失敗 · `2` 全部失敗 · `4` 儲存路徑 preflight 失敗 · **`7` 對帳不平** —— 有檔案掃到了卻沒落到任何分類，或計數說進庫了但 DB 沒有那一列（執行輸出的 `Reconcile:` 那行會列出檔名）。非 0 一律代表「沒有乾淨做完」；完整對照見 [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)。
+
 </details>
 
 ## 功能總覽

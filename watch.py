@@ -117,8 +117,31 @@ def ingest_file(path: Path, timeout: float = 600.0) -> bool:
     if result.returncode == 0:
         print(f"  ✓ {path.name}")
         return True
-    print(f"  ✗ {path.name}: {(result.stderr or '')[:200]}")
+    # Every non-zero code is "not cleanly in the library" and goes through the
+    # same back-off / quarantine path in Watcher.tick — the watcher itself never
+    # stops on it. What differs is only what we can say about it: exit 7
+    # (ingest.EXIT_RECONCILE_MISMATCH, issue #393) is reported on STDOUT by the
+    # `Reconcile:` block with an empty stderr, so printing stderr alone would log
+    # a bare "✗ name:" with no reason at all.
+    print(f"  ✗ {path.name}: exit {result.returncode}"
+          f"{' (reconcile mismatch — not in the library)' if result.returncode == 7 else ''}")
+    detail = _failure_detail(result)
+    if detail:
+        print(f"      {detail}")
     return False
+
+
+def _failure_detail(result) -> str:
+    """One line of why: stderr tail if there is one, else the `Reconcile:` lines
+    from stdout (where #393's mismatch report goes). Pure — testable."""
+    err = (result.stderr or "").strip()
+    if err:
+        return err[-200:]
+    out = (result.stdout or "").splitlines()
+    for i, line in enumerate(out):
+        if line.startswith("Reconcile:"):
+            return " | ".join(l.strip() for l in out[i:i + 4] if l.strip())[:300]
+    return ""
 
 
 # ── watcher core (testable) ──────────────────────────────────────────────────
