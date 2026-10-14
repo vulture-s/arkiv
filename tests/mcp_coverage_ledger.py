@@ -88,6 +88,12 @@ NOT_EXPOSED = {
     "PATCH /api/media/{media_id}/rating": ("write", "rating / note"),
     "PATCH /api/media/{media_id}/inout": ("write", "IN/OUT points"),
     "PATCH /api/media/{media_id}/camera": ("write", "camera / angle"),
+    "PATCH /api/media/{media_id}/color-profile": ("write", "log→709 preview profile"),
+    "POST /api/media/color-profile": ("write", "batch log→709 preview profile"),
+    "POST /api/color-profiles/import": ("write", "import a user .cube LUT"),
+    "GET /api/color-profiles": ("ui", "profile picker for the inspector; the per-clip "
+                                "value is already in get_media"),
+    "GET /api/color-profiles/{profile_id}/cube": ("ui", "LUT bytes for the WebGL player"),
     "POST /api/media/{media_id}/tags": ("write", "add tag"),
     "DELETE /api/media/{media_id}/tags/{tag_name}": ("write", "remove tag"),
     "POST /api/media/{media_id}/transcript/activate": ("write", "switch active transcript"),
