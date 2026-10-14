@@ -687,6 +687,29 @@ def build_proxies() -> tuple:
     return proxy_ok, proxy_skip
 
 
+# Proxy encode timeout scales with clip length. A flat 600s killed every long
+# 4K HEVC clip: on an M2 Max with VideoToolbox decode, 4K60 HEVC → 720p ran at
+# ~0.9x realtime (17.2 min clip = 902s, 20.9 min = 1104s; 2026-10-14), so
+# anything over ~11 min timed out after burning the full 600s. 3x realtime
+# leaves room for the software-decode retry and a loaded machine; the floor
+# keeps short clips' old budget, the cap bounds a bogus probed duration.
+PROXY_TIMEOUT_FLOOR_S = 600
+PROXY_TIMEOUT_PER_SOURCE_S = 3.0
+PROXY_TIMEOUT_CAP_S = 4 * 3600
+
+
+def _proxy_timeout_s(path: str) -> float:
+    from pathres import _probe_duration
+    try:  # a probe problem must never cost the proxy itself — fall back to the floor
+        duration = _probe_duration(path)
+    except Exception:
+        duration = None
+    if not duration or duration <= 0:
+        return float(PROXY_TIMEOUT_FLOOR_S)
+    return float(min(max(PROXY_TIMEOUT_FLOOR_S, duration * PROXY_TIMEOUT_PER_SOURCE_S),
+                     PROXY_TIMEOUT_CAP_S))
+
+
 def generate_proxy(media_id: int, path: str, force: bool = False,
                    height: Optional[int] = None, hwaccel: Optional[bool] = None) -> Optional[str]:
     """Generate an H.264 proxy for browser playback. Returns proxy path or None.
@@ -718,12 +741,14 @@ def generate_proxy(media_id: int, path: str, force: bool = False,
     tmp_path = proxy_path.with_name("{0}.tmp.{1}{2}".format(proxy_path.stem, os.getpid(), proxy_path.suffix))
     tmp_path.unlink(missing_ok=True)
 
+    timeout_s = _proxy_timeout_s(path)
+
     def _run(use_hw: bool):
         # encoding pinned: Windows zh-TW default cp950 can't decode ffmpeg's
         # utf-8 stderr → UnicodeDecodeError crashes proxy gen on headless ingest.
         return subprocess.run(
             _build_proxy_cmd(path, str(tmp_path), height, use_hw),
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_s,
         )
 
     try:
@@ -749,7 +774,7 @@ def generate_proxy(media_id: int, path: str, force: bool = False,
         return None
     except subprocess.TimeoutExpired:
         tmp_path.unlink(missing_ok=True)
-        print("[proxy] timeout after 600s: {0}".format(path))
+        print("[proxy] timeout after {0:.0f}s: {1}".format(timeout_s, path))
         return None
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)
