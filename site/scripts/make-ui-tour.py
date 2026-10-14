@@ -2,7 +2,7 @@
 # Usage: python3 site/scripts/make-ui-tour.py site/public/img/arkiv-ui.webp site/public/video/arkiv-ui-tour.mp4
 # Needs Pillow, ffmpeg (libx264), Noto Sans CJK TC (TOUR_FONT / TOUR_MONO to override).
 # Placeholder until a real screen recording of a clean demo library replaces it (Hevin 2026-10-05).
-# Source: site/public/img/arkiv-ui.webp (3200x1780, real arkiv v1.2.0 screenshot).
+# Source: site/public/img/arkiv-ui.webp (3200x1780, real arkiv v1.5.0 screenshot, log footage shown through the built-in preview LUT).
 import math, os, subprocess, sys
 from PIL import Image, ImageDraw, ImageFont
 
