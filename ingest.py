@@ -20,6 +20,7 @@ from typing import Dict, List
 
 import codec
 import collection_defs
+import color_profiles
 import config
 import db
 import frames as frm
@@ -956,9 +957,19 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # SVG/vector stills are intentionally excluded — no pixel stream, no thumbnail.
     is_video = ext in VIDEO_EXT
     still_raster = ext in RASTER_IMAGE_EXTS
+
+    # Log footage (S-Log3 etc.) is unwatchable flat; posters and the frames vision
+    # reads get a log→Rec.709 LUT. A profile already on the row (set by the user,
+    # or "none" to opt out) wins over auto-detection. Proxies stay log on purpose:
+    # the player applies the LUT live so the original stays one toggle away.
+    color_profile = (existing or {}).get("color_profile") or (
+        color_profiles.detect_profile(str(path)) if is_video else None)
+    if color_profile:
+        record["color_profile"] = color_profile
+    lut = color_profiles.lut_file_for(color_profile)
     if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("thumb", "thumbnail")
-        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh)
+        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh, lut=lut)
         # Only record a thumbnail when extraction succeeded — omitting the key on
         # failure preserves the prior value on refresh (H6) and leaves new rows
         # at the column default (NULL).
@@ -968,7 +979,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # Frame extraction (video + raster still) — persistent thumbnails + DB records
     if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("frames", "frames")
-        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh)
+        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh, lut=lut)
         for frame in frame_data:
             if frame.get("thumbnail_path"):
                 frame["thumbnail_path"] = db.to_relative(frame["thumbnail_path"])
@@ -1442,7 +1453,7 @@ def _regenerate_thumbnails():
     media.thumbnail_path. Frame thumbnails (which carry vision descriptions) are
     intentionally left untouched — use --vision-only / --refresh for those."""
     with db.get_conn() as conn:
-        rows = conn.execute("SELECT id, path, filename FROM media").fetchall()
+        rows = conn.execute("SELECT id, path, filename, color_profile FROM media").fetchall()
         records = [dict(r) for r in rows]
     videos = [r for r in records if Path(r["path"]).suffix.lower() in VIDEO_EXT]
     if not videos:
@@ -1468,13 +1479,19 @@ def _regenerate_thumbnails():
         meta = probe(src)
         dur = meta.get("duration_s", 0) if meta else 0
         print(f"  [{idx}/{len(videos)}] id={rec['id']} {rec['filename']}", end="", flush=True)
-        thumb = frm.extract_thumbnail(src, dur, force=True) if dur > 0 else None
+        # Backfill: rows ingested before color profiles existed get detected here,
+        # so one --regenerate-thumbnails pass grades an existing log library.
+        profile = rec.get("color_profile") or color_profiles.detect_profile(src)
+        lut = color_profiles.lut_file_for(profile)
+        thumb = frm.extract_thumbnail(src, dur, force=True, lut=lut) if dur > 0 else None
         if thumb:
             with db.get_conn() as conn:
                 conn.execute(
-                    "UPDATE media SET thumbnail_path=? WHERE id=?",
-                    (db.to_relative(thumb), rec["id"]),
+                    "UPDATE media SET thumbnail_path=?, color_profile=? WHERE id=?",
+                    (db.to_relative(thumb), profile, rec["id"]),
                 )
+            if lut:
+                print(f" [{profile}]", end="")
             print(" [OK]")
             ok += 1
         else:
