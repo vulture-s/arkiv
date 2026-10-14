@@ -67,6 +67,8 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 
 → **Full pipeline (4 stages, storage layout, exit codes, maintenance modes)**: [docs/pipeline.md](docs/pipeline.md) · architecture overview [ARCHITECTURE.md](ARCHITECTURE.md)
 
+→ **Exit codes for scripts / cron**: `0` every scanned file is in the library · `1` some files failed · `2` all failed · `4` storage preflight failed · **`7` reconcile mismatch** — a file was scanned but landed nowhere, or was counted as ingested with no DB row (the run prints a `Reconcile:` line naming it). Anything non-zero means "not clean"; full table in [docs/pipeline.md](docs/pipeline.md#exit-codes-since-v031).
+
 </details>
 
 ## Features
