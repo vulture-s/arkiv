@@ -22,6 +22,7 @@
   import { pushToast } from '../lib/toast.js'
   import { createViewGen } from '../lib/viewGen.js'
   import { shotYearRows, mediaParams } from '../lib/shotYear.js'
+  import { parseStartParam } from '../lib/matchTime.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
@@ -681,9 +682,14 @@
       })
     }
   }
+  // #/main-live?sel=<id>&t=<sec>: a search hit's matched second. Handed to the
+  // Inspector, which seeks once the player has metadata.
+  let startAt = null
   async function selectFromParam() {
     const sel = readSelParam()
     if (sel == null) return
+    const t = parseStartParam(readHashParam('t'))
+    startAt = t == null ? null : { id: sel, t }
     if (items.find((m) => m.id === sel)) { selectedId = sel; return }
     // Prepending into whatever view is current: if the user moved on while the detail
     // fetch was in flight, this would splice an unrelated clip into the new grid.
@@ -1256,6 +1262,7 @@
         peaks={inspPeaks}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
+        {startAt}
         {particleStat}
         {transcriptLangs}
         {viewLang}

@@ -614,3 +614,48 @@ def find_similar(
         n_results,
         skip_media_ids=set([media_id_str]),
     )
+
+
+# ── Embedder drift (index ↔ current embedder) ─────────────────────────────────
+# _assert_collection_compatible catches a renamed model. It cannot catch the same
+# model NAME now producing different vectors — an Ollama upgrade, a re-pulled tag
+# whose weights changed, a different quantization. Queries are then embedded in a
+# slightly different space from the stored chunks and ranking degrades with no
+# error anywhere. Re-embedding a few stored chunks and comparing them against
+# their stored vectors measures exactly that.
+#
+# Floor: measured 2026-10-14 on bge-m3 — same machine 1.000000; vectors stored on
+# an M2 Max (Metal) re-embedded on an RTX 4070 (CUDA) min 0.999986. 0.999 leaves
+# two orders of magnitude for cross-machine noise.
+DRIFT_COS_FLOOR = 0.999
+
+
+def _cosine(a, b) -> float:
+    a, b = list(a), list(b)
+    if len(a) != len(b) or not a:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def embedder_drift(col=None, sample: int = 5) -> Optional[Dict[str, Any]]:
+    """Re-embed up to ``sample`` stored chunks with the active embedder and compare
+    them with the vectors stored in the index.
+
+    Returns ``{"min_cos", "n", "ok"}``, or ``None`` when nothing can be measured
+    (empty index, or a backend that returns no stored text) — the caller must
+    report that as unmeasured, never as a pass."""
+    col = col if col is not None else get_collection()
+    got = col.get(include=["documents", "embeddings"], limit=sample) or {}
+    docs = got.get("documents") or []
+    embs = got.get("embeddings")
+    embs = list(embs) if embs is not None else []
+    pairs = [(d, e) for d, e in zip(docs, embs) if d and e is not None and len(e)]
+    if not pairs:
+        return None
+    fresh = embed_batch([d for d, _ in pairs])
+    cos = [_cosine(f, s) for f, (_, s) in zip(fresh, pairs)]
+    worst = min(cos)
+    return {"min_cos": worst, "n": len(cos), "ok": worst >= DRIFT_COS_FLOOR}
