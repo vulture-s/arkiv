@@ -3,6 +3,17 @@
 Local Media Asset Manager — Phase 1 Ingest CLI
 Usage:
     python ingest.py --dir /path/to/media [--limit N] [--skip-vision] [--db /path/to/media.db]
+
+Exit codes (full table: docs/pipeline.md § Exit Codes):
+    0  clean — every scanned file is in the library
+    1  partial failure (Phase 1 or Phase 2)
+    2  every file failed Phase 1 (usually an upstream problem)
+    3  dangling thumbnails symlink (frames.py last-line guard)
+    4  storage preflight failed
+    5  --migrate-storage: backup failed
+    6  --migrate-storage: target .arkiv already exists
+    7  reconcile mismatch — a scanned file landed in no bucket, or was counted as
+       in the library but has no DB row (issue #393). Precedence: 2 > 7 > 1.
 """
 from __future__ import annotations
 import argparse
@@ -1022,8 +1033,15 @@ _INGEST_CONSECUTIVE_HALT = int(os.getenv("ARKIV_INGEST_HALT_STREAK", "5") or 0)
 # trace at all. This report closes that gap with output only: every queued file
 # must land in exactly one bucket, and every file we claim is in the library is
 # checked against the DB itself rather than against our own counters.
-# NB: deliberately does NOT change the exit code — that is a behaviour change for
-# cron / watch.py callers and is left for a separate decision.
+# Exit code: a mismatch — a file in no bucket, or a file counted as in the library
+# with no DB row — exits EXIT_RECONCILE_MISMATCH (7), see main(). Callers were
+# audited first: watch.py, /api/ingest, /api/ingest/ws, bins, seed_sample and
+# build_sample_prebuilt all test `!= 0`, none branches on a specific value, so a
+# new number cannot collide with an existing meaning.
+# Exit codes in use by ingest.py / frames.py: 0 clean, 1 partial failure,
+# 2 all failed, 3 dangling thumbnails symlink (frames.py), 4 storage preflight,
+# 5 --migrate-storage backup failed, 6 --migrate-storage target blocked.
+EXIT_RECONCILE_MISMATCH = 7
 _RECONCILE_BUCKETS = ("ingested", "already-indexed", "moved", "failed")
 _RECONCILE_NAME_CAP = 50
 
@@ -1044,6 +1062,27 @@ def _reconcile_report(queued, outcomes, known_paths, not_reached=(),
 
     Pure: no I/O, so it can be tested without running a batch.
     """
+    return _reconcile(queued, outcomes, known_paths, not_reached=not_reached,
+                      deferred=deferred, prefiltered_known=prefiltered_known,
+                      frame_skips=frame_skips, skip_failed=skip_failed,
+                      name_cap=name_cap)[0]
+
+
+def _reconcile_mismatch(queued, outcomes, known_paths, not_reached=()):
+    """Number of files the batch cannot account for (issue #393 point 2):
+    scanned-but-in-no-bucket + counted-as-in-library-but-no-DB-row.
+
+    Deliberately NOT counted: `failed` and `not reached` — those already have a
+    record (the failed count, the [INGEST HALTED] line) and their own exit code.
+    This is only the part that used to leave no trace at all. Pure."""
+    return _reconcile(queued, outcomes, known_paths, not_reached=not_reached)[1]
+
+
+def _reconcile(queued, outcomes, known_paths, not_reached=(),
+               deferred=0, prefiltered_known=0, frame_skips=(),
+               skip_failed=False, name_cap=_RECONCILE_NAME_CAP):
+    """Shared body of _reconcile_report / _reconcile_mismatch → (lines, mismatch),
+    so the exit code and the printed line can never disagree about a file."""
     counts = {b: 0 for b in _RECONCILE_BUCKETS}
     by_bucket = {b: [] for b in _RECONCILE_BUCKETS}
     unaccounted, missing_in_db = [], []
@@ -1100,7 +1139,7 @@ def _reconcile_report(queued, outcomes, known_paths, not_reached=(),
             lines.append("    {0}: {1}/{2} frames".format(fn, n, tot))
         if len(frame_skips) > name_cap:
             lines.append("    … and {0} more".format(len(frame_skips) - name_cap))
-    return lines
+    return lines, len(unaccounted) + len(missing_in_db)
 
 
 def _ingest_halt_decision(consecutive_failed, threshold=None):
@@ -2758,16 +2797,20 @@ def main():
     print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}{_moved_suffix}")
     print(f"DB: {db.get_db_path()}")
     # issue #393: one line that says whether every scanned file is accounted for,
-    # checked against the DB as it is NOW (not the pre-batch snapshot). Output only:
-    # the exit code below is unchanged. A failure to read the DB must not turn a
-    # finished ingest into a crash, so it degrades to a visible note.
+    # checked against the DB as it is NOW (not the pre-batch snapshot). A mismatch
+    # sets the exit code (EXIT_RECONCILE_MISMATCH, decided at the end of main).
+    # A failure to read the DB must not turn a finished ingest into a crash, so it
+    # degrades to a visible note — and to "not measured", which leaves the exit
+    # code to the other signals rather than inventing a mismatch.
+    reconcile_mismatch = 0
     try:
         with db.get_conn() as conn:
             _known_after = {r[0] for r in conn.execute("SELECT path FROM media").fetchall()}
-        for _line in _reconcile_report(
+        _lines, reconcile_mismatch = _reconcile(
                 files, outcomes, _known_after, not_reached=not_reached,
                 deferred=deferred, prefiltered_known=prefiltered_known,
-                frame_skips=vision_failed_files, skip_failed=skip_failed):
+                frame_skips=vision_failed_files, skip_failed=skip_failed)
+        for _line in _lines:
             print(_line)
     except Exception as exc:  # noqa: BLE001 — report-only; never fail the run on it
         print(f"Reconcile: unavailable ({type(exc).__name__}: {exc})")
@@ -2827,8 +2870,18 @@ def main():
     # Phase 8.0e (R1): exit code reflects actual ingest outcome.
     # Before this, main() always fell through to exit 0 — 222/222 fail
     # on 2026-05-25 still returned 0, hiding the regression from runner.
+    #
+    # Issue #393: 0 used to mean "did not crash", not "every file is in the
+    # library". Precedence 2 > 7 > 1: "everything failed" is still the loudest
+    # (it is usually upstream); a file that left NO trace outranks a partial
+    # failure, because a failure is already named in the output and counted,
+    # while the mismatch is the one that otherwise goes unnoticed.
     if failed and not ok:
         sys.exit(2)  # all phase 1 failed
+    if reconcile_mismatch:
+        print(f"[exit {EXIT_RECONCILE_MISMATCH}] reconcile mismatch: "
+              f"{reconcile_mismatch} file(s) not accounted for (see Reconcile above)")
+        sys.exit(EXIT_RECONCILE_MISMATCH)
     if failed or vision_fail or vision_halted:
         sys.exit(1)  # partial fail (phase 1) or vision failure/halt (phase 2)
     # else: implicit exit 0

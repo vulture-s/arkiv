@@ -11,8 +11,12 @@ to find it was `comm` between the disk listing and `media.filename`, because:
 
 These tests pin the output that closes that: one reconcile line, the name of every
 file that is not cleanly in the library, and a DB cross-check that does not trust
-the counters. They also pin that the exit code is UNCHANGED — changing it is a
-behaviour change for cron / watch.py callers and is deliberately out of scope.
+the counters.
+
+Point 2 of the issue (exit non-zero on a mismatch) was approved on 2026-10-14:
+a mismatch exits 7 (`ingest.EXIT_RECONCILE_MISMATCH`), chosen after checking that
+no caller branches on a specific non-zero value (watch.py, /api/ingest, ws, bins,
+seed scripts all test `!= 0`). Precedence 2 > 7 > 1.
 """
 import importlib
 import sys
@@ -25,6 +29,10 @@ import pytest
 @pytest.fixture
 def ing():
     return importlib.import_module("ingest")
+
+
+def ing_exit_mismatch():
+    return importlib.import_module("ingest").EXIT_RECONCILE_MISMATCH
 
 
 def _known(db, *paths):
@@ -194,7 +202,8 @@ def test_main_names_a_file_the_counters_say_is_in_but_the_db_lacks(run_main):
     assert "ingested=2" in out, "precondition: the counter believes both made it"
     assert "no DB row" in out
     assert "A7520260820_9912.MP4" in out
-    assert code in (0, None), "#393 asks for output only — exit code must stay as it was"
+    assert code == ing_exit_mismatch(), "#393 point 2: a file with no DB row is not a clean run"
+    assert "[exit 7] reconcile mismatch: 1 file(s)" in out
 
 
 def test_main_keeps_its_exit_code_on_a_partial_failure(run_main):
@@ -240,3 +249,53 @@ def test_vision_only_skip_failed_prints_every_file_name(tmp_db, ing, monkeypatch
     assert halted is False
     for name in names:
         assert name in out.split("left empty", 1)[1], name
+
+
+# ── #393 point 2: the exit code ──────────────────────────────────────────────
+def test_exit_code_number_does_not_collide(ing):
+    """0-6 are taken (0 clean, 1 partial, 2 all-fail, 3 frames.py symlink guard,
+    4 preflight, 5/6 --migrate-storage). Pin the value so a renumbering is a
+    deliberate, documented change rather than an accident."""
+    assert ing.EXIT_RECONCILE_MISMATCH == 7
+
+
+def test_mismatch_counts_only_the_traceless_kinds(ing, tmp_path):
+    db = importlib.import_module("db")
+    ok, lost, gone, bad, late = (tmp_path / n for n in
+                                 ("ok.mp4", "lost.mp4", "gone.mp4", "bad.mp4", "late.mp4"))
+    queued = [ok, lost, gone, bad, late]
+    outcomes = {str(ok): "ingested", str(lost): "ingested", str(bad): "failed"}
+    # gone: in no bucket; lost: counted but no row; bad: failed (has its own
+    # record + exit 1); late: not reached after a halt (has its own record).
+    n = ing._reconcile_mismatch(queued, outcomes, _known(db, ok), not_reached=[late])
+    assert n == 2
+
+
+def test_mismatch_is_zero_on_a_clean_batch(ing, tmp_path):
+    db = importlib.import_module("db")
+    a, b = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    assert ing._reconcile_mismatch(
+        [a, b], {str(a): "ingested", str(b): "already-indexed"}, _known(db, a, b)) == 0
+
+
+def test_mismatch_outranks_a_partial_failure(run_main, ing):
+    code, out = run_main({"a.mp4": "ok", "bad.mp4": "fail", "lost.mp4": "lost"})
+    assert "failed=1" in out and "no DB row" in out
+    assert code == ing.EXIT_RECONCILE_MISMATCH
+
+
+def test_all_failed_still_exits_2(run_main):
+    code, _ = run_main({"bad1.mp4": "fail", "bad2.mp4": "fail"})
+    assert code == 2
+
+
+def test_reconcile_unavailable_is_not_a_mismatch(run_main, ing, monkeypatch):
+    """The DB read for the cross-check fails → 'unavailable', and the exit code
+    falls back to the other signals. Not measured must not be reported as either
+    'clean' by the line or 'mismatch' by the code."""
+    def boom(*a, **k):
+        raise RuntimeError("db locked")
+    monkeypatch.setattr(ing, "_reconcile", boom)
+    code, out = run_main({"a.mp4": "ok", "lost.mp4": "lost"})
+    assert "Reconcile: unavailable (RuntimeError: db locked)" in out
+    assert code in (0, None)

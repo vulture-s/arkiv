@@ -150,3 +150,57 @@ def test_event_candidates_drained_by_tick(tmp_path):
     w.note_event(root / "x.txt")  # non-media ignored at note time
     out = w.tick(now=1.0, candidates=[f])
     assert out == [f] and calls == [f]
+
+
+# ---- #393: ingest exit 7 (reconcile mismatch) is logged and the watcher goes on ----
+
+def _fake_result(rc, stdout="", stderr=""):
+    import subprocess
+    return subprocess.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
+
+
+def test_ingest_file_reports_exit_7_with_the_reconcile_line(tmp_path, monkeypatch, capsys):
+    out = ("Done. OK=1  skip=0  fail=0\n"
+           "Reconcile: scanned=1  ingested=1  already-indexed=0  moved=0  failed=0"
+           "  →  ⚠ 1 file(s) need attention\n"
+           "  ⚠ counted as in the library but no DB row (1):\n"
+           "    clip.mp4\n"
+           "[exit 7] reconcile mismatch: 1 file(s) not accounted for\n")
+    monkeypatch.setattr(watch, "run_tree", lambda cmd, timeout: _fake_result(7, stdout=out))
+
+    ok = watch.ingest_file(tmp_path / "clip.mp4")
+
+    printed = capsys.readouterr().out
+    assert ok is False
+    assert "exit 7" in printed and "reconcile mismatch" in printed
+    assert "no DB row" in printed, "the reason must reach the watcher log, not just '✗ name:'"
+
+
+def test_ingest_file_still_prefers_stderr(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(watch, "run_tree",
+                        lambda cmd, timeout: _fake_result(1, stdout="Reconcile: x", stderr="boom"))
+    assert watch.ingest_file(tmp_path / "clip.mp4") is False
+    printed = capsys.readouterr().out
+    assert "exit 1" in printed and "boom" in printed
+
+
+def test_watcher_keeps_going_after_an_exit_7(tmp_path, monkeypatch):
+    """The real dispatch (ingest_file) against a fake ingest that answers 7 for
+    one file and 0 for the other: the watcher must not stop, must not mark the
+    mismatched file known, and must still ingest the other file."""
+    root = tmp_path / "inbox"
+    root.mkdir()
+    lost, good = root / "lost.mp4", root / "good.mp4"
+    _make_file(lost)
+    _make_file(good)
+
+    def fake_run(cmd, timeout):
+        return _fake_result(7 if cmd[-1].endswith("lost.mp4") else 0)
+    monkeypatch.setattr(watch, "run_tree", fake_run)
+
+    w = watch.Watcher([root], debounce_s=0.0)       # default dispatch = ingest_file
+    done = w.tick(now=1.0)
+
+    assert done == [good]
+    assert str(good) in w.known and str(lost) not in w.known
+    assert str(lost) in w._failures                  # backed off, will be retried
