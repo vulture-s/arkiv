@@ -33,7 +33,7 @@ def test_mhl_failure_still_copies_the_other_destination(tmp_path, monkeypatch):
     d1, d2 = tmp_path / "d1", tmp_path / "d2"
     d1.mkdir(); d2.mkdir()
 
-    def _boom(dst_root, hash_algo, op="offload"):
+    def _boom(dst_root, hash_algo, op="offload", known_hashes=None):
         if str(dst_root) == str(d1):
             raise RuntimeError("mhl write blew up")
         return dst_root / "fake.mhl"
