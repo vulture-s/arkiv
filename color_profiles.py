@@ -374,3 +374,71 @@ def add_lut_to_vf_args(args: Sequence[str], lut_path: Optional[str], matrix: str
         assert fc.endswith("[o]"), fc
         args[1] = fc[: -len("[o]")] + "," + chain + "[o]"
     return args
+
+
+# ── user LUT import / validation ─────────────────────────────────────────────
+MAX_USER_LUT_BYTES = 16 * 1024 * 1024  # a 65³ float .cube is ~7 MB
+_UNSAFE_NAME = __import__("re").compile(r"[^\w\-. ()　-鿿]+")
+
+
+class InvalidLUT(ValueError):
+    pass
+
+
+def validate_cube(text: str) -> int:
+    """Return LUT_3D_SIZE of a well-formed 3D .cube, else raise InvalidLUT.
+    1D LUTs are rejected (they cannot carry a gamut transform)."""
+    size, rows = None, 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        head = line.split()[0].upper()
+        if head == "LUT_1D_SIZE":
+            raise InvalidLUT("只支援 3D LUT（這是 1D LUT）")
+        if head == "LUT_3D_SIZE":
+            try:
+                size = int(line.split()[1])
+            except (IndexError, ValueError):
+                raise InvalidLUT("LUT_3D_SIZE 格式錯誤")
+            if not 2 <= size <= 129:
+                raise InvalidLUT("LUT_3D_SIZE 超出範圍（2–129）")
+            continue
+        if head in ("TITLE", "DOMAIN_MIN", "DOMAIN_MAX", "LUT_3D_INPUT_RANGE"):
+            continue
+        parts = line.split()
+        if len(parts) != 3:
+            raise InvalidLUT("資料列格式錯誤：{0}".format(line[:40]))
+        try:
+            [float(p) for p in parts]
+        except ValueError:
+            raise InvalidLUT("資料列不是數字：{0}".format(line[:40]))
+        rows += 1
+    if size is None:
+        raise InvalidLUT("缺少 LUT_3D_SIZE")
+    if rows != size ** 3:
+        raise InvalidLUT("資料列數 {0} ≠ {1}³".format(rows, size))
+    return size
+
+
+def save_user_lut(filename: str, data: bytes) -> str:
+    """Validate and store an uploaded .cube in USER_LUT_DIR. Returns its profile id.
+    Same-named file is replaced (re-import an updated vendor LUT)."""
+    if len(data) > MAX_USER_LUT_BYTES:
+        raise InvalidLUT("檔案太大（上限 16 MB）")
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise InvalidLUT("不是文字格式的 .cube")
+    validate_cube(text)
+    stem = _UNSAFE_NAME.sub("_", Path(filename or "").stem).strip(" ._") or "imported"
+    USER_LUT_DIR.mkdir(parents=True, exist_ok=True)
+    dest = USER_LUT_DIR / (stem[:80] + ".cube")
+    tmp = dest.with_name(dest.name + ".tmp.{0}".format(os.getpid()))
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(str(tmp), str(dest))
+    return "user:" + dest.stem
+
+
+def is_known(profile_id: Optional[str]) -> bool:
+    return profile_id in (None, "none") or profile_id in PROFILES or profile_id in _user_luts()

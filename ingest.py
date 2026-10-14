@@ -1397,6 +1397,32 @@ def _fmt_size_delta(delta_bytes: int) -> str:
     return f"{sign}{abs(delta_bytes) / 1_000_000:.1f} MB"
 
 
+def regrade_thumbnail(media_id: int) -> Optional[str]:
+    """Rebuild one clip's poster with its current color_profile (used right after
+    the user picks a profile in the UI). Returns the new thumbnail path or None
+    when the source is unreachable / extraction failed (row left untouched)."""
+    rec = db.get_record_by_id(media_id)
+    if not rec or Path(rec["path"]).suffix.lower() not in VIDEO_EXT:
+        return None
+    try:
+        src = db.resolve_path(rec["path"])
+    except ValueError:
+        return None
+    if not Path(src).exists():
+        return None
+    meta = probe(src)
+    dur = meta.get("duration_s", 0) if meta else 0
+    if dur <= 0:
+        return None
+    thumb = frm.extract_thumbnail(src, dur, force=True,
+                                  lut=color_profiles.lut_file_for(rec.get("color_profile")))
+    if thumb:
+        with db.get_conn() as conn:
+            conn.execute("UPDATE media SET thumbnail_path=? WHERE id=?",
+                         (db.to_relative(thumb), media_id))
+    return thumb
+
+
 def _regenerate_thumbnails():
     """B4: rebuild the poster thumbnail for every video record (mirror of
     --regenerate-proxies). Re-runs extract_thumbnail and updates
