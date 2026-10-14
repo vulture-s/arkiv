@@ -189,7 +189,7 @@ def _probe_codec(media_path: Optional[str]) -> str:
                 "-v",
                 "error",
                 "-select_streams",
-                "v:0",
+                "V:0",  # capital V: skip embedded cover art (#521)
                 "-show_entries",
                 "stream=codec_name",
                 "-of",

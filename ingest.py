@@ -31,6 +31,7 @@ from typing import Dict, List
 
 import codec
 import collection_defs
+import color_profiles
 import config
 import db
 import frames as frm
@@ -321,6 +322,24 @@ def _white_balance_string(kelvin, tint, path=None):
     return "{0}K T{1}".format(int(round(kelvin_value)), int(round(tint_value)))
 
 
+def _real_video_stream(path: str, streams) -> Optional[Dict]:
+    """First video stream that is actual picture content (issue #521).
+
+    Returns None for audio-extension files and skips `attached_pic` streams
+    (embedded cover art), so codec / fps / width / height / start_tc are never
+    read off an album cover.
+    """
+    if Path(path).suffix.lower() in mediatypes.AUDIO_EXT:
+        return None
+    for s in streams:
+        if s.get("codec_type") != "video":
+            continue
+        if (s.get("disposition") or {}).get("attached_pic") == 1:
+            continue
+        return s
+    return None
+
+
 def probe(path: str) -> Optional[Dict]:
     # `-v error` (not `quiet`) so real ffprobe errors surface on stderr — a
     # silent `-v quiet` failure mid-ingest used to print only "[ffprobe failed]"
@@ -358,7 +377,14 @@ def probe(path: str) -> Optional[Dict]:
     fmt = data.get("format", {})
     streams = data.get("streams", [])
 
-    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    # Issue #521: an audio file's embedded cover art (ID3v2 APIC, m4a `covr`,
+    # FLAC PICTURE) is reported by ffprobe as a VIDEO stream — `codec=mjpeg`,
+    # `r_frame_rate=90000/1`, the cover's width/height — flagged only by
+    # `disposition.attached_pic=1`. Taking "the first video stream" recorded that
+    # picture as the file's picture track. Skip attached pictures, and never
+    # read video geometry from an audio-extension file at all: whatever video
+    # stream an audio container carries is artwork, not footage.
+    video_stream = _real_video_stream(path, streams)
     audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
 
     duration = float(fmt.get("duration") or 0)
@@ -697,6 +723,29 @@ def build_proxies() -> tuple:
     return proxy_ok, proxy_skip
 
 
+# Proxy encode timeout scales with clip length. A flat 600s killed every long
+# 4K HEVC clip: on an M2 Max with VideoToolbox decode, 4K60 HEVC → 720p ran at
+# ~0.9x realtime (17.2 min clip = 902s, 20.9 min = 1104s; 2026-10-14), so
+# anything over ~11 min timed out after burning the full 600s. 3x realtime
+# leaves room for the software-decode retry and a loaded machine; the floor
+# keeps short clips' old budget, the cap bounds a bogus probed duration.
+PROXY_TIMEOUT_FLOOR_S = 600
+PROXY_TIMEOUT_PER_SOURCE_S = 3.0
+PROXY_TIMEOUT_CAP_S = 4 * 3600
+
+
+def _proxy_timeout_s(path: str) -> float:
+    from pathres import _probe_duration
+    try:  # a probe problem must never cost the proxy itself — fall back to the floor
+        duration = _probe_duration(path)
+    except Exception:
+        duration = None
+    if not duration or duration <= 0:
+        return float(PROXY_TIMEOUT_FLOOR_S)
+    return float(min(max(PROXY_TIMEOUT_FLOOR_S, duration * PROXY_TIMEOUT_PER_SOURCE_S),
+                     PROXY_TIMEOUT_CAP_S))
+
+
 def generate_proxy(media_id: int, path: str, force: bool = False,
                    height: Optional[int] = None, hwaccel: Optional[bool] = None) -> Optional[str]:
     """Generate an H.264 proxy for browser playback. Returns proxy path or None.
@@ -728,12 +777,14 @@ def generate_proxy(media_id: int, path: str, force: bool = False,
     tmp_path = proxy_path.with_name("{0}.tmp.{1}{2}".format(proxy_path.stem, os.getpid(), proxy_path.suffix))
     tmp_path.unlink(missing_ok=True)
 
+    timeout_s = _proxy_timeout_s(path)
+
     def _run(use_hw: bool):
         # encoding pinned: Windows zh-TW default cp950 can't decode ffmpeg's
         # utf-8 stderr → UnicodeDecodeError crashes proxy gen on headless ingest.
         return subprocess.run(
             _build_proxy_cmd(path, str(tmp_path), height, use_hw),
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_s,
         )
 
     try:
@@ -759,7 +810,7 @@ def generate_proxy(media_id: int, path: str, force: bool = False,
         return None
     except subprocess.TimeoutExpired:
         tmp_path.unlink(missing_ok=True)
-        print("[proxy] timeout after 600s: {0}".format(path))
+        print("[proxy] timeout after {0:.0f}s: {1}".format(timeout_s, path))
         return None
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)
@@ -917,9 +968,19 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # SVG/vector stills are intentionally excluded — no pixel stream, no thumbnail.
     is_video = ext in VIDEO_EXT
     still_raster = ext in RASTER_IMAGE_EXTS
+
+    # Log footage (S-Log3 etc.) is unwatchable flat; posters and the frames vision
+    # reads get a log→Rec.709 LUT. A profile already on the row (set by the user,
+    # or "none" to opt out) wins over auto-detection. Proxies stay log on purpose:
+    # the player applies the LUT live so the original stays one toggle away.
+    color_profile = (existing or {}).get("color_profile") or (
+        color_profiles.detect_profile(str(path)) if is_video else None)
+    if color_profile:
+        record["color_profile"] = color_profile
+    lut = color_profiles.lut_file_for(color_profile)
     if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("thumb", "thumbnail")
-        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh)
+        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh, lut=lut)
         # Only record a thumbnail when extraction succeeded — omitting the key on
         # failure preserves the prior value on refresh (H6) and leaves new rows
         # at the column default (NULL).
@@ -929,7 +990,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # Frame extraction (video + raster still) — persistent thumbnails + DB records
     if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("frames", "frames")
-        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh)
+        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh, lut=lut)
         for frame in frame_data:
             if frame.get("thumbnail_path"):
                 frame["thumbnail_path"] = db.to_relative(frame["thumbnail_path"])
@@ -1425,13 +1486,39 @@ def _fmt_size_delta(delta_bytes: int) -> str:
     return f"{sign}{abs(delta_bytes) / 1_000_000:.1f} MB"
 
 
+def regrade_thumbnail(media_id: int) -> Optional[str]:
+    """Rebuild one clip's poster with its current color_profile (used right after
+    the user picks a profile in the UI). Returns the new thumbnail path or None
+    when the source is unreachable / extraction failed (row left untouched)."""
+    rec = db.get_record_by_id(media_id)
+    if not rec or Path(rec["path"]).suffix.lower() not in VIDEO_EXT:
+        return None
+    try:
+        src = db.resolve_path(rec["path"])
+    except ValueError:
+        return None
+    if not Path(src).exists():
+        return None
+    meta = probe(src)
+    dur = meta.get("duration_s", 0) if meta else 0
+    if dur <= 0:
+        return None
+    thumb = frm.extract_thumbnail(src, dur, force=True,
+                                  lut=color_profiles.lut_file_for(rec.get("color_profile")))
+    if thumb:
+        with db.get_conn() as conn:
+            conn.execute("UPDATE media SET thumbnail_path=? WHERE id=?",
+                         (db.to_relative(thumb), media_id))
+    return thumb
+
+
 def _regenerate_thumbnails():
     """B4: rebuild the poster thumbnail for every video record (mirror of
     --regenerate-proxies). Re-runs extract_thumbnail and updates
     media.thumbnail_path. Frame thumbnails (which carry vision descriptions) are
     intentionally left untouched — use --vision-only / --refresh for those."""
     with db.get_conn() as conn:
-        rows = conn.execute("SELECT id, path, filename FROM media").fetchall()
+        rows = conn.execute("SELECT id, path, filename, color_profile FROM media").fetchall()
         records = [dict(r) for r in rows]
     videos = [r for r in records if Path(r["path"]).suffix.lower() in VIDEO_EXT]
     if not videos:
@@ -1457,13 +1544,19 @@ def _regenerate_thumbnails():
         meta = probe(src)
         dur = meta.get("duration_s", 0) if meta else 0
         print(f"  [{idx}/{len(videos)}] id={rec['id']} {rec['filename']}", end="", flush=True)
-        thumb = frm.extract_thumbnail(src, dur, force=True) if dur > 0 else None
+        # Backfill: rows ingested before color profiles existed get detected here,
+        # so one --regenerate-thumbnails pass grades an existing log library.
+        profile = rec.get("color_profile") or color_profiles.detect_profile(src)
+        lut = color_profiles.lut_file_for(profile)
+        thumb = frm.extract_thumbnail(src, dur, force=True, lut=lut) if dur > 0 else None
         if thumb:
             with db.get_conn() as conn:
                 conn.execute(
-                    "UPDATE media SET thumbnail_path=? WHERE id=?",
-                    (db.to_relative(thumb), rec["id"]),
+                    "UPDATE media SET thumbnail_path=?, color_profile=? WHERE id=?",
+                    (db.to_relative(thumb), profile, rec["id"]),
                 )
+            if lut:
+                print(f" [{profile}]", end="")
             print(" [OK]")
             ok += 1
         else:

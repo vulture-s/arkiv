@@ -708,7 +708,30 @@
       engineLangs = e?.languages || null
     } catch (e) { /* picker falls back to its built-in zh/en list */ }
   }
+  // log → Rec.709 preview profiles for the inspector picker (best-effort: an older
+  // backend without the route just hides the picker's options).
+  let colorProfiles = []
+  async function loadColorProfiles() {
+    try { colorProfiles = (await api.getColorProfiles()).profiles || [] } catch { colorProfiles = [] }
+  }
+  // The poster is rebuilt in place under the same filename, so the inspector's
+  // <img> needs a cache-bust after a profile change.
+  let thumbBust = {}
+  async function setColorProfileLive(pid) {
+    if (!selected) return
+    const id = selected.id
+    await api.setColorProfile(id, pid)
+    if (detail && detail.id === id) detail = { ...detail, color_profile: pid }
+    thumbBust = { ...thumbBust, [id]: Date.now() }
+  }
+  async function importLutLive(file) {
+    const r = await api.importLut(file)
+    await loadColorProfiles()
+    pushToast(`已匯入 LUT：${file.name}`)
+    return r.id
+  }
   onMount(async () => {
+    loadColorProfiles()
     // Deep-link from chat: #/main-live?ids=<csv>&sel=<id> filters the grid to that
     // relevant subset (not the full library) before selecting the clicked clip.
     const ids = readHashParam('ids')
@@ -871,7 +894,11 @@
         }))
       })()
     : null
-  $: inspThumb = selected ? selected.thumb : null
+  $: inspThumb = selected
+    ? (selected.thumb && thumbBust[selected.id]
+        ? `${selected.thumb}${selected.thumb.includes('?') ? '&' : '?'}v=${thumbBust[selected.id]}`
+        : selected.thumb)
+    : null
   // Real playback stream for the inspector player (loopback = token-free; remote
   // carries ?token). Inspector turns this into a <video>/<audio> element.
   $: inspVideoSrc = selected ? api.streamUrl(selected.id) : null
@@ -1275,6 +1302,11 @@
         onAddTag={selected ? addTag : null}
         onRemoveTag={selected ? removeTag : null}
         onReprocess={selected ? reprocess : null}
+        colorProfile={detailLive ? detailLive.color_profile : null}
+        {colorProfiles}
+        onSetColorProfile={selected && colorProfiles.length ? setColorProfileLive : null}
+        onImportLut={importLutLive}
+        getCube={api.getColorCube}
         {reProgress}
         languages={engineLangs}
         mediaLang={detailLive ? detailLive.lang : null}

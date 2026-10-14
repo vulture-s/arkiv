@@ -1010,6 +1010,8 @@ def test_generate_proxy_falls_back_to_software_when_hwaccel_fails(tmp_path, monk
             self.returncode = rc
 
     def fake_run(cmd, **kw):
+        if cmd[0] == config.FFPROBE_PATH:  # duration probe for the timeout budget
+            raise OSError("no ffprobe in this test")
         calls.append(cmd)
         used_hw = "-hwaccel" in cmd
         if used_hw:
