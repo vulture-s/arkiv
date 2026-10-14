@@ -311,6 +311,24 @@ def _white_balance_string(kelvin, tint, path=None):
     return "{0}K T{1}".format(int(round(kelvin_value)), int(round(tint_value)))
 
 
+def _real_video_stream(path: str, streams) -> Optional[Dict]:
+    """First video stream that is actual picture content (issue #521).
+
+    Returns None for audio-extension files and skips `attached_pic` streams
+    (embedded cover art), so codec / fps / width / height / start_tc are never
+    read off an album cover.
+    """
+    if Path(path).suffix.lower() in mediatypes.AUDIO_EXT:
+        return None
+    for s in streams:
+        if s.get("codec_type") != "video":
+            continue
+        if (s.get("disposition") or {}).get("attached_pic") == 1:
+            continue
+        return s
+    return None
+
+
 def probe(path: str) -> Optional[Dict]:
     # `-v error` (not `quiet`) so real ffprobe errors surface on stderr — a
     # silent `-v quiet` failure mid-ingest used to print only "[ffprobe failed]"
@@ -348,7 +366,14 @@ def probe(path: str) -> Optional[Dict]:
     fmt = data.get("format", {})
     streams = data.get("streams", [])
 
-    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    # Issue #521: an audio file's embedded cover art (ID3v2 APIC, m4a `covr`,
+    # FLAC PICTURE) is reported by ffprobe as a VIDEO stream — `codec=mjpeg`,
+    # `r_frame_rate=90000/1`, the cover's width/height — flagged only by
+    # `disposition.attached_pic=1`. Taking "the first video stream" recorded that
+    # picture as the file's picture track. Skip attached pictures, and never
+    # read video geometry from an audio-extension file at all: whatever video
+    # stream an audio container carries is artwork, not footage.
+    video_stream = _real_video_stream(path, streams)
     audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
 
     duration = float(fmt.get("duration") or 0)
