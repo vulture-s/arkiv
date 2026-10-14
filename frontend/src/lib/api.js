@@ -537,3 +537,31 @@ export const editorProxyStatus = (opts) => req('/api/proxy/editor/status', opts)
 export const editorProxyFor = (id, opts) => req(`/api/proxy/editor/${id}`, opts)
 
 export { ApiError }
+
+// ---- color profiles (log → Rec.709 preview) --------------------------------
+// GET /api/color-profiles → {profiles:[{id,label,vendor,source:'builtin'|'user',note}], user_lut_dir}
+export const getColorProfiles = (opts) => req('/api/color-profiles', opts)
+// GET /api/color-profiles/{id}/cube → .cube text (the player applies it live in WebGL)
+export const getColorCube = (id, opts) =>
+  req(`/api/color-profiles/${encodeURIComponent(id)}/cube`, opts)
+// PATCH /api/media/{id}/color-profile {color_profile} — a profile id, 'none' (not
+// log; stops auto-detect) or null (forget). The poster is rebuilt with it.
+export const setColorProfile = (id, color_profile, opts) =>
+  req(`/api/media/${id}/color-profile`, { method: 'PATCH', body: { color_profile }, ...opts })
+// POST /api/media/color-profile {ids, color_profile} → {updated, missing}; posters
+// rebuild in the background.
+export const setColorProfileBatch = (ids, color_profile, opts) =>
+  req('/api/media/color-profile', { method: 'POST', body: { ids, color_profile }, ...opts })
+// POST /api/color-profiles/import (multipart) → {id:'user:<name>'}. Bespoke fetch:
+// req() always JSON-encodes its body, which would turn FormData into "{}".
+export async function importLut(file, { signal } = {}) {
+  const form = new FormData()
+  form.append('file', file)
+  const headers = {}
+  if (_token) headers['Authorization'] = `Bearer ${_token}`
+  const res = await fetch(`${BASE}/api/color-profiles/import`, { method: 'POST', headers, body: form, signal })
+  let body = null
+  try { body = await res.json() } catch { /* non-json */ }
+  if (!res.ok) throw new ApiError(res.status, '/api/color-profiles/import', body)
+  return body
+}
