@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## v1.5.0 - 2026-10-14
+
+**Log 素材進庫就是正常顏色了。** S-Log3、D-Log、C-Log、N-Log、F-Log、Apple Log、V-Log 這類
+log 模式拍的片，縮圖、vision 讀的關鍵畫面、播放器以前全是灰的；現在會換算成 Rec.709 給你看，
+原始檔一個 byte 都沒動。
+
+- **12 個內建色彩設定檔**：Sony S-Log3／S-Gamut3、S-Gamut3.Cine，DJI D-Log，Insta360 I-Log，
+  Canon C-Log2／C-Log3，Nikon N-Log，Fujifilm F-Log／F-Log2／F-Log2 C，Apple Log，Panasonic V-Log。
+  每一個都是 arkiv **依廠商公開發表的曲線與色域公式自己算出來的**，不內附任何廠商的 LUT 檔；
+  曲線用白皮書上的 0%／18%／90% 參考點逐一驗過。這是技術轉換、不是廠商的調色風格，
+  跟廠商 LUT 不會逐點相同（以 Sony s709 對照：18% 灰 0.426 vs 0.429，90% 白 0.791 vs 0.780）。
+- **Sony 自動辨識**：A7 系列、FX 系列的 XAVC 檔會自己標上 S-Log3。其他廠牌在 Inspector 指定一次即可。
+- **自訂 LUT**：Inspector 的 COLOR 選單「匯入 .cube…」，或把 `.cube` 放進 `~/.arkiv-luts/`
+  （`ARKIV_LUT_DIR` 可改）。**DJI D-Log M 與 Apple Log 2 沒有公開數學**，請匯入廠商提供的 `.cube`。
+- **播放器即時套用**：有設定檔的片子，Inspector 播放器右上「LUT ● / LOG ○」隨時切回原始 log
+  （proxy 本身保持 log，所以切得回去）。套用中時點畫面或按空白鍵播放／暫停。
+- **舊素材庫一次補完**：`python ingest.py --regenerate-thumbnails` 會偵測並重生封面；
+  關鍵畫面要等下次 `--refresh` 才套用。
+- API：`GET /api/color-profiles`、`PATCH /api/media/{id}/color-profile`、批次 `POST /api/media/color-profile`、
+  `POST /api/color-profiles/import`。
+
+**長片的 proxy 不再白等 10 分鐘然後失敗。** proxy 轉檔的時限原本寫死 600 秒，
+4K60 HEVC 在 M2 Max 上大約 0.9 倍即時，超過約 11 分鐘的片全部燒滿 10 分鐘才放棄
+（實際一次 ingest：25 支裡 4 支沒有 proxy、多等 40 分鐘）。現在時限依片長給（片長 × 3，最少 600 秒、最多 4 小時）。
+
+**FFmpeg 7 以上：長片的關鍵畫面重新依場景切換挑選。** FFmpeg 拿掉了 `-vsync`，
+場景偵測每次都失敗、靜默退回固定位置取格；改用 `-fps_mode`（FFmpeg 5.1 起支援，arkiv 最低需求 6.0）。
+
+- **批次匯入結束多一行對帳。** `Done.` 之後印出 scanned／ingested／already-indexed／moved／failed，
+  任何一支沒乾淨進庫的檔都會列出檔名，不再需要自己拿磁碟清單跟資料庫比對（#393）。
+
 - **帶封面的音檔不再被記成「300×300 的 mjpeg 影片、90000 fps」。** MP3／M4A／FLAC 內嵌的
   專輯封面，ffprobe 會報成一條 video stream（只靠 `attached_pic` 標記區分），ingest 把它當成
   畫面軌，codec／fps／寬高全部抄自封面。現在 ingest 跳過封面、音訊副檔名一律不讀畫面資訊；
