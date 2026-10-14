@@ -8,6 +8,7 @@
   import { onDestroy } from 'svelte'
   import { createInOutWriter } from './inoutWriter.js'
   import { pendingSeek } from './matchTime.js'
+  import { parseCube, webgl2Available, createLutRenderer } from './lutGL.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -168,6 +169,7 @@
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
     if (!(useVideo || useAudio)) return
     switch (e.key) {
+      case ' ': if (lutShown) { lutTogglePlay(); e.preventDefault() } break
       case 'i': case 'I': setIn(); e.preventDefault(); break
       case 'o': case 'O': setOut(); e.preventDefault(); break
       case ',': if (frameExact) { stepFrame(-1); e.preventDefault() } break
@@ -275,6 +277,77 @@
   // Live re-processing. onReprocess = async (action, opts) => {ok, message};
   // action ∈ 'retranscribe' | 'retry-vision' | 'reingest'. null → no block (mock).
   export let onReprocess = null
+  // ---- log → Rec.709 preview (color profiles) -------------------------------
+  // colorProfile: the clip's profile id ('sony-slog3-…', 'user:<lut>', 'none', or
+  // null). colorProfiles: [{id,label,vendor,source}] for the picker. The proxy is
+  // log; when a profile is set the player is drawn through its LUT in WebGL and
+  // the toggle shows the original. getCube(id) → .cube text.
+  export let colorProfile = null
+  export let colorProfiles = []
+  export let onSetColorProfile = null // (id|null) => Promise
+  export let onImportLut = null // (File) => Promise<id>
+  export let getCube = null // (id) => Promise<string>
+  const glOK = typeof document !== 'undefined' && webgl2Available()
+  let lutOn = true
+  let lutCanvas = null
+  let lutRenderer = null
+  let lutErr = ''
+  let lutFor = null // profile id currently uploaded to the renderer
+  const cubeCache = new Map()
+  $: lutApplies = useVideo && !videoFailed && glOK && !!getCube && !!colorProfile && colorProfile !== 'none'
+  $: lutShown = lutApplies && lutOn && !lutErr
+  $: if (lutShown && lutCanvas && playerEl) _ensureLut(colorProfile)
+  $: if (!lutShown && lutRenderer) _dropLut()
+  async function _ensureLut(id) {
+    try {
+      if (!lutRenderer) { lutRenderer = createLutRenderer(lutCanvas, playerEl); lutFor = null }
+      if (lutFor === id) return
+      lutFor = id
+      if (!cubeCache.has(id)) cubeCache.set(id, getCube(id).then(parseCube))
+      const cube = await cubeCache.get(id)
+      if (lutRenderer && lutFor === id) lutRenderer.setLut(cube)
+    } catch (e) {
+      cubeCache.delete(id)
+      lutErr = 'LUT 載入失敗：' + ((e && e.message) || e)
+      _dropLut()
+    }
+  }
+  function _dropLut() {
+    if (lutRenderer) lutRenderer.destroy()
+    lutRenderer = null
+    lutFor = null
+  }
+  onDestroy(_dropLut)
+  // The canvas covers the native control bar, so it takes over play/pause.
+  function lutTogglePlay() {
+    if (!playerEl) return
+    if (playerEl.paused) playerEl.play && playerEl.play().catch(() => {})
+    else playerEl.pause && playerEl.pause()
+  }
+  let cpBusy = false
+  let cpMsg = ''
+  async function pickProfile(e) {
+    const v = e.target.value
+    if (v === '__import') { e.target.value = colorProfile || ''; lutFile && lutFile.click(); return }
+    if (!onSetColorProfile) return
+    cpBusy = true; cpMsg = ''; lutErr = ''
+    try { await onSetColorProfile(v || null) } catch (err) { cpMsg = (err && err.message) || String(err) }
+    cpBusy = false
+  }
+  let lutFile = null
+  async function importPicked(e) {
+    const f = e.target.files && e.target.files[0]
+    e.target.value = ''
+    if (!f || !onImportLut) return
+    cpBusy = true; cpMsg = ''
+    try {
+      const id = await onImportLut(f)
+      if (id && onSetColorProfile) await onSetColorProfile(id)
+    } catch (err) { cpMsg = (err && err.message) || String(err) }
+    cpBusy = false
+  }
+  $: vendors = [...new Set((colorProfiles || []).filter((p) => p.source === 'builtin').map((p) => p.vendor))]
+  $: userLuts = (colorProfiles || []).filter((p) => p.source === 'user')
   export let languages = null // [{code,label}] for the retranscribe picker
   export let mediaLang = null // current clip language → default selection
   let imgFailed = false
@@ -423,6 +496,17 @@
     {:else if useVideo}
       <!-- svelte-ignore a11y-media-has-caption -->
       <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} on:error={onVideoError} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+      {#if lutShown}
+        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+        <canvas bind:this={lutCanvas} class="lutcanvas" on:click={lutTogglePlay} title="點擊播放／暫停（空白鍵）"></canvas>
+      {/if}
+      {#if lutApplies}
+        <div class="lutpill">
+          <button class="ak-btn lutbtn" class:on={lutOn && !lutErr} on:click={() => { lutOn = !lutOn; lutErr = '' }}
+            title={lutOn ? '顯示原始 log 畫面' : '套用色彩設定檔'}>{lutOn && !lutErr ? 'LUT ●' : 'LOG ○'}</button>
+          {#if lutShown}<button class="ak-btn lutbtn" on:click={lutTogglePlay} title="播放／暫停（空白鍵）">▶︎❚❚</button>{/if}
+        </div>
+      {/if}
     {:else if useAudio}
       {#if thumbUrl && !imgFailed}
         <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
@@ -456,6 +540,30 @@
       <Mono dim>ISO</Mono><Mono>{media.iso} · {media.ap} · {media.fl}</Mono>
       <Mono dim>TC</Mono><Mono>{media.tc}</Mono>
       <Mono dim>SIZE</Mono><Mono>{media.size} · {media.dur}</Mono>
+      {#if onSetColorProfile && media.kind !== 'audio'}
+        <Mono dim>COLOR</Mono>
+        <div class="cprow">
+          <select class="cpsel" value={colorProfile || ''} disabled={cpBusy} on:change={pickProfile} title="log 素材的色彩設定檔（縮圖、關鍵畫面、播放器套用）">
+            <option value="">未指定</option>
+            <option value="none">非 log（不套用）</option>
+            {#each vendors as v}
+              <optgroup label={v}>
+                {#each colorProfiles.filter((p) => p.source === 'builtin' && p.vendor === v) as p}
+                  <option value={p.id} title={p.note || ''}>{p.label}</option>
+                {/each}
+              </optgroup>
+            {/each}
+            {#if userLuts.length}
+              <optgroup label="自訂 LUT">
+                {#each userLuts as p}<option value={p.id}>{p.label}</option>{/each}
+              </optgroup>
+            {/if}
+            {#if onImportLut}<option value="__import">匯入 .cube…</option>{/if}
+          </select>
+          <input bind:this={lutFile} type="file" accept=".cube" style="display:none" on:change={importPicked} />
+        </div>
+        {#if cpMsg || lutErr}<span></span><Mono style="font-size:10px;color:#d9534f;">{cpMsg || lutErr}</Mono>{/if}
+      {/if}
     </div>
   </div>
 
@@ -730,6 +838,14 @@
   .previmg { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* the real player: contain (don't crop footage) on black; audio sits at the bottom */
   video.previmg { object-fit: contain; background: #000; }
+  /* LUT preview: drawn over the video (same contain box); takes over play/pause
+     because it covers the native control bar. */
+  .lutcanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; cursor: pointer; }
+  .lutpill { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; }
+  .lutbtn { font-size: 10px; padding: 2px 8px; background: rgba(0,0,0,0.55); color: #f3f2ee; border-color: rgba(255,255,255,0.25); }
+  .lutbtn.on { border-color: #e8b04a; color: #e8b04a; }
+  .cprow { display: flex; gap: 6px; align-items: center; }
+  .cpsel { font: inherit; font-size: 11px; background: var(--surface-2); color: inherit; border: 1px solid var(--rule); padding: 1px 4px; max-width: 100%; }
   /* The native control bar renders light-on-white by default, which in this
      dark inspector reads as a broken white box rather than a play control
      (#420). `color-scheme` is what tells the engine to draw its own widgets
