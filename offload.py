@@ -449,6 +449,7 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
             pass
 
         try:
+            t_copy = time.monotonic()
             with src_path.open("rb") as src_handle, partial_path.open("wb") as dst_handle:
                 hasher = _fallback_hasher(hash_algo)
                 while True:
@@ -466,7 +467,14 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
                 src_hash = hasher.hexdigest().lower()
             if callable(TEST_MUTATOR):
                 TEST_MUTATOR(src_path, partial_path, attempt, file_state["bytes_copied"])
+            t_verify = time.monotonic()
             dst_hash = _hash_file(partial_path, hash_algo)
+            t_done = time.monotonic()
+            # Per-file throughput (#537): a slow destination (e.g. an SMB session that
+            # landed on Wi-Fi) otherwise only shows as "file N/N" sitting for an hour.
+            mib = file_state["bytes_copied"] / 1048576.0
+            file_state["copy_mib_s"] = round(mib / max(t_verify - t_copy, 1e-6), 1)
+            file_state["verify_mib_s"] = round(mib / max(t_done - t_verify, 1e-6), 1)
             file_state["src_hash"] = src_hash
             file_state["dst_hash"] = dst_hash
             if src_hash != dst_hash:
@@ -579,6 +587,8 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
 
         verified_rel_paths = []
         failed = 0
+        copied_bytes = 0
+        copy_secs = 0.0
         total = len(state["files"])
         _emit(progress, {"type": "dst_start", "dst": dst_key, "total": total})
         for idx, file_entry in enumerate(state["files"], 1):
@@ -603,8 +613,14 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
                 verified_rel_paths.append(rel_path)
             else:
                 failed += 1
-            _emit(progress, {"type": "file", "dst": dst_key, "index": idx, "total": total,
-                             "name": src_path.name, "status": "verified" if ok else "failed"})
+            event = {"type": "file", "dst": dst_key, "index": idx, "total": total,
+                     "name": src_path.name, "status": "verified" if ok else "failed"}
+            if ok:
+                event["copy_mib_s"] = file_state.get("copy_mib_s")
+                event["verify_mib_s"] = file_state.get("verify_mib_s")
+                copied_bytes += file_state.get("bytes_copied") or 0
+                copy_secs += (file_state["bytes_copied"] / 1048576.0) / file_state["copy_mib_s"] if file_state.get("copy_mib_s") else 0
+            _emit(progress, event)
 
         dst_state["verified_files"] = len(verified_rel_paths)
         dst_state["failed_files"] = failed
@@ -662,6 +678,7 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
         _save_state(state_path, state)
 
         summary[dst_key] = {
+            "copy_mib_s": round(copied_bytes / 1048576.0 / copy_secs, 1) if copy_secs else None,
             "verified_files": len(verified_rel_paths),
             "failed_files": failed,
             "mhl_path": str(mhl_path) if mhl_path else None,
