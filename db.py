@@ -353,6 +353,8 @@ def init_db():
             ("gps_lat", "REAL"),
             ("gps_lon", "REAL"),
             ("color_space", "TEXT"),
+            # log→Rec.709 preview profile (color_profiles.py id, "user:<lut>", or "none")
+            ("color_profile", "TEXT"),
             ("iso", "INTEGER"),
             ("shutter_speed", "TEXT"),
             ("aperture", "REAL"),
@@ -857,7 +859,7 @@ _ALLOWED_COLS = {
     "fps", "has_audio", "transcript", "lang", "frame_tags", "thumbnail_path",
     "processed_at", "rating", "rating_note", "file_hash", "hash_algo",
     "hash_verified_at", "camera_make", "camera_model",
-    "lens_model", "gps_lat", "gps_lon", "color_space", "iso", "shutter_speed",
+    "lens_model", "gps_lat", "gps_lon", "color_space", "color_profile", "iso", "shutter_speed",
     "aperture", "focal_length", "creation_date", "white_balance", "content_type",
     "reel_name",
     "start_tc",
