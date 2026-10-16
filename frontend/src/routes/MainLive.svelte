@@ -256,9 +256,9 @@
       pushToast(`章節已匯出 · ${_stem(id, name)}.chapters.txt`)
     } catch (e) { pushToast(`章節匯出失敗: ${e.message}`, 'error') }
   }
-  async function exportRemotion(id, name) {
+  async function exportRemotion(id, name, trim = null) {
     try {
-      const r = await api.getRemotionProps(id)
+      const r = await api.getRemotionProps(id, undefined, trim)
       api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
       pushToast(`Remotion props 已匯出 · ${_stem(id, name)}.remotion.json`)
     } catch (e) { pushToast(`Remotion 匯出失敗: ${e.message}`, 'error') }
@@ -1312,7 +1312,7 @@
         mediaLang={detailLive ? detailLive.lang : null}
         onExport={selected ? (fmt, trim) => exportClip(selected.id, fmt, selected.name, trim) : null}
         onChapters={selected ? (fmt) => exportChapters(selected.id, selected.name, fmt) : null}
-        onRemotion={selected ? () => exportRemotion(selected.id, selected.name) : null}
+        onRemotion={selected ? (trim) => exportRemotion(selected.id, selected.name, trim) : null}
         onReveal={inspPath ? () => revealFile(inspPath, selected && selected.id) : null}
         onDelete={selected ? askDeleteSingle : null}
         onRate={rate}

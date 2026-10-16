@@ -35,6 +35,7 @@ import progress
 import search_syntax
 import tag_quality
 import transcript_compare
+import transcript_time
 from auth import require_scopes
 from config import BASE_DIR
 from mediarecords import _get_light_records_by_ids, _get_tags_bulk
@@ -865,13 +866,38 @@ def remove_tag(
 @router.get("/api/media/{media_id}/remotion-props")
 def get_remotion_props(
     media_id: int,
+    in_s: Optional[float] = None,
+    out_s: Optional[float] = None,
     _tok: dict = Depends(require_scopes("media_read")),
 ):
-    """Export word-level timestamps as Remotion CellPhoneReel props."""
+    """Export word-level timestamps as Remotion CellPhoneReel props.
+
+    Optional ``in_s`` / ``out_s`` (seconds, same query params as
+    /api/media/{id}/export/{fmt}) limit the props to the IN/OUT window: words
+    are filtered, clipped and rebased so 0 = IN, and ``duration`` becomes the
+    window length. The window rule is transcript_time.trim_window/trim_rebase —
+    the very one the trim export uses. Without a window (or with one that
+    covers the whole clip) the payload is unchanged.
+    """
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
     words = json.loads(rec.get("words_json") or "[]")
+    if in_s is not None or out_s is not None:
+        full = rec.get("duration_s", 0) or 0
+        trim_in, trim_out, has_trim = transcript_time.trim_window(in_s, out_s, full)
+        if has_trim:
+            words = [w for w in words if isinstance(w, dict)]
+            clipped = transcript_time.trim_rebase(words, trim_in, trim_out)
+            return {
+                "captions": [{"word": w.get("word", ""), "start": w["start"], "end": w["end"]}
+                             for w in clipped],
+                "duration": trim_out - trim_in,
+                "filename": rec.get("filename", ""),
+                # where the window sits in the source file, so a renderer can
+                # seek the media to IN (captions are already relative to it)
+                "trim": {"in_s": trim_in, "out_s": trim_out},
+            }
     return {
         "captions": [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in words],
         "duration": rec.get("duration_s", 0),
