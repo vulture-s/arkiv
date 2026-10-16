@@ -67,6 +67,8 @@ Designed for solo DITs and small crews who own their data: local-first, self-hos
 
 → **Full pipeline (4 stages, storage layout, exit codes, maintenance modes)**: [docs/pipeline.md](docs/pipeline.md) · architecture overview [ARCHITECTURE.md](ARCHITECTURE.md)
 
+→ **Exit codes for scripts / cron**: `0` every scanned file is in the library · `1` some files failed · `2` all failed · `4` storage preflight failed · **`7` reconcile mismatch** — a file was scanned but landed nowhere, or was counted as ingested with no DB row (the run prints a `Reconcile:` line naming it). Anything non-zero means "not clean"; full table in [docs/pipeline.md](docs/pipeline.md#exit-codes-since-v031).
+
 </details>
 
 ## Features
@@ -351,7 +353,7 @@ python offload.py --watch --dst /Volumes/Backup # auto-offload on card insert
 
 # Auto-watch a folder for new media (ingest)
 python watch.py /path/to/footage
-python watch.py ~/Movies/rushes --interval 10
+python watch.py ~/Movies/rushes --poll-interval 10
 
 # API search (requires server running)
 # Linux / macOS / Git Bash
@@ -477,7 +479,7 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 ## For developers
 
-[ARCHITECTURE.md](ARCHITECTURE.md) (architecture overview) · [docs/api.md](docs/api.md) (API + Chat) · [docs/pipeline.md](docs/pipeline.md) (full pipeline) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
+[ARCHITECTURE.md](ARCHITECTURE.md) (architecture overview) · [docs/api.md](docs/api.md) (API + Chat) · [docs/pipeline.md](docs/pipeline.md) (full pipeline) · [BENCHMARK.md](BENCHMARK.md) (transcription speed, Mac MLX vs PC CUDA) · [docs/adr/](docs/adr/) (architecture decision records) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
@@ -489,7 +491,7 @@ The line is what your customer is buying: a deliverable you produced with arkiv 
 
 ## Pro add-on
 
-The free core covers up to **3 projects**. The optional **Pro add-on** — a separate closed-source component — unlocks unlimited projects and cross-project aggregation (search and collections spanning projects) for **NT$3,000, one time, perpetual**. No subscription, no activation server, no phone-home. Terms: [docs/pro-addon-license.md](docs/pro-addon-license.md).
+The free core covers up to **3 projects**. The optional **Pro add-on** — a separately licensed paid tier, enabled by a signed licence file — unlocks unlimited projects and cross-project aggregation (search and collections spanning projects) for **NT$3,000, one time, perpetual**. No subscription, no activation server, no phone-home. Terms: [docs/pro-addon-license.md](docs/pro-addon-license.md).
 
 > On sale since 2026-10-03 through the Waffle House store — see the [product page](https://vulture-s.github.io/arkiv/).
 

@@ -136,7 +136,10 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
         stored_codec = codec.probe_codec(str(file_path))
     else:
         stored_codec = (rec.get("codec") or "").strip().lower() or None
-        if stored_codec is None:
+        # Issue #521: an audio file has no video codec to backfill. Probing it
+        # used to answer with its cover art (`mjpeg`) and write that into
+        # `media.codec`; the codec gate below never applies to audio anyway.
+        if stored_codec is None and file_path.suffix.lower() not in mediatypes.AUDIO_EXT:
             stored_codec = codec.probe_codec(str(file_path))
             if stored_codec:
                 try:
@@ -417,7 +420,13 @@ def logs_tail(n: int = 200, _tok: dict = Depends(require_scopes("projects_read")
             if size > 262144:
                 fh.seek(-262144, 2)
             raw = fh.read()
-        lines = [_log_safe(ln, 2000) for ln in raw.decode("utf-8", "replace").splitlines()[-n:]]
+        # Redact ?token= on the way out too (audit 2026-10-09): lines written before
+        # the uvicorn.error filter existed — or by any other writer — must not hand
+        # a raw token to whoever can call this endpoint.
+        import re as _re
+        _tok_re = _re.compile(r"(token=)[^&\s\"']+")
+        lines = [_tok_re.sub(r"\1REDACTED", _log_safe(ln, 2000))
+                 for ln in raw.decode("utf-8", "replace").splitlines()[-n:]]
         return {"lines": lines, "available": True}
     except Exception as e:  # noqa: BLE001
         return {"lines": [], "available": False, "detail": "log read error: {0}".format(type(e).__name__)}

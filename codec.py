@@ -113,7 +113,11 @@ def probe_codec(path: str, timeout: float = 10.0) -> Optional[str]:
         return _codec_cache[key]
     cmd = [
         # audit M15: -v error (was quiet) so failure reasons reach stderr.
-        FFPROBE_PATH, "-v", "error", "-select_streams", "v:0",
+        # `V:0` (capital), not `v:0`: capital V excludes attached pictures, so
+        # an MP3/M4A/FLAC's embedded cover art is not reported as the file's
+        # video codec (`mjpeg`) — issue #521. A JPEG still is unaffected (its
+        # picture is not an attached_pic), measured 2026-10-14 on ffmpeg 9.0.1.
+        FFPROBE_PATH, "-v", "error", "-select_streams", "V:0",
         "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(path),
     ]
     try:

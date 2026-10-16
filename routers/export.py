@@ -31,11 +31,14 @@ from export_builders import (
     _edl_comment,
     _edl_fps_warning,
     _edl_reel,
+    _edl_span,
     _edl_timecode,
     _fcpxml_rational,
     _media_streams,
+    _record_base_seconds,
     _start_tc_seconds,
     _subtitle_text,
+    _tc_is_drop,
     _subtitle_ts,
     render_subtitle_cues,
     transcript_fallback_segments,
@@ -45,6 +48,20 @@ from reqopts import _parse_ids_query
 from webguard import _assert_export_dest_safe
 
 router = APIRouter()
+
+
+def _file_url(path: str) -> str:
+    """Absolute media path → a valid, percent-encoded file:/// URL for FCPXML.
+
+    FCPXML `src` is a URL, so a space (`/Volumes/My Passport`) makes it invalid
+    and a `#` or `%` in a filename is read as a fragment / an escape — the NLE
+    then looks for a different file (audit N1). Windows paths keep their drive
+    letter (`C:` stays unescaped) and use forward slashes."""
+    from urllib.parse import quote
+    posix = (path or "").replace("\\", "/")
+    if not posix.startswith("/"):
+        posix = "/" + posix
+    return "file://" + quote(posix, safe="/:")
 
 
 @router.get("/api/export/metadata-csv")
@@ -224,30 +241,22 @@ def export_media(
     if fmt in ("edl", "edl-markers"):
         # CMX3600 EDL — full clip + optional frame markers
         clip_fps = rec.get("fps") or 30.0
-        # 29.97/59.94 are drop-frame by convention
-        is_df = round(clip_fps, 2) in (29.97, 59.94)
+        # DF/NDF follows the camera's own TC (`;` vs `:`); the "29.97/59.94 are
+        # DF" convention is only the fallback when there is no camera TC.
+        is_df = _tc_is_drop(rec, clip_fps)
         fcm = "DROP FRAME" if is_df else "NON-DROP FRAME"
 
-        # Camera body start timecode (may not be 00:00:00:00)
+        # Camera body start timecode (may not be 00:00:00:00) — parsed as a frame
+        # count at the nominal rate, not as wall seconds (audit N1: 23.976).
         start_tc_str = rec.get("start_tc") or ""
-        start_tc_offset = 0.0
-        if start_tc_str:
-            # Parse HH:MM:SS:FF or HH:MM:SS;FF into seconds
-            _tc = start_tc_str.replace(";", ":").split(":")
-            if len(_tc) == 4:
-                try:
-                    _h, _m, _s, _f = int(_tc[0]), int(_tc[1]), int(_tc[2]), int(_tc[3])
-                    start_tc_offset = _h * 3600 + _m * 60 + _s + _f / clip_fps
-                except (ValueError, ZeroDivisionError):
-                    start_tc_offset = 0.0
+        start_tc_offset = _start_tc_seconds(rec, clip_fps)
 
         # Source TC = camera start TC + offset into clip (shifted by trim_in when trimmed)
-        src_start = _edl_tc(start_tc_offset + trim_in, clip_fps, is_df)
-        src_end = _edl_tc(start_tc_offset + trim_in + duration, clip_fps, is_df)
-        # Record TC = timeline position (starts at 01:00:00:00 by convention)
-        rec_base = 3600.0  # 01:00:00:00
-        rec_start = _edl_tc(rec_base, clip_fps, is_df)
-        rec_end = _edl_tc(rec_base + duration, clip_fps, is_df)
+        src_start, src_end = _edl_span(start_tc_offset + trim_in, duration, clip_fps, is_df)
+        # Record TC = timeline position (starts at 01:00:00:00 by convention —
+        # in label terms, so 23.976 does not start at 00:59:56:10)
+        rec_base = _record_base_seconds(clip_fps, is_df)
+        rec_start, rec_end = _edl_span(rec_base, duration, clip_fps, is_df)
 
         edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n\n"
         reel = _edl_reel(rec, stem)
@@ -295,38 +304,31 @@ def export_media(
         else:
             _num, _den = "1", str(round(clip_fps))
 
-        # Drop frame for NTSC rates
-        is_df = rounded_fps in (29.97, 59.94)
+        # DF/NDF from the camera's own TC (fallback: NTSC rate convention)
+        is_df = _tc_is_drop(rec, clip_fps)
         tc_fmt = "DF" if is_df else "NDF"
 
         # Asset references the full file on disk; the timeline clip uses the trim window.
         asset_dur_frames = round(full_duration * clip_fps)
         clip_dur_frames = round(duration * clip_fps)
 
-        # Camera body start timecode
-        start_tc_str = rec.get("start_tc") or "00:00:00:00"
-        start_tc_offset = 0.0
-        _tc = start_tc_str.replace(";", ":").split(":")
-        if len(_tc) == 4:
-            try:
-                _h, _m, _s, _f = int(_tc[0]), int(_tc[1]), int(_tc[2]), int(_tc[3])
-                start_tc_offset = _h * 3600 + _m * 60 + _s + _f / clip_fps
-            except (ValueError, ZeroDivisionError):
-                pass
+        # Camera body start timecode, as media seconds (frame-exact, audit N1)
+        start_tc_offset = _start_tc_seconds(rec, clip_fps)
+        # The asset is anchored AT the camera TC so the asset-clip's start (camera
+        # TC + trim_in) falls inside [asset.start, asset.start + duration]. It was
+        # anchored at 0s, which put the clip start an hour past the end of the
+        # asset for any camera with TC 01:00:00:00 — the same bug the timeline
+        # export already fixed (Codex P2), left behind here.
+        asset_start_frames = round(start_tc_offset * clip_fps)
 
         from xml.sax.saxutils import escape as xml_esc
-        import pathlib
         # Attribute escaping must also cover the double quote (xml_esc leaves it
         # alone by default), or a filename like `cam "A".mp4` breaks name="..." /
         # src="..." — same protection the batch timeline path uses.
         _attr = lambda s: xml_esc(s, {'"': "&quot;"})
 
-        # Build file URI with proper file:/// prefix
-        raw_path = _resolve_media_path(rec.get("path", ""))
-        file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
-        if not str(file_uri).startswith("/"):
-            file_uri = pathlib.PurePosixPath("/" + str(file_uri))
-        file_uri_str = _attr(f"file://{file_uri}")
+        # Build a percent-encoded file:/// URL (spaces, `#`, `%` in paths)
+        file_uri_str = _attr(_file_url(_resolve_media_path(rec.get("path", ""))))
 
         # Build marker elements from frame analysis (filter to trim window, rebase to clip start)
         markers_xml = ""
@@ -352,7 +354,7 @@ def export_media(
 <fcpxml version="1.8">
     <resources>
         <format id="r1" frameDuration="{_num}/{_den}s" width="{rec.get('width') or 1920}" height="{rec.get('height') or 1080}" />
-        <asset id="r2" name="{_attr(stem)}" src="{file_uri_str}" start="0s" duration="{asset_dur_frames * int(_num)}/{_den}s" format="r1" hasAudio="1" hasVideo="1" />
+        <asset id="r2" name="{_attr(stem)}" src="{file_uri_str}" start="{asset_start_frames * int(_num)}/{_den}s" duration="{asset_dur_frames * int(_num)}/{_den}s" format="r1" hasAudio="1" hasVideo="1" />
     </resources>
     <library>
         <event name="arkiv Export">
@@ -536,7 +538,7 @@ def export_timeline(
         raise HTTPException(404, f"找不到素材：{','.join(str(m) for m in missing)}")
 
     tl_fps = recs[0].get("fps") or 30.0
-    tl_is_df = round(tl_fps, 2) in (29.97, 59.94)
+    tl_is_df = _tc_is_drop(recs[0], tl_fps)
 
     if fmt == "edl":
         fcm = "DROP FRAME" if tl_is_df else "NON-DROP FRAME"
@@ -545,20 +547,21 @@ def export_timeline(
         if fps_warn:
             edl += fps_warn + "\n"
         edl += "\n"
-        rec_pos = 3600.0  # timeline starts at 01:00:00:00 by convention
+        rec_pos = _record_base_seconds(tl_fps, tl_is_df)  # 01:00:00:00 by convention
         for i, rec in enumerate(recs, 1):
             filename = rec.get("filename", f"media_{rec.get('id')}")
             stem = filename.rsplit(".", 1)[0]
             win_in, dur = _clip_window(rec)  # D2: honor the clip's IN/OUT marks
             clip_fps = rec.get("fps") or tl_fps
-            clip_is_df = round(clip_fps, 2) in (29.97, 59.94)
+            clip_is_df = _tc_is_drop(rec, clip_fps)
             # Source TC starts at the clip's camera TC PLUS its IN point, so the EDL
             # cuts from the marked in-point rather than the head of the file.
             src_off = _start_tc_seconds(rec, clip_fps) + win_in
-            src_start = _edl_timecode(src_off, clip_fps, clip_is_df)
-            src_end = _edl_timecode(src_off + dur, clip_fps, clip_is_df)
-            rec_start = _edl_timecode(rec_pos, tl_fps, tl_is_df)
-            rec_end = _edl_timecode(rec_pos + dur, tl_fps, tl_is_df)
+            # Each side's length is counted once (round(dur*fps)) so source and
+            # record spans agree; the record head advances by whole frames so
+            # rounding never accumulates along the timeline.
+            src_start, src_end = _edl_span(src_off, dur, clip_fps, clip_is_df)
+            rec_start, rec_end = _edl_span(rec_pos, dur, tl_fps, tl_is_df)
             reel = _edl_reel(rec, stem)
             has_vid, _ = _media_streams(rec)
             chan = "V" if has_vid else "A"  # audio-only clip → audio channel
@@ -567,7 +570,7 @@ def export_timeline(
             if rec.get("start_tc"):
                 edl += f"* SOURCE START TC: {_edl_comment(rec['start_tc'])}\n"
             edl += "\n"
-            rec_pos += dur
+            rec_pos = (round(rec_pos * tl_fps) + round(dur * tl_fps)) / tl_fps
         return HTMLResponse(
             content=edl,
             media_type="text/plain; charset=utf-8",
@@ -625,7 +628,6 @@ def export_timeline(
 
     # fmt == "fcpxml"
     from xml.sax.saxutils import escape as xml_esc
-    import pathlib
     # Attribute escaping must also cover the double quote, or a filename like
     # `cam "A".mp4` breaks the name="..." attribute → malformed XML (Codex P2).
     _attr = lambda s: xml_esc(s, {'"': "&quot;"})
@@ -655,11 +657,7 @@ def export_timeline(
         # reads from the in-point; asset spans exactly the marked window.
         src_off_frames = round((_start_tc_seconds(rec, clip_fps) + win_in) * tl_fps)
 
-        raw_path = _resolve_media_path(rec.get("path", ""))
-        file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
-        if not str(file_uri).startswith("/"):
-            file_uri = pathlib.PurePosixPath("/" + str(file_uri))
-        file_uri_str = _attr(f"file://{file_uri}")
+        file_uri_str = _attr(_file_url(_resolve_media_path(rec.get("path", ""))))
 
         # asset.start = the media's own start timecode (camera TC). The asset
         # therefore spans [src_off, src_off + duration], so the asset-clip's

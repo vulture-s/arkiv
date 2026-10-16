@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import unicodedata
 import hashlib
 import re
 import socket
@@ -191,7 +192,13 @@ def _compute_directory_hashes(
     file_records: List[FileRecord],
     directory_records: List[DirectoryRecord],
     manifest_entries: List[Tuple[str, object]],
+    known: Optional[Dict[str, Tuple[int, int, Dict[str, str]]]] = None,
 ) -> Dict[str, Tuple[str, str]]:
+    """``known``: rel_path (NFC) → (size, mtime_ns, {algo: hex}) for files whose
+    hash the caller already computed from these exact bytes (offload reads every
+    destination file back right after writing it). Used only when size AND
+    mtime_ns still match and every requested algo is present; otherwise the
+    file is hashed as usual."""
     content_hashes: Dict[str, List[str]] = {algo: [] for algo in algos}
     structure_hashes: Dict[str, List[str]] = {algo: [] for algo in algos}
     entries = sorted(list(directory.iterdir()), key=lambda path: path.name.lower())
@@ -202,7 +209,8 @@ def _compute_directory_hashes(
 
         child_rel = child.name if not rel_dir else rel_dir + "/" + child.name
         if child.is_dir():
-            child_hashes = _compute_directory_hashes(child, child_rel, algos, file_records, directory_records, manifest_entries)
+            child_hashes = _compute_directory_hashes(child, child_rel, algos, file_records, directory_records,
+                                                    manifest_entries, known)
             for algo in algos:
                 content_hashes[algo].append(child_hashes[algo][0])
                 child_structure_bytes = _hash_from_hash_string(algo, child_hashes[algo][1])
@@ -234,9 +242,14 @@ def _compute_directory_hashes(
             )
             manifest_entries.append(("directoryhash", directory_records[-1]))
         else:
-            file_hashes = {algo: hash_file(child, algo) for algo in algos}
-            size = child.stat().st_size
-            mtime = _local_from_timestamp(child.stat().st_mtime)
+            st = child.stat()
+            hit = known.get(unicodedata.normalize("NFC", child_rel)) if known else None
+            if hit and hit[0] == st.st_size and hit[1] == st.st_mtime_ns and all(a in hit[2] for a in algos):
+                file_hashes = {algo: hit[2][algo] for algo in algos}
+            else:
+                file_hashes = {algo: hash_file(child, algo) for algo in algos}
+            size = st.st_size
+            mtime = _local_from_timestamp(st.st_mtime)
             record_time = _local_now()
             file_records.append(
                 FileRecord(
@@ -453,6 +466,7 @@ def create_manifest(
     secondary_hash: Optional[str] = None,
     op: str = "ingest",
     previous_paths: Optional[Dict[str, str]] = None,
+    known_hashes: Optional[Dict[str, Tuple[int, int, Dict[str, str]]]] = None,
 ) -> Tuple[Path, Path]:
     source = source.resolve()
     if not source.exists() or not source.is_dir():
@@ -465,7 +479,8 @@ def create_manifest(
     file_records: List[FileRecord] = []
     directory_records: List[DirectoryRecord] = []
     manifest_entries: List[Tuple[str, object]] = []
-    root_hashes = _compute_directory_hashes(source, "", algos, file_records, directory_records, manifest_entries)
+    root_hashes = _compute_directory_hashes(source, "", algos, file_records, directory_records, manifest_entries,
+                                           known_hashes)
 
     creator_time = _local_now().replace(microsecond=0)
     manifest_xml = _render_manifest(creator_time, root_hashes, manifest_entries, op, previous_paths)
@@ -759,7 +774,12 @@ def verify_manifest(mhl_path: Path, chain: bool = False, strict: bool = False) -
         manifest_root_hashes = _manifest_root(root)
         manifest_files, manifest_dirs = _manifest_entries(root)
         algos = sorted(manifest_root_hashes) if manifest_root_hashes else [DEFAULT_HASH_ALGO]
-        recomputed_root = _recompute_from_tree(source_root, algos)
+        # ONE pass over the tree feeds both the root-hash check and the per-entry
+        # checks below. They used to be two separate full re-hashes of every byte
+        # (#535): on a 117 GB card over Wi-Fi SMB that was 4.5 h instead of 2.2 h.
+        file_records: List[FileRecord] = []
+        directory_records: List[DirectoryRecord] = []
+        recomputed_root = _compute_directory_hashes(source_root, "", algos, file_records, directory_records, [])
     except FileNotFoundError:
         return 3
     except Exception:
@@ -773,9 +793,6 @@ def verify_manifest(mhl_path: Path, chain: bool = False, strict: bool = False) -
 
     actual_file_map: Dict[str, FileRecord] = {}
     actual_dir_map: Dict[str, DirectoryRecord] = {}
-    file_records: List[FileRecord] = []
-    directory_records: List[DirectoryRecord] = []
-    _compute_directory_hashes(source_root, "", algos, file_records, directory_records, [])
     for record in file_records:
         actual_file_map[record.rel_path] = record
     for record in directory_records:
