@@ -7,6 +7,7 @@
   import { onMount } from 'svelte'
   import * as api from '../lib/api.js'
   import { describeDelete } from '../lib/deleteOutcome.js'
+  import { describeLearn } from '../lib/transcriptCorrect.js'
   import TopBar from '../lib/TopBar.svelte'
   import PoolSidebar from '../lib/PoolSidebar.svelte'
   import MediaCard from '../lib/MediaCard.svelte'
@@ -825,6 +826,26 @@
     } catch (e) { pushToast(`切換主要語言失敗: ${e.message}`, 'error') }  // round-5 #43
   }
 
+  // 選字 → 校正: teach the project dictionary one correction (POST
+  // /api/corrections/learn) and, when asked, rewrite every stored transcript with
+  // it; then reload THIS clip so the inspector shows the corrected text. Throws on
+  // failure so the inspector keeps its form open with the error.
+  async function correctTranscript(from, to, apply) {
+    const id = selected && selected.id
+    let res
+    try {
+      res = await api.learnCorrection({ from, to }, apply)
+    } catch (e) {
+      pushToast(`校正失敗: ${e.message}`, 'error')
+      throw e
+    }
+    pushToast(describeLearn(res, apply), 'ok', 6000)
+    if (id != null && apply) await Promise.all([fetchDetail(id), fetchTranscripts(id)])
+  }
+  // Only the ACTIVE language is correctable: recorrect rewrites media.* (the
+  // active transcript); archived languages would silently not change.
+  $: canCorrect = !!selected && (!tdLive || !viewLang || !!(_viewedRow && _viewedRow.active))
+
   // Real audio waveform peaks (0..1) from the backend ffmpeg endpoint — fetched
   // per clip, passed to the inspector's <Waveform>. Replaces the old mock sin bars.
   let wavePeaks = null
@@ -1295,6 +1316,7 @@
         {viewLang}
         {onViewLang}
         {onActivateLang}
+        onCorrect={canCorrect ? correctTranscript : null}
         frameDescriptions={inspFrames}
         frameScenes={inspScenes}
         tags={inspTags}
