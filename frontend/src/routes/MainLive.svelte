@@ -6,6 +6,7 @@
 <script>
   import { onMount } from 'svelte'
   import * as api from '../lib/api.js'
+  import { describeDelete } from '../lib/deleteOutcome.js'
   import TopBar from '../lib/TopBar.svelte'
   import PoolSidebar from '../lib/PoolSidebar.svelte'
   import MediaCard from '../lib/MediaCard.svelte'
@@ -21,6 +22,7 @@
   import { pushToast } from '../lib/toast.js'
   import { createViewGen } from '../lib/viewGen.js'
   import { shotYearRows, mediaParams } from '../lib/shotYear.js'
+  import { parseStartParam } from '../lib/matchTime.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
@@ -204,21 +206,19 @@
   async function confirmDelete() {
     if (!confirmDel) return
     const ids = confirmDel.ids
-    const set = new Set(ids)
     delBusy = true
     try {
-      if (confirmDel.kind === 'single') {
-        const r = await api.deleteMedia(ids[0], true)
-        if (r && r.external) pushToast(`外部檔案僅移除資料：${r.message || ''}`)
-        else pushToast(`已移至回收桶 · ${r && r.filename ? r.filename : ids[0]}`)
-      } else {
-        const r = await api.bulkDeleteMedia(ids, true)
-        const n = (r && r.deleted && r.deleted.length) || 0
-        const skipped = (r && r.skipped && r.skipped.length) || 0
-        pushToast(`已刪除 ${n} 支` + (skipped ? ` · 跳過 ${skipped} 支` : ''))
-      }
-      // remove from the grid source so the card/list row disappears immediately
-      items = items.filter((m) => !set.has(m.id))
+      // describeDelete reads what the backend actually returns (file_deleted /
+      // warning / not_trashed) — a metadata-only delete must not be announced as
+      // 「已移至回收桶」 (audit 2026-10-09 K1).
+      const r = confirmDel.kind === 'single'
+        ? await api.deleteMedia(ids[0], true)
+        : await api.bulkDeleteMedia(ids, true)
+      const out = describeDelete(confirmDel.kind, r, confirmDel.label, ids)
+      pushToast(out.msg, out.kind)
+      // remove only the rows that are actually gone; a hard per-item error keeps its card
+      const gone = new Set(out.removeIds)
+      items = items.filter((m) => !gone.has(m.id))
       if (confirmDel.kind === 'single' && selectedId === ids[0]) selectedId = null
       clearPicks()
       confirmDel = null
@@ -682,9 +682,14 @@
       })
     }
   }
+  // #/main-live?sel=<id>&t=<sec>: a search hit's matched second. Handed to the
+  // Inspector, which seeks once the player has metadata.
+  let startAt = null
   async function selectFromParam() {
     const sel = readSelParam()
     if (sel == null) return
+    const t = parseStartParam(readHashParam('t'))
+    startAt = t == null ? null : { id: sel, t }
     if (items.find((m) => m.id === sel)) { selectedId = sel; return }
     // Prepending into whatever view is current: if the user moved on while the detail
     // fetch was in flight, this would splice an unrelated clip into the new grid.
@@ -703,7 +708,30 @@
       engineLangs = e?.languages || null
     } catch (e) { /* picker falls back to its built-in zh/en list */ }
   }
+  // log → Rec.709 preview profiles for the inspector picker (best-effort: an older
+  // backend without the route just hides the picker's options).
+  let colorProfiles = []
+  async function loadColorProfiles() {
+    try { colorProfiles = (await api.getColorProfiles()).profiles || [] } catch { colorProfiles = [] }
+  }
+  // The poster is rebuilt in place under the same filename, so the inspector's
+  // <img> needs a cache-bust after a profile change.
+  let thumbBust = {}
+  async function setColorProfileLive(pid) {
+    if (!selected) return
+    const id = selected.id
+    await api.setColorProfile(id, pid)
+    if (detail && detail.id === id) detail = { ...detail, color_profile: pid }
+    thumbBust = { ...thumbBust, [id]: Date.now() }
+  }
+  async function importLutLive(file) {
+    const r = await api.importLut(file)
+    await loadColorProfiles()
+    pushToast(`已匯入 LUT：${file.name}`)
+    return r.id
+  }
   onMount(async () => {
+    loadColorProfiles()
     // Deep-link from chat: #/main-live?ids=<csv>&sel=<id> filters the grid to that
     // relevant subset (not the full library) before selecting the clicked clip.
     const ids = readHashParam('ids')
@@ -866,7 +894,11 @@
         }))
       })()
     : null
-  $: inspThumb = selected ? selected.thumb : null
+  $: inspThumb = selected
+    ? (selected.thumb && thumbBust[selected.id]
+        ? `${selected.thumb}${selected.thumb.includes('?') ? '&' : '?'}v=${thumbBust[selected.id]}`
+        : selected.thumb)
+    : null
   // Real playback stream for the inspector player (loopback = token-free; remote
   // carries ?token). Inspector turns this into a <video>/<audio> element.
   $: inspVideoSrc = selected ? api.streamUrl(selected.id) : null
@@ -1039,14 +1071,14 @@
     if (!selected) return
     const backendVal = RATING_MAP[uiRating] ?? null
     const id = selected.id
-    // preserve any existing rating_note (backend PATCH overwrites both fields →
-    // omitting note would silently delete it). Codex review P2.
-    const note = detailLive && detailLive.id === id ? detailLive.rating_note ?? null : null
+    // Rating only — no note. The backend is PATCH (omitted = untouched), and the
+    // UI has no note editor; sending `detailLive?.rating_note ?? null` wiped the
+    // stored note whenever the detail had not loaded yet (audit 2026-10-09 K1).
     // optimistic: reflect immediately in grid + inspector (which both read item.rating)
     const prev = selected.rating
     items = items.map((m) => (m.id === id ? { ...m, rating: uiRating } : m))
     try {
-      await api.setRating(id, backendVal, note)
+      await api.setRating(id, backendVal)
     } catch (e) {
       // revert on failure
       items = items.map((m) => (m.id === id ? { ...m, rating: prev } : m))
@@ -1257,6 +1289,7 @@
         peaks={inspPeaks}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
+        {startAt}
         {particleStat}
         {transcriptLangs}
         {viewLang}
@@ -1269,6 +1302,11 @@
         onAddTag={selected ? addTag : null}
         onRemoveTag={selected ? removeTag : null}
         onReprocess={selected ? reprocess : null}
+        colorProfile={detailLive ? detailLive.color_profile : null}
+        {colorProfiles}
+        onSetColorProfile={selected && colorProfiles.length ? setColorProfileLive : null}
+        onImportLut={importLutLive}
+        getCube={api.getColorCube}
         {reProgress}
         languages={engineLangs}
         mediaLang={detailLive ? detailLive.lang : null}
@@ -1280,7 +1318,7 @@
         onRate={rate}
         inPoint={detailLive ? detailLive.in_point : null}
         outPoint={detailLive ? detailLive.out_point : null}
-        onInOut={selected ? (inS, outS) => saveInOut(selected.id, inS, outS) : null}
+        onInOut={selected ? (inS, outS, id) => saveInOut(id ?? selected.id, inS, outS) : null}
       />
     {/if}
   </div>
@@ -1289,7 +1327,7 @@
     open={!!confirmDel}
     title={confirmDel ? (confirmDel.kind === 'bulk' ? '刪除所選素材' : '刪除素材') : '確認'}
     message={confirmDel
-      ? `確定要將「${confirmDel.label}」移至回收桶嗎？\n原始檔會保留 30 天，可從回收桶還原。`
+      ? `確定要將「${confirmDel.label}」移至回收桶嗎？\n原始檔會保留 30 天，可從回收桶還原；\n但標籤、評分／備註、IN/OUT、手改逐字稿不會隨還原回來。`
       : ''}
     confirmLabel="移至回收桶"
     danger={true}

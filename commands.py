@@ -125,6 +125,24 @@ def set_camera(media_id: int, changes: Dict[str, Any],
     return _patch("set_camera", media_id, changes, _CAMERA_FIELDS, token)
 
 
+_COLOR_PROFILE_FIELDS = (("color_profile", "color_profile"),)
+
+
+def _check_color_profile(merged: Dict[str, Any]) -> None:
+    import color_profiles
+    if not color_profiles.is_known(merged["color_profile"]):
+        raise Invalid("未知的色彩設定檔：{0}".format(merged["color_profile"]))
+
+
+def set_color_profile(media_id: int, changes: Dict[str, Any],
+                      token: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Set a clip's log→709 preview profile: a color_profiles id, "user:<lut>",
+    "none" (not log — stops auto-detection), or null (forget; re-detect on next
+    regenerate). Returns {color_profile}."""
+    return _patch("set_color_profile", media_id, changes, _COLOR_PROFILE_FIELDS, token,
+                  check=_check_color_profile)
+
+
 def _reindex(media_id: int, after: str) -> None:
     # Tags feed the vector index; a failed reindex leaves the tag written and the
     # index stale until the next rebuild.

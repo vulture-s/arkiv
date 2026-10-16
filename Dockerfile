@@ -41,4 +41,4 @@ EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=5s \
   CMD curl -f http://localhost:8501/api/stats || exit 1
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8501"]
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8501", "--no-proxy-headers"]

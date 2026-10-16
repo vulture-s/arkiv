@@ -93,7 +93,7 @@ def test_thumbnail_of_jpeg_samples_t0_despite_nonzero_duration(monkeypatch, tmp_
     monkeypatch.setattr(frames, "THUMBNAILS_DIR", tmp_path)
     seen = {}
     monkeypatch.setattr(
-        frames, "_extract_frame_to", lambda p, t, out: seen.setdefault("t", t) is None or True
+        frames, "_extract_frame_to", lambda p, t, out, lut=None: seen.setdefault("t", t) is None or True
     )
     frames.extract_thumbnail("/x/shot.jpg", 0.04, force=True)
     assert seen["t"] == 0.0
@@ -103,7 +103,7 @@ def test_thumbnail_of_video_still_uses_midpoint(monkeypatch, tmp_path):
     monkeypatch.setattr(frames, "THUMBNAILS_DIR", tmp_path)
     seen = {}
     monkeypatch.setattr(
-        frames, "_extract_frame_to", lambda p, t, out: seen.setdefault("t", t) is None or True
+        frames, "_extract_frame_to", lambda p, t, out, lut=None: seen.setdefault("t", t) is None or True
     )
     frames.extract_thumbnail("/x/clip.mp4", 30.0, force=True)
     assert seen["t"] == 15.0
@@ -112,7 +112,7 @@ def test_thumbnail_of_video_still_uses_midpoint(monkeypatch, tmp_path):
 def test_fixed_frames_of_still_is_one_frame_at_zero(monkeypatch, tmp_path):
     monkeypatch.setattr(frames, "THUMBNAILS_DIR", tmp_path)
 
-    def fake_extract(p, t, out):
+    def fake_extract(p, t, out, lut=None):
         out.write_bytes(b"\xff\xd8jpegbytes")
         return True
 

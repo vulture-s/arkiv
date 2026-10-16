@@ -96,11 +96,14 @@ def test_download_media_requests_stream_with_token(monkeypatch, tmp_path):
     captured = {}
 
     class _FakeResp:
+        # Chunked like a real HTTPResponse: the download now streams with
+        # read(n) instead of one whole-file read() (audit N1).
         def __init__(self, data):
             self._d = data
 
-        def read(self):
-            return self._d
+        def read(self, n=-1):
+            d, self._d = self._d, b""
+            return d
 
         def __enter__(self):
             return self

@@ -91,6 +91,34 @@ def _check_opencc():
               required=False)
 
 
+def _check_embedder_drift():
+    """The stamp check in vectordb only compares model NAMES. An Ollama upgrade or
+    a re-pulled tag can change the vectors under the same name, and search then
+    degrades with no error — so re-embed a few stored chunks and compare."""
+    name = "embedder ↔ index"
+    try:
+        import vectordb
+        result = vectordb.embedder_drift()
+    except Exception as e:  # noqa: BLE001 — no index yet / backend down: can't judge
+        check(name, False, f"(not measured: {type(e).__name__}: {str(e)[:120]})", required=False)
+        return
+    if result is None:
+        check(name, False, "(not measured: index is empty)", required=False)
+        return
+    if result["ok"]:
+        check(name, True, "(re-embedded {n} stored chunks, min cosine {c:.6f})".format(
+            n=result["n"], c=result["min_cos"]))
+        return
+    import config
+    warn(name, "vectors DRIFTED — {n} stored chunks re-embedded with {m} now score min "
+               "cosine {c:.6f} (< {f}). Same model name, different vectors (Ollama upgrade, "
+               "re-pulled tag or new quantization): queries no longer land in the space the "
+               "index was built in, so search quality drops with no error. "
+               "Fix: python embed.py --rebuild".format(
+                   n=result["n"], m=config.OLLAMA_EMBED_MODEL, c=result["min_cos"],
+                   f=vectordb.DRIFT_COS_FLOOR))
+
+
 def spa_freshness(root: Path):
     """(status, detail) for the built SPA under `root`.
 
@@ -330,6 +358,8 @@ def main():
         embed_model = config.OLLAMA_EMBED_MODEL.split(":")[0]
         has_embed = any(embed_model in m for m in models)
         check(config.OLLAMA_EMBED_MODEL, has_embed, "" if has_embed else f"(run: ollama pull {config.OLLAMA_EMBED_MODEL})")
+        if has_embed:
+            _check_embedder_drift()
 
         vision_model = config.VISION_MODEL.split(":")[0]
         has_vision = any(vision_model in m for m in models)
