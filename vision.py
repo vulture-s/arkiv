@@ -1,7 +1,9 @@
 from __future__ import annotations
 import base64
+import contextvars
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 
 import requests
@@ -191,7 +193,121 @@ def _empty_result() -> Dict:
     return result
 
 
+def vision_concurrency() -> int:
+    """How many vision requests `describe_frames` keeps in flight (client side).
+
+    Read at call time so a test (or an operator editing the env of a long-lived
+    server) is honoured without a re-import. Clamped to [1, 8]; anything
+    unparseable falls back to the default.
+    """
+    try:
+        n = int(getattr(config, "VISION_CONCURRENCY", _DEFAULT_VISION_CONCURRENCY))
+    except (TypeError, ValueError):
+        n = _DEFAULT_VISION_CONCURRENCY
+    return max(1, min(_MAX_VISION_CONCURRENCY, n))
+
+
+_DEFAULT_VISION_CONCURRENCY = 2
+_MAX_VISION_CONCURRENCY = 8
+
+
 def describe_frames(frame_paths: List[str], model: Optional[str] = None) -> List[Dict]:
+    """
+    Representative frame strategy:
+    - Middle frame: full 12-field analysis
+    - Other frames: light 11-field + inherit edit_reason only
+    - Skip unusable frames (black/white/blurry)
+
+    `model` is threaded down to `_call_vision`; when None the effective/default
+    model is resolved from settings (behavior-preserving). Callers pass an explicit
+    model name to force the fallback path onto that model (round-5 #50).
+
+    Requests go out with bounded client-side concurrency (`config.VISION_CONCURRENCY`,
+    default 2). Measured on M2 Max (bench 2026-10-17, PR #548): two in-flight
+    requests against an Ollama with server-side NUM_PARALLEL=1 is +26% frames/min —
+    the client's base64/JSON/zh_convert work overlaps the GPU's inference instead of
+    alternating with it. The server still queues to one inference at a time, so this
+    loads no second model and adds no VRAM; it only keeps one request queued.
+    With concurrency 1 the original serial loop runs, unchanged.
+    """
+    if not frame_paths:
+        return []
+    workers = min(vision_concurrency(), len(frame_paths))
+    if workers <= 1:
+        return _describe_frames_serial(frame_paths, model=model)
+    return _describe_frames_concurrent(frame_paths, model=model, workers=workers)
+
+
+def _describe_frames_concurrent(frame_paths: List[str], model: Optional[str], workers: int) -> List[Dict]:
+    """Same output, same progress events, same order as the serial loop.
+
+    Order: results are indexed by submission, never by completion — `futures[i]`
+    belongs to `frame_paths[i]` and the output list is assembled by walking i.
+    Errors: every per-frame failure is already folded into the result dict inside
+    `_describe_one` / `_describe_one_light` / `_is_usable_frame` (none of them
+    raise), exactly as in the serial loop. An unexpected exception is re-raised
+    here when its index is reached, as the serial loop would have raised it.
+    Progress: `progress.report` uses a ContextVar, so it is only ever called from
+    this (the caller's) thread, in the same sequence the serial loop emits.
+    """
+    total = len(frame_paths)
+    rep_idx = total // 2
+    inheritable = ("edit_reason",)
+
+    def light_task(path):
+        if not _is_usable_frame(path):
+            return None  # marker: skipped — built below once rep_result is known
+        return _describe_one_light(path, model=model)
+
+    # Each task runs in a copy of the caller's context (settings scope, progress
+    # sink, ...) — a fresh copy per task, since one Context can't be entered twice.
+    def submit(fn, *args, **kwargs):
+        return pool.submit(contextvars.copy_context().run, fn, *args, **kwargs)
+
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="arkiv-vision")
+    try:
+        progress.report(stage="representative", done=0, total=total)
+        # Representative first in the queue: it is the slowest call and everything
+        # inherits from it, so it should never wait behind light frames.
+        rep_future = submit(_describe_one, frame_paths[rep_idx], model=model)
+        futures = {}
+        for i, path in enumerate(frame_paths):
+            if i != rep_idx:
+                futures[i] = submit(light_task, path)
+
+        rep_result = rep_future.result()
+        rep_result["file"] = frame_paths[rep_idx]
+
+        results = []
+        for i, path in enumerate(frame_paths):
+            progress.report(stage="frames", done=i, total=total)
+            if i == rep_idx:
+                results.append(rep_result)
+                continue
+            light = futures[i].result()
+            if light is None:
+                skip_result = _empty_result()
+                skip_result["file"] = path
+                skip_result["description"] = "[skipped: unusable frame]"
+                for k in inheritable:
+                    skip_result[k] = rep_result.get(k)
+                results.append(skip_result)
+                continue
+            light["file"] = path
+            for k in inheritable:
+                light[k] = rep_result.get(k)
+            results.append(light)
+
+        progress.report(stage="frames", done=total, total=total)
+        return results
+    finally:
+        # Normal exit: everything is already done. Exception / KeyboardInterrupt:
+        # drop the queued frames and don't block on the (at most `workers`)
+        # requests already in flight — they finish or time out on their own.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _describe_frames_serial(frame_paths: List[str], model: Optional[str] = None) -> List[Dict]:
     """
     Representative frame strategy:
     - Middle frame: full 12-field analysis
