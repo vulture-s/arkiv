@@ -207,7 +207,7 @@ def vision_concurrency() -> int:
     return max(1, min(_MAX_VISION_CONCURRENCY, n))
 
 
-_DEFAULT_VISION_CONCURRENCY = 2
+_DEFAULT_VISION_CONCURRENCY = 1
 _MAX_VISION_CONCURRENCY = 8
 
 

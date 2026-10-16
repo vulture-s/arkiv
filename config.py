@@ -605,13 +605,15 @@ except ValueError:
     OLLAMA_NUM_PARALLEL = 1
 # Client-side: how many vision requests describe_frames keeps in flight. This is
 # NOT Ollama's server setting above (that one is read by `ollama serve`, not by
-# arkiv). 2 with a server at NUM_PARALLEL=1 measured +26% frames/min on M2 Max
-# (docs/bench/2026-10-17-ollama-num-parallel-ab.md) with no extra model memory.
-# 1 = the original strictly serial loop. Clamped to [1, 8] by vision.py.
+# arkiv). Default 1 = the original strictly serial loop. Opt-in: 2 against a
+# server at NUM_PARALLEL=1 measured +26% frames/min on a dedicated M2 Max server
+# (docs/bench/2026-10-17-ollama-num-parallel-ab.md), but a re-measure through
+# describe_frames on an everyday server saw no gain (#555) — raise it only after
+# timing it on your own machine. Clamped to [1, 8] by vision.py.
 try:
-    VISION_CONCURRENCY = max(1, int(os.getenv("ARKIV_VISION_CONCURRENCY", "2")))
+    VISION_CONCURRENCY = max(1, int(os.getenv("ARKIV_VISION_CONCURRENCY", "1")))
 except ValueError:
-    VISION_CONCURRENCY = 2
+    VISION_CONCURRENCY = 1
 
 def discover_projects():
     from projects import discover_projects as _discover_projects

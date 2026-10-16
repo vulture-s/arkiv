@@ -192,15 +192,17 @@ def test_model_threaded_through_concurrent_path(vis, monkeypatch, frames):
     assert seen == ["minicpm-v:latest"] * 3
 
 
-@pytest.mark.parametrize("raw,expected", [(0, 1), (-3, 1), (1, 1), (2, 2), (99, 8), ("x", 2), (None, 2)])
+@pytest.mark.parametrize("raw,expected", [(0, 1), (-3, 1), (1, 1), (2, 2), (99, 8), ("x", 1), (None, 1)])
 def test_concurrency_clamped(vis, monkeypatch, raw, expected):
     monkeypatch.setattr(vis.config, "VISION_CONCURRENCY", raw, raising=False)
     assert vis.vision_concurrency() == expected
 
 
-def test_default_is_two():
+def test_default_is_serial():
+    """Opt-in until a speed-up reproduces: #548 measured +26% on a dedicated
+    server, #555's re-measure through describe_frames saw none."""
     import config
     import os
     if "ARKIV_VISION_CONCURRENCY" in os.environ:
         pytest.skip("env override present")
-    assert config.VISION_CONCURRENCY == 2
+    assert config.VISION_CONCURRENCY == 1
