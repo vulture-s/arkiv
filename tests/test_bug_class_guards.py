@@ -226,7 +226,6 @@ KNOWN_NON_ATOMIC_WRITES = {
     "ingest.py:_run_apply_aliases": 1,
     "ingest.py:_run_propose_aliases": 1,
     "ingest.py:main": 1,
-    "mhl.py:create_manifest": 2,
     "resolve_plugin/arkiv_resolve.py:download_metadata_csv": 1,
     "resolve_plugin/arkiv_resolve_lan.py:download_metadata_csv": 1,
     "routers/export.py:export_metadata_csv_to": 1,
