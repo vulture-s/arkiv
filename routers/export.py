@@ -5,7 +5,8 @@ export_media directly (an internal call, not an HTTP round-trip):
   * /api/export/metadata-csv (GET) + /api/export/metadata-csv-to (POST) —
     DaVinci Resolve metadata CSV (browser blob vs Tauri server-write);
   * /api/media/{id}/export/{fmt} (GET) — single-clip txt/srt/vtt/edl/edl-markers/
-    fcpxml with an optional trim window;
+    fcpxml with an optional trim window; `?markers=transcript` makes the
+    edl-markers / fcpxml markers come from transcript segments, not scene frames;
   * /api/media/{id}/export-to (POST) — same, written to a caller-picked path;
   * /api/export/batch (POST) — zip of many single-clip exports;
   * /api/export/timeline/{fmt} (GET) — several clips laid end-to-end on ONE
@@ -25,11 +26,13 @@ from pydantic import BaseModel
 
 import db
 import settings as settings_store
+import transcript_time
 from auth import require_scopes
 from export_builders import (
     _build_metadata_csv,
     _edl_comment,
     _edl_fps_warning,
+    _edl_high_fps_warning,
     _edl_reel,
     _edl_span,
     _edl_timecode,
@@ -42,12 +45,18 @@ from export_builders import (
     _subtitle_ts,
     render_subtitle_cues,
     transcript_fallback_segments,
+    transcript_marker_cues,
+    truncate_marker_name,
 )
 from pathres import _resolve_media_path
 from reqopts import _parse_ids_query
 from webguard import _assert_export_dest_safe
 
 router = APIRouter()
+
+# Formats that carry markers, and where those markers can come from.
+MARKER_FMTS = ("edl-markers", "fcpxml")
+MARKER_SOURCES = ("frames", "transcript")
 
 
 def _file_url(path: str) -> str:
@@ -164,8 +173,16 @@ def export_media(
     fmt: str,
     in_s: Optional[float] = None,
     out_s: Optional[float] = None,
+    markers: str = "frames",
     _tok: dict = Depends(require_scopes("media_read")),
 ):
+    # markers = where edl-markers / fcpxml markers come from: analysed scene
+    # frames (the default, unchanged) or the transcript's segments (8.2i).
+    markers = (markers or "frames").lower()
+    if markers not in MARKER_SOURCES:
+        raise HTTPException(422, "markers 必須是 {0}".format("/".join(MARKER_SOURCES)))
+    if markers != "frames" and fmt not in MARKER_FMTS:
+        raise HTTPException(422, "markers={0} 只適用於 {1}".format(markers, "/".join(MARKER_FMTS)))
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
@@ -175,11 +192,7 @@ def export_media(
     full_duration = rec.get("duration_s", 0) or 0
 
     # Normalize trim window: [trim_in, trim_out] in seconds, duration = trim_out - trim_in
-    trim_in = max(0.0, float(in_s)) if in_s is not None else 0.0
-    trim_out = min(full_duration, float(out_s)) if out_s is not None else full_duration
-    if trim_out <= trim_in:
-        trim_in, trim_out = 0.0, full_duration
-    has_trim = trim_in > 0.05 or trim_out < full_duration - 0.05
+    trim_in, trim_out, has_trim = transcript_time.trim_window(in_s, out_s, full_duration)
     duration = trim_out - trim_in
 
     # TC helpers are module-level (shared with the batch-timeline endpoint).
@@ -199,20 +212,7 @@ def export_media(
     # When trimmed, keep only segments that overlap [trim_in, trim_out] and
     # rebase their timestamps so the output starts at 0.
     if has_trim and _segments:
-        trimmed = []
-        for seg in _segments:
-            # `or 0`: an explicit null in segments_json (legacy rows have them)
-            # would make these comparisons raise TypeError → 500. Every other
-            # read of these fields already guards this way; this one did not.
-            s, e = seg.get("start", 0) or 0, seg.get("end", 0) or 0
-            if e <= trim_in or s >= trim_out:
-                continue
-            trimmed.append({
-                **seg,
-                "start": max(0.0, s - trim_in),
-                "end": min(duration, e - trim_in),
-            })
-        _segments = trimmed
+        _segments = transcript_time.trim_rebase(_segments, trim_in, trim_out)
 
     if fmt == "txt":
         if has_trim:
@@ -258,7 +258,11 @@ def export_media(
         rec_base = _record_base_seconds(clip_fps, is_df)
         rec_start, rec_end = _edl_span(rec_base, duration, clip_fps, is_df)
 
-        edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n\n"
+        edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n"
+        hi_warn = _edl_high_fps_warning(clip_fps)  # B13: high-fps spec limit
+        if hi_warn:
+            edl += hi_warn + "\n"
+        edl += "\n"
         reel = _edl_reel(rec, stem)
         edl += f"001  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
         edl += f"* FROM CLIP NAME: {_edl_comment(filename)}\n"
@@ -266,7 +270,15 @@ def export_media(
             edl += f"* SOURCE START TC: {_edl_comment(start_tc_str)}\n"
         edl += "\n"
 
-        if fmt == "edl-markers":
+        if fmt == "edl-markers" and markers == "transcript":
+            # One LOC per transcript cue at its start (LOC has no duration).
+            # Same ASCII rule as the scene markers below, so a CJK transcript
+            # comes out as "?" here — FCPXML is the path that keeps UTF-8.
+            for cue in transcript_marker_cues(_segments):
+                rtc = _edl_tc(rec_base + cue["start"], clip_fps, is_df)
+                name = cue["text"].encode("ascii", "replace").decode("ascii")
+                edl += f"* LOC: {rtc} YELLOW {truncate_marker_name(name, ellipsis='...')}\n"
+        elif fmt == "edl-markers":
             # LOC comments — DaVinci reads these via "Import > Timeline Markers from EDL"
             colors = ["RED", "BLUE", "GREEN", "CYAN", "MAGENTA", "YELLOW", "WHITE"]
             frames = db.get_frames(media_id)
@@ -332,7 +344,16 @@ def export_media(
 
         # Build marker elements from frame analysis (filter to trim window, rebase to clip start)
         markers_xml = ""
-        frames = db.get_frames(media_id)
+        frames = db.get_frames(media_id) if markers == "frames" else []
+        for cue in (transcript_marker_cues(_segments) if markers == "transcript" else []):
+            # Resolve maps value → marker name, note → marker notes. Start and
+            # duration snap to whole frames; a marker is at least one frame long.
+            off_f = round(cue["start"] * clip_fps)
+            dur_f = max(1, round((cue["end"] - cue["start"]) * clip_fps))
+            name = _attr(truncate_marker_name(cue["text"]))
+            note = _attr(cue["text"])
+            markers_xml += (f'                <marker start="{off_f * int(_num)}/{_den}s" '
+                            f'duration="{dur_f * int(_num)}/{_den}s" value="{name}" note="{note}" />\n')
         colors = ["Blue", "Red", "Green", "Cyan", "Magenta", "Yellow", "White"]
         kept = 0
         for fr in frames:
@@ -384,6 +405,7 @@ class ExportToRequest(BaseModel):
     dest: str
     in_s: Optional[float] = None
     out_s: Optional[float] = None
+    markers: str = "frames"
 
 
 @router.post("/api/media/{media_id}/export-to")
@@ -399,7 +421,8 @@ def export_to_file(
     ~/.ssh / ~/Library/LaunchAgents 等敏感位置），改走 _assert_export_dest_safe
     共用 helper（allowlist of approved user export roots + 副檔名白名單）。
     """
-    resp = export_media(media_id, body.fmt, in_s=body.in_s, out_s=body.out_s)
+    resp = export_media(media_id, body.fmt, in_s=body.in_s, out_s=body.out_s,
+                        markers=body.markers)
     content = resp.body.decode("utf-8")
     dest = Path(body.dest).expanduser().resolve()
     _assert_export_dest_safe(dest)
@@ -414,6 +437,7 @@ class BatchExportRequest(BaseModel):
     # file each). For a single stitched timeline use /api/export/timeline.
     ids: List[int]
     fmt: str = "srt"
+    markers: str = "frames"
 
 
 @router.post("/api/export/batch")
@@ -443,7 +467,7 @@ def export_batch(
             rec = db.get_record_by_id(mid)
             if not rec:
                 continue
-            resp = export_media(media_id=mid, fmt=fmt, _tok=_tok)  # _tok is gate-only
+            resp = export_media(media_id=mid, fmt=fmt, markers=body.markers, _tok=_tok)  # _tok is gate-only
             content = resp.body if isinstance(resp.body, (bytes, bytearray)) else str(resp.body).encode("utf-8")
             stem = (rec.get("filename") or "media_{0}".format(mid)).rsplit(".", 1)[0]
             arcname = "{0}.{1}".format(stem, ext)
@@ -546,6 +570,11 @@ def export_timeline(
         fps_warn = _edl_fps_warning(recs, tl_fps)  # B13
         if fps_warn:
             edl += fps_warn + "\n"
+        # B13 high-fps: one line per distinct off-spec rate, not per clip.
+        for r in sorted({round(float(x.get("fps") or tl_fps), 3) for x in recs}):
+            hi_warn = _edl_high_fps_warning(r)
+            if hi_warn:
+                edl += hi_warn + "\n"
         edl += "\n"
         rec_pos = _record_base_seconds(tl_fps, tl_is_df)  # 01:00:00:00 by convention
         for i, rec in enumerate(recs, 1):

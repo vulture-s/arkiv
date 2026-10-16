@@ -276,3 +276,129 @@ def test_api_recorrect_apply_requires_same_site(client_env):
     r = client.post("/api/recorrect?dry_run=0", headers={"Origin": "https://evil.example"})
     assert r.status_code == 403
     assert _fetch(1)["transcript"] == "我用富田電源"  # untouched
+
+
+# ── learning loop: "fix it once, remember it" ────────────────────────────────
+
+def test_is_hotword_term_rejects_sentences(corr_env):
+    corrections = corr_env
+    assert corrections.is_hotword_term("李多慧")
+    assert corrections.is_hotword_term("Waffle House")
+    assert not corrections.is_hotword_term("")
+    assert not corrections.is_hotword_term("她今天來到攝影棚。")      # sentence punct
+    assert not corrections.is_hotword_term("我們，然後")              # comma
+    assert not corrections.is_hotword_term("一" * 17)                 # too long
+    assert not corrections.is_hotword_term("this is a whole sentence")  # >3 words
+
+
+def test_learn_creates_rule_with_pre_and_post(corr_env):
+    corrections = corr_env
+    out = corrections.learn("李東煙", "李多慧")
+    assert out["created"] is True and out["hotword"] is True
+    rule = corrections.load_rules()[0]
+    assert (rule["from"], rule["to"], rule["pre"], rule["post"]) == ("李東煙", "李多慧", True, True)
+    assert rule["learned_at"]
+    assert corrections.hotword_terms() == ["李多慧"]
+
+
+def test_learn_upserts_same_from_and_dedups_hotword(corr_env):
+    corrections = corr_env
+    corrections.learn("李東煙", "李多惠")
+    out = corrections.learn("李東煙", "李多慧")   # user fixes their own fix
+    assert out["created"] is False
+    rules = corrections.load_rules()
+    assert len(rules) == 1 and rules[0]["to"] == "李多慧"
+    # three different mis-hearings of the same name → one hotword
+    corrections.learn("多惠", "李多慧")
+    corrections.learn("小熙", "李多慧")
+    assert len(corrections.load_rules()) == 3
+    assert corrections.hotword_terms() == ["李多慧"]
+
+
+def test_learn_sentence_is_post_only(corr_env):
+    """A sentence-shaped fix is still remembered for recorrect, but is never fed
+    to Whisper as a hotword (prompt-hallucination guard)."""
+    corrections = corr_env
+    out = corrections.learn("今天天氣很好", "今天天氣很好，我們出發。")
+    assert out["hotword"] is False
+    assert corrections.load_rules()[0]["pre"] is False
+    assert corrections.hotword_terms() == []
+
+
+def test_hotword_terms_skip_sentence_even_if_flagged_pre(corr_env):
+    corrections = corr_env
+    corrections.save_rules([
+        {"from": "a", "to": "這是一整句話，不是名字。", "pre": True},
+        {"from": "富田", "to": "Furutech", "pre": True},
+    ])
+    assert corrections.hotword_terms() == ["Furutech"]
+
+
+def test_hotword_order_newest_learned_first(corr_env):
+    corrections = corr_env
+    corrections.save_rules([
+        {"from": "富田", "to": "Furutech", "pre": True},  # hand-written, no stamp
+        {"from": "x1", "to": "舊詞", "pre": True, "learned_at": "2026-01-01T00:00:00.000000Z"},
+        {"from": "x2", "to": "新詞", "pre": True, "learned_at": "2026-10-01T00:00:00.000000Z"},
+    ])
+    assert corrections.hotword_terms() == ["新詞", "舊詞", "Furutech"]
+
+
+def test_learned_at_survives_save_roundtrip(corr_env):
+    corrections = corr_env
+    corrections.learn("李東煙", "李多慧")
+    stamp = corrections.load_rules()[0]["learned_at"]
+    corrections.save_rules(corrections.load_rules())
+    assert corrections.load_rules()[0]["learned_at"] == stamp
+
+
+def test_learn_refuses_unreadable_dictionary(corr_env):
+    """Never build a fresh dictionary over a file we couldn't parse."""
+    corrections = corr_env
+    path = corrections.corrections_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        corrections.learn("李東煙", "李多慧")
+    assert path.read_text(encoding="utf-8") == "{not json"
+
+
+def test_learn_rejects_bad_input(corr_env):
+    corrections = corr_env
+    with pytest.raises(ValueError):
+        corrections.learn("", "李多慧")
+    with pytest.raises(ValueError):
+        corrections.learn("李多慧", "李多慧")
+
+
+def test_api_learn_then_apply_only_that_rule(client_env):
+    client = client_env
+    mid = _seed("李東煙來了，富田也在",
+                [{"start": 0, "end": 1, "text": "李東煙來了，富田也在"}])
+    # an unrelated rule already in the dictionary must NOT be applied by learn
+    client.put("/api/corrections", json={"rules": [{"from": "富田", "to": "Furutech"}]})
+    r = client.post("/api/corrections/learn",
+                    json={"rule": {"from": "李東煙", "to": "李多慧"}, "apply": True})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created"] is True and body["hotword"] is True
+    assert body["applied"]["media_updated"] == 1 and body["applied"]["backup"]
+    row = _fetch(mid)
+    assert row["transcript"] == "李多慧來了，富田也在"
+    assert json.loads(row["segments_json"])[0]["text"] == "李多慧來了，富田也在"
+    rules = client.get("/api/corrections").json()["rules"]
+    assert [r["from"] for r in rules] == ["富田", "李東煙"]
+
+
+def test_api_learn_without_apply_writes_no_transcript(client_env):
+    client = client_env
+    mid = _seed("李東煙來了")
+    r = client.post("/api/corrections/learn", json={"rule": {"from": "李東煙", "to": "李多慧"}})
+    assert r.status_code == 200
+    assert "applied" not in r.json()
+    assert _fetch(mid)["transcript"] == "李東煙來了"
+
+
+def test_api_learn_bad_rule_is_400(client_env):
+    r = client_env.post("/api/corrections/learn", json={"rule": {"from": "", "to": "x"}})
+    assert r.status_code == 400

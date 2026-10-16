@@ -219,3 +219,43 @@ def test_custom_terms_empty(monkeypatch):
     monkeypatch.setattr(transcribe, "VOCABULARY_FILE", "")
     assert transcribe._custom_terms() == []
     assert transcribe._build_initial_prompt() == ""
+
+
+# ── hotword prompt budget + correction-dictionary feed ───────────────────────
+
+def test_prompt_budget_keeps_priority_terms_and_drops_tail(monkeypatch):
+    """Whisper keeps only the LAST ~223 prompt tokens, so an over-long list would
+    silently lose its FRONT (the env / vocabulary.txt terms). The budget is
+    enforced here instead: priority terms survive, the tail is dropped."""
+    many = ",".join("詞{0:03d}".format(i) for i in range(200))
+    monkeypatch.setattr(transcribe, "CUSTOM_VOCABULARY", "李多慧," + many)
+    monkeypatch.setattr(transcribe, "VOCABULARY_FILE", "")
+    prompt = transcribe._build_initial_prompt()
+    assert prompt.startswith("李多慧、")
+    assert transcribe._estimate_prompt_tokens(prompt) <= transcribe.PROMPT_TOKEN_BUDGET
+    assert "詞199" not in prompt
+
+
+def test_prompt_budget_long_term_does_not_block_shorter(monkeypatch):
+    kept, dropped = transcribe._select_prompt_terms(["甲", "乙" * 50, "丙"], budget=10)
+    assert kept == ["甲", "丙"] and dropped == ["乙" * 50]
+
+
+def test_estimate_prompt_tokens_is_conservative_for_cjk():
+    assert transcribe._estimate_prompt_tokens("李多慧") == 6
+    assert transcribe._estimate_prompt_tokens("Furutech") == 3
+    assert transcribe._estimate_prompt_tokens("") == 0
+
+
+def test_learned_correction_reaches_whisper_call(monkeypatch, hermetic, tmp_path):
+    """The loop end to end: one learned fix in the active project's dictionary
+    is passed as initial_prompt to the NEXT faster-whisper call."""
+    import config
+    import corrections
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(transcribe, "VOCABULARY_FILE", "")
+    corrections.learn("李東煙", "李多慧")
+    fake = FakeModel([FakeSegment("x", 0.0, 0.5, words=[])], FakeInfo("zh"))
+    monkeypatch.setattr(transcribe, "_fw_model", fake)
+    transcribe._transcribe_faster_whisper("/tmp/fake.wav", "zh")
+    assert fake.last_opts["initial_prompt"] == "李多慧"

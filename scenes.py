@@ -14,7 +14,9 @@ of the path-leak guard for exactly this reason (there was nowhere to share from)
 and the copy silently missed a fix to the original for 38 days (#182). Same
 trap, so: one derivation, two callers.
 
-Depends only on `pathres` (itself db+stdlib) and stdlib — no server state, no
+Depends only on `pathres` (itself db+stdlib), `camera_motion` (stdlib at import;
+numpy only inside its measuring functions, never on this read path) and stdlib —
+no server state, no
 fastapi, no db — so it sits at the bottom of the import graph and is safe for
 the stdio MCP server to import. Callers fetch their own rows and own their own
 error surface: this module returns data and never raises HTTPException; the 404
@@ -23,6 +25,7 @@ stays in routers/media.py.
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import camera_motion
 from pathres import _display_path, _resolve_media_path
 
 
@@ -119,6 +122,17 @@ def _scenes_core(media_id: int, rec: Dict[str, Any],
 # true when both are visible in one screenful. Everything above the fold —
 # envelope, boundaries, vision fields — is shared by construction.
 
+def _append_camera_motion(scene: Dict[str, Any], frame: Dict[str, Any]) -> None:
+    """Shared by both surfaces, appended AFTER the keyframe key and only when the
+    scene was measured — the same conditional-append convention as keyframe_url,
+    so every pre-existing body (no measurement) stays byte-identical. Unlike the
+    vision fields, absence here is meaningful: "not measured" (the pass is opt-in)
+    must not read as "measured, static"."""
+    cm = camera_motion.from_db(frame.get("camera_motion"))
+    if cm is not None:
+        scene["camera_motion"] = cm
+
+
 def _scenes_payload(media_id: int, rec: Dict[str, Any],
                     frames: List[Dict[str, Any]]) -> Dict[str, Any]:
     """The exact HTTP response body. Byte-frozen by tests/test_scenes_contract.py."""
@@ -128,6 +142,7 @@ def _scenes_payload(media_id: int, rec: Dict[str, Any],
             # Appended LAST, and conditionally: key order is contract, and a
             # scene with no thumbnail omits the key rather than carrying null.
             scene["keyframe_url"] = _keyframe_url(frame["thumbnail_path"])
+        _append_camera_motion(scene, frame)
     return payload
 
 
@@ -139,4 +154,5 @@ def _scenes_for_mcp(media_id: int, rec: Dict[str, Any],
     for scene, frame in zip(payload["scenes"], frames):
         if frame.get("thumbnail_path"):
             scene["keyframe_path"] = _keyframe_path(frame["thumbnail_path"])
+        _append_camera_motion(scene, frame)
     return payload

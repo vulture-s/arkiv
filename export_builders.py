@@ -438,6 +438,31 @@ def _edl_fps_warning(recs: list, tl_fps: float) -> "str | None":
     )
 
 
+# CMX3600's frame-rate vocabulary: the FCM header only knows DROP / NON-DROP,
+# and conform tooling assumes one of these film/video rates. Anything else
+# (50 / 59.94 / 60 / 119.88 …) imports, but some NLEs conform the source TC
+# against a different rate than the clip's — FCPXML carries the exact rational.
+_EDL_SPEC_FPS = (23.976, 24.0, 25.0, 29.97, 30.0)
+
+
+def _edl_high_fps_warning(fps) -> "str | None":
+    """B13 (high-fps): EDL comment line when a clip's rate is outside the
+    CMX3600 set (_EDL_SPEC_FPS), else None. Non-blocking on purpose — Resolve
+    imports a 59.94 EDL fine when the timeline is also 59.94, so a hard 422
+    would break a working path; the comment tells the editor to prefer FCPXML
+    if conform drifts. Comment lines are ignored by EDL parsers. Pure."""
+    try:
+        f = float(fps)
+    except (TypeError, ValueError):
+        return None
+    if f <= 0 or any(abs(f - s) < 0.01 for s in _EDL_SPEC_FPS):
+        return None
+    return (
+        f"* WARNING: {f:g} fps is outside the CMX3600 EDL rates "
+        f"(23.976/24/25/29.97/30); if conform TC drifts, export FCPXML instead."
+    )
+
+
 # ── FCPXML ───────────────────────────────────────────────────────────────────
 
 def _fcpxml_rational(fps: float):
@@ -450,3 +475,73 @@ def _fcpxml_rational(fps: float):
     if rounded in _fps_map:
         return _fps_map[rounded]
     return "1", str(round(fps))
+
+
+# ── Transcript markers (roadmap 8.2i) ─────────────────────────────────────────
+# The scene markers (edl-markers / fcpxml) come from analysed FRAMES. These come
+# from the transcript's segments, so an editor sees on the Resolve timeline who
+# said what, when. Pure: segments in, marker cues out; the route serialises.
+
+TRANSCRIPT_MARKER_NAME_MAX = 60     # same cap the scene markers already use
+TRANSCRIPT_MARKER_NOTE_MAX = 500    # full text goes in the note, within reason
+TRANSCRIPT_MARKER_MIN_SPAN_S = 1.5  # a marker shorter than this absorbs the next
+TRANSCRIPT_MARKER_MAX_GAP_S = 1.0   # ...unless there is a pause longer than this
+
+
+def _marker_text(text) -> str:
+    """One line, no control characters (CR/LF would start a new EDL line, and
+    C0 controls are not legal in XML 1.0 at all)."""
+    if not text:
+        return ""
+    one_line = " ".join(str(text).split())
+    return "".join(c for c in one_line if ord(c) >= 0x20 and ord(c) != 0x7F)
+
+
+def _join_marker_text(a: str, b: str) -> str:
+    # Latin words need a space between them; CJK runs do not.
+    if a and b and a[-1].isascii() and a[-1].isalnum() and b[0].isascii() and b[0].isalnum():
+        return a + " " + b
+    return a + b
+
+
+def truncate_marker_name(text: str, limit: int = TRANSCRIPT_MARKER_NAME_MAX,
+                         ellipsis: str = "…") -> str:
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - len(ellipsis))] + ellipsis
+
+
+def transcript_marker_cues(segments, min_span: float = TRANSCRIPT_MARKER_MIN_SPAN_S,
+                           max_gap: float = TRANSCRIPT_MARKER_MAX_GAP_S,
+                           note_max: int = TRANSCRIPT_MARKER_NOTE_MAX) -> list:
+    """Transcript segments → [{start, end, text}] marker cues.
+
+    One cue per segment, except that a cue shorter than ``min_span`` swallows the
+    following segment when the pause between them is at most ``max_gap`` and the
+    joined text still fits ``note_max`` — Whisper emits sub-second fragments
+    ("嗯", "對") that would otherwise stack unreadable markers frame-on-frame.
+    Segments with no text are dropped. Times are taken as given (the caller has
+    already trimmed/rebased them); ``end`` never precedes ``start``.
+    """
+    cues = []
+    cur = None
+    ordered = sorted(
+        (s for s in (segments or []) if isinstance(s, dict)),
+        key=lambda s: float(s.get("start") or 0),
+    )
+    for seg in ordered:
+        text = _marker_text(seg.get("text"))
+        if not text:
+            continue
+        start = float(seg.get("start") or 0)
+        end = max(start, float(seg.get("end") or start))
+        if (cur is not None
+                and cur["end"] - cur["start"] < min_span
+                and start - cur["end"] <= max_gap
+                and len(cur["text"]) + len(text) + 1 <= note_max):
+            cur["end"] = max(cur["end"], end)
+            cur["text"] = _join_marker_text(cur["text"], text)
+            continue
+        cur = {"start": start, "end": end, "text": text[:note_max]}
+        cues.append(cur)
+    return cues

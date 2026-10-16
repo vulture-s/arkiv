@@ -68,6 +68,12 @@ _STAGE_EVENTS = os.environ.get("ARKIV_STAGE_EVENTS") == "1"
 # brick 4: per-run whisper language override (None = auto-detect / guard-layer
 # hint, the default). Set from --language in main(), read at the transcribe call.
 _LANGUAGE_OVERRIDE = None
+# A7 camera motion (camera_motion.py). Opt-in: it is one extra full read + decode
+# of every video (~20-55 s per minute of 4K long-GOP on an M2 Max, see
+# camera_motion._keyframe_dense), far more than the frame-extraction stage it
+# follows. `--camera-motion` or ARKIV_CAMERA_MOTION=1 turns it on for an ingest;
+# `--refresh-motion` backfills an existing library without touching vision.
+_CAMERA_MOTION = os.environ.get("ARKIV_CAMERA_MOTION", "").strip().lower() in ("1", "true", "yes", "on")
 
 # Pro/cinema codecs ffmpeg can't decode without vendor SDKs — a --dir scan drops
 # them silently, so a user who dumps a C300/RED/BRAW card sees "Found 0 media
@@ -996,6 +1002,12 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
                 frame["thumbnail_path"] = db.to_relative(frame["thumbnail_path"])
         record["_frames"] = frame_data  # pass to caller for DB insert
 
+        # Camera motion (optional, video only): per-scene pan/zoom/jitter,
+        # cut on the same boundaries scenes.py serves. Never fails the ingest.
+        if _CAMERA_MOTION and is_video and frame_data:
+            _stage("motion", "camera motion")
+            _attach_camera_motion(str(path), frame_data, meta["duration_s"])
+
         # Vision description (optional)
         if not skip_vision and frame_data:
             _stage("llava", "vision")
@@ -1013,6 +1025,65 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     if not _STAGE_EVENTS:
         print(" [OK]")
     return record
+
+
+def _attach_camera_motion(path: str, frame_data: List[Dict], duration_s: float) -> bool:
+    """Measure and stash each scene's motion JSON on its frame dict under
+    "camera_motion" (written by the caller next to the frame row). False on any
+    failure — a clip that cannot be measured stays NULL ("not measured")."""
+    import camera_motion as cmo
+    try:
+        ordered = sorted(frame_data, key=lambda f: f["index"])
+        metrics = cmo.measure_scenes(path, ordered, duration_s,
+                                     ffmpeg=config.FFMPEG_PATH,
+                                     ffprobe=config.FFPROBE_PATH)
+    except Exception as e:  # measurement is advisory; ingest must not die on it
+        print(f"  [motion] skipped: {e}")
+        return False
+    for fd, m in zip(ordered, metrics):
+        fd["camera_motion"] = cmo.to_db(m)
+    return True
+
+
+def _run_refresh_motion(args) -> int:
+    """`--refresh-motion`: backfill camera motion on already-indexed videos.
+
+    Re-reads only the video stream; vision, transcript, thumbnails and frames are
+    untouched. Picks media with at least one frame whose camera_motion is NULL or
+    from an older measurement version — "has a value" is not the resume
+    condition, "has THIS version's value" is. Returns the count of media written."""
+    import camera_motion as cmo
+    import time as _time
+    marker = '%"v": {0}%'.format(cmo.SCHEMA_VERSION)
+    with db.get_conn() as conn:
+        rows = conn.execute("""
+            SELECT DISTINCT m.id, m.path, m.filename, m.duration_s
+            FROM media m JOIN frames f ON f.media_id = m.id
+            WHERE f.camera_motion IS NULL OR f.camera_motion NOT LIKE ?
+            ORDER BY m.id
+        """, (marker,)).fetchall()
+    todo = [r for r in rows if Path(r["filename"] or "").suffix.lower() in VIDEO_EXT]
+    if args.limit:
+        todo = todo[:args.limit]
+    print(f"Camera motion backfill: {len(todo)} video(s) to measure")
+    done = 0
+    for i, r in enumerate(todo, 1):
+        src = db.resolve_path(r["path"])
+        if not os.path.exists(src):
+            print(f"[{i}/{len(todo)}] {r['filename']}  [missing — skipped]")
+            continue
+        frames = db.get_frames(r["id"])
+        fdata = [{"index": f["frame_index"], "timestamp_s": f["timestamp_s"]} for f in frames]
+        t0 = _time.time()
+        if not _attach_camera_motion(src, fdata, float(r["duration_s"] or 0.0)):
+            continue
+        with db.get_conn() as conn:
+            for fd in fdata:
+                db.set_frame_camera_motion(r["id"], fd["index"], fd.get("camera_motion"), _conn=conn)
+        done += 1
+        print(f"[{i}/{len(todo)}] {r['filename']}  [{_time.time() - t0:.1f}s]")
+    print(f"Camera motion backfill done: {done}/{len(todo)}")
+    return done
 
 
 def _run_queue_cmd(args):
@@ -2286,6 +2357,10 @@ def _run_apply_aliases(args):
 
 
 def main():
+    # Server-spawned? Then die with the server if it is SIGKILLed (desktop app
+    # quit) instead of running on as an orphan — inert for CLI runs (audit N1).
+    import orphan_guard
+    orphan_guard.install()
     # Windows: the console codepage (cp950 on zh-TW) can't encode chars the CLI
     # prints (⚠, →, emoji) → UnicodeEncodeError crashes mid-run. Force UTF-8 on
     # stdout/stderr so progress output is robust on every platform.
@@ -2344,6 +2419,8 @@ def main():
     parser.add_argument("--json", action="store_true", help="With --status: emit JSON instead of human-readable")
     parser.add_argument("--retraditionalize", action="store_true", help="Phase 9.8b backfill: retro-convert existing SIMPLIFIED zh transcripts (transcript + segments + words + the per-language archive) to Taiwan Traditional (s2twp), so the pre-9.8b backlog stops missing a 記憶體 query on a 內存 clip. GATED: only genuine Simplified rows convert; already-Traditional / mixed rows are skipped (never fed to the phrase layer, so never corrupted). Idempotent, timing-safe. Follow with `embed.py --rebuild`. No --dir / re-transcribe needed.")
     parser.add_argument("--dry-run", action="store_true", help="With --retraditionalize: report what would convert without writing.")
+    parser.add_argument("--camera-motion", action="store_true", help="A7: also measure per-scene camera motion (pan / jitter / zoom / zjitter) during this ingest — zero VLM, ffmpeg+numpy. Opt-in because it re-reads and decodes every video (~20-55 s per minute of 4K). Same as ARKIV_CAMERA_MOTION=1.")
+    parser.add_argument("--refresh-motion", action="store_true", help="A7 backfill: measure camera motion for already-indexed videos missing it (or measured by an older version). No re-vision, no re-transcribe, no --dir needed. Honours --limit.")
     args = parser.parse_args()
 
     # brick 4: apply the per-run whisper preset + language override before any
@@ -2352,8 +2429,10 @@ def main():
     # transcribe CLI); language is a direct override read at the transcribe call.
     if args.whisper_guard is not None:
         tr._apply_whisper_guard_mode(tr._resolve_whisper_guard_mode(args.whisper_guard))
-    global _LANGUAGE_OVERRIDE
+    global _LANGUAGE_OVERRIDE, _CAMERA_MOTION
     _LANGUAGE_OVERRIDE = args.language or None
+    if args.camera_motion:
+        _CAMERA_MOTION = True
     # One-time notice: with no explicit --language, Whisper falls back to zh, so
     # English/Japanese footage gets silently transcribed as garbled Chinese.
     if _LANGUAGE_OVERRIDE is None and (getattr(args, "dir", None) or getattr(args, "files", None)):
@@ -2370,7 +2449,7 @@ def main():
         or args.canonicalize_tags
         or args.propose_aliases or args.apply_aliases
         or args.propose_collections or args.apply_collections
-        or args.retraditionalize
+        or args.retraditionalize or args.refresh_motion
         or bool(args.queue) or args.status
     )
     if not maintenance_mode and not args.dir and not args.files:
@@ -2418,6 +2497,10 @@ def main():
 
     if args.regenerate_thumbnails:
         _regenerate_thumbnails()
+        return
+
+    if args.refresh_motion:
+        _run_refresh_motion(args)
         return
 
     # ── Vision-only mode: patch missing vision descriptions ──────────────
@@ -2666,6 +2749,9 @@ def main():
                                     edit_reason=fd.get("edit_reason"),
                                     _conn=conn,
                                 )
+                                if fd.get("camera_motion"):
+                                    db.set_frame_camera_motion(
+                                        mid, fd["index"], fd["camera_motion"], _conn=conn)
                 # Queue for Phase 2 vision
                 if frames and need_vision:
                     # fable-audit round-5 #28: the FULL record (transcript +
