@@ -12,6 +12,8 @@ reader reads once BEFORE the write, so any read-side cache would have something
 to hold onto.
 """
 import importlib
+
+import pytest
 import os
 import subprocess
 import sys
@@ -73,6 +75,7 @@ def test_http_scenes_sees_frames_rewritten_by_another_process(fastapi_client, tm
 
 
 def test_mcp_get_scenes_sees_frames_rewritten_by_another_process(tmp_db, sample_record):
+    pytest.importorskip("mcp")  # the MCP SDK is gated to Python >= 3.10
     db = importlib.import_module("db")
     mcp_server = importlib.import_module("mcp_server")
     mid = _seed(db, sample_record)
