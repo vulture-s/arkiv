@@ -463,3 +463,16 @@ def test_deleting_the_chain_does_not_erase_the_baseline(scratch, monkeypatch):
     assert offload.run_offload(c2, [dst])[0] != 0
     c3 = _card(scratch / "card3", {"C/C0001.MP4": b"day3"})
     assert offload.run_offload(c3, [dst])[0] != 0  # stays red
+
+
+def test_known_dst_hashes_keys_a_renamed_clip_by_its_destination_name():
+    """#535 lets the MHL pass reuse dst_hash keyed by path. A clip renamed on a
+    name clash lives at dst_rel — and the card's rel on that drive holds the
+    OTHER file it clashed with. Keying by rel would hand that other file this
+    clip's hash whenever size+mtime happen to match."""
+    import offload
+    fs = {"status": "verified", "dst_hash": "abc", "dst_size": 5, "dst_mtime_ns": 1,
+          "dst_rel": "CLIP/C0001__2.MP4", "renamed_from": "CLIP/C0001.MP4"}
+    state = {"files": [{"rel": "CLIP/C0001.MP4", "destinations": {"D": fs}}]}
+    known = offload._known_dst_hashes(state, "D", "xxh64")
+    assert set(known) == {"CLIP/C0001__2.MP4"}
