@@ -8,12 +8,15 @@ helpers `_current_project_registry_name` (get_stats) and `_thumb_url`
 server.ROOT for the disk-usage fallback. Imports auth + db + config +
 tag_quality/tag_aliases/smart_collections/projects — no server import, no cycle.
 """
-from fastapi import APIRouter, Depends
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 import os
 
 import collection_defs
 import config
 import db
+import exposure_report
 import projects as project_registry
 import smart_collections
 import tag_aliases
@@ -168,3 +171,24 @@ def size_by_ext(
             "FROM media GROUP BY ext ORDER BY total_mb DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+@router.get("/api/report/exposure")
+def get_exposure_report(
+    term: List[str] = Query(..., description="brand/product/object term; repeat for several (any one hits)"),
+    filters: str = "",
+    group_by: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    """Brand / object exposure report — clips, hit scenes and total exposure
+    seconds for the given terms, matched against keyframe vision descriptions
+    and tags (NOT frame-by-frame detection; see `method.note`). Same body as
+    the `exposure_report` MCP tool (exposure_report.build_exposure_report)."""
+    try:
+        return exposure_report.build_exposure_report(
+            term, filters=filters or None, group_by=group_by or None,
+            limit=limit, offset=offset)
+    except exposure_report.ReportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
