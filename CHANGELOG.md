@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### 新增
+- **品牌／物件曝光報告**：給一個或多個詞（品牌名、產品名、物件），統計素材裡命中幾支、總共幾秒、在哪些 scene。比對 keyframe 的 vision 描述與標籤，大小寫、全半形、繁簡都不分；可用搜尋框語法（`shot:` `camera:` `tag:`…）縮小範圍，可依拍攝日期或相機分組。曝光秒數＝命中 scene 的整段長度，scene 切法跟 `get_scenes` 同一套。三個入口：CLI `python exposure_report.py "古河" --filters "shot:2026-10"`（markdown／`--format json`）、REST `GET /api/report/exposure?term=…`、MCP 工具 `exposure_report`。⚠️ 這是依 vision 描述比對，不是逐格偵測：會漏判、會誤判，報告裡也這樣寫；沒做過 vision 分析的素材另外計數，不算成「沒出現」。
+
 ## v1.5.1 - 2026-10-14
 
 **過卡的 MHL 清單快了一倍以上：複製完之後不再把整張卡重讀 3 遍。**
