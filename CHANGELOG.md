@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### 新增
+- **品牌／物件曝光報告**：給一個或多個詞（品牌名、產品名、物件），統計素材裡命中幾支、總共幾秒、在哪些 scene。比對 keyframe 的 vision 描述與標籤，大小寫、全半形、繁簡都不分；可用搜尋框語法（`shot:` `camera:` `tag:`…）縮小範圍，可依拍攝日期或相機分組。曝光秒數＝命中 scene 的整段長度，scene 切法跟 `get_scenes` 同一套。三個入口：CLI `python exposure_report.py "古河" --filters "shot:2026-10"`（markdown／`--format json`）、REST `GET /api/report/exposure?term=…`、MCP 工具 `exposure_report`。⚠️ 這是依 vision 描述比對，不是逐格偵測：會漏判、會誤判，報告裡也這樣寫；沒做過 vision 分析的素材另外計數，不算成「沒出現」。
+
 **逐字稿可以直接變成 Resolve 時間軸上的 marker。** Inspector 匯出列多一顆「字幕 MARKER」：
 匯出的 FCPXML 每段話一個 marker，名稱是那句話（前 60 字），備註是全文，長度跟著那段話。
 設了 ✂ IN/OUT 只輸出範圍內的段落。API：`/api/media/{id}/export/fcpxml?markers=transcript`

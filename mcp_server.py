@@ -24,6 +24,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 
 import db
+import exposure_report as exposure_report_mod
 import scenes
 import search_syntax
 from mcp.server.fastmcp import FastMCP
@@ -454,6 +455,16 @@ def export_project_impl(
     }
 
 
+def exposure_report_impl(terms: Any, filters: str = "", group_by: str = "",
+                         limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    if isinstance(terms, str):
+        terms = [terms]
+    limit = max(1, min(200, int(limit or 50)))
+    return exposure_report_mod.build_exposure_report(
+        list(terms or []), filters=(filters or None), group_by=(group_by or None),
+        limit=limit, offset=offset)
+
+
 # ── MCP tools ─────────────────────────────────────────────────────────────────
 # Tools return JSON strings (ensure_ascii=False keeps Chinese readable, matching
 # export.py) — an unambiguous, version-stable contract across MCP SDK releases.
@@ -638,6 +649,43 @@ def export_project(
                                       include_scenes, max_chars))
     except search_syntax.QueryError as exc:
         raise ValueError("export_project filter: {0}".format(exc))
+
+
+@mcp.tool()
+def exposure_report(terms: List[str], filters: str = "", group_by: str = "",
+                    limit: int = 50, offset: int = 0) -> str:
+    """Brand / product / object exposure across the library: how many clips show
+    it, for how many seconds in total, and in which scenes.
+
+    A scene hits when ANY term appears in its keyframe's vision description or
+    vision tags (case-, width- and Traditional/Simplified-insensitive). Exposure
+    seconds = the full duration of each hit scene, using the same scene cut as
+    get_scenes. This is matched against VLM descriptions, NOT frame-by-frame
+    detection: it misses and mislabels, and a hit scene counts in full even if
+    the object is only on screen for part of it. Always relay `method.note` to
+    the person you are answering.
+
+    Args:
+      terms     one or more words, e.g. ["古河", "FURUTECH"]
+      filters   optional search-box filters narrowing the clips considered,
+                e.g. "shot:2026-10 camera:fx3" (key:value only, no free text)
+      group_by  "" / "date" (shoot day) / "camera"
+      limit, offset  page the per-clip `clips` list (limit 1-200); every total,
+                `by_term` and `groups` always cover ALL hit clips
+
+    Returns a JSON object: {terms, filters, method, clips_in_scope,
+    clips_unanalysed, clips_hit, scenes_hit, exposure_s, by_term, [group_by,
+    groups], clips_total, offset, clips: [{media_id, filename, path (relative),
+    shot_date, camera, media_duration_s, hit_scenes, exposure_s, scenes: [
+    {scene_index, start_s, end_s, duration_s, matched_terms, content_type,
+    description (truncated), tags}]}]}
+    """
+    _require_ready()
+    try:
+        report = exposure_report_impl(terms, filters, group_by, limit, offset)
+    except exposure_report_mod.ReportError as exc:
+        raise ValueError(str(exc))
+    return _j(report)
 
 
 def _prewarm_vectordb() -> None:

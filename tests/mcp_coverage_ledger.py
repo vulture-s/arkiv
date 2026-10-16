@@ -55,6 +55,9 @@ MCP_EQUIVALENTS = {
     "GET /api/media/{media_id}/tags": (("get_media",), "tags are part of get_media"),
     "GET /api/stats": (("library_stats",), ""),
     "GET /api/tags": (("list_tags",), "list_tags returns the top N, not all"),
+    "GET /api/report/exposure": (
+        ("exposure_report",), "same body (exposure_report.build_exposure_report)",
+    ),
 }
 
 # "METHOD /path" -> (category, reason)
