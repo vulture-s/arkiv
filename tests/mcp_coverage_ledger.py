@@ -41,10 +41,11 @@ CATEGORIES = {
 # "METHOD /path" -> (tool names, note on how far the tool matches the route)
 MCP_EQUIVALENTS = {
     "GET /api/media": (
-        ("search_media", "list_recent"),
+        ("search_media", "list_recent", "export_project"),
         "q= search (incl. tag:/camera:/lang:/rating:/type:/shot: filters, via "
-        "search_syntax) maps to search_media, newest-first listing to list_recent; "
-        "the separate filter params and paging have no MCP form",
+        "search_syntax) maps to search_media, newest-first listing to list_recent, "
+        "filtered id-cursor paging (with transcripts + scenes inlined) to "
+        "export_project; the separate filter params have no MCP form",
     ),
     "GET /api/media/{media_id}": (("get_media",), "same record, sanitized paths"),
     "GET /api/media/{media_id}/scenes": (("get_scenes",), ""),
@@ -132,6 +133,7 @@ NOT_EXPOSED = {
     "GET /api/proxy/editor/{media_id}": ("job", "editor proxy state for one clip"),
     "POST /api/offload": ("job", "card offload with checksums"),
     "POST /api/offload/preview": ("job", "offload dry run"),
+    "POST /api/offload/resolve": ("job", "copy one same-name-conflict clip under a user-chosen name"),
     "POST /api/sample/load": ("job", "sample library"),
     "POST /api/sample/remove": ("job", "sample library"),
     "POST /api/sample/seed": ("job", "sample library"),
