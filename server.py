@@ -87,6 +87,8 @@ _TOKEN_QS = _re.compile(r"(token=)[^&\s\"']+")
 class _RedactTokenFilter(_logging.Filter):
     def filter(self, record):
         try:
+            if isinstance(record.msg, str) and "token=" in record.msg:
+                record.msg = _TOKEN_QS.sub(r"\1REDACTED", record.msg)
             if record.args:
                 record.args = tuple(
                     _TOKEN_QS.sub(r"\1REDACTED", a) if isinstance(a, str) else a
@@ -116,9 +118,14 @@ async def _lifespan(app: FastAPI):
 
 def _install_token_redaction_filter() -> None:
     # Idempotent: never stack a second filter if the app is (re)started in-process.
-    logger = _logging.getLogger("uvicorn.access")
-    if not any(isinstance(f, _RedactTokenFilter) for f in logger.filters):
-        logger.addFilter(_RedactTokenFilter())
+    # uvicorn.error too (audit 2026-10-09): WebSocket handshakes are logged there
+    # ('"WebSocket /ws/ingest?token=…" [accepted]'), not on uvicorn.access, and a
+    # browser ws can only authenticate via ?token= — so the raw token landed in
+    # backend.log, which /api/logs/tail serves to a projects_read token.
+    for name in ("uvicorn.access", "uvicorn.error"):
+        logger = _logging.getLogger(name)
+        if not any(isinstance(f, _RedactTokenFilter) for f in logger.filters):
+            logger.addFilter(_RedactTokenFilter())
 
 app = FastAPI(title="Media Asset Manager API", lifespan=_lifespan)
 # R5-25 / #51: web-security boundary guards live in webguard.py (a leaf service
@@ -145,6 +152,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Audit 2026-10-09: same-site (CSRF) check on every write, not per-route.
+from webguard import SameSiteWriteGuard  # noqa: E402
+app.add_middleware(SameSiteWriteGuard)
 
 # R5-25 / #51 router split: route groups peeled from this module into focused
 # APIRouter modules under routers/, mounted here. Each is self-contained (imports
@@ -163,6 +173,7 @@ from routers.recorrect import router as recorrect_router  # noqa: E402
 from routers.misc import router as misc_router  # noqa: E402
 from routers.sample import router as sample_router  # noqa: E402
 from routers.export import router as export_router  # noqa: E402
+from routers.color import router as color_router  # noqa: E402
 from routers.media import router as media_router  # noqa: E402
 from routers.search import router as search_router  # noqa: E402
 from routers.ingest import router as ingest_router  # noqa: E402
@@ -180,6 +191,8 @@ app.include_router(recorrect_router)
 app.include_router(misc_router)
 app.include_router(sample_router)
 app.include_router(export_router)
+# before media_router: POST /api/media/color-profile must not be read as /api/media/{id}
+app.include_router(color_router)
 app.include_router(media_router)
 app.include_router(search_router)
 app.include_router(ingest_router)

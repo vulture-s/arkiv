@@ -3,6 +3,17 @@
 Local Media Asset Manager — Phase 1 Ingest CLI
 Usage:
     python ingest.py --dir /path/to/media [--limit N] [--skip-vision] [--db /path/to/media.db]
+
+Exit codes (full table: docs/pipeline.md § Exit Codes):
+    0  clean — every scanned file is in the library
+    1  partial failure (Phase 1 or Phase 2)
+    2  every file failed Phase 1 (usually an upstream problem)
+    3  dangling thumbnails symlink (frames.py last-line guard)
+    4  storage preflight failed
+    5  --migrate-storage: backup failed
+    6  --migrate-storage: target .arkiv already exists
+    7  reconcile mismatch — a scanned file landed in no bucket, or was counted as
+       in the library but has no DB row (issue #393). Precedence: 2 > 7 > 1.
 """
 from __future__ import annotations
 import argparse
@@ -20,6 +31,7 @@ from typing import Dict, List
 
 import codec
 import collection_defs
+import color_profiles
 import config
 import db
 import frames as frm
@@ -310,6 +322,24 @@ def _white_balance_string(kelvin, tint, path=None):
     return "{0}K T{1}".format(int(round(kelvin_value)), int(round(tint_value)))
 
 
+def _real_video_stream(path: str, streams) -> Optional[Dict]:
+    """First video stream that is actual picture content (issue #521).
+
+    Returns None for audio-extension files and skips `attached_pic` streams
+    (embedded cover art), so codec / fps / width / height / start_tc are never
+    read off an album cover.
+    """
+    if Path(path).suffix.lower() in mediatypes.AUDIO_EXT:
+        return None
+    for s in streams:
+        if s.get("codec_type") != "video":
+            continue
+        if (s.get("disposition") or {}).get("attached_pic") == 1:
+            continue
+        return s
+    return None
+
+
 def probe(path: str) -> Optional[Dict]:
     # `-v error` (not `quiet`) so real ffprobe errors surface on stderr — a
     # silent `-v quiet` failure mid-ingest used to print only "[ffprobe failed]"
@@ -347,7 +377,14 @@ def probe(path: str) -> Optional[Dict]:
     fmt = data.get("format", {})
     streams = data.get("streams", [])
 
-    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    # Issue #521: an audio file's embedded cover art (ID3v2 APIC, m4a `covr`,
+    # FLAC PICTURE) is reported by ffprobe as a VIDEO stream — `codec=mjpeg`,
+    # `r_frame_rate=90000/1`, the cover's width/height — flagged only by
+    # `disposition.attached_pic=1`. Taking "the first video stream" recorded that
+    # picture as the file's picture track. Skip attached pictures, and never
+    # read video geometry from an audio-extension file at all: whatever video
+    # stream an audio container carries is artwork, not footage.
+    video_stream = _real_video_stream(path, streams)
     audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
 
     duration = float(fmt.get("duration") or 0)
@@ -686,6 +723,29 @@ def build_proxies() -> tuple:
     return proxy_ok, proxy_skip
 
 
+# Proxy encode timeout scales with clip length. A flat 600s killed every long
+# 4K HEVC clip: on an M2 Max with VideoToolbox decode, 4K60 HEVC → 720p ran at
+# ~0.9x realtime (17.2 min clip = 902s, 20.9 min = 1104s; 2026-10-14), so
+# anything over ~11 min timed out after burning the full 600s. 3x realtime
+# leaves room for the software-decode retry and a loaded machine; the floor
+# keeps short clips' old budget, the cap bounds a bogus probed duration.
+PROXY_TIMEOUT_FLOOR_S = 600
+PROXY_TIMEOUT_PER_SOURCE_S = 3.0
+PROXY_TIMEOUT_CAP_S = 4 * 3600
+
+
+def _proxy_timeout_s(path: str) -> float:
+    from pathres import _probe_duration
+    try:  # a probe problem must never cost the proxy itself — fall back to the floor
+        duration = _probe_duration(path)
+    except Exception:
+        duration = None
+    if not duration or duration <= 0:
+        return float(PROXY_TIMEOUT_FLOOR_S)
+    return float(min(max(PROXY_TIMEOUT_FLOOR_S, duration * PROXY_TIMEOUT_PER_SOURCE_S),
+                     PROXY_TIMEOUT_CAP_S))
+
+
 def generate_proxy(media_id: int, path: str, force: bool = False,
                    height: Optional[int] = None, hwaccel: Optional[bool] = None) -> Optional[str]:
     """Generate an H.264 proxy for browser playback. Returns proxy path or None.
@@ -717,12 +777,14 @@ def generate_proxy(media_id: int, path: str, force: bool = False,
     tmp_path = proxy_path.with_name("{0}.tmp.{1}{2}".format(proxy_path.stem, os.getpid(), proxy_path.suffix))
     tmp_path.unlink(missing_ok=True)
 
+    timeout_s = _proxy_timeout_s(path)
+
     def _run(use_hw: bool):
         # encoding pinned: Windows zh-TW default cp950 can't decode ffmpeg's
         # utf-8 stderr → UnicodeDecodeError crashes proxy gen on headless ingest.
         return subprocess.run(
             _build_proxy_cmd(path, str(tmp_path), height, use_hw),
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_s,
         )
 
     try:
@@ -748,7 +810,7 @@ def generate_proxy(media_id: int, path: str, force: bool = False,
         return None
     except subprocess.TimeoutExpired:
         tmp_path.unlink(missing_ok=True)
-        print("[proxy] timeout after 600s: {0}".format(path))
+        print("[proxy] timeout after {0:.0f}s: {1}".format(timeout_s, path))
         return None
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)
@@ -906,9 +968,19 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # SVG/vector stills are intentionally excluded — no pixel stream, no thumbnail.
     is_video = ext in VIDEO_EXT
     still_raster = ext in RASTER_IMAGE_EXTS
+
+    # Log footage (S-Log3 etc.) is unwatchable flat; posters and the frames vision
+    # reads get a log→Rec.709 LUT. A profile already on the row (set by the user,
+    # or "none" to opt out) wins over auto-detection. Proxies stay log on purpose:
+    # the player applies the LUT live so the original stays one toggle away.
+    color_profile = (existing or {}).get("color_profile") or (
+        color_profiles.detect_profile(str(path)) if is_video else None)
+    if color_profile:
+        record["color_profile"] = color_profile
+    lut = color_profiles.lut_file_for(color_profile)
     if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("thumb", "thumbnail")
-        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh)
+        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh, lut=lut)
         # Only record a thumbnail when extraction succeeded — omitting the key on
         # failure preserves the prior value on refresh (H6) and leaves new rows
         # at the column default (NULL).
@@ -918,7 +990,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # Frame extraction (video + raster still) — persistent thumbnails + DB records
     if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("frames", "frames")
-        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh)
+        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh, lut=lut)
         for frame in frame_data:
             if frame.get("thumbnail_path"):
                 frame["thumbnail_path"] = db.to_relative(frame["thumbnail_path"])
@@ -1013,6 +1085,122 @@ _VISION_CONSECUTIVE_HALT = 20
 # so halt fast. The counter resets on any ok/skip/move (proof the drive is readable),
 # so a few genuinely-corrupt clips never trip it. Env-tunable; 0 disables.
 _INGEST_CONSECUTIVE_HALT = int(os.getenv("ARKIV_INGEST_HALT_STREAK", "5") or 0)
+
+
+# issue #393: a batch silently lost one file and still exited 0 — the only way to
+# notice was `comm` between the disk listing and `media.filename`. The exit code
+# answers "did it crash", not "did it finish", and BENCHMARK SUMMARY only lists the
+# files that WERE processed, so a file that fell through every counter left no
+# trace at all. This report closes that gap with output only: every queued file
+# must land in exactly one bucket, and every file we claim is in the library is
+# checked against the DB itself rather than against our own counters.
+# Exit code: a mismatch — a file in no bucket, or a file counted as in the library
+# with no DB row — exits EXIT_RECONCILE_MISMATCH (7), see main(). Callers were
+# audited first: watch.py, /api/ingest, /api/ingest/ws, bins, seed_sample and
+# build_sample_prebuilt all test `!= 0`, none branches on a specific value, so a
+# new number cannot collide with an existing meaning.
+# Exit codes in use by ingest.py / frames.py: 0 clean, 1 partial failure,
+# 2 all failed, 3 dangling thumbnails symlink (frames.py), 4 storage preflight,
+# 5 --migrate-storage backup failed, 6 --migrate-storage target blocked.
+EXIT_RECONCILE_MISMATCH = 7
+_RECONCILE_BUCKETS = ("ingested", "already-indexed", "moved", "failed")
+_RECONCILE_NAME_CAP = 50
+
+
+def _reconcile_report(queued, outcomes, known_paths, not_reached=(),
+                      deferred=0, prefiltered_known=0, frame_skips=(),
+                      skip_failed=False, name_cap=_RECONCILE_NAME_CAP):
+    """Return the end-of-ingest reconciliation as a list of printable lines.
+
+    queued            : the files the Phase-1 loop was given (Path objects)
+    outcomes          : {str(path): bucket} for every file the loop finished with
+    known_paths       : set of `media.path` values read from the DB AFTER the run
+    not_reached       : files after an [INGEST HALTED] break
+    deferred          : files found but left out by --limit
+    prefiltered_known : already-indexed files dropped before the loop (--limit path)
+    frame_skips       : [(filename, n_failed, n_frames)] from Phase-2 vision
+    skip_failed       : whether --skip-failed was on (labels the frame-skip list)
+
+    Pure: no I/O, so it can be tested without running a batch.
+    """
+    return _reconcile(queued, outcomes, known_paths, not_reached=not_reached,
+                      deferred=deferred, prefiltered_known=prefiltered_known,
+                      frame_skips=frame_skips, skip_failed=skip_failed,
+                      name_cap=name_cap)[0]
+
+
+def _reconcile_mismatch(queued, outcomes, known_paths, not_reached=()):
+    """Number of files the batch cannot account for (issue #393 point 2):
+    scanned-but-in-no-bucket + counted-as-in-library-but-no-DB-row.
+
+    Deliberately NOT counted: `failed` and `not reached` — those already have a
+    record (the failed count, the [INGEST HALTED] line) and their own exit code.
+    This is only the part that used to leave no trace at all. Pure."""
+    return _reconcile(queued, outcomes, known_paths, not_reached=not_reached)[1]
+
+
+def _reconcile(queued, outcomes, known_paths, not_reached=(),
+               deferred=0, prefiltered_known=0, frame_skips=(),
+               skip_failed=False, name_cap=_RECONCILE_NAME_CAP):
+    """Shared body of _reconcile_report / _reconcile_mismatch → (lines, mismatch),
+    so the exit code and the printed line can never disagree about a file."""
+    counts = {b: 0 for b in _RECONCILE_BUCKETS}
+    by_bucket = {b: [] for b in _RECONCILE_BUCKETS}
+    unaccounted, missing_in_db = [], []
+    not_reached_set = {str(p) for p in not_reached}
+    for p in queued:
+        key = str(p)
+        bucket = outcomes.get(key)
+        if bucket is None:
+            if key not in not_reached_set:
+                unaccounted.append(p)
+            continue
+        counts[bucket] = counts.get(bucket, 0) + 1
+        by_bucket.setdefault(bucket, []).append(p)
+        # A counter is our own claim; the DB row is the fact. Check every file we
+        # say is in the library — including SKIP and MOVED, whose "already there"
+        # verdict came from a snapshot taken before the batch started.
+        if bucket != "failed" and not any(
+                v in known_paths for v in db.dedup_path_variants(key)):
+            missing_in_db.append(p)
+
+    scanned = len(queued) + deferred + prefiltered_known
+    head = ("Reconcile: scanned={0}  ingested={1}  already-indexed={2}  moved={3}  "
+            "failed={4}").format(scanned, counts["ingested"],
+                                 counts["already-indexed"] + prefiltered_known,
+                                 counts["moved"], counts["failed"])
+    if not_reached:
+        head += "  not-reached={0}".format(len(not_reached))
+    if deferred:
+        head += "  deferred(--limit)={0}".format(deferred)
+    problems = len(unaccounted) + len(missing_in_db) + counts["failed"] + len(not_reached)
+    head += "  →  " + ("✓ every file accounted for" if problems == 0
+                         else "⚠ {0} file(s) need attention".format(problems))
+    lines = [head]
+
+    def _names(label, paths):
+        if not paths:
+            return
+        lines.append("  {0} ({1}):".format(label, len(paths)))
+        for p in paths[:name_cap]:
+            lines.append("    {0}".format(Path(p).name))
+        if len(paths) > name_cap:
+            lines.append("    … and {0} more".format(len(paths) - name_cap))
+
+    _names("⚠ unaccounted — scanned but in no bucket", unaccounted)
+    _names("⚠ counted as in the library but no DB row", missing_in_db)
+    _names("failed", by_bucket["failed"])
+    _names("not reached (ingest halted)", list(not_reached))
+    if frame_skips:
+        label = ("--skip-failed skipped vision frames in" if skip_failed
+                 else "vision frames left empty in")
+        lines.append("  {0} {1} file(s) (re-run --vision-only to retry):".format(
+            label, len(frame_skips)))
+        for fn, n, tot in list(frame_skips)[:name_cap]:
+            lines.append("    {0}: {1}/{2} frames".format(fn, n, tot))
+        if len(frame_skips) > name_cap:
+            lines.append("    … and {0} more".format(len(frame_skips) - name_cap))
+    return lines, len(unaccounted) + len(missing_in_db)
 
 
 def _ingest_halt_decision(consecutive_failed, threshold=None):
@@ -1222,10 +1410,14 @@ def _run_vision_only(args):
     if failed_files:
         total = sum(n for _, n, _ in failed_files)
         print(f"\n⚠ {total} frame(s) across {len(failed_files)} file(s) left empty (re-run --vision-only to retry just those):")
-        for fn, n, tot in failed_files[:20]:
+        # issue #393: when --skip-failed is what let the run continue past these,
+        # every name is printed — a skipped file must be findable from the log
+        # alone, not only the first 20 of them.
+        _cap = len(failed_files) if skip_failed else 20
+        for fn, n, tot in failed_files[:_cap]:
             print(f"    {fn}: {n}/{tot}")
-        if len(failed_files) > 20:
-            print(f"    … and {len(failed_files) - 20} more file(s)")
+        if len(failed_files) > _cap:
+            print(f"    … and {len(failed_files) - _cap} more file(s)")
     if not halted:
         suffix = f", {len(failed_files)} with skipped frames." if failed_files else "."
         print(f"\nVision-only done. {ok} file(s) fully patched{suffix}")
@@ -1294,13 +1486,39 @@ def _fmt_size_delta(delta_bytes: int) -> str:
     return f"{sign}{abs(delta_bytes) / 1_000_000:.1f} MB"
 
 
+def regrade_thumbnail(media_id: int) -> Optional[str]:
+    """Rebuild one clip's poster with its current color_profile (used right after
+    the user picks a profile in the UI). Returns the new thumbnail path or None
+    when the source is unreachable / extraction failed (row left untouched)."""
+    rec = db.get_record_by_id(media_id)
+    if not rec or Path(rec["path"]).suffix.lower() not in VIDEO_EXT:
+        return None
+    try:
+        src = db.resolve_path(rec["path"])
+    except ValueError:
+        return None
+    if not Path(src).exists():
+        return None
+    meta = probe(src)
+    dur = meta.get("duration_s", 0) if meta else 0
+    if dur <= 0:
+        return None
+    thumb = frm.extract_thumbnail(src, dur, force=True,
+                                  lut=color_profiles.lut_file_for(rec.get("color_profile")))
+    if thumb:
+        with db.get_conn() as conn:
+            conn.execute("UPDATE media SET thumbnail_path=? WHERE id=?",
+                         (db.to_relative(thumb), media_id))
+    return thumb
+
+
 def _regenerate_thumbnails():
     """B4: rebuild the poster thumbnail for every video record (mirror of
     --regenerate-proxies). Re-runs extract_thumbnail and updates
     media.thumbnail_path. Frame thumbnails (which carry vision descriptions) are
     intentionally left untouched — use --vision-only / --refresh for those."""
     with db.get_conn() as conn:
-        rows = conn.execute("SELECT id, path, filename FROM media").fetchall()
+        rows = conn.execute("SELECT id, path, filename, color_profile FROM media").fetchall()
         records = [dict(r) for r in rows]
     videos = [r for r in records if Path(r["path"]).suffix.lower() in VIDEO_EXT]
     if not videos:
@@ -1326,13 +1544,19 @@ def _regenerate_thumbnails():
         meta = probe(src)
         dur = meta.get("duration_s", 0) if meta else 0
         print(f"  [{idx}/{len(videos)}] id={rec['id']} {rec['filename']}", end="", flush=True)
-        thumb = frm.extract_thumbnail(src, dur, force=True) if dur > 0 else None
+        # Backfill: rows ingested before color profiles existed get detected here,
+        # so one --regenerate-thumbnails pass grades an existing log library.
+        profile = rec.get("color_profile") or color_profiles.detect_profile(src)
+        lut = color_profiles.lut_file_for(profile)
+        thumb = frm.extract_thumbnail(src, dur, force=True, lut=lut) if dur > 0 else None
         if thumb:
             with db.get_conn() as conn:
                 conn.execute(
-                    "UPDATE media SET thumbnail_path=? WHERE id=?",
-                    (db.to_relative(thumb), rec["id"]),
+                    "UPDATE media SET thumbnail_path=?, color_profile=? WHERE id=?",
+                    (db.to_relative(thumb), profile, rec["id"]),
                 )
+            if lut:
+                print(f" [{profile}]", end="")
             print(" [OK]")
             ok += 1
         else:
@@ -2310,13 +2534,19 @@ def main():
         # Windows (backslash) DB row isn't re-ingested as a duplicate (round-5 #9).
         return any(v in _known_paths for v in db.dedup_path_variants(str(p)))
 
+    # issue #393 reconciliation: files the --limit path drops before the loop
+    # still have to be counted, or "scanned" would silently shrink to the queue.
+    prefiltered_known, deferred = 0, 0
     if args.limit and not args.refresh:
         # Filter out already-processed files before applying limit
         new_files = [f for f in files if not _is_known(f)]
         skipped_count = total - len(new_files)
         files = new_files[:args.limit]
+        prefiltered_known = skipped_count
+        deferred = len(new_files) - len(files)
         print(f"Found {total} media files ({skipped_count} already indexed). Processing {len(files)}...\n")
     elif args.limit:
+        deferred = max(0, len(files) - args.limit)
         files = files[:args.limit]
         print(f"Found {total} media files. Processing {len(files)}...\n")
     else:
@@ -2325,6 +2555,8 @@ def main():
     import time as _time
 
     ok, skipped, failed, moved = 0, 0, 0, 0
+    outcomes = {}  # issue #393: str(path) -> bucket, one entry per file the loop finished
+    not_reached = []  # files after an [INGEST HALTED] break
     consecutive_ingest_fail = 0  # whole-file failures in a row → drive-gone halt
     refreshed_ids = set()  # already-indexed ids re-processed this run → force re-embed
     bench_log = []  # per-file benchmark records
@@ -2342,6 +2574,7 @@ def main():
         if already and not args.refresh:
             print(f"[{i}/{len(files)}] SKIP {f.name}")
             skipped += 1
+            outcomes[str(f)] = "already-indexed"
             consecutive_ingest_fail = 0  # a readable skip proves the drive is alive
             continue
 
@@ -2360,6 +2593,7 @@ def main():
                     db.repoint_media_path(mrow["id"], str(f))
                     print(f"[{i}/{len(files)}] MOVED {f.name} → re-pointed id={mrow['id']}")
                     moved += 1
+                    outcomes[str(f)] = "moved"
                     consecutive_ingest_fail = 0  # a readable move proves the drive is alive
                     continue
 
@@ -2455,14 +2689,17 @@ def main():
                 })
                 print(f"  [{file_elapsed:.1f}s | {dur/max(file_elapsed,1):.1f}x RT]")
                 ok += 1
+                outcomes[str(f)] = "ingested"
                 consecutive_ingest_fail = 0  # a healthy read resets the drive-gone streak
                 _emit_progress({"t": "file", "index": i, "total": len(files), "file": f.name, "status": "phase1_done"})
             else:
                 failed += 1
+                outcomes[str(f)] = "failed"
                 consecutive_ingest_fail += 1
         except Exception as e:
             print(f" [ERROR: {e}]")
             failed += 1
+            outcomes[str(f)] = "failed"
             consecutive_ingest_fail += 1
 
         # Phase-1 counterpart to the vision halt: an unbroken run of whole-file
@@ -2477,6 +2714,7 @@ def main():
                 "and re-run — already-indexed files skip.".format(
                     _reason, ok, failed, len(files) - i)
             )
+            not_reached = list(files[i:])
             break
 
     # ── Phase 2: Vision (unload LLM first to free VRAM) ───────────────────
@@ -2651,6 +2889,24 @@ def main():
     _moved_suffix = f"  moved={moved}" if moved else ""
     print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}{_moved_suffix}")
     print(f"DB: {db.get_db_path()}")
+    # issue #393: one line that says whether every scanned file is accounted for,
+    # checked against the DB as it is NOW (not the pre-batch snapshot). A mismatch
+    # sets the exit code (EXIT_RECONCILE_MISMATCH, decided at the end of main).
+    # A failure to read the DB must not turn a finished ingest into a crash, so it
+    # degrades to a visible note — and to "not measured", which leaves the exit
+    # code to the other signals rather than inventing a mismatch.
+    reconcile_mismatch = 0
+    try:
+        with db.get_conn() as conn:
+            _known_after = {r[0] for r in conn.execute("SELECT path FROM media").fetchall()}
+        _lines, reconcile_mismatch = _reconcile(
+                files, outcomes, _known_after, not_reached=not_reached,
+                deferred=deferred, prefiltered_known=prefiltered_known,
+                frame_skips=vision_failed_files, skip_failed=skip_failed)
+        for _line in _lines:
+            print(_line)
+    except Exception as exc:  # noqa: BLE001 — report-only; never fail the run on it
+        print(f"Reconcile: unavailable ({type(exc).__name__}: {exc})")
 
     # Auto-build the vector index so semantic search + chat work immediately.
     # ingest writes SQLite records; embeddings live in ChromaDB and were a
@@ -2707,8 +2963,18 @@ def main():
     # Phase 8.0e (R1): exit code reflects actual ingest outcome.
     # Before this, main() always fell through to exit 0 — 222/222 fail
     # on 2026-05-25 still returned 0, hiding the regression from runner.
+    #
+    # Issue #393: 0 used to mean "did not crash", not "every file is in the
+    # library". Precedence 2 > 7 > 1: "everything failed" is still the loudest
+    # (it is usually upstream); a file that left NO trace outranks a partial
+    # failure, because a failure is already named in the output and counted,
+    # while the mismatch is the one that otherwise goes unnoticed.
     if failed and not ok:
         sys.exit(2)  # all phase 1 failed
+    if reconcile_mismatch:
+        print(f"[exit {EXIT_RECONCILE_MISMATCH}] reconcile mismatch: "
+              f"{reconcile_mismatch} file(s) not accounted for (see Reconcile above)")
+        sys.exit(EXIT_RECONCILE_MISMATCH)
     if failed or vision_fail or vision_halted:
         sys.exit(1)  # partial fail (phase 1) or vision failure/halt (phase 2)
     # else: implicit exit 0

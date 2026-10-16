@@ -45,7 +45,7 @@
   let pTotal = 0
   let pDone = 0
   let pFailed = 0
-  let recent = [] // [{name, status}] — last handful of files, failed flagged
+  let recent = [] // [{name, status, mibs}] — last handful of files, failed flagged; mibs = copy MiB/s (#537)
   let summary = null // {dst: {verified_files, failed_files, mhl_path, status}}
   let doneCode = null
   // R5-17 (#45): a running offload used to be uncancellable — Cancel just navigated
@@ -171,7 +171,7 @@
           } else if (ev.type === 'file') {
             pDone++
             if (ev.status === 'failed') pFailed++
-            recent = [{ name: ev.name, status: ev.status }, ...recent].slice(0, 8)
+            recent = [{ name: ev.name, status: ev.status, mibs: ev.copy_mib_s ?? null }, ...recent].slice(0, 8)
           } else if (ev.type === 'phase') {
             // mhl_failed is terminal for this destination: keep the row's own
             // error visible rather than showing a hashing pass that already died.
@@ -351,6 +351,7 @@
             {#each recent as r}
               <div class="prow file" class:fail={r.status === 'failed'}>
                 <Mono style="font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{r.name}</Mono>
+                {#if r.mibs != null}<Mono dim style="font-size:10px;margin-left:auto;padding-right:8px;" title="這支的複製速度（不含讀回驗證）">{r.mibs} MiB/s</Mono>{/if}
                 <span class="st {r.status}">{r.status === 'failed' ? 'FAIL' : r.status === 'skipped' ? 'SKIP' : 'OK'}</span>
               </div>
             {/each}

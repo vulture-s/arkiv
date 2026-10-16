@@ -18,8 +18,10 @@ NLE/DIT export — is source-available under the
 [PolyForm Perimeter License 1.0.1](../LICENSE) and free to use for any purpose,
 including commercial work.
 
-The **Pro add-on** is a separate, closed-source component that unlocks two
-things the free core does not provide:
+The **Pro add-on** is a separately licensed paid tier that unlocks two things
+the free core does not provide. It is delivered as a signed licence file that
+arkiv verifies offline; Pro features delivered later as a separate closed-source
+component, if any, are covered by these same terms:
 
 | | Free core | Pro add-on |
 |---|---|---|
@@ -118,7 +120,7 @@ these terms or from use of the add-on.
 
 ## Who grants this licence
 
-The Pro add-on is a closed-source component owned and licensed by:
+The Pro add-on is owned and licensed by:
 
 > **立凡科技有限公司** (Lifan Technology Co., Ltd.)
 > Unified Business No. **00066982**
@@ -157,7 +159,7 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 [PolyForm Perimeter License 1.0.1](../LICENSE) 授權，source-available，
 **任何用途皆免費，包含商業工作**。
 
-**Pro 附加元件**是另外一個閉源元件，解鎖免費核心沒有的兩件事：
+**Pro 附加元件**是另外授權的付費方案，解鎖免費核心沒有的兩件事。交付形式是一份簽章授權檔，由 arkiv 離線驗證；日後若有以獨立閉源元件提供的 Pro 功能，同樣適用本條款：
 
 | | 免費核心 | Pro 附加元件 |
 |---|---|---|
@@ -236,7 +238,7 @@ arkiv 本體（ingest、轉錄、視覺標註、語意搜尋、chat、NLE／DIT 
 
 ## 授權方
 
-Pro 附加元件為閉源元件，由下列主體持有並授權：
+Pro 附加元件由下列主體持有並授權：
 
 > **立凡科技有限公司**
 > 統一編號 **00066982**
