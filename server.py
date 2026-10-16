@@ -214,9 +214,30 @@ thumbs_dir.mkdir(parents=True, exist_ok=True)
 # dependency entirely — any unauthenticated client could pull every scene
 # thumbnail. Serve via an authed route instead: loopback trust still covers the
 # local UI token-free; a remote client needs a videos_read token.
+# Keyframes are rewritten IN PLACE under the same name (frames.py writes
+# {stem}_frame{i}.jpg; `ingest.py --regenerate-thumbnails` / a vision re-run
+# overwrite it), so /api/media/{id}/scenes returns the same keyframe_url after a
+# rebuild. With no Cache-Control the webview applied heuristic freshness and kept
+# painting the old frame until an app restart. `no-cache` = store, but revalidate
+# every use; the ETag (mtime+size, Starlette's) makes that revalidation a bodyless
+# 304 until the file actually changes — so the normal path does not re-download.
+_THUMB_CACHE_CONTROL = "no-cache"
+
+
+def _etag_matches(if_none_match: str, etag: str) -> bool:
+    if not if_none_match:
+        return False
+    if if_none_match.strip() == "*":
+        return True
+    tags = [t.strip() for t in if_none_match.split(",")]
+    # Weak comparison (RFC 9110 §13.1.2): W/"x" matches "x".
+    return any((t[2:] if t.startswith("W/") else t) == etag for t in tags)
+
+
 @app.get("/thumbnails/{name}")
 def serve_thumbnail(
     name: str,
+    request: Request,
     _tok: dict = Depends(require_scopes("videos_read")),
 ):
     # basename + containment check: no separators (an encoded %2F decodes into
@@ -231,7 +252,20 @@ def serve_thumbnail(
         raise HTTPException(404, "not found")
     if not resolved.is_file():
         raise HTTPException(404, "not found")
-    return FileResponse(str(resolved))
+    try:
+        st = resolved.stat()
+    except OSError:
+        raise HTTPException(404, "not found")
+    resp = FileResponse(str(resolved), stat_result=st,
+                        headers={"Cache-Control": _THUMB_CACHE_CONTROL})
+    etag = resp.headers.get("etag", "")
+    if etag and _etag_matches(request.headers.get("if-none-match", ""), etag):
+        return Response(status_code=304, headers={
+            "ETag": etag,
+            "Cache-Control": _THUMB_CACHE_CONTROL,
+            "Last-Modified": resp.headers.get("last-modified", ""),
+        })
+    return resp
 
 
 # R5-25 / #51: path-resolution helpers live in pathres.py (a leaf service module,
