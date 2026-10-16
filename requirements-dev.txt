@@ -1,5 +1,5 @@
 pytest>=7.4
-pytest-asyncio>=0.21
+pytest-asyncio>=1.4.0
 pytest-cov>=7.1.0
 httpx>=0.28.1
 # tests/test_compose_deploy.py parses the compose files. PyYAML is already
