@@ -30,6 +30,7 @@ footage library directly — no HTTP round-trip, no auth token.
 | `list_recent` | `limit=20` | list of lightweight records |
 | `library_stats` | — | `{total, with_transcript, with_thumb, total_duration_s, total_size_mb, langs}` |
 | `list_tags` | `limit=30` | list of `{name, count}` |
+| `export_project` | `filters="", cursor=0, limit=20, include_transcript=True, include_scenes=True, max_chars=30000` | `{filters, total_matching, returned, next_cursor, oversized, items: [{id, filename, path, duration_s, lang, rating, tags, segments \| transcript, scenes}]}` — whole-library bulk read, id-cursor pages; `filters` = search_syntax keys only |
 
 Search tries semantic (vector) search first and falls back to SQL
 filename/transcript `LIKE` when the vector index is empty/unavailable.

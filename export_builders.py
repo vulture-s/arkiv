@@ -438,6 +438,31 @@ def _edl_fps_warning(recs: list, tl_fps: float) -> "str | None":
     )
 
 
+# CMX3600's frame-rate vocabulary: the FCM header only knows DROP / NON-DROP,
+# and conform tooling assumes one of these film/video rates. Anything else
+# (50 / 59.94 / 60 / 119.88 …) imports, but some NLEs conform the source TC
+# against a different rate than the clip's — FCPXML carries the exact rational.
+_EDL_SPEC_FPS = (23.976, 24.0, 25.0, 29.97, 30.0)
+
+
+def _edl_high_fps_warning(fps) -> "str | None":
+    """B13 (high-fps): EDL comment line when a clip's rate is outside the
+    CMX3600 set (_EDL_SPEC_FPS), else None. Non-blocking on purpose — Resolve
+    imports a 59.94 EDL fine when the timeline is also 59.94, so a hard 422
+    would break a working path; the comment tells the editor to prefer FCPXML
+    if conform drifts. Comment lines are ignored by EDL parsers. Pure."""
+    try:
+        f = float(fps)
+    except (TypeError, ValueError):
+        return None
+    if f <= 0 or any(abs(f - s) < 0.01 for s in _EDL_SPEC_FPS):
+        return None
+    return (
+        f"* WARNING: {f:g} fps is outside the CMX3600 EDL rates "
+        f"(23.976/24/25/29.97/30); if conform TC drifts, export FCPXML instead."
+    )
+
+
 # ── FCPXML ───────────────────────────────────────────────────────────────────
 
 def _fcpxml_rational(fps: float):

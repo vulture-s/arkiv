@@ -106,3 +106,54 @@ def locate_text(transcript: str, segments_json: Any, needle: str) -> Optional[fl
     t_norm, t_index = _normalize(transcript)
     at = t_norm.find(n_norm[:24])
     return locate(transcript, segments_json, t_index[at]) if at >= 0 else None
+
+
+# ---------------------------------------------------------------------------
+# IN/OUT trim window — the one rule every single-clip export shares
+# (EDL / FCPXML / SRT / VTT / TXT via routers/export.py, and the Remotion props
+# in routers/media.py). Kept here, next to the other segment-time helpers, so the
+# two routers cannot drift apart on what "trimmed" means at the boundary.
+# ---------------------------------------------------------------------------
+
+TRIM_EPSILON = 0.05  # seconds; a mark this close to an edge is "not trimmed"
+
+
+def trim_window(in_s: Optional[float], out_s: Optional[float],
+                full_duration: float) -> Tuple[float, float, bool]:
+    """Normalize a requested [in_s, out_s] (seconds) against the clip length.
+
+    Returns ``(trim_in, trim_out, has_trim)``. A missing side means the clip
+    edge; ``out_s`` is clamped to the duration; an empty/inverted window falls
+    back to the whole clip. ``has_trim`` is False when both marks sit within
+    TRIM_EPSILON of the edges, so a no-op window produces the untrimmed output.
+    """
+    trim_in = max(0.0, float(in_s)) if in_s is not None else 0.0
+    trim_out = min(full_duration, float(out_s)) if out_s is not None else full_duration
+    if trim_out <= trim_in:
+        trim_in, trim_out = 0.0, full_duration
+    has_trim = trim_in > TRIM_EPSILON or trim_out < full_duration - TRIM_EPSILON
+    return trim_in, trim_out, has_trim
+
+
+def trim_rebase(items: Sequence[dict], trim_in: float, trim_out: float) -> List[dict]:
+    """Keep the timed items (segments / words) that overlap [trim_in, trim_out],
+    clip them to the window and rebase so 0 = IN.
+
+    Boundary rule: an item that only touches an edge (end <= IN or start >= OUT)
+    is dropped; an item straddling an edge is kept and clipped to it. Every
+    other key on the item is carried through unchanged.
+    """
+    duration = trim_out - trim_in
+    out: List[dict] = []
+    for it in items:
+        # `or 0`: an explicit null in segments_json (legacy rows have them)
+        # would make these comparisons raise TypeError → 500.
+        s, e = it.get("start", 0) or 0, it.get("end", 0) or 0
+        if e <= trim_in or s >= trim_out:
+            continue
+        out.append({
+            **it,
+            "start": max(0.0, s - trim_in),
+            "end": min(duration, e - trim_in),
+        })
+    return out
