@@ -426,6 +426,10 @@ def init_db():
             ("energy", "TEXT"),
             ("edit_position", "TEXT"),
             ("edit_reason", "TEXT"),
+            # A7 camera motion (camera_motion.py): per-scene JSON of
+            # pan/net/jitter/zoom/znet/zjitter. NULL = not measured (the pass is
+            # opt-in), which is NOT the same as "measured, static".
+            ("camera_motion", "TEXT"),
         ]:
             _add_column_if_missing(conn, "frames", col, typ)  # audit L10
         conn.execute("""
@@ -1357,6 +1361,23 @@ def upsert_frame(
             content_type, focus_score, exposure, stability, audio_quality,
             atmosphere, energy, edit_position, edit_reason,
         ))
+    if _conn is not None:
+        _do(_conn)
+    else:
+        with get_conn() as conn:
+            _do(conn)
+
+
+def set_frame_camera_motion(media_id: int, frame_index: int,
+                            camera_motion: Optional[str], _conn=None):
+    """Write one scene's camera-motion JSON. A separate writer on purpose:
+    upsert_frame's ON CONFLICT clause does not list this column, so a vision
+    re-run (which re-upserts frames) never clobbers a stored measurement."""
+    def _do(c):
+        c.execute(
+            "UPDATE frames SET camera_motion = ? WHERE media_id = ? AND frame_index = ?",
+            (camera_motion, media_id, frame_index),
+        )
     if _conn is not None:
         _do(_conn)
     else:

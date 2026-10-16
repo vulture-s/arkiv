@@ -461,10 +461,69 @@ def _custom_terms() -> list:
     return out
 
 
+# Whisper's decoder keeps at most n_text_ctx // 2 - 1 = 223 prompt tokens and,
+# when the prompt is longer, keeps the LAST ones — i.e. it silently drops the
+# FRONT of the list, which is exactly where the env / vocabulary.txt terms sit.
+# So the budget is enforced here, by priority, instead of letting the decoder cut.
+# 200 (not 223) leaves headroom for the token-count estimate below being low.
+PROMPT_TOKEN_BUDGET = 200
+_PROMPT_SEP = "、"
+
+
+def _estimate_prompt_tokens(text: str) -> int:
+    """Conservative token estimate without loading a tokenizer.
+
+    Whisper's multilingual BPE is byte-level: a common CJK ideograph is 1 token,
+    a rarer one 2-3 (3 UTF-8 bytes). Count every non-ASCII char as 2, and each
+    ASCII alphanumeric run as ceil(len/3) (English subwords average ~4 chars),
+    other ASCII (space, punctuation) as 1. Over-estimating only means a term is
+    dropped a little early; under-estimating means the decoder cuts the front."""
+    n = 0
+    run = 0
+    for ch in text:
+        if ch.isascii() and ch.isalnum():
+            run += 1
+            continue
+        if run:
+            n += -(-run // 3)
+            run = 0
+        n += 1 if ch.isascii() else 2
+    if run:
+        n += -(-run // 3)
+    return n
+
+
+def _select_prompt_terms(terms, budget=None):
+    """Greedy, in priority order (``_custom_terms`` order: env, vocabulary.txt,
+    then the correction dictionary newest-learned first): keep each term whose
+    cost (+ separator) still fits the budget, skip the ones that don't (a long
+    term never blocks shorter, lower-priority ones). Returns ``(kept, dropped)``."""
+    budget = PROMPT_TOKEN_BUDGET if budget is None else budget
+    sep_cost = _estimate_prompt_tokens(_PROMPT_SEP)
+    used = 0
+    kept, dropped = [], []
+    for t in terms:
+        cost = _estimate_prompt_tokens(t) + (sep_cost if kept else 0)
+        if used + cost <= budget:
+            kept.append(t)
+            used += cost
+        else:
+            dropped.append(t)
+    return kept, dropped
+
+
 def _build_initial_prompt() -> str:
-    """Build whisper initial_prompt from the merged custom vocabulary (env + file)."""
+    """Build whisper initial_prompt from the merged custom vocabulary (env + file
+    + correction dictionary), capped to :data:`PROMPT_TOKEN_BUDGET`."""
     terms = _custom_terms()
-    return "、".join(terms) if terms else ""
+    if not terms:
+        return ""
+    kept, dropped = _select_prompt_terms(terms)
+    if dropped:
+        print("  [hotwords] initial_prompt over budget: kept %d, dropped %d (%s%s)"
+              % (len(kept), len(dropped), _PROMPT_SEP.join(dropped[:5]),
+                 "…" if len(dropped) > 5 else ""), flush=True)
+    return _PROMPT_SEP.join(kept)
 
 
 def _transcribe_mlx(wav: str, language: str) -> tuple:

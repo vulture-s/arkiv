@@ -24,6 +24,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 
 import db
+import exposure_report as exposure_report_mod
 import scenes
 import search_syntax
 from mcp.server.fastmcp import FastMCP
@@ -360,6 +361,110 @@ def list_tags_impl(limit: int = 30) -> List[Dict[str, Any]]:
     return db.get_top_tags(limit)
 
 
+# export_project: the whole library (or a filtered slice of it) in one pass —
+# transcript segments + scene descriptions + timecodes per clip. The per-clip
+# tools above answer "this clip"; planning a cut across a shoot needs "every
+# clip", which before this meant reading the SQLite file directly (2026-10-14).
+_EXPORT_SCENE_KEYS = ("start_s", "end_s", "description", "content_type")
+EXPORT_MAX_LIMIT = 100
+EXPORT_DEFAULT_MAX_CHARS = 30000
+
+
+def _export_item(rec: Dict[str, Any], include_transcript: bool,
+                 include_scenes: bool) -> Dict[str, Any]:
+    mid = int(rec["id"])
+    item: Dict[str, Any] = {
+        "id": mid,
+        "filename": rec.get("filename"),
+        "path": _safe_path(rec.get("path")),
+        "duration_s": rec.get("duration_s"),
+        "lang": rec.get("lang"),
+        "rating": rec.get("rating"),
+        "tags": _tag_names(mid),
+    }
+    if include_transcript:
+        segments = _project_segments(_json_rows(rec.get("segments_json")))
+        if segments:
+            item["segments"] = segments
+        else:
+            # Clips transcribed before segment timing was stored: flat text only.
+            item["transcript"] = rec.get("transcript") or ""
+    if include_scenes:
+        payload = scenes._scenes_core(mid, rec, db.get_frames(mid))
+        item["scenes"] = [{k: sc.get(k) for k in _EXPORT_SCENE_KEYS}
+                          for sc in payload["scenes"]]
+    return item
+
+
+def export_project_impl(
+    filters: str = "",
+    cursor: int = 0,
+    limit: int = 20,
+    include_transcript: bool = True,
+    include_scenes: bool = True,
+    max_chars: int = EXPORT_DEFAULT_MAX_CHARS,
+) -> Dict[str, Any]:
+    """One page of the library, oldest id first, resumable by `next_cursor`.
+
+    Pages stop at `limit` clips OR when the serialized page would pass
+    `max_chars`, whichever comes first — a shoot's worth of transcripts does not
+    fit one response. A page always carries at least one clip (else a single
+    oversized clip would stall the cursor forever); `oversized` flags that case.
+    """
+    text, conditions = search_syntax.parse(filters or "")
+    if text.strip():
+        raise ValueError(
+            "export_project takes filters only (tag:/camera:/lang:/rating:/type:/shot:); "
+            "free text {0!r} is a search — use search_media for that".format(text))
+    limit = max(1, min(EXPORT_MAX_LIMIT, int(limit)))
+    max_chars = max(1000, int(max_chars))
+    cursor = max(0, int(cursor))
+    with db.get_conn() as conn:
+        if conditions:
+            ids = sorted(search_syntax.matching_ids(conn, conditions))
+        else:
+            ids = [r[0] for r in conn.execute("SELECT id FROM media ORDER BY id").fetchall()]
+    remaining = [i for i in ids if i > cursor]
+
+    items: List[Dict[str, Any]] = []
+    used = 0
+    oversized = False
+    for mid in remaining:
+        if len(items) >= limit:
+            break
+        rec = db.get_record_by_id(mid)
+        if not rec:
+            continue  # deleted between the id scan and now
+        item = _export_item(rec, include_transcript, include_scenes)
+        size = len(_j(item))
+        if items and used + size > max_chars:
+            break
+        if not items and size > max_chars:
+            oversized = True
+        items.append(item)
+        used += size
+    last = items[-1]["id"] if items else cursor
+    more = any(i > last for i in remaining)
+    return {
+        "filters": search_syntax.describe("", conditions)["filters"],
+        "total_matching": len(ids),
+        "returned": len(items),
+        "next_cursor": last if more else None,
+        "oversized": oversized,
+        "items": items,
+    }
+
+
+def exposure_report_impl(terms: Any, filters: str = "", group_by: str = "",
+                         limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    if isinstance(terms, str):
+        terms = [terms]
+    limit = max(1, min(200, int(limit or 50)))
+    return exposure_report_mod.build_exposure_report(
+        list(terms or []), filters=(filters or None), group_by=(group_by or None),
+        limit=limit, offset=offset)
+
+
 # ── MCP tools ─────────────────────────────────────────────────────────────────
 # Tools return JSON strings (ensure_ascii=False keeps Chinese readable, matching
 # export.py) — an unambiguous, version-stable contract across MCP SDK releases.
@@ -437,6 +542,21 @@ def get_scenes(media_id: int) -> str:
       audio_quality  str
       keyframe_path  str    PROJECT_ROOT-relative path to the keyframe JPEG.
                             Present only when a keyframe exists.
+      camera_motion  obj    What the CAMERA does in this scene (pan / zoom /
+                            shake). Present only when measured — the pass is
+                            opt-in (`ingest.py --camera-motion`, backfill with
+                            `--refresh-motion`); absent = not measured, NOT static.
+                            Keys, in order:
+          pan      float  horizontal travel, px/s in a 160-px-wide frame
+          net      float  signed travel; > 0 = camera panned LEFT, < 0 = RIGHT
+          jitter   float  mean change of direction between 0.5 s steps (shake)
+          zoom     float  scale travel, %/s
+          znet     float  signed; > 0 = zoom IN, < 0 = OUT
+          zjitter  float  instability of the scale signal (trust check on znet)
+          pan_dir  str|null  "left"/"right" when |net| >= 2.0 and jitter <= 6.0
+          zoom_dir str|null  "in"/"out" when |znet| >= 3.0 and zjitter <= 4.0
+                            e.g. "a clean left-right pan" = pan_dir not null;
+                            "the shaky take" = higher jitter among siblings.
 
     Every vision field is present on every scene, but is null when that clip has
     not been analysed — check for null rather than for the key. Values are in the
@@ -501,6 +621,86 @@ def list_tags(limit: int = 30) -> str:
     """Top tags in the library by frequency. Returns a JSON list of {name, count}."""
     _require_ready()
     return _j(list_tags_impl(limit))
+
+
+@mcp.tool()
+def export_project(
+    filters: str = "",
+    cursor: int = 0,
+    limit: int = 20,
+    include_transcript: bool = True,
+    include_scenes: bool = True,
+    max_chars: int = EXPORT_DEFAULT_MAX_CHARS,
+) -> str:
+    """Bulk read of the whole library: every clip's transcript segments AND scene
+    descriptions with timecodes, page by page. Use this to plan across a shoot
+    ("which clips mention X and show Y") instead of calling get_transcript /
+    get_scenes once per clip.
+
+    filters  same filter syntax as search_media, filters only — e.g.
+             "shot:2026-10 camera:fx3", "tag:訪談 rating:good". "" = everything.
+             Free text is rejected: that is a search, use search_media.
+    cursor   0 for the first page, then pass back `next_cursor`.
+    limit    max clips per page (1-100).
+    max_chars  soft cap on the page's JSON size; the page ends early to stay
+             under it. Lower it if your context is tight.
+
+    Returns a JSON object:
+      filters         how the filters were understood
+      total_matching  clips matching the filters (all pages)
+      returned        clips in this page
+      next_cursor     int to fetch the next page, or null when done
+      oversized       true when this page's single clip alone exceeds max_chars
+      items           [{id, filename, path, duration_s, lang, rating, tags,
+                        segments: [{start, end, text}]   (or `transcript` str
+                                                          when no timing exists),
+                        scenes: [{start_s, end_s, description, content_type}]}]
+    Timecodes are seconds from clip start. Set include_transcript /
+    include_scenes false to drop either half and fit more clips per page.
+    """
+    _require_ready()
+    try:
+        return _j(export_project_impl(filters, cursor, limit, include_transcript,
+                                      include_scenes, max_chars))
+    except search_syntax.QueryError as exc:
+        raise ValueError("export_project filter: {0}".format(exc))
+
+
+@mcp.tool()
+def exposure_report(terms: List[str], filters: str = "", group_by: str = "",
+                    limit: int = 50, offset: int = 0) -> str:
+    """Brand / product / object exposure across the library: how many clips show
+    it, for how many seconds in total, and in which scenes.
+
+    A scene hits when ANY term appears in its keyframe's vision description or
+    vision tags (case-, width- and Traditional/Simplified-insensitive). Exposure
+    seconds = the full duration of each hit scene, using the same scene cut as
+    get_scenes. This is matched against VLM descriptions, NOT frame-by-frame
+    detection: it misses and mislabels, and a hit scene counts in full even if
+    the object is only on screen for part of it. Always relay `method.note` to
+    the person you are answering.
+
+    Args:
+      terms     one or more words, e.g. ["古河", "FURUTECH"]
+      filters   optional search-box filters narrowing the clips considered,
+                e.g. "shot:2026-10 camera:fx3" (key:value only, no free text)
+      group_by  "" / "date" (shoot day) / "camera"
+      limit, offset  page the per-clip `clips` list (limit 1-200); every total,
+                `by_term` and `groups` always cover ALL hit clips
+
+    Returns a JSON object: {terms, filters, method, clips_in_scope,
+    clips_unanalysed, clips_hit, scenes_hit, exposure_s, by_term, [group_by,
+    groups], clips_total, offset, clips: [{media_id, filename, path (relative),
+    shot_date, camera, media_duration_s, hit_scenes, exposure_s, scenes: [
+    {scene_index, start_s, end_s, duration_s, matched_terms, content_type,
+    description (truncated), tags}]}]}
+    """
+    _require_ready()
+    try:
+        report = exposure_report_impl(terms, filters, group_by, limit, offset)
+    except exposure_report_mod.ReportError as exc:
+        raise ValueError(str(exc))
+    return _j(report)
 
 
 def _prewarm_vectordb() -> None:
