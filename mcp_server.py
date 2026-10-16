@@ -437,6 +437,21 @@ def get_scenes(media_id: int) -> str:
       audio_quality  str
       keyframe_path  str    PROJECT_ROOT-relative path to the keyframe JPEG.
                             Present only when a keyframe exists.
+      camera_motion  obj    What the CAMERA does in this scene (pan / zoom /
+                            shake). Present only when measured — the pass is
+                            opt-in (`ingest.py --camera-motion`, backfill with
+                            `--refresh-motion`); absent = not measured, NOT static.
+                            Keys, in order:
+          pan      float  horizontal travel, px/s in a 160-px-wide frame
+          net      float  signed travel; > 0 = camera panned LEFT, < 0 = RIGHT
+          jitter   float  mean change of direction between 0.5 s steps (shake)
+          zoom     float  scale travel, %/s
+          znet     float  signed; > 0 = zoom IN, < 0 = OUT
+          zjitter  float  instability of the scale signal (trust check on znet)
+          pan_dir  str|null  "left"/"right" when |net| >= 2.0 and jitter <= 6.0
+          zoom_dir str|null  "in"/"out" when |znet| >= 3.0 and zjitter <= 4.0
+                            e.g. "a clean left-right pan" = pan_dir not null;
+                            "the shaky take" = higher jitter among siblings.
 
     Every vision field is present on every scene, but is null when that clip has
     not been analysed — check for null rather than for the key. Values are in the
