@@ -361,6 +361,100 @@ def list_tags_impl(limit: int = 30) -> List[Dict[str, Any]]:
     return db.get_top_tags(limit)
 
 
+# export_project: the whole library (or a filtered slice of it) in one pass —
+# transcript segments + scene descriptions + timecodes per clip. The per-clip
+# tools above answer "this clip"; planning a cut across a shoot needs "every
+# clip", which before this meant reading the SQLite file directly (2026-10-14).
+_EXPORT_SCENE_KEYS = ("start_s", "end_s", "description", "content_type")
+EXPORT_MAX_LIMIT = 100
+EXPORT_DEFAULT_MAX_CHARS = 30000
+
+
+def _export_item(rec: Dict[str, Any], include_transcript: bool,
+                 include_scenes: bool) -> Dict[str, Any]:
+    mid = int(rec["id"])
+    item: Dict[str, Any] = {
+        "id": mid,
+        "filename": rec.get("filename"),
+        "path": _safe_path(rec.get("path")),
+        "duration_s": rec.get("duration_s"),
+        "lang": rec.get("lang"),
+        "rating": rec.get("rating"),
+        "tags": _tag_names(mid),
+    }
+    if include_transcript:
+        segments = _project_segments(_json_rows(rec.get("segments_json")))
+        if segments:
+            item["segments"] = segments
+        else:
+            # Clips transcribed before segment timing was stored: flat text only.
+            item["transcript"] = rec.get("transcript") or ""
+    if include_scenes:
+        payload = scenes._scenes_core(mid, rec, db.get_frames(mid))
+        item["scenes"] = [{k: sc.get(k) for k in _EXPORT_SCENE_KEYS}
+                          for sc in payload["scenes"]]
+    return item
+
+
+def export_project_impl(
+    filters: str = "",
+    cursor: int = 0,
+    limit: int = 20,
+    include_transcript: bool = True,
+    include_scenes: bool = True,
+    max_chars: int = EXPORT_DEFAULT_MAX_CHARS,
+) -> Dict[str, Any]:
+    """One page of the library, oldest id first, resumable by `next_cursor`.
+
+    Pages stop at `limit` clips OR when the serialized page would pass
+    `max_chars`, whichever comes first — a shoot's worth of transcripts does not
+    fit one response. A page always carries at least one clip (else a single
+    oversized clip would stall the cursor forever); `oversized` flags that case.
+    """
+    text, conditions = search_syntax.parse(filters or "")
+    if text.strip():
+        raise ValueError(
+            "export_project takes filters only (tag:/camera:/lang:/rating:/type:/shot:); "
+            "free text {0!r} is a search — use search_media for that".format(text))
+    limit = max(1, min(EXPORT_MAX_LIMIT, int(limit)))
+    max_chars = max(1000, int(max_chars))
+    cursor = max(0, int(cursor))
+    with db.get_conn() as conn:
+        if conditions:
+            ids = sorted(search_syntax.matching_ids(conn, conditions))
+        else:
+            ids = [r[0] for r in conn.execute("SELECT id FROM media ORDER BY id").fetchall()]
+    remaining = [i for i in ids if i > cursor]
+
+    items: List[Dict[str, Any]] = []
+    used = 0
+    oversized = False
+    for mid in remaining:
+        if len(items) >= limit:
+            break
+        rec = db.get_record_by_id(mid)
+        if not rec:
+            continue  # deleted between the id scan and now
+        item = _export_item(rec, include_transcript, include_scenes)
+        size = len(_j(item))
+        if items and used + size > max_chars:
+            break
+        if not items and size > max_chars:
+            oversized = True
+        items.append(item)
+        used += size
+    last = items[-1]["id"] if items else cursor
+    more = any(i > last for i in remaining)
+    return {
+        "filters": search_syntax.describe("", conditions)["filters"],
+        "total_matching": len(ids),
+        "returned": len(items),
+        "next_cursor": last if more else None,
+        "oversized": oversized,
+        "items": items,
+    }
+
+
 def exposure_report_impl(terms: Any, filters: str = "", group_by: str = "",
                          limit: int = 50, offset: int = 0) -> Dict[str, Any]:
     if isinstance(terms, str):
@@ -512,6 +606,49 @@ def list_tags(limit: int = 30) -> str:
     """Top tags in the library by frequency. Returns a JSON list of {name, count}."""
     _require_ready()
     return _j(list_tags_impl(limit))
+
+
+@mcp.tool()
+def export_project(
+    filters: str = "",
+    cursor: int = 0,
+    limit: int = 20,
+    include_transcript: bool = True,
+    include_scenes: bool = True,
+    max_chars: int = EXPORT_DEFAULT_MAX_CHARS,
+) -> str:
+    """Bulk read of the whole library: every clip's transcript segments AND scene
+    descriptions with timecodes, page by page. Use this to plan across a shoot
+    ("which clips mention X and show Y") instead of calling get_transcript /
+    get_scenes once per clip.
+
+    filters  same filter syntax as search_media, filters only — e.g.
+             "shot:2026-10 camera:fx3", "tag:訪談 rating:good". "" = everything.
+             Free text is rejected: that is a search, use search_media.
+    cursor   0 for the first page, then pass back `next_cursor`.
+    limit    max clips per page (1-100).
+    max_chars  soft cap on the page's JSON size; the page ends early to stay
+             under it. Lower it if your context is tight.
+
+    Returns a JSON object:
+      filters         how the filters were understood
+      total_matching  clips matching the filters (all pages)
+      returned        clips in this page
+      next_cursor     int to fetch the next page, or null when done
+      oversized       true when this page's single clip alone exceeds max_chars
+      items           [{id, filename, path, duration_s, lang, rating, tags,
+                        segments: [{start, end, text}]   (or `transcript` str
+                                                          when no timing exists),
+                        scenes: [{start_s, end_s, description, content_type}]}]
+    Timecodes are seconds from clip start. Set include_transcript /
+    include_scenes false to drop either half and fit more clips per page.
+    """
+    _require_ready()
+    try:
+        return _j(export_project_impl(filters, cursor, limit, include_transcript,
+                                      include_scenes, max_chars))
+    except search_syntax.QueryError as exc:
+        raise ValueError("export_project filter: {0}".format(exc))
 
 
 @mcp.tool()

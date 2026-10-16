@@ -194,9 +194,13 @@ def test_watcher_keeps_going_after_an_exit_7(tmp_path, monkeypatch):
     _make_file(lost)
     _make_file(good)
 
+    # Behaves like the real ingest in both shapes: `--dir <one>` and the B8
+    # batch `--files a b`. Any run that includes lost.mp4 answers 7, and only
+    # good.mp4 ever reaches the library.
     def fake_run(cmd, timeout):
-        return _fake_result(7 if cmd[-1].endswith("lost.mp4") else 0)
+        return _fake_result(7 if any(c.endswith("lost.mp4") for c in cmd) else 0)
     monkeypatch.setattr(watch, "run_tree", fake_run)
+    monkeypatch.setattr(watch, "_path_in_library", lambda p: p.name == "good.mp4")
 
     w = watch.Watcher([root], debounce_s=0.0)       # default dispatch = ingest_file
     done = w.tick(now=1.0)
@@ -204,3 +208,150 @@ def test_watcher_keeps_going_after_an_exit_7(tmp_path, monkeypatch):
     assert done == [good]
     assert str(good) in w.known and str(lost) not in w.known
     assert str(lost) in w._failures                  # backed off, will be retried
+
+
+# ---- B8: files ready together share one ingest run ----
+
+def _batch_watcher(root, monkeypatch, rc_for=None, in_lib=None, **kw):
+    """Watcher on the REAL dispatch path with run_tree faked. Records each ingest
+    command; `rc_for(cmd)` picks the exit code."""
+    calls = []
+
+    def fake_run(cmd, timeout):
+        calls.append((list(cmd), timeout))
+        return _fake_result(rc_for(cmd) if rc_for else 0)
+    monkeypatch.setattr(watch, "run_tree", fake_run)
+    if in_lib is not None:
+        monkeypatch.setattr(watch, "_path_in_library", in_lib)
+    w = watch.Watcher([root], debounce_s=0.0, **kw)
+    return w, calls
+
+
+def test_ready_files_go_to_one_ingest_run(tmp_path, monkeypatch):
+    root = tmp_path / "inbox"
+    root.mkdir()
+    a, b = root / "a.mp4", root / "b.mp4"
+    _make_file(a)
+    _make_file(b)
+    w, calls = _batch_watcher(root, monkeypatch)
+    done = w.tick(now=1.0)
+    assert sorted(done) == [a, b]
+    assert len(calls) == 1                       # one warm-up, not two
+    cmd, timeout = calls[0]
+    assert "--files" in cmd and str(a) in cmd and str(b) in cmd
+    assert timeout == 600.0 * 2                  # per-file budget, summed
+    assert {str(a), str(b)} <= w.known
+
+
+def test_lone_file_still_uses_single_file_run(tmp_path, monkeypatch):
+    root = tmp_path / "inbox"
+    root.mkdir()
+    a = root / "a.mp4"
+    _make_file(a)
+    w, calls = _batch_watcher(root, monkeypatch)
+    assert w.tick(now=1.0) == [a]
+    assert len(calls) == 1 and calls[0][0][-2:] == ["--dir", str(a)]
+
+
+def test_failed_batch_does_not_charge_healthy_batchmates(tmp_path, monkeypatch):
+    """One poison file kills the batch run (exit 2, nothing written after it).
+    Files already in the library count as done; the rest are retried ALONE, so
+    only the poison file ends up in back-off."""
+    root = tmp_path / "inbox"
+    root.mkdir()
+    first, bad, late = root / "a1.mp4", root / "b_bad.mp4", root / "c_late.mp4"
+    for f in (first, bad, late):
+        _make_file(f)
+    w, calls = _batch_watcher(
+        root, monkeypatch,
+        rc_for=lambda cmd: 2 if any(c.endswith("b_bad.mp4") for c in cmd) else 0,
+        in_lib=lambda p: p.name == "a1.mp4")     # batch got a1 in before dying
+    done = w.tick(now=1.0)
+    assert sorted(done) == [first, late]
+    assert str(bad) in w._failures and str(late) not in w._failures
+    # batch run + one solo retry each for the two that were not in the library
+    assert calls[0][0][2] == "--files"
+    solo = sorted(c[0][-1] for c in calls[1:])
+    assert solo == sorted([str(bad), str(late)])
+
+
+def test_batch_timeout_falls_back_to_single_runs(tmp_path, monkeypatch):
+    import subprocess
+    root = tmp_path / "inbox"
+    root.mkdir()
+    a, b = root / "a.mp4", root / "b.mp4"
+    _make_file(a)
+    _make_file(b)
+    calls = []
+
+    def fake_run(cmd, timeout):
+        calls.append(list(cmd))
+        if "--files" in cmd:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return _fake_result(0)
+    monkeypatch.setattr(watch, "run_tree", fake_run)
+    monkeypatch.setattr(watch, "_path_in_library", lambda p: False)
+    w = watch.Watcher([root], debounce_s=0.0)
+    assert sorted(w.tick(now=1.0)) == [a, b]
+    assert len(calls) == 3 and not w._failures
+
+
+def test_batch_respects_max_batch(tmp_path, monkeypatch):
+    root = tmp_path / "inbox"
+    root.mkdir()
+    for n in ("a", "b", "c"):
+        _make_file(root / (n + ".mp4"))
+    w, calls = _batch_watcher(root, monkeypatch, max_batch=2)
+    assert len(w.tick(now=1.0)) == 3
+    assert len(calls) == 2
+
+
+def test_ready_file_held_while_another_is_still_copying(tmp_path, monkeypatch):
+    root = tmp_path / "inbox"
+    root.mkdir()
+    a, b = root / "a.mp4", root / "b.mp4"
+    _make_file(a)
+    _make_file(b, size=10)
+    calls = []
+    monkeypatch.setattr(watch, "run_tree",
+                        lambda cmd, timeout: calls.append(list(cmd)) or _fake_result(0))
+    w = watch.Watcher([root], debounce_s=5.0, batch_hold_s=30.0)
+    w.tick(now=0.0)
+    _make_file(b, size=20)                       # b still growing
+    assert w.tick(now=6.0) == [] and calls == []  # a ready, held for b
+    assert sorted(w.tick(now=12.0)) == [a, b]
+    assert len(calls) == 1 and "--files" in calls[0]   # b stable at 11+ → one batch
+
+
+def test_hold_expires_even_if_another_file_keeps_growing(tmp_path, monkeypatch):
+    root = tmp_path / "inbox"
+    root.mkdir()
+    a, b = root / "a.mp4", root / "b.mp4"
+    _make_file(a)
+    calls = []
+    monkeypatch.setattr(watch, "run_tree",
+                        lambda cmd, timeout: calls.append(list(cmd)) or _fake_result(0))
+    w = watch.Watcher([root], debounce_s=5.0, batch_hold_s=30.0)
+    w.tick(now=0.0)
+    size = 10
+    for t in (5.0, 15.0, 25.0, 35.0):
+        size += 10
+        _make_file(b, size=size)                 # b never settles
+        out = w.tick(now=t)
+    assert out == [a]                            # released at 35 (held since 5)
+    assert calls == [calls[0]] and calls[0][-2:] == ["--dir", str(a)]
+
+
+def test_vanished_file_does_not_hold_the_batch(tmp_path, monkeypatch):
+    root = tmp_path / "inbox"
+    root.mkdir()
+    a, gone = root / "a.mp4", root / "gone.mp4"
+    _make_file(a)
+    _make_file(gone)
+    calls = []
+    monkeypatch.setattr(watch, "run_tree",
+                        lambda cmd, timeout: calls.append(list(cmd)) or _fake_result(0))
+    w = watch.Watcher([root], debounce_s=5.0, batch_hold_s=30.0)
+    w.tick(now=0.0)
+    gone.unlink()                                # tracked, then deleted
+    assert w.tick(now=5.0) == [a]
