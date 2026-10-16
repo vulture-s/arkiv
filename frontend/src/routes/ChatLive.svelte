@@ -12,6 +12,7 @@
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
   import { pushToast } from '../lib/toast.js'
+  import { createExportGuard, downloadedMsg } from '../lib/exportFeedback.js'
 
   $: theme = $resolvedTheme
   let messages = [] // {role:'user'|'assistant', text, intent?, scenes?:[{id,name,thumb}]}
@@ -74,15 +75,20 @@
   const EXPORTS = ['edl', 'fcpxml', 'srt']
   // Authenticated download — a plain <a href> can't carry the Bearer token, so
   // exports would 401 on a tokened backend (Codex review P2 pattern).
-  async function exportScene(sc, fmt) {
+  // One export in flight at a time (B11): exportBusy = `${id}:${fmt}` while running.
+  let exportBusy = null
+  const exportGuard = createExportGuard((b) => (exportBusy = b))
+  function exportScene(sc, fmt) {
     const stem = (sc.name || `media_${sc.id}`).replace(/\.[^.]+$/, '')
-    try {
-      await api.downloadFile(api.exportPath(sc.id, fmt), `${stem}.${fmt}`)
-      pushToast(`已匯出 · ${stem}.${fmt}`)
-    } catch (e) {
-      console.error('export failed', e)
-      pushToast(`匯出失敗: ${e.message}`, 'error')
-    }
+    return exportGuard.run(`${sc.id}:${fmt}`, async () => {
+      try {
+        const r = await api.downloadFile(api.exportPath(sc.id, fmt), `${stem}.${fmt}`)
+        pushToast(downloadedMsg(r.filename, r.size))
+      } catch (e) {
+        console.error('export failed', e)
+        pushToast(`${fmt.toUpperCase()} 匯出失敗: ${e.message}`, 'error')
+      }
+    })
   }
 
   // Prefetch the first page as a cheap cache; misses are resolved by id below
@@ -278,7 +284,9 @@
                   </a>
                   <div class="exports">
                     {#each EXPORTS as fmt}
-                      <button class="exp" on:click={() => exportScene(sc, fmt)}>{fmt.toUpperCase()}</button>
+                      <button class="exp" on:click={() => exportScene(sc, fmt)}
+                              disabled={!!exportBusy} aria-busy={exportBusy === `${sc.id}:${fmt}`}
+                      >{fmt.toUpperCase()}{exportBusy === `${sc.id}:${fmt}` ? ' …' : ''}</button>
                     {/each}
                   </div>
                 </div>
@@ -330,6 +338,9 @@
   .convitem:hover { background: var(--surface-2); }
   .convitem.active { border-left-color: var(--invert); background: var(--surface-2); }
   .convitem:disabled { cursor: default; opacity: 0.6; }
+  /* B11: other exports dim while one runs; the running one stays legible */
+  .exp:disabled { opacity: 0.45; cursor: default; }
+  .exp[aria-busy='true'] { opacity: 1; cursor: progress; }
   .convtitle {
     font-size: 12px; color: var(--ink); line-height: 1.3; width: 100%;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
