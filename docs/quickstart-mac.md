@@ -54,7 +54,7 @@ The app starts its own backend and opens a window. Your library lives in
 ```bash
 git clone https://github.com/vulture-s/arkiv.git && cd arkiv
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt && pip install mlx-whisper
+pip install -r requirements.txt -c constraints.txt
 python health.py        # confirm everything is READY (see step 3)
 python server.py        # then open http://localhost:8501
 ```

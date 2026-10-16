@@ -101,7 +101,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build frontend (SPA that assemble-backend + generate_context! embed)
@@ -112,17 +112,19 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
       - name: Build .venv (assemble-backend needs .venv/lib/python3.12/site-packages)
         run: |
           python -m venv .venv
           ./.venv/bin/pip install --upgrade pip
-          ./.venv/bin/pip install -r requirements.txt
+          ./.venv/bin/pip install -r requirements.txt -c constraints.txt
 
       - name: Assemble self-contained backend bundle
         run: bash src-tauri/assemble-backend.sh
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"  # = rust-toolchain.toml (tests/test_toolchain_pins.py)
 
       # -- tauri-cli: cache the BINARY, don't rebuild it every release ---------
       # `cargo install tauri-cli` compiles the CLI from source. Measured on the
@@ -244,7 +246,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
 
       - name: Stamp version from tag (so the bundle can't drift from the tag)
         if: ${{ github.ref_type == 'tag' }}
@@ -262,7 +264,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build frontend (SPA that assemble-backend-win + generate_context! embed)
@@ -285,14 +287,16 @@ jobs:
         run: |
           python -m venv .venv-pack
           .\.venv-pack\Scripts\python.exe -m pip install --upgrade pip
-          .\.venv-pack\Scripts\pip.exe install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
-          .\.venv-pack\Scripts\pip.exe install -r requirements.txt
+          .\.venv-pack\Scripts\pip.exe install --index-url https://download.pytorch.org/whl/cpu torch -c constraints.txt
+          .\.venv-pack\Scripts\pip.exe install -r requirements.txt -c constraints.txt
 
       - name: Assemble self-contained backend bundle
         shell: pwsh
         run: .\src-tauri\assemble-backend-win.ps1
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"  # = rust-toolchain.toml (tests/test_toolchain_pins.py)
 
       # -- tauri-cli: cache the BINARY, don't rebuild it every release ---------
       # `cargo install tauri-cli` compiles the CLI from source. Measured on the

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+**依賴版本固化：每條安裝路徑裝到的是同一組版本。**
+新增 `constraints.txt`（`scripts/lock.sh`，uv universal 解析，一份涵蓋 3.9–3.12 與 macOS／Windows／Linux），
+CI、release、Docker、安裝文件一律 `pip install -r … -c constraints.txt`；CI 會重跑 lock，有差異就紅。
+Python／Node／Rust 版本各自只有一個來源（`.python-version`／`.nvmrc`／`rust-toolchain.toml`），
+`scripts/doctor.py` 對照本機、`--fix` 一鍵建 venv。
+
+- **修：`requirements.txt` 在 Python 3.9 上裝不起來。** #234 起 fastapi／uvicorn／pillow 的下限都要 3.10，
+  而 CI 的 3.9 測試腿裝的是另一份手抄清單，所以兩個月沒人發現。3.9 改用各自最後支援 3.9 的版本。
+- **Windows 安裝包的 torch 從 2.9.1 對齊到跟 Mac 一樣的版本**：打包時多裝的 `torchaudio`（沒有任何程式用到）
+  把 torch 鎖在 2.9.1。
+- Docker：UI 建置從 Node 25 改為 22（與 CI 同版），Python 3.11 → 3.12（與正式環境同版）。
+
 ## v1.5.1 - 2026-10-14
 
 **過卡的 MHL 清單快了一倍以上：複製完之後不再把整張卡重讀 3 遍。**

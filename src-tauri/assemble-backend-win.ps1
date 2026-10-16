@@ -23,8 +23,11 @@
 #      transcription itself runs on ctranslate2, so the CPU build costs nothing
 #      a user would feel. Build .venv-pack with:
 #        py -3.12 -m venv .venv-pack
-#        .venv-pack\Scripts\pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
-#        .venv-pack\Scripts\pip install -r requirements.txt
+#        .venv-pack\Scripts\pip install --index-url https://download.pytorch.org/whl/cpu torch -c constraints.txt
+#        .venv-pack\Scripts\pip install -r requirements.txt -c constraints.txt
+#      (No torchaudio: nothing in arkiv imports it and silero-vad only wants it
+#      for extras -- and torchaudio 2.9.1 pins torch==2.9.1, which held the
+#      Windows build three torch minors behind the Mac one.)
 #      Override with $env:ARKIV_PACKAGING_VENV to point somewhere else.
 #   3. Copies go through robocopy rather than rsync -- it is native on every
 #      Windows box and on the windows-latest runner, so the script has no
@@ -100,8 +103,8 @@ $VENV_SP not found.
 
 Build the packaging venv first (CPU-only torch -- see the header of this script for why):
   py -3.12 -m venv .venv-pack
-  .venv-pack\Scripts\pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
-  .venv-pack\Scripts\pip install -r requirements.txt
+  .venv-pack\Scripts\pip install --index-url https://download.pytorch.org/whl/cpu torch -c constraints.txt
+  .venv-pack\Scripts\pip install -r requirements.txt -c constraints.txt
 
 Or point `$env:ARKIV_PACKAGING_VENV` at an existing CPU-only venv.
 "@
