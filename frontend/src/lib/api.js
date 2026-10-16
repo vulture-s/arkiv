@@ -296,6 +296,13 @@ export async function offloadRun(body, { signal } = {}) {
   return res
 }
 
+// POST /api/offload/resolve {src, dst, rel, action:"rename"|"skip", new_name?, confirm?}
+// → {status, summary, file}. Settles ONE same-name conflict of a finished
+// offload: copy that clip under a new name (hash-verified, never overwrites) or —
+// confirmed — skip it (NOT backed up; the card can then never read as done).
+export const offloadResolve = (body, opts) =>
+  req('/api/offload/resolve', { method: 'POST', body, ...opts })
+
 // /api/media?limit&offset&projects&tag&rating  → {items, total, search}
 export const getMedia = (params = {}, opts) => req(`/api/media${qs(params)}`, opts)
 // /api/media/facets/shoot-date → {years:[{year,count}], unknown, total}
@@ -373,6 +380,9 @@ export async function downloadFile(path, filename) {
   // revoking immediately can invalidate the blob before WebKit reads it →
   // empty/failed saves (Codex review P2). A short delay lets the click settle.
   setTimeout(() => URL.revokeObjectURL(url), 10000)
+  // What landed, for the success toast (B11). The save location is not knowable
+  // from a blob download (browser or WKWebView), so only name + size.
+  return { filename, size: blob.size }
 }
 // Path-only builders (no BASE) for downloadFile, which prepends BASE itself.
 export const exportPath = (id, fmt) => `/api/media/${id}/export/${fmt}`
@@ -420,6 +430,7 @@ export function downloadText(text, filename, mime = 'text/plain') {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10000)
+  return { filename, size: blob.size }
 }
 // DaVinci Resolve metadata CSV (File → Import Metadata from CSV). ids optional
 // (CSV of media ids) → batch-scoped; omitted/empty → whole library.
