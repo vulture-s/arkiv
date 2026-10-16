@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**校正一次就記住：`POST /api/corrections/learn`。** 把「李東煙」改成「李多慧」一次，
+本專案字典就記下這條（同一個錯字再改會更新、不會重複），並把「李多慧」排進**下一次轉錄**的
+Whisper initial_prompt；`apply: true` 會順便只用這一條改寫本專案已存的逐字稿（先備份、可還原）。
+整句話不會被當 hotword 餵給 Whisper（只留作批次校正），避免 prompt 幻覺。
+
+**hotword 清單有長度上限了。** Whisper 的 prompt 只留最後約 223 個 token，超過時會默默丟掉
+**最前面**的詞——也就是 `ARKIV_CUSTOM_VOCABULARY` 與 `vocabulary.txt` 的詞。現在由 arkiv
+自己按優先序裁到 200（估算值，偏保守）：環境變數 → vocabulary.txt → 字典（最近學到的先），
+裝不下的從尾巴丟，轉錄 log 會印出丟了哪些。
+
 ### 新增
 - **品牌／物件曝光報告**：給一個或多個詞（品牌名、產品名、物件），統計素材裡命中幾支、總共幾秒、在哪些 scene。比對 keyframe 的 vision 描述與標籤，大小寫、全半形、繁簡都不分；可用搜尋框語法（`shot:` `camera:` `tag:`…）縮小範圍，可依拍攝日期或相機分組。曝光秒數＝命中 scene 的整段長度，scene 切法跟 `get_scenes` 同一套。三個入口：CLI `python exposure_report.py "古河" --filters "shot:2026-10"`（markdown／`--format json`）、REST `GET /api/report/exposure?term=…`、MCP 工具 `exposure_report`。⚠️ 這是依 vision 描述比對，不是逐格偵測：會漏判、會誤判，報告裡也這樣寫；沒做過 vision 分析的素材另外計數，不算成「沒出現」。
 

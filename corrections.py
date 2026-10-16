@@ -84,13 +84,19 @@ def _clean_rule(raw: Dict) -> Optional[Dict]:
     scope = raw.get("scope", "global")
     if scope not in SCOPES:
         scope = "global"
-    return {
+    out = {
         "from": frm,
         "to": to,
         "scope": scope,
         "pre": bool(raw.get("pre", False)),
         "post": bool(raw.get("post", True)),
     }
+    # Optional: when :func:`learn` last touched this rule (UTC ISO-8601). Drives
+    # hotword priority (newest first) when the prompt budget can't fit them all.
+    learned_at = raw.get("learned_at")
+    if isinstance(learned_at, str) and learned_at:
+        out["learned_at"] = learned_at
+    return out
 
 
 def load_rules_checked() -> Tuple[List[Dict], Optional[str]]:
@@ -151,16 +157,85 @@ def save_rules(rules: Iterable[Dict]) -> List[Dict]:
     return cleaned
 
 
+# A hotword must be a proper noun / term, never a sentence: Whisper treats the
+# initial_prompt as "the text that came before", so a sentence there is the kind
+# of thing it will happily re-emit (prompt hallucination). Anything with sentence
+# punctuation, a line break, more than a few space-separated words, or longer
+# than this many characters is kept as a post (recorrect) rule only.
+MAX_HOTWORD_CHARS = 16
+_SENTENCE_PUNCT = set("。，、！？；：…「」『』,.!?;:\"\n\r\t")
+
+
+def is_hotword_term(term: str) -> bool:
+    """True if ``term`` is short and term-shaped enough to feed Whisper as a hotword."""
+    if not isinstance(term, str):
+        return False
+    term = term.strip()
+    if not term or len(term) > MAX_HOTWORD_CHARS:
+        return False
+    if any(ch in _SENTENCE_PUNCT for ch in term):
+        return False
+    return len(term.split()) <= 3
+
+
 def hotword_terms() -> List[str]:
     """The ``to`` terms of rules with ``pre=True`` — merged into the Whisper
-    hotword list by ``transcribe._custom_terms()``. De-duplicated, order kept."""
+    hotword list by ``transcribe._custom_terms()``. De-duplicated.
+
+    Order = priority when the prompt budget is short (``transcribe`` drops from
+    the tail): rules carrying ``learned_at`` come first, newest first; rules
+    without it (hand-written, older) follow in file order. Sentence-shaped
+    ``to`` values are skipped even if flagged ``pre`` (see :func:`is_hotword_term`)."""
+    rules = [r for r in load_rules() if r.get("pre") and is_hotword_term(r["to"])]
+    stamped = sorted((r for r in rules if r.get("learned_at")),
+                     key=lambda r: r["learned_at"], reverse=True)
+    unstamped = [r for r in rules if not r.get("learned_at")]
     seen = set()
     out = []
-    for r in load_rules():
-        if r.get("pre") and r["to"] and r["to"] not in seen:
-            seen.add(r["to"])
-            out.append(r["to"])
+    for r in stamped + unstamped:
+        term = r["to"].strip()
+        if term not in seen:
+            seen.add(term)
+            out.append(term)
     return out
+
+
+def learn(frm: str, to: str, scope: str = "global") -> Dict:
+    """"Fix it once, remember it": record one correction the user just made.
+
+    Upserts the rule keyed on ``from`` (an existing rule for the same mis-hearing
+    is updated, not duplicated), turns ``post`` on so the fix can be applied to the
+    rest of the project, turns ``pre`` on when ``to`` is term-shaped so the NEXT
+    transcription is prompted with it, and stamps ``learned_at`` (hotword
+    priority). Returns ``{"rule", "created", "hotword"}``; raises ``ValueError``
+    on an unusable rule."""
+    from datetime import datetime, timezone
+    frm = (frm or "").strip() if isinstance(frm, str) else ""
+    to = to.strip() if isinstance(to, str) else None
+    if not frm or to is None:
+        raise ValueError("from 不可為空，to 必須是字串")
+    if frm == to:
+        raise ValueError("from 與 to 相同")
+    rules, load_error = load_rules_checked()
+    if load_error is not None:
+        # Same rule as the editor: never build a new dictionary on top of a file
+        # we couldn't read — the save would silently drop every curated rule.
+        raise ValueError(load_error)
+    hotword = is_hotword_term(to)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    rule = {"from": frm, "to": to, "scope": scope if scope in SCOPES else "global",
+            "pre": hotword, "post": True, "learned_at": stamp}
+    created = True
+    for i, r in enumerate(rules):
+        if r["from"] == frm:
+            rules[i] = rule  # same mis-hearing → update in place, no duplicate
+            created = False
+            break
+    else:
+        rules.append(rule)
+    saved = save_rules(rules)
+    persisted = next(r for r in saved if r["from"] == frm)
+    return {"rule": persisted, "created": created, "hotword": hotword}
 
 
 # ── correction application (pure, testable) ──────────────────────────────────
