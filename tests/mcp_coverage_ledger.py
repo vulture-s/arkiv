@@ -107,6 +107,7 @@ NOT_EXPOSED = {
     "DELETE /api/bins/{bin_id}/items": ("write", "remove from bin"),
     "POST /api/bins/{bin_id}/copy": ("write", "copies bin files to disk"),
     "PUT /api/corrections": ("write", "transcript correction rules"),
+    "POST /api/corrections/learn": ("write", "records one correction rule (+ optional apply)"),
     "POST /api/recorrect": ("write", "applies correction rules to transcripts"),
     "POST /api/recorrect/revert": ("write", "restores a recorrect backup"),
 
