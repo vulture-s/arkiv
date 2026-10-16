@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**逐字稿可以直接變成 Resolve 時間軸上的 marker。** Inspector 匯出列多一顆「字幕 MARKER」：
+匯出的 FCPXML 每段話一個 marker，名稱是那句話（前 60 字），備註是全文，長度跟著那段話。
+設了 ✂ IN/OUT 只輸出範圍內的段落。API：`/api/media/{id}/export/fcpxml?markers=transcript`
+（`edl-markers` 也吃，但 EDL 的 marker 只能是 ASCII，中文會變成 `?`，中文片請用 FCPXML）。
+原本的場景 marker 不變，仍是預設。
+
 **Remotion props 吃 IN/OUT。** `GET /api/media/{id}/remotion-props` 接受跟單支匯出同一組
 `in_s`／`out_s`（秒）：只輸出範圍內的字、時間改成從 IN 起算、`duration` 變成範圍長度，
 並多帶 `trim: {in_s, out_s}` 讓渲染端知道要從原檔哪裡開始。跨邊界的字裁到邊界、只碰到邊界的字丟掉，

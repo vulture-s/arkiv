@@ -244,16 +244,18 @@
   function exportClip(id, fmt, name, trim = null) {
     const stem = (name || `media_${id}`).replace(/\.[^.]+$/, '')
     // trim = {in_s, out_s?} from the inspector IN/OUT points → backend trims the export
+    // trim.markers = 'transcript' → FCPXML/EDL markers from the transcript (8.2i)
     let path = api.exportPath(id, fmt)
-    if (trim && (trim.in_s != null || trim.out_s != null)) {
-      const q = []
-      if (trim.in_s != null) q.push(`in_s=${trim.in_s}`)
-      if (trim.out_s != null) q.push(`out_s=${trim.out_s}`)
-      path += `?${q.join('&')}`
-    }
-    return exportGuard.run(`clip:${fmt}`, async () => {
+    const q = []
+    if (trim && trim.in_s != null) q.push(`in_s=${trim.in_s}`)
+    if (trim && trim.out_s != null) q.push(`out_s=${trim.out_s}`)
+    if (trim && trim.markers) q.push(`markers=${encodeURIComponent(trim.markers)}`)
+    if (q.length) path += `?${q.join('&')}`
+    const transcriptMarkers = !!(trim && trim.markers === 'transcript')
+    const file = `${stem}${transcriptMarkers ? '.transcript' : ''}.${fmt}`
+    return exportGuard.run(`clip:${fmt}${transcriptMarkers ? '.transcript' : ''}`, async () => {
       try {
-        const r = await api.downloadFile(path, `${stem}.${fmt}`)
+        const r = await api.downloadFile(path, file)
         pushToast(downloadedMsg(r.filename, r.size))
       } catch (e) {
         pushToast(`${fmt.toUpperCase()} 匯出失敗: ${e.message}`, 'error')
