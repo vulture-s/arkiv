@@ -246,7 +246,7 @@
   // the export buttons become live; null → mock screens keep the inert buttons.
   export let onExport = null
   // Extra clip actions (live only): onChapters(format) downloads YouTube chapters,
-  // onRemotion() downloads Remotion caption props, onReveal() reveals the source
+  // onRemotion(trim) downloads Remotion caption props (trim = IN/OUT window or null), onReveal() reveals the source
   // file in Finder/Explorer. null → button hidden (mock screens unchanged).
   export let onChapters = null
   export let onRemotion = null
@@ -794,7 +794,7 @@
       {#if showMore}
         <div class="exports sub">
           {#if onChapters}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'chapters'} on:click={() => onChapters('youtube')} title="YouTube 章節文字（成品輔助，非 arkiv 核心）">YT 章節</button>{/if}
-          {#if onRemotion}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'remotion'} on:click={onRemotion} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion</button>{/if}
+          {#if onRemotion}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'remotion'} on:click={() => onRemotion(trimArgs)} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion{trimArgs ? ' ✂' : ''}{exportBusy === 'remotion' ? ' …' : ''}</button>{/if}
         </div>
       {/if}
     {/if}
