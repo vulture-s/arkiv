@@ -385,6 +385,9 @@ export async function downloadFile(path, filename) {
   // revoking immediately can invalidate the blob before WebKit reads it →
   // empty/failed saves (Codex review P2). A short delay lets the click settle.
   setTimeout(() => URL.revokeObjectURL(url), 10000)
+  // What landed, for the success toast (B11). The save location is not knowable
+  // from a blob download (browser or WKWebView), so only name + size.
+  return { filename, size: blob.size }
 }
 // Path-only builders (no BASE) for downloadFile, which prepends BASE itself.
 export const exportPath = (id, fmt) => `/api/media/${id}/export/${fmt}`
@@ -396,7 +399,13 @@ export const exportTimelinePath = (ids, fmt) =>
 export const getChapters = (id, format = 'youtube', opts) =>
   req(`/api/media/${id}/chapters?format=${format}`, opts)
 // /api/media/{id}/remotion-props → word-level caption props (JSON)
-export const getRemotionProps = (id, opts) => req(`/api/media/${id}/remotion-props`, opts)
+// trim = {in_s, out_s?} (inspector IN/OUT) → captions limited to the window, rebased to 0 = IN
+export const getRemotionProps = (id, opts, trim = null) => {
+  const q = []
+  if (trim && trim.in_s != null) q.push(`in_s=${trim.in_s}`)
+  if (trim && trim.out_s != null) q.push(`out_s=${trim.out_s}`)
+  return req(`/api/media/${id}/remotion-props${q.length ? `?${q.join('&')}` : ''}`, opts)
+}
 // POST /api/open-file {path?, media_id?, reveal} → reveal in Finder/Explorer or open.
 // Send media_id whenever it is known: a library indexed before the relative-path
 // migration reports only a basename as its path, which the server cannot match back
@@ -426,6 +435,7 @@ export function downloadText(text, filename, mime = 'text/plain') {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10000)
+  return { filename, size: blob.size }
 }
 // DaVinci Resolve metadata CSV (File → Import Metadata from CSV). ids optional
 // (CSV of media ids) → batch-scoped; omitted/empty → whole library.

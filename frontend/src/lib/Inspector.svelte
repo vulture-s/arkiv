@@ -247,10 +247,13 @@
   // the export buttons become live; null → mock screens keep the inert buttons.
   export let onExport = null
   // Extra clip actions (live only): onChapters(format) downloads YouTube chapters,
-  // onRemotion() downloads Remotion caption props, onReveal() reveals the source
+  // onRemotion(trim) downloads Remotion caption props (trim = IN/OUT window or null), onReveal() reveals the source
   // file in Finder/Explorer. null → button hidden (mock screens unchanged).
   export let onChapters = null
   export let onRemotion = null
+  // Parent's in-flight export key ('clip:edl', 'chapters', …) or null. While set,
+  // export buttons disable and the running one shows … (B11 — no silent wait).
+  export let exportBusy = null
   export let onReveal = null
   // Live delete. onDelete = () => void; when set, a "刪除素材" button appears. The
   // parent owns the confirm dialog + the API call (so it can also drive bulk delete).
@@ -427,6 +430,17 @@
   const EXPORT_TITLES = {
     txt: '逐字稿純文字（完整標點）。設了 ✂ 範圍時輸出的是該範圍內的 segment 原文，未經潤稿',
   }
+  // B13: CMX3600 only knows 23.976/24/25/29.97/30. media.fps arrives rounded
+  // (MainLive), so 24/25/30 cover the NTSC rates too. Off-spec clips still export
+  // (the server adds a WARNING comment to the EDL) — this just says so up front.
+  $: edlOffSpec = media && typeof media.fps === 'number' && media.fps > 0 && ![24, 25, 30].includes(media.fps)
+  $: edlTitle = edlOffSpec ? `EDL 規格（CMX3600）不支援 ${media.fps}p，Resolve conform 時 TC 可能對不上，建議改用 FCPXML` : ''
+
+  // 8.2i: same FCPXML, but its markers come from the transcript segments (who
+  // said what, when) instead of the scene frames. Resolve: marker name = the
+  // line (≤60 chars), marker notes = the full text. Honours ✂ like the others.
+  const TRANSCRIPT_MARKERS_TITLE =
+    'FCPXML，marker 來源改成逐字稿：每段話一個 marker（名稱＝前 60 字，備註＝全文）。設了 ✂ 只輸出範圍內的段落'
 
   const MOCK_TRANSCRIPT = [
     ['00:05', '我們從上海一路騎到拉薩，第十七天。', false],
@@ -907,9 +921,14 @@
     <div class="exports">
       {#if onExport}
         {#each EXPORT_FMTS as fmt}
-          <button class="ak-btn exp" title={EXPORT_TITLES[fmt] || ''}
-                  on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{trimArgs ? ' ✂' : ''}</button>
+          <button class="ak-btn exp" title={(fmt === 'edl' && edlTitle) || EXPORT_TITLES[fmt] || ''}
+                  disabled={!!exportBusy} aria-busy={exportBusy === `clip:${fmt}`}
+                  on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{fmt === 'edl' && edlOffSpec ? ' ⚠' : ''}{trimArgs ? ' ✂' : ''}{exportBusy === `clip:${fmt}` ? ' …' : ''}</button>
         {/each}
+        <button class="ak-btn exp" title={TRANSCRIPT_MARKERS_TITLE}
+                disabled={!!exportBusy} aria-busy={exportBusy === 'clip:fcpxml.transcript'}
+                on:click={() => onExport('fcpxml', { ...(trimArgs || {}), markers: 'transcript' })}
+        >字幕 MARKER{trimArgs ? ' ✂' : ''}{exportBusy === 'clip:fcpxml.transcript' ? ' …' : ''}</button>
       {:else}
         {#each EXPORT_FMTS as fmt}
           <button class="ak-btn exp">{fmt.toUpperCase()}</button>
@@ -921,8 +940,8 @@
       <span class="moreexp" on:click={() => (showMore = !showMore)}>{showMore ? '成品輔助 ▴' : '更多 · 成品輔助 ▾'}</span>
       {#if showMore}
         <div class="exports sub">
-          {#if onChapters}<button class="ak-btn exp ghost" on:click={() => onChapters('youtube')} title="YouTube 章節文字（成品輔助，非 arkiv 核心）">YT 章節</button>{/if}
-          {#if onRemotion}<button class="ak-btn exp ghost" on:click={onRemotion} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion</button>{/if}
+          {#if onChapters}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'chapters'} on:click={() => onChapters('youtube')} title="YouTube 章節文字（成品輔助，非 arkiv 核心）">YT 章節</button>{/if}
+          {#if onRemotion}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'remotion'} on:click={() => onRemotion(trimArgs)} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion{trimArgs ? ' ✂' : ''}{exportBusy === 'remotion' ? ' …' : ''}</button>{/if}
         </div>
       {/if}
     {/if}
@@ -1077,6 +1096,9 @@
   .relang { flex: 0 0 auto; font-size: 11px; padding: 5px 6px; }
   .rebtn { flex: 1; font-size: 10px; }
   .rebtn:disabled { opacity: 0.5; cursor: default; }
+  /* B11: other exports dim while one runs; the running one stays legible */
+  .exp:disabled { opacity: 0.45; cursor: default; }
+  .exp[aria-busy='true'] { opacity: 1; cursor: progress; }
   .rate { padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
   .ratebtns { display: flex; gap: 4px; }
   .ratebtn {
