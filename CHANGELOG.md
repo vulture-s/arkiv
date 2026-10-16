@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+**依賴版本固化：每條安裝路徑裝到的是同一組版本。**
+新增 `constraints.txt`（`scripts/lock.sh`，uv universal 解析，一份涵蓋 3.9–3.12 與 macOS／Windows／Linux），
+CI、release、Docker、安裝文件一律 `pip install -r … -c constraints.txt`；CI 會重跑 lock，有差異就紅。
+Python／Node／Rust 版本各自只有一個來源（`.python-version`／`.nvmrc`／`rust-toolchain.toml`），
+`scripts/doctor.py` 對照本機、`--fix` 一鍵建 venv。
+
+- **修：`requirements.txt` 在 Python 3.9 上裝不起來。** #234 起 fastapi／uvicorn／pillow 的下限都要 3.10，
+  而 CI 的 3.9 測試腿裝的是另一份手抄清單，所以兩個月沒人發現。3.9 改用各自最後支援 3.9 的版本。
+- **Windows 安裝包的 torch 從 2.9.1 對齊到跟 Mac 一樣的版本**：打包時多裝的 `torchaudio`（沒有任何程式用到）
+  把 torch 鎖在 2.9.1。
+- Docker：UI 建置從 Node 25 改為 22（與 CI 同版），Python 3.11 → 3.12（與正式環境同版）。
+
 **校正一次就記住：`POST /api/corrections/learn`。** 把「李東煙」改成「李多慧」一次，
 本專案字典就記下這條（同一個錯字再改會更新、不會重複），並把「李多慧」排進**下一次轉錄**的
 Whisper initial_prompt；`apply: true` 會順便只用這一條改寫本專案已存的逐字稿（先備份、可還原）。

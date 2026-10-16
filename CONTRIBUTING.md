@@ -194,10 +194,37 @@ upstream changelog and a one-click rollback:
   reproducible rebuilds; dependabot's `docker` ecosystem refreshes those digests — merge the
   dependabot PR rather than hand-editing (or run `docker buildx imagetools inspect <image>`
   for a fresh digest if you must).
-- Python deps stay in `requirements.txt` (flat, no lockfile): the 3.9×3.12 matrix + platform
-  markers (`mlx-whisper`@Darwin / `faster-whisper`@Linux, `opencc`/`mcp` gated ≥3.10) mean a
-  single frozen lockfile can't honestly represent all environments. The `dependency-audit`
-  gate + deliberate bumps are the reproducibility contract instead.
+- **Python pins live in `constraints.txt`** (generated, committed). `requirements*.txt`
+  say what the code needs (floors, markers); `constraints.txt` says what gets installed.
+  Every install path — CI's test legs, the release venvs, Docker, the docs — runs
+  `pip install -r … -c constraints.txt`. It is ONE universal file: `uv pip compile
+  --universal` forks a pin per marker where the answer differs (numpy 2.0.2 on 3.9,
+  2.5.4 on 3.12; mlx-whisper only on Darwin), so the 3.9×3.12 matrix and the platform
+  markers no longer stand in the way of a lock.
+  - Change a requirement (or merge a dependabot floor bump) → run `scripts/lock.sh` and
+    commit `constraints.txt`. CI's `dependency-audit` job reruns the lock and fails on
+    any diff, so a forgotten relock is caught at review. Existing pins are kept unless
+    a requirement forces a change; `scripts/lock.sh --upgrade-package NAME` moves one.
+  - **A floor must be installable on every supported Python.** #234 raised fastapi /
+    uvicorn / pillow to versions that need 3.10, which made `requirements.txt`
+    unsatisfiable on 3.9 for two months — invisible because CI's 3.9 leg installed a
+    hand-copied list instead. Split such floors by `python_version` marker (see
+    `requirements.txt`); `scripts/lock.sh` refuses to resolve otherwise.
+
+## Toolchain
+
+One file per tool; `tests/test_toolchain_pins.py` fails if a workflow or the
+`Dockerfile` reads a version from anywhere else.
+
+| tool | pin | read by |
+|---|---|---|
+| Python | `.python-version` (3.12; 3.9 = NAS floor, also in the CI matrix) | setup-python, `Dockerfile` |
+| Node | `.nvmrc` | setup-node (CI, release, site), `Dockerfile` |
+| Rust | `rust-toolchain.toml` | rustup locally; `dtolnay/rust-toolchain` `toolchain:` inputs |
+| packages | `constraints.txt` (via `scripts/lock.sh`, needs [uv](https://docs.astral.sh/uv/)) | every `pip install -r` |
+
+`python3 scripts/doctor.py` reports how this machine differs from those pins;
+`--fix` creates or syncs `.venv` from `constraints.txt` with uv and runs `npm ci`.
 
 ## Releases
 

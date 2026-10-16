@@ -101,7 +101,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build frontend (SPA that assemble-backend + generate_context! embed)
@@ -112,17 +112,19 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
       - name: Build .venv (assemble-backend needs .venv/lib/python3.12/site-packages)
         run: |
           python -m venv .venv
           ./.venv/bin/pip install --upgrade pip
-          ./.venv/bin/pip install -r requirements.txt
+          ./.venv/bin/pip install -r requirements.txt -c constraints.txt
 
       - name: Assemble self-contained backend bundle
         run: bash src-tauri/assemble-backend.sh
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"  # = rust-toolchain.toml (tests/test_toolchain_pins.py)
 
       # -- tauri-cli: download the official prebuilt BINARY, don't compile it --
       # `cargo install tauri-cli` compiles the CLI from source: 9m38s (macOS) and
@@ -261,7 +263,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
 
       - name: Stamp version from tag (so the bundle can't drift from the tag)
         if: ${{ github.ref_type == 'tag' }}
@@ -279,7 +281,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build frontend (SPA that assemble-backend-win + generate_context! embed)
@@ -299,17 +301,33 @@ jobs:
         # `python`, not `py -3.12`: setup-python puts its interpreter on PATH but
         # does not necessarily register it with the py launcher, so `py -3.12`
         # can resolve to a different (or absent) install on a hosted runner.
+        #
+        # Every native call is checked: pwsh does NOT stop on a non-zero exit code,
+        # and this step used to "succeed" with the CPU-index torch install failing
+        # (ResolutionImpossible) — requirements.txt then quietly pulled torch from
+        # PyPI instead. The CPU-index install pins only torch's version (read from
+        # constraints.txt): the full constraints file names versions of torch's
+        # own deps that the CPU index does not carry, which is what made it fail.
         run: |
-          python -m venv .venv-pack
-          .\.venv-pack\Scripts\python.exe -m pip install --upgrade pip
-          .\.venv-pack\Scripts\pip.exe install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
-          .\.venv-pack\Scripts\pip.exe install -r requirements.txt
+          function Check($what) { if ($LASTEXITCODE -ne 0) { Write-Error "$what failed (exit $LASTEXITCODE)"; exit 1 } }
+          $m = Select-String -Path constraints.txt -Pattern "^torch==([0-9][0-9.]*) ; python_full_version >= '3\.10'"
+          if (-not $m) { Write-Error "torch pin for Python >= 3.10 not found in constraints.txt"; exit 1 }
+          $torch = $m.Matches[0].Groups[1].Value
+          python -m venv .venv-pack; Check "venv"
+          .\.venv-pack\Scripts\python.exe -m pip install --upgrade pip; Check "pip upgrade"
+          .\.venv-pack\Scripts\pip.exe install --index-url https://download.pytorch.org/whl/cpu "torch==$torch"; Check "CPU torch $torch"
+          .\.venv-pack\Scripts\pip.exe install -r requirements.txt -c constraints.txt; Check "requirements"
+          $v = .\.venv-pack\Scripts\python.exe -c "import torch; print(torch.__version__)"; Check "torch import"
+          if ($v -notmatch '\+cpu$') { Write-Error "expected a +cpu torch build, got $v"; exit 1 }
+          Write-Host "torch $v"
 
       - name: Assemble self-contained backend bundle
         shell: pwsh
         run: .\src-tauri\assemble-backend-win.ps1
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"  # = rust-toolchain.toml (tests/test_toolchain_pins.py)
 
       # -- tauri-cli: download the official prebuilt BINARY, don't compile it --
       # `cargo install tauri-cli` compiles the CLI from source: 9m38s (macOS) and
