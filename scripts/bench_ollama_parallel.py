@@ -45,7 +45,7 @@ REPO = Path(__file__).resolve().parent.parent
 def _server_pid(port: int) -> int:
     # lsof, not psutil.net_connections (needs root on macOS).
     out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
-                         capture_output=True, text=True).stdout.split()
+                         capture_output=True, text=True, encoding="utf-8").stdout.split()
     if not out:
         raise SystemExit(f"no process listening on :{port}")
     return int(out[0])
@@ -76,7 +76,7 @@ class MemSampler(threading.Thread):
             self.peak_rss = max(self.peak_rss, rss)
             try:
                 lvl = int(subprocess.check_output(
-                    ["sysctl", "-n", "kern.memorystatus_level"], text=True).strip())
+                    ["sysctl", "-n", "kern.memorystatus_level"], text=True, encoding="utf-8").strip())
                 self.min_free_pct = min(self.min_free_pct, lvl)
             except Exception:
                 pass
@@ -108,7 +108,9 @@ def run_ingest(args, sampler):
     lat_file = Path(args.project_root) / f"lat-{os.getpid()}-{time.time():.0f}.txt"
     shim = Path(args.project_root) / "_bench_shim"
     shim.mkdir(parents=True, exist_ok=True)
-    (shim / "sitecustomize.py").write_text(_SITE)
+    tmp = shim / "sitecustomize.py.tmp"
+    tmp.write_text(_SITE, encoding="utf-8")
+    os.replace(str(tmp), str(shim / "sitecustomize.py"))  # repo rule: no in-place writes
     env = dict(os.environ,
                ARKIV_OLLAMA_URL=args.ollama_url,
                ARKIV_PROJECT_ROOT=args.project_root,
@@ -117,7 +119,7 @@ def run_ingest(args, sampler):
     cmd = [args.python, str(REPO / "ingest.py"), "--dir", args.clips, "--refresh",
            "--no-embed", "--skip-failed"]
     t0 = time.time()
-    proc = subprocess.run(cmd, env=env, cwd=str(REPO), capture_output=True, text=True)
+    proc = subprocess.run(cmd, env=env, cwd=str(REPO), capture_output=True, text=True, encoding="utf-8")
     wall = time.time() - t0
     lats = [float(x) for x in lat_file.read_text().split()] if lat_file.exists() else []
     lat_file.unlink(missing_ok=True)
