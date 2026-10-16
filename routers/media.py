@@ -32,6 +32,7 @@ import db
 import media_delete
 import mediatypes
 import progress
+import search_syntax
 import tag_quality
 import transcript_compare
 from auth import require_scopes
@@ -247,6 +248,46 @@ def shoot_date_facets(
     return db.get_shoot_date_facets()
 
 
+def _attach_match_times(items, semantic, q):
+    """Set ``match_start_s`` on each page item whose hit lives in the transcript:
+    where the matched chunk begins (semantic) or where the query first appears
+    (keyword). Absent when the hit is in tags/frames/filename, or the time cannot
+    be placed with confidence — the UI then just opens the clip at 0, as before.
+    One query for the page; never fails the search."""
+    wanted = {}
+    for rec in items:
+        sem = semantic.get(rec["id"])
+        if sem is not None:
+            if sem.get("chunk_type") == "transcript" and sem.get("excerpt"):
+                wanted[rec["id"]] = sem["excerpt"]
+        elif q:
+            wanted[rec["id"]] = q
+    if not wanted:
+        return
+    try:
+        import transcript_time
+        ids = list(wanted)
+        with db.get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, transcript, segments_json FROM media WHERE id IN ({0})".format(
+                    ",".join("?" * len(ids))),
+                ids,
+            ).fetchall()
+        times = {}
+        for row in rows:
+            r = dict(row)
+            t = transcript_time.locate_text(r.get("transcript") or "", r.get("segments_json"),
+                                            wanted[r["id"]])
+            if t is not None:
+                times[r["id"]] = round(t, 2)
+    except Exception as exc:  # a timestamp is a convenience; the results must still return
+        _logging.getLogger(__name__).warning("match time lookup failed: %s", exc)
+        return
+    for rec in items:
+        if rec["id"] in times:
+            rec["match_start_s"] = times[rec["id"]]
+
+
 @router.get("/api/media")
 def list_media(
     offset: int = 0,
@@ -280,7 +321,22 @@ def list_media(
         for rec in records:
             rec["tags"] = tags_by_id.get(rec["id"], [])
         return {"items": records, "total": len(records), "search": True}
+    # `camera:a7s3 tag:海邊 …` in the search box → typed filters (search_syntax).
+    # `q` is narrowed to the free text; the filters become one SQL predicate that
+    # both legs below must satisfy, so they cannot drift apart.
+    conditions: list = []
+    cond_ids = None
+    parsed = None
     if q:
+        try:
+            q, conditions = search_syntax.parse(q)
+        except search_syntax.QueryError as exc:
+            raise HTTPException(422, str(exc))
+        parsed = search_syntax.describe(q, conditions)
+        if conditions:
+            with db.get_conn() as conn:
+                cond_ids = search_syntax.matching_ids(conn, conditions)
+    if q or conditions:
         search_warning = None
         import vectordb as vdb
         # audit M19: search MUST paginate correctly. `total` is the STABLE number
@@ -291,6 +347,8 @@ def list_media(
         SEARCH_CAP = 2000
 
         def _passes_filters(rec: dict) -> bool:
+            if cond_ids is not None and rec["id"] not in cond_ids:
+                return False
             # Applied to the ENRICHED record (which has real lang/rating), not the
             # raw vector hit — vectordb results carry no `rating`, so filtering on
             # them dropped every semantic hit under `rating=good` and silently fell
@@ -337,14 +395,16 @@ def list_media(
         # scores + excerpt). May be empty on degradation (search_warning set).
         semantic: dict = {}
         try:
-            raw = vdb.search(q, n_results=SEARCH_CAP)
+            # Filters only, no text: nothing to rank by meaning.
+            raw = vdb.search(q, n_results=SEARCH_CAP) if q else []
             seen = set()
             for r in raw:
                 mid = int(r["media_id"])
                 if mid in seen:
                     continue
                 seen.add(mid)
-                semantic[mid] = {"score": r.get("score", 0), "excerpt": r.get("excerpt", "")}
+                semantic[mid] = {"score": r.get("score", 0), "excerpt": r.get("excerpt", ""),
+                                 "chunk_type": r.get("chunk_type")}
         except vdb.EmbeddingDimensionMismatch as exc:
             # Don't silently SQL-degrade a dim mismatch — log it and surface a hint
             # so the operator knows semantic search is off until they rebuild.
@@ -388,22 +448,26 @@ def list_media(
             filter_sql += " AND " + shot_sql
             filter_params.extend(shot_params)
         lexical_ids: list = []
-        with db.get_conn() as conn:
-            rows = conn.execute(
-                "SELECT id FROM media "
-                "WHERE (filename LIKE ? OR transcript LIKE ?)" + filter_sql +
-                " ORDER BY id LIMIT ?",
-                (like, like, *filter_params, SEARCH_CAP),
-            ).fetchall()
-            lexical_ids = [dict(r)["id"] for r in rows]
-            tag_rows = conn.execute(
-                "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
-                (like, SEARCH_CAP),
-            ).fetchall()
-        for tr in tag_rows:
-            tid = dict(tr)["media_id"]
-            if tid not in lexical_ids:
-                lexical_ids.append(tid)
+        if q:
+            with db.get_conn() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM media "
+                    "WHERE (filename LIKE ? OR transcript LIKE ?)" + filter_sql +
+                    " ORDER BY id LIMIT ?",
+                    (like, like, *filter_params, SEARCH_CAP),
+                ).fetchall()
+                lexical_ids = [dict(r)["id"] for r in rows]
+                tag_rows = conn.execute(
+                    "SELECT DISTINCT media_id FROM tags WHERE name LIKE ? LIMIT ?",
+                    (like, SEARCH_CAP),
+                ).fetchall()
+            for tr in tag_rows:
+                tid = dict(tr)["media_id"]
+                if tid not in lexical_ids:
+                    lexical_ids.append(tid)
+        else:
+            # Filters only, no text: the matching set IS the result, newest first.
+            lexical_ids = sorted(cond_ids, reverse=True)[:SEARCH_CAP]
 
         # Stable, offset-independent ordering: semantic hits by score desc, then
         # lexical hits in id order, de-duplicated. Capped at SEARCH_CAP.
@@ -437,7 +501,10 @@ def list_media(
         tags_by_id = _get_tags_bulk([rec["id"] for rec in items])
         for rec in items:
             rec["tags"] = tags_by_id.get(rec["id"], [])
+        _attach_match_times(items, semantic, q)
         resp = {"items": items, "total": total, "search": True}
+        if parsed is not None:
+            resp["parsed"] = parsed
         if search_warning:
             resp["search_degraded"] = True
             resp["warning"] = search_warning
@@ -962,6 +1029,17 @@ def activate_transcript(
     if not row:
         raise HTTPException(404, "該語言尚無轉錄")
     with db.get_conn() as conn:
+        # Archive what is active NOW before replacing it. media.* can be newer than
+        # its archive row — the correction dictionary (corrections.apply) rewrites
+        # only media.* — so copying the archive over it without this step turned
+        # zh(corrected) → en → zh back into the raw, uncorrected text.
+        if (rec.get("transcript") or "").strip() and rec.get("lang"):
+            db.upsert_transcript(media_id, rec["lang"], rec.get("transcript"),
+                                 rec.get("segments_json"), rec.get("words_json"), _conn=conn)
+            if rec["lang"] == body.lang:
+                row = {"transcript": rec.get("transcript"), "lang": rec["lang"],
+                       "segments_json": rec.get("segments_json"),
+                       "words_json": rec.get("words_json")}
         conn.execute(
             "UPDATE media SET transcript=?, lang=?, segments_json=?, words_json=? WHERE id=?",
             (row["transcript"], row["lang"], row["segments_json"], row["words_json"], media_id),
@@ -1132,8 +1210,16 @@ def bulk_delete_media(
 ):
     """Delete several media records at once. Returns the ids that were deleted,
     skipped (e.g. not found), and any hard errors — matching the designed
-    {deleted, skipped, errors} contract."""
+    {deleted, skipped, errors} contract.
+
+    Audit 2026-10-09 K1: `deleted` alone cannot tell a recoverable trash move
+    from a metadata-only delete (clip outside PROJECT_ROOT/ARKIV_MEDIA_ROOTS, or
+    a failed move) — and the UI promised 「可從回收桶還原」 for both. Each
+    delete's outcome is kept: `not_trashed` lists rows whose original did NOT
+    go into the recycle bin (their tags/rating/transcript are unrecoverable),
+    `warnings` carries every per-item warning delete_media_full produced."""
     deleted, skipped, errors = [], [], []
+    not_trashed, warnings = [], []
     for mid in body.ids:
         try:
             mid = int(mid)
@@ -1145,13 +1231,25 @@ def bulk_delete_media(
         )
         if r is None:
             skipped.append(mid)
-        else:
-            deleted.append(mid)
-    return {"ok": True, "deleted": deleted, "skipped": skipped, "errors": errors}
+            continue
+        deleted.append(mid)
+        if not r.get("file_deleted"):
+            not_trashed.append({"media_id": mid, "warning": r.get("warning")})
+        if r.get("warning"):
+            warnings.append({"media_id": mid, "warning": r["warning"]})
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "skipped": skipped,
+        "errors": errors,
+        "not_trashed": not_trashed,
+        "warnings": warnings,
+    }
 
 
 class PruneMissingBody(BaseModel):
     dry_run: bool = True
+    force: bool = False  # override the ">= 90% of a storage looks missing" hold-back
 
 
 @router.post("/api/media/prune-missing")
@@ -1165,23 +1263,84 @@ def prune_missing_media(
     data-integrity operation (delete_media_full over ghost rows), not a token
     /admin one (R5-25 route ownership)."""
     missing = db.iter_missing()
-    if body.dry_run:
-        return {
-            "scanned": len(missing),
-            "pruned": 0,
-            "pruned_ids": [],
-            "dry_run": True,
-        }
-    pruned_ids = []
+    # Audit 2026-10-09 (MED): a file is only "missing" if the storage it lives on
+    # is actually there. An unmounted NAS / external drive made EVERY row on it
+    # look deleted, and a real run dropped the whole library (tags, ratings,
+    # transcripts — CASCADE, no trash row) with no way back.
+    #  1. rows whose volume is not mounted are excluded (db.storage_status);
+    #  2. second net for storage we can't classify (an NFS/SMB share mounted at an
+    #     arbitrary path leaves an ordinary empty folder when it drops): if the
+    #     rows under one nearest-existing folder would lose >= 90% (and >= 10
+    #     rows), they are held back unless the caller passes force=true.
+    # Every skipped row is reported (`skipped`, capped) so nothing is silent.
+    prunable_by_root, unavailable, skipped = {}, {}, []
+    status_cache = {}
     for m in missing:
+        try:
+            resolved = db.resolve_path(m["path"])
+        except ValueError:
+            resolved = m["path"]
+        parent = str(Path(resolved).parent)
+        if parent not in status_cache:
+            status_cache[parent] = db.storage_status(resolved)
+        st = status_cache[parent]
+        if not st["available"]:
+            unavailable[st["root"]] = unavailable.get(st["root"], 0) + 1
+            skipped.append({"id": m["id"], "path": m["path"], "root": st["root"], "reason": st["reason"]})
+            continue
+        # Group by the nearest EXISTING folder, not the mount: on a single-disk
+        # machine the mount is "/" and would lump the whole library together.
+        prunable_by_root.setdefault(st.get("anchor") or st["root"], []).append(m)
+
+    held_back = []
+    prunable = []
+    if prunable_by_root:
+        def _under(rp, root):
+            try:
+                Path(rp).relative_to(root)
+                return True
+            except ValueError:
+                return False
+
+        totals = {}
+        with db.get_conn() as conn:
+            for r in conn.execute("SELECT path FROM media").fetchall():
+                try:
+                    rp = db.resolve_path(r["path"])
+                except ValueError:
+                    continue
+                # deepest matching anchor wins (anchors may nest)
+                hits = [root for root in prunable_by_root if _under(rp, root)]
+                if hits:
+                    best = max(hits, key=len)
+                    totals[best] = totals.get(best, 0) + 1
+        for root, rows in sorted(prunable_by_root.items()):
+            total = max(totals.get(root, len(rows)), len(rows))
+            if not body.force and len(rows) >= 10 and len(rows) >= 0.9 * total:
+                held_back.append({"root": root, "count": len(rows), "total": total})
+                for m in rows:
+                    skipped.append({"id": m["id"], "path": m["path"], "root": root,
+                                    "reason": "held back: {0}/{1} rows on this storage look missing "
+                                              "(pass force=true if they really were deleted)".format(len(rows), total)})
+                continue
+            prunable.extend(rows)
+
+    unavailable_roots = [{"root": r, "count": n} for r, n in sorted(unavailable.items())]
+    report = {
+        "scanned": len(missing),
+        "prunable": len(prunable),
+        "unavailable_roots": unavailable_roots,
+        "held_back": held_back,
+        "skipped_count": len(skipped),
+        "skipped": skipped[:200],
+    }
+    if body.dry_run:
+        return dict(report, pruned=0, pruned_ids=[], dry_run=True)
+    pruned_ids = []
+    for m in prunable:
         r = media_delete.delete_media_full(
             m["id"], allow_file_delete=False, token_info=_tok
         )
         if r is not None:
             pruned_ids.append(m["id"])
-    return {
-        "scanned": len(missing),
-        "pruned": len(pruned_ids),
-        "pruned_ids": pruned_ids,
-        "dry_run": False,
-    }
+    return dict(report, pruned=len(pruned_ids), pruned_ids=pruned_ids, dry_run=False)

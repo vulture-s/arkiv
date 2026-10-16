@@ -67,6 +67,8 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 
 → **完整 pipeline（4 階段、儲存路徑、exit code、maintenance modes）**：[docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md) · 架構總覽 [ARCHITECTURE.md](ARCHITECTURE.md)
 
+→ **給腳本／cron 看的 exit code**：`0` 掃到的檔全部在庫 · `1` 部分失敗 · `2` 全部失敗 · `4` 儲存路徑 preflight 失敗 · **`7` 對帳不平** —— 有檔案掃到了卻沒落到任何分類，或計數說進庫了但 DB 沒有那一列（執行輸出的 `Reconcile:` 那行會列出檔名）。非 0 一律代表「沒有乾淨做完」；完整對照見 [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)。
+
 </details>
 
 ## 功能總覽
@@ -411,7 +413,7 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 
 ## 開發者資訊
 
-[ARCHITECTURE.md](ARCHITECTURE.md)（架構總覽） · [docs/api.zh-TW.md](docs/api.zh-TW.md)（API + Chat） · [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)（完整 pipeline） · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
+[ARCHITECTURE.md](ARCHITECTURE.md)（架構總覽） · [docs/api.zh-TW.md](docs/api.zh-TW.md)（API + Chat） · [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)（完整 pipeline） · [BENCHMARK.md](BENCHMARK.md)（轉錄速度實測，Mac MLX vs PC CUDA） · [docs/adr/](docs/adr/)（架構決策紀錄） · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
 
 ## 授權
 
@@ -423,7 +425,7 @@ arkiv **任何用途皆免費，包含商業工作**：接案、工作室內部�
 
 ## Pro 附加元件
 
-免費核心支援 **3 個專案**。選購的 **Pro 附加元件**（另一個閉源元件）解鎖無限專案與跨專案聚合（跨專案搜尋與精選集），**NT$3,000 一次買斷、終身有效**。無訂閱、無啟用伺服器、不對外回報。條款：[docs/pro-addon-license.md](docs/pro-addon-license.md)。
+免費核心支援 **3 個專案**。選購的 **Pro 附加元件**（另外授權的付費方案，以簽章授權檔啟用）解鎖無限專案與跨專案聚合（跨專案搜尋與精選集），**NT$3,000 一次買斷、終身有效**。無訂閱、無啟用伺服器、不對外回報。條款：[docs/pro-addon-license.md](docs/pro-addon-license.md)。
 
 > 2026-10-03 起於 Waffle House 商店販售 —— 見[產品頁](https://vulture-s.github.io/arkiv/)。
 
