@@ -57,6 +57,12 @@ contention on a GPU that's already memory-bound for a num_ctx=16384 vision model
 parallel=2 brings no throughput win and no cold-start regression (NULL=0 in both),
 so the default stands.
 
+**Apple Silicon leg** (`2026-10-17`, M2 Max 32 GB, 10 sample-derived clips / 30 frames,
+vision only): parallel=2 brought no win either — wall +35% (partly host-load-confounded),
++3.3 GB resident. arkiv's ingest is a serial client (`describe_frames` loop; nothing reads
+`config.OLLAMA_NUM_PARALLEL`), so the server setting has no request to parallelise.
+Details + hypothetical client-fan-out numbers: [`docs/bench/2026-10-17-ollama-num-parallel-ab.md`](bench/2026-10-17-ollama-num-parallel-ab.md).
+
 ---
 
 ## B. Cold-start elimination (the headline risk)
