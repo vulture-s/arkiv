@@ -38,52 +38,10 @@ WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # A cross-site page can fire "simple" POSTs without a preflight, and a DNS-
 # rebinding page reaches 127.0.0.1 with loopback trust. Per-route
 # `_assert_same_site(request)` calls kept being forgotten on new routes (audit
-# M14 → #498 moves it to a global SameSiteWriteGuard middleware). Until that
-# middleware is on main, these are the write routes with no guard at all.
-# Key = "<module>.<endpoint>" (stable across FastAPI versions, unlike paths of
-# lazily-included routers). ONLY SHRINK THIS LIST.
-KNOWN_UNGUARDED_WRITE_ROUTES = {
-    "routers.admin.admin_create_token",
-    "routers.admin.admin_revoke_token",
-    "routers.admin.admin_purge_trash",
-    "routers.admin.admin_restore_trash",
-    "routers.settings.put_settings",
-    "routers.settings.reset_setting",
-    "routers.projects.add_project",
-    "routers.projects.remove_project",
-    "routers.projects.sync_projects",
-    "routers.chat.chat_endpoint",
-    "routers.bins.create_bin",
-    "routers.bins.rename_bin",
-    "routers.bins.delete_bin",
-    "routers.bins.add_bin_items",
-    "routers.bins.remove_bin_item",
-    "routers.bins.copy_bin",
-    "routers.offload.offload_preview",
-    "routers.offload.offload_run",
-    "routers.misc.open_file",
-    "routers.misc.client_log",
-    "routers.export.export_metadata_csv_to",
-    "routers.export.export_to_file",
-    "routers.export.export_batch",
-    "routers.media.update_rating",
-    "routers.media.update_inout",
-    "routers.media.update_camera",
-    "routers.media.add_tag",
-    "routers.media.remove_tag",
-    "routers.media.retranscribe_media",
-    "routers.media.retry_vision",
-    "routers.media.delete_media",
-    "routers.media.bulk_delete_media",
-    "routers.media.prune_missing_media",
-    "routers.search.structured_query",
-    "routers.ingest.scan_media",
-    "routers.ingest.ingest_media",
-    "routers.ingest.reingest_media",
-    "routers.ingest.ingest_upload",
-    "routers.ingest.ingest_media_ws",
-}
-
+# M14). #498 landed a global SameSiteWriteGuard middleware that covers every
+# write route; per-route calls remain as a second layer. So the guarantee here
+# is: the global guard is mounted — and if it is ever removed, every write route
+# must carry its own call again (no exemption list: there are no gaps to grant).
 GLOBAL_WRITE_GUARD_NAMES = {"SameSiteWriteGuard"}
 
 
@@ -153,23 +111,17 @@ def test_detector_flags_an_unguarded_write_route():
 def test_every_write_route_is_same_site_guarded(server_module):
     app = server_module.app
     if _has_global_write_guard(app):
-        return  # global middleware covers every write route
-    new = _unguarded_write_routes(app) - KNOWN_UNGUARDED_WRITE_ROUTES
-    assert not new, (
-        "new write route(s) without the same-site guard — call "
-        "`_assert_same_site(request)` first thing in the handler (or land the "
-        "global SameSiteWriteGuard, #498): {0}".format(sorted(new)))
+        return  # global middleware (#498) covers every write route
+    unguarded = _unguarded_write_routes(app)
+    assert not unguarded, (
+        "the global SameSiteWriteGuard is not mounted, and these write routes have "
+        "no per-route `_assert_same_site(request)` either: {0}".format(sorted(unguarded)))
 
 
-def test_unguarded_write_route_baseline_only_shrinks(server_module):
-    app = server_module.app
-    if _has_global_write_guard(app):
-        pytest.skip("global SameSiteWriteGuard is mounted — KNOWN_UNGUARDED_"
-                    "WRITE_ROUTES is dead; delete it")
-    stale = KNOWN_UNGUARDED_WRITE_ROUTES - _unguarded_write_routes(app)
-    assert not stale, (
-        "these KNOWN entries are now guarded (or gone) — delete them from "
-        "KNOWN_UNGUARDED_WRITE_ROUTES so the ratchet tightens: {0}".format(sorted(stale)))
+def test_global_write_guard_is_mounted(server_module):
+    """Pins #498. Removing the middleware falls back to per-route calls, which is
+    exactly the state that kept forgetting new routes (audit M14)."""
+    assert _has_global_write_guard(server_module.app)
 
 
 # ════════════════════════════════════════════════════════════════════════════
