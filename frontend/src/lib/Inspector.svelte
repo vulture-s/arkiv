@@ -9,6 +9,7 @@
   import { createInOutWriter } from './inoutWriter.js'
   import { pendingSeek } from './matchTime.js'
   import { parseCube, webgl2Available, createLutRenderer } from './lutGL.js'
+  import { selectionToFrom, validateCorrection } from './transcriptCorrect.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -470,11 +471,112 @@
     ? (pathLabel ?? media.name)
     : (pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`)
   const rateBtns = [['good', 'Good'], ['rev', 'Review'], ['ng', 'N·G'], ['none', '—']]
+
+  // ── 選字 → 校正 ──────────────────────────────────────────────────────────
+  // Select text inside ONE transcript segment (drag, or double-click a word) →
+  // a small 「校正…」 chip appears → type the right spelling → Enter sends it to
+  // onCorrect(from, to, apply). onCorrect is the parent's learnCorrection call; it
+  // resolves on success (parent toasts + reloads the transcript) and throws on
+  // failure (the error stays in the form so the user can fix and resend).
+  // null → transcript stays read-only (mock screens, archived languages).
+  export let onCorrect = null
+  // corr: null | {stage:'chip'|'refuse'|'form', from, seg, reason, x, y, to, apply, busy, err}
+  let corr = null
+  let linesEl = null
+  let corrEl = null
+  const POP_W = 300
+  // A selection boundary can be (text node, offset) or — WebKit does this when a
+  // drag crosses block boundaries — (element, child index). Resolve the latter to
+  // the child it points at before looking for the segment.
+  function segOf(node, offset) {
+    if (node && node.nodeType === 1 && node.childNodes.length) {
+      node = node.childNodes[Math.min(offset || 0, node.childNodes.length - 1)]
+    }
+    const el = node && (node.nodeType === 1 ? node : node.parentElement)
+    const host = el && el.closest ? el.closest('[data-seg]') : null
+    return host && linesEl && linesEl.contains(host) ? Number(host.dataset.seg) : null
+  }
+  function hasSelection() {
+    const s = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null
+    return !!(s && s.rangeCount && !s.isCollapsed && s.toString().trim())
+  }
+  function readSelection() {
+    if (!onCorrect || (corr && corr.stage === 'form')) return
+    const s = window.getSelection()
+    if (!s || !s.rangeCount || s.isCollapsed) { corr = null; return }
+    const range = s.getRangeAt(0)
+    // a selection that never touches the transcript is someone else's business
+    if (!linesEl || !linesEl.contains(range.commonAncestorContainer)) {
+      if (!(linesEl && range.intersectsNode(linesEl))) { corr = null; return }
+    }
+    const startSeg = segOf(range.startContainer, range.startOffset)
+    const endSeg = segOf(range.endContainer, range.endOffset)
+    const segText = startSeg != null && lines[startSeg] ? lines[startSeg][1] : null
+    const r = selectionToFrom({ startSeg, endSeg, text: s.toString(), segText })
+    if (!r.ok && r.reason === 'empty') { corr = null; return }
+    const rect = range.getBoundingClientRect()
+    const x = Math.max(8, Math.min(rect.left, window.innerWidth - POP_W - 8))
+    const pos = { x, top: rect.top, bottom: rect.bottom }
+    corr = r.ok
+      ? { stage: 'chip', from: r.from, seg: r.seg, ...pos }
+      : { stage: 'refuse', reason: r.reason, ...pos }
+  }
+  // Below the selection when it fits, else above it (the transcript sits at the
+  // bottom of a scrolling panel, so "above" is the common case for late lines).
+  function popStyle(c) {
+    const h = c.stage === 'form' ? 190 : 34
+    if (c.bottom + 6 + h <= window.innerHeight - 8) return `left:${c.x}px;top:${c.bottom + 6}px;`
+    return `left:${c.x}px;bottom:${Math.max(8, window.innerHeight - c.top + 6)}px;`
+  }
+  // WebKit finalises the selection after mouseup's handlers; read it a tick later.
+  function onLinesMouseUp() { if (onCorrect) setTimeout(readSelection, 0) }
+  function openCorrForm() {
+    if (!corr || corr.stage !== 'chip') return
+    corr = { ...corr, stage: 'form', to: corr.from, apply: true, busy: false, err: null }
+  }
+  function closeCorr() { corr = null }
+  async function submitCorr() {
+    if (!corr || corr.stage !== 'form' || corr.busy) return
+    const v = validateCorrection(corr.from, corr.to)
+    if (!v.ok) { corr = { ...corr, err: v.reason }; return }
+    const mine = corr
+    corr = { ...corr, busy: true, err: null }
+    try {
+      await onCorrect(v.from, v.to, mine.apply)
+      if (corr && corr.from === mine.from) corr = null
+      const s = window.getSelection()
+      if (s) s.removeAllRanges()
+    } catch (e) {
+      if (corr && corr.from === mine.from) corr = { ...corr, busy: false, err: (e && e.message) || String(e) }
+    }
+  }
+  function onCorrKey(e) {
+    // IME: the Enter that commits a 注音/拼音 candidate must not submit
+    // (WebKit reports it as keyCode 229 and/or isComposing).
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); submitCorr() }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCorr() }
+  }
+  function onDocMouseDown(e) {
+    if (!corr) return
+    if (corrEl && corrEl.contains(e.target)) return
+    if (corr.stage === 'form') { if (!corr.busy) closeCorr(); return }
+    // chip/refuse: a new mousedown starts a new selection; mouseup re-reads it
+    corr = null
+  }
+  function onWinKey(e) {
+    if (corr && e.key === 'Escape' && corr.stage !== 'form') { closeCorr(); return }
+    onKey(e)
+  }
+  function focusInput(node) { node.focus(); node.select() }
+  // switching clips (or the parent turning correction off) drops a pending correction
+  let _corrMid = null
+  $: if ((media && media.id) !== _corrMid) { _corrMid = media && media.id; corr = null }
+  $: if (!onCorrect) corr = null
 </script>
 
-<svelte:window on:keydown={onKey} />
+<svelte:window on:keydown={onWinKey} on:mousedown={onDocMouseDown} />
 
-<aside class="inspector">
+<aside class="inspector" on:scroll={() => { if (corr && corr.stage !== 'form') corr = null }}>
   <div class="header">
     <Eyebrow style="margin-bottom:8px;">
       Inspector · {media.kind === 'image' ? 'IMAGE' : media.kind === 'audio' ? 'AUDIO' : `${media.fps}p · ${media.res}`}
@@ -675,20 +777,50 @@
         {/if}
       </div>
     {/if}
-    <div class="lines">
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="lines" class:correctable={!!onCorrect} bind:this={linesEl} on:mouseup={onLinesMouseUp}>
       {#if lines.length === 0}
         <Mono dim style="font-size:11px;">（無語音 · no speech detected）</Mono>
       {:else}
-        {#each lines as [tc, text, hl, t]}
+        {#each lines as [tc, text, hl, t], i}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
           <div class="line" class:seekable={typeof t === 'number' && (useVideo || useAudio)}
-            on:click={() => (typeof t === 'number') && seekTo(t)}>
+            on:click={() => (typeof t === 'number') && !hasSelection() && seekTo(t)}>
             <Mono dim style="font-size:10.5px;flex:0 0 36px;">{tc}</Mono>
-            <span class="ttext" class:hl>{text}</span>
+            <span class="ttext" class:hl data-seg={i}>{text}</span>
           </div>
         {/each}
       {/if}
     </div>
+    {#if onCorrect && lines.length}
+      <div class="corrhint">選取一段字（或雙擊一個詞）可校正錯字</div>
+    {/if}
+    {#if corr}
+      <div class="corrpop" class:form={corr.stage === 'form'} bind:this={corrEl}
+        style={popStyle(corr)}>
+        {#if corr.stage === 'chip'}
+          <button class="corrchip" on:click={openCorrForm} title="把這段字的正確寫法教給本專案">校正「{corr.from}」…</button>
+        {:else if corr.stage === 'refuse'}
+          <div class="corrrefuse" role="status">{corr.reason}</div>
+        {:else}
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+          <div class="corrform" role="dialog" aria-label="校正逐字稿" tabindex="-1" on:keydown={onCorrKey}>
+            <div class="corrfrom">原文 <b>{corr.from}</b></div>
+            <input class="corrinput" type="text" bind:value={corr.to} use:focusInput
+              disabled={corr.busy} aria-label="正確寫法" placeholder="正確寫法" />
+            <label class="corrapply">
+              <input type="checkbox" bind:checked={corr.apply} disabled={corr.busy} />
+              套用到本專案所有逐字稿
+            </label>
+            {#if corr.err}<div class="correrr" role="alert">{corr.err}</div>{/if}
+            <div class="corractions">
+              <button class="ak-btn" on:click={closeCorr} disabled={corr.busy}>取消 · Esc</button>
+              <button class="ak-btn ak-btn--primary" on:click={submitCorr} disabled={corr.busy}>{corr.busy ? '處理中…' : '校正 · Enter'}</button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   {#if frameScenes && frameScenes.length}
@@ -907,6 +1039,31 @@
   .line.seekable:hover .ttext { color: var(--invert); }
   .ttext { color: var(--ink); }
   .ttext.hl { border-bottom: 1px solid var(--invert); padding-bottom: 1px; }
+  .lines.correctable .ttext { cursor: text; }
+  .corrhint { margin-top: 8px; font-size: 10px; color: var(--quiet); }
+  .corrpop { position: fixed; z-index: 900; max-width: 300px; }
+  .corrchip {
+    appearance: none; cursor: pointer; font-family: var(--ak-mono); font-size: 10.5px;
+    background: var(--invert); color: var(--invert-ink); border: 1px solid var(--invert);
+    padding: 4px 8px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .corrrefuse {
+    font-size: 11px; color: var(--ink); background: var(--surface-2);
+    border: 1px dashed var(--rule-hi); padding: 6px 8px;
+  }
+  .corrform {
+    width: 300px; box-sizing: border-box; background: var(--bg); color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--invert); padding: 12px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .corrfrom { font-size: 11px; color: var(--ink-2); word-break: break-all; }
+  .corrfrom b { color: var(--ink); font-weight: 600; }
+  .corrinput {
+    font: inherit; font-size: 13px; background: var(--surface-2); color: var(--ink);
+    border: 1px solid var(--rule-hi); padding: 5px 7px; width: 100%; box-sizing: border-box;
+  }
+  .corrapply { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-2); }
+  .correrr { font-size: 11px; color: var(--ink); border-left: 2px solid var(--invert); padding-left: 6px; word-break: break-all; }
+  .corractions { display: flex; justify-content: flex-end; gap: 6px; }
   /* tags */
   .tagrow { display: flex; flex-wrap: wrap; gap: 5px; }
   .tagchip {
