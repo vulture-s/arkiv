@@ -367,3 +367,46 @@ class SameSiteWriteGuard:
                 await resp(scope, receive, send)
                 return
         await self.app(scope, receive, send)
+
+
+# ── Content-Security-Policy for the SPA document ─────────────────────────────
+#
+# WHERE this policy takes effect (P4, 2026-10-17): the Tauri shell opens the
+# window with `WebviewUrl::External("http://127.0.0.1:<port>")` (src-tauri/
+# src/main.rs), so WKWebView loads the page straight from this uvicorn. Tauri's
+# `app.security.csp` is only attached by Tauri's own asset protocol
+# (tauri/src/protocol/tauri.rs → `asset.csp_header`) for *embedded* assets — it
+# never touches a remote-URL page. So the CSP that actually governs the desktop
+# app (and the browser UI at :8501) is the header sent HERE with index.html.
+# CSP is enforced per document, so the header only needs to ride on "/".
+_CSP_HOST_OK = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]"
+)
+
+
+def spa_csp(host: str = "") -> str:
+    """CSP header value for the SPA shell.
+
+    `host` is the request's Host header; it is echoed into connect-src as an
+    explicit ws:// / wss:// source because older WebKit (macOS 12 = Safari 15,
+    our minimumSystemVersion) does not let 'self' match WebSocket schemes. Only
+    a plain host[:port] is accepted — anything else (a `;` would inject a
+    directive) falls back to 'self' only.
+    """
+    connect = ["'self'"]
+    if host and len(host) <= 255 and all(c in _CSP_HOST_OK for c in host):
+        connect += ["ws://" + host, "wss://" + host]
+    directives = [
+        "default-src 'self'",
+        "script-src 'self'",                 # Vite bundle only; no eval/inline script
+        "style-src 'self' 'unsafe-inline'",  # Svelte style= attrs / transitions
+        "img-src 'self' data: blob:",        # data: favicon + CSS data URIs; blob: textures
+        "media-src 'self' blob:",            # /api/stream video, waveform audio
+        "font-src 'self' data:",             # bundled @fontsource woff/woff2
+        "connect-src " + " ".join(connect),  # fetch /api/* + ws /ws/ingest
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ]
+    return "; ".join(directives)

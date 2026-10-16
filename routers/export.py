@@ -26,11 +26,13 @@ from pydantic import BaseModel
 
 import db
 import settings as settings_store
+import transcript_time
 from auth import require_scopes
 from export_builders import (
     _build_metadata_csv,
     _edl_comment,
     _edl_fps_warning,
+    _edl_high_fps_warning,
     _edl_reel,
     _edl_span,
     _edl_timecode,
@@ -190,11 +192,7 @@ def export_media(
     full_duration = rec.get("duration_s", 0) or 0
 
     # Normalize trim window: [trim_in, trim_out] in seconds, duration = trim_out - trim_in
-    trim_in = max(0.0, float(in_s)) if in_s is not None else 0.0
-    trim_out = min(full_duration, float(out_s)) if out_s is not None else full_duration
-    if trim_out <= trim_in:
-        trim_in, trim_out = 0.0, full_duration
-    has_trim = trim_in > 0.05 or trim_out < full_duration - 0.05
+    trim_in, trim_out, has_trim = transcript_time.trim_window(in_s, out_s, full_duration)
     duration = trim_out - trim_in
 
     # TC helpers are module-level (shared with the batch-timeline endpoint).
@@ -214,20 +212,7 @@ def export_media(
     # When trimmed, keep only segments that overlap [trim_in, trim_out] and
     # rebase their timestamps so the output starts at 0.
     if has_trim and _segments:
-        trimmed = []
-        for seg in _segments:
-            # `or 0`: an explicit null in segments_json (legacy rows have them)
-            # would make these comparisons raise TypeError → 500. Every other
-            # read of these fields already guards this way; this one did not.
-            s, e = seg.get("start", 0) or 0, seg.get("end", 0) or 0
-            if e <= trim_in or s >= trim_out:
-                continue
-            trimmed.append({
-                **seg,
-                "start": max(0.0, s - trim_in),
-                "end": min(duration, e - trim_in),
-            })
-        _segments = trimmed
+        _segments = transcript_time.trim_rebase(_segments, trim_in, trim_out)
 
     if fmt == "txt":
         if has_trim:
@@ -273,7 +258,11 @@ def export_media(
         rec_base = _record_base_seconds(clip_fps, is_df)
         rec_start, rec_end = _edl_span(rec_base, duration, clip_fps, is_df)
 
-        edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n\n"
+        edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n"
+        hi_warn = _edl_high_fps_warning(clip_fps)  # B13: high-fps spec limit
+        if hi_warn:
+            edl += hi_warn + "\n"
+        edl += "\n"
         reel = _edl_reel(rec, stem)
         edl += f"001  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
         edl += f"* FROM CLIP NAME: {_edl_comment(filename)}\n"
@@ -581,6 +570,11 @@ def export_timeline(
         fps_warn = _edl_fps_warning(recs, tl_fps)  # B13
         if fps_warn:
             edl += fps_warn + "\n"
+        # B13 high-fps: one line per distinct off-spec rate, not per clip.
+        for r in sorted({round(float(x.get("fps") or tl_fps), 3) for x in recs}):
+            hi_warn = _edl_high_fps_warning(r)
+            if hi_warn:
+                edl += hi_warn + "\n"
         edl += "\n"
         rec_pos = _record_base_seconds(tl_fps, tl_is_df)  # 01:00:00:00 by convention
         for i, rec in enumerate(recs, 1):
