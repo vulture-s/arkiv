@@ -7,6 +7,7 @@ single-flight primitives (_offload_lock / _offload_active / _acquire_offload_slo
 handlers. `BASE_DIR` (config) replaces server.ROOT for locating offload.py. Imports
 auth + config + webguard (dst denylist) + offload — no server import, no cycle.
 """
+import os
 import threading
 from pathlib import Path
 from typing import List, Optional
@@ -16,6 +17,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 import config
+import orphan_guard
 from auth import require_scopes
 from config import BASE_DIR
 from webguard import _assert_offload_dst_safe
@@ -42,6 +44,26 @@ def _acquire_offload_slot(key: str) -> bool:
 def _release_offload_slot(key: str) -> None:
     with _offload_lock:
         _offload_active.discard(key)
+
+
+def _offload_state_path(state_cwd: Path, src: Path, include_heic: bool = False) -> Path:
+    """Resumable state file for ONE card.
+
+    Audit 2026-10-09 (HIGH): this used to be keyed on the mount path alone, so a
+    second card mounted at the same path (Sony → /Volumes/Untitled, Canon →
+    /Volumes/EOS_DIGITAL) silently reused the first card's state and was reported
+    done without being copied. The key now also covers the card's content
+    fingerprint (every file's relpath + size + mtime) — the same card re-inserted
+    after an interruption resumes; a different card starts a fresh state. The
+    engine additionally refuses a state that does not match the source, so a
+    fingerprint collision cannot reintroduce the bug."""
+    import hashlib as _hashlib
+    import offload as _offload
+    files = _offload._collect_sources(src, include_heic=include_heic)
+    fp = _offload.source_fingerprint(files, src)
+    key = "{0}\0{1}\0{2}".format(src, int(bool(include_heic)), fp)
+    return state_cwd / "offload-state-{0}.json".format(
+        _hashlib.sha1(key.encode("utf-8")).hexdigest()[:16])
 
 
 class OffloadPreviewRequest(BaseModel):
@@ -117,9 +139,10 @@ def offload_run(
     # single cwd/offload-state.json: a retry re-copied from zero, and a second
     # concurrent card clobbered the first's state. A stable per-source path means a
     # 400GB offload that dies at 92% picks up from the last verified file.
-    import hashlib as _hashlib
-    state_path = state_cwd / "offload-state-{0}.json".format(
-        _hashlib.sha1(str(src).encode("utf-8")).hexdigest()[:16])
+    try:
+        state_path = _offload_state_path(state_cwd, src, body.include_heic)
+    except OSError as exc:  # unreadable card → a 400 the UI can show, not a 500
+        raise HTTPException(400, "無法讀取來源：{0}".format(exc))
     cmd += ["--resume", str(state_path)]
 
     # Single-flight per source (see _acquire_offload_slot): reject a second run over
@@ -139,7 +162,14 @@ def offload_run(
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 encoding="utf-8", errors="replace",
-                bufsize=1, cwd=str(state_cwd))
+                bufsize=1, cwd=str(state_cwd),
+                # orphan_guard: the offload stops (resumably) if this server is
+                # SIGKILLed instead of copying on, invisible, after app quit.
+                env=orphan_guard.child_env(),
+                # Own process group, so the guard's killpg also takes exiftool &
+                # co. — outside it, the guard can only _exit the worker itself and
+                # its children run on in the dead server's group (Claude review).
+                start_new_session=(os.name == "posix"))
             for line in proc.stdout:
                 try:  # JSON parse (not substring) so a filename can't false-positive
                     if _json.loads(line).get("type") == "done":
@@ -172,6 +202,52 @@ def offload_run(
                 proc.stdout.close()
             _release_offload_slot(slot_key)
     return StreamingResponse(_stream(), media_type="application/x-ndjson")
+
+
+class OffloadResolveRequest(BaseModel):
+    src: str
+    dst: str
+    rel: str  # the clip's card-layout path, as reported in the run's needs_rename list
+    action: str  # "rename" | "skip"
+    new_name: Optional[str] = None
+    confirm: bool = False  # required for "skip": that clip is then NOT backed up
+    include_heic: bool = False
+
+
+@router.post("/api/offload/resolve")
+def offload_resolve(
+    body: OffloadResolveRequest,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
+    """Settle one same-name conflict of a finished offload (Hevin 2026-10-09
+    23:14): copy that single clip under the user's new name (hash-verified, never
+    overwrites, MHL records the original path) or — confirmed — skip it, leaving
+    the card NOT done. The state file is found exactly like /api/offload finds it
+    (same card → same state), so the card must still be mounted; the engine
+    re-checks the clip against the state before copying."""
+    import offload as _offload
+    src = Path(body.src).expanduser().resolve()
+    if not src.exists():
+        raise HTTPException(400, "來源路徑不存在（卡片要插著才能補拷）")
+    _assert_offload_dst_safe(body.dst)
+    state_cwd = config.THUMBNAILS_DIR.parent
+    try:
+        state_path = _offload_state_path(state_cwd, src, body.include_heic)
+    except OSError as exc:
+        raise HTTPException(400, "無法讀取來源：{0}".format(exc))
+    if not state_path.exists():
+        raise HTTPException(400, "找不到這張卡的轉存紀錄 — 請先跑一次 offload")
+    slot_key = str(src)
+    if not _acquire_offload_slot(slot_key):
+        raise HTTPException(409, "此來源的轉存正在進行中，請稍候")
+    try:
+        return _offload.resolve_conflict(
+            state_path, body.dst, body.rel, body.action,
+            new_name=body.new_name, confirm=body.confirm)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        _release_offload_slot(slot_key)
 
 
 @router.get("/dit")

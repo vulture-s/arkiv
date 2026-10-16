@@ -19,6 +19,8 @@ import subprocess
 import time
 from typing import Mapping, Optional, Sequence
 
+import orphan_guard
+
 
 def _kill_tree(proc) -> None:
     """Kill the child AND its descendants. Extracted so the timeout path and the
@@ -58,8 +60,9 @@ def run_tree(
     }
     if cwd is not None:
         popen_kwargs["cwd"] = cwd
-    if env is not None:
-        popen_kwargs["env"] = env
+    # Always pass an env: the worker learns our pid (ARKIV_PARENT_PID) so it
+    # can die with us if we are SIGKILLed — see orphan_guard (audit N1).
+    popen_kwargs["env"] = orphan_guard.child_env(env)
     if encoding is not None:
         popen_kwargs["encoding"] = encoding
     if errors is not None:
@@ -144,8 +147,9 @@ def run_tree_watched(
     }
     if cwd is not None:
         popen_kwargs["cwd"] = cwd
-    if env is not None:
-        popen_kwargs["env"] = env
+    # Always pass an env: the worker learns our pid (ARKIV_PARENT_PID) so it
+    # can die with us if we are SIGKILLed — see orphan_guard (audit N1).
+    popen_kwargs["env"] = orphan_guard.child_env(env)
     if os.name == "posix":
         popen_kwargs["start_new_session"] = True
     else:
