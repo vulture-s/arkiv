@@ -5,6 +5,7 @@
      thumbnail_path(abs fs path → /thumbnails/<basename>), rating(null), tags[]. -->
 <script>
   import { onMount } from 'svelte'
+  import { createExportGuard, downloadedMsg } from '../lib/exportFeedback.js'
   import * as api from '../lib/api.js'
   import { describeDelete } from '../lib/deleteOutcome.js'
   import TopBar from '../lib/TopBar.svelte'
@@ -169,24 +170,33 @@
     } catch (e) { pushToast('加入精選集失敗: ' + e.message, 'error') }
   }
   const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
-  async function exportTimeline(fmt) {
+  // One export in flight at a time; exportBusy = the running key (e.g.
+  // 'timeline:edl') so the clicked button shows … and the rest disable (B11).
+  let exportBusy = null
+  const exportGuard = createExportGuard((b) => (exportBusy = b))
+  function exportTimeline(fmt) {
     if (!picked.length) return
-    try {
-      await api.downloadFile(api.exportTimelinePath(picked, fmt), `arkiv-timeline.${fmt}`)
-      pushToast(`時間軸已匯出 · ${picked.length} 支 · ${fmt.toUpperCase()}`)
-    } catch (e) {
-      pushToast(`匯出失敗: ${e.message}`, 'error')
-    }
+    const n = picked.length
+    return exportGuard.run(`timeline:${fmt}`, async () => {
+      try {
+        const r = await api.downloadFile(api.exportTimelinePath(picked, fmt), `arkiv-timeline.${fmt}`)
+        pushToast(downloadedMsg(r.filename, r.size, `時間軸 ${n} 支`))
+      } catch (e) {
+        pushToast(`時間軸 ${fmt.toUpperCase()} 匯出失敗: ${e.message}`, 'error')
+      }
+    })
   }
   // DaVinci Resolve metadata CSV (auth-safe download). ids=null → whole library;
   // ids=picked → just the selected clips (camera-report / DIT handoff deliverable).
-  async function exportMetadataCsv(ids = null) {
-    try {
-      await api.downloadFile(api.metadataCsvPath(ids), 'arkiv_davinci_metadata.csv')
-      pushToast(ids ? `中繼資料 CSV 已匯出 · ${ids.length} 支` : '中繼資料 CSV 已匯出 · 全庫')
-    } catch (e) {
-      pushToast(`CSV 匯出失敗: ${e.message}`, 'error')
-    }
+  function exportMetadataCsv(ids = null) {
+    return exportGuard.run(ids ? 'csv:picked' : 'csv:all', async () => {
+      try {
+        const r = await api.downloadFile(api.metadataCsvPath(ids), 'arkiv_davinci_metadata.csv')
+        pushToast(downloadedMsg(r.filename, r.size, ids ? `中繼資料 ${ids.length} 支` : '中繼資料 · 全庫'))
+      } catch (e) {
+        pushToast(`CSV 匯出失敗: ${e.message}`, 'error')
+      }
+    })
   }
   // ---- media delete (reversible: original moved to trash, metadata removed) ----
   // confirmDel holds the pending delete so the ConfirmDialog can show context and
@@ -231,7 +241,7 @@
   }
 
   // single-clip export from the inspector (auth-safe download).
-  async function exportClip(id, fmt, name, trim = null) {
+  function exportClip(id, fmt, name, trim = null) {
     const stem = (name || `media_${id}`).replace(/\.[^.]+$/, '')
     // trim = {in_s, out_s?} from the inspector IN/OUT points → backend trims the export
     let path = api.exportPath(id, fmt)
@@ -241,27 +251,33 @@
       if (trim.out_s != null) q.push(`out_s=${trim.out_s}`)
       path += `?${q.join('&')}`
     }
-    try {
-      await api.downloadFile(path, `${stem}.${fmt}`)
-      pushToast(`已匯出 · ${stem}.${fmt}`)
-    } catch (e) {
-      pushToast(`匯出失敗: ${e.message}`, 'error')
-    }
+    return exportGuard.run(`clip:${fmt}`, async () => {
+      try {
+        const r = await api.downloadFile(path, `${stem}.${fmt}`)
+        pushToast(downloadedMsg(r.filename, r.size))
+      } catch (e) {
+        pushToast(`${fmt.toUpperCase()} 匯出失敗: ${e.message}`, 'error')
+      }
+    })
   }
   const _stem = (id, name) => (name || `media_${id}`).replace(/\.[^.]+$/, '')
-  async function exportChapters(id, name, format = 'youtube') {
-    try {
-      const r = await api.getChapters(id, format)
-      api.downloadText(r.chapters || '', `${_stem(id, name)}.chapters.txt`)
-      pushToast(`章節已匯出 · ${_stem(id, name)}.chapters.txt`)
-    } catch (e) { pushToast(`章節匯出失敗: ${e.message}`, 'error') }
+  function exportChapters(id, name, format = 'youtube') {
+    return exportGuard.run('chapters', async () => {
+      try {
+        const r = await api.getChapters(id, format)
+        const d = api.downloadText(r.chapters || '', `${_stem(id, name)}.chapters.txt`)
+        pushToast(downloadedMsg(d.filename, d.size, '章節'))
+      } catch (e) { pushToast(`章節匯出失敗: ${e.message}`, 'error') }
+    })
   }
-  async function exportRemotion(id, name) {
-    try {
-      const r = await api.getRemotionProps(id)
-      api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
-      pushToast(`Remotion props 已匯出 · ${_stem(id, name)}.remotion.json`)
-    } catch (e) { pushToast(`Remotion 匯出失敗: ${e.message}`, 'error') }
+  function exportRemotion(id, name, trim = null) {
+    return exportGuard.run('remotion', async () => {
+      try {
+        const r = await api.getRemotionProps(id, undefined, trim)
+        const d = api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
+        pushToast(downloadedMsg(d.filename, d.size, 'Remotion props'))
+      } catch (e) { pushToast(`Remotion 匯出失敗: ${e.message}`, 'error') }
+    })
   }
   async function revealFile(path, mediaId = null) {
     try { await api.openFile(path, true, undefined, mediaId) } catch (e) { pushToast(`在 Finder 顯示失敗: ${e.message}`, 'error') }
@@ -1126,8 +1142,10 @@
         <button
           class="ak-btn metacsv"
           on:click={() => exportMetadataCsv(null)}
+          disabled={!!exportBusy}
+          aria-busy={exportBusy === 'csv:all'}
           title="匯出整庫 metadata CSV（DaVinci Resolve）"
-        >CSV ↓</button>
+        >{exportBusy === 'csv:all' ? 'CSV …' : 'CSV ↓'}</button>
         <FilterRow bind:activeFilter bind:activeRating />
         <ViewToggle bind:view />
         <button class="ak-btn trash" on:click={() => (trashOpen = true)} title="回收桶（已刪除、可還原）">回收桶</button>
@@ -1139,9 +1157,13 @@
           <div class="expbtns">
             <span class="barlabel">時間軸</span>
             {#each EXPORT_FMTS as fmt}
-              <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}>{fmt.toUpperCase()}</button>
+              <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}
+                      disabled={!!exportBusy} aria-busy={exportBusy === `timeline:${fmt}`}
+              >{fmt.toUpperCase()}{exportBusy === `timeline:${fmt}` ? ' …' : ''}</button>
             {/each}
-            <button class="ak-btn expbtn" on:click={() => exportMetadataCsv(picked)} title="匯出所選 metadata CSV">CSV</button>
+            <button class="ak-btn expbtn" on:click={() => exportMetadataCsv(picked)} title="匯出所選 metadata CSV"
+                    disabled={!!exportBusy} aria-busy={exportBusy === 'csv:picked'}
+            >CSV{exportBusy === 'csv:picked' ? ' …' : ''}</button>
             <div class="barvrule"></div>
             <span class="barlabel">精選集</span>
             <select class="ak-input binsel" bind:value={targetBinId} disabled={!projectRegName}
@@ -1312,7 +1334,8 @@
         mediaLang={detailLive ? detailLive.lang : null}
         onExport={selected ? (fmt, trim) => exportClip(selected.id, fmt, selected.name, trim) : null}
         onChapters={selected ? (fmt) => exportChapters(selected.id, selected.name, fmt) : null}
-        onRemotion={selected ? () => exportRemotion(selected.id, selected.name) : null}
+        onRemotion={selected ? (trim) => exportRemotion(selected.id, selected.name, trim) : null}
+        {exportBusy}
         onReveal={inspPath ? () => revealFile(inspPath, selected && selected.id) : null}
         onDelete={selected ? askDeleteSingle : null}
         onRate={rate}
@@ -1409,6 +1432,10 @@
   .expbtn { font-size: 10px; padding: 5px 10px; text-decoration: none; }
   .expbtn.clear { opacity: 0.7; }
   .expbtn:disabled { opacity: 0.4; cursor: default; }
+  /* B11: other exports dim while one runs; the running one stays legible */
+  .expbtn[aria-busy='true'] { opacity: 1; cursor: progress; }
+  .metacsv:disabled { opacity: 0.4; cursor: default; }
+  .metacsv[aria-busy='true'] { opacity: 1; cursor: progress; }
   .barlabel { font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--quiet); }
   .barvrule { width: 1px; height: 16px; background: var(--rule-hi); margin: 0 4px; }
   .binsel, .binnew { font-size: 10px; padding: 4px 6px; }
