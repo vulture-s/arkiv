@@ -146,6 +146,17 @@ Reads `media.transcript` → chunks → Ollama `bge-m3` →
 | 2 | All-fail — every file failed Phase 1 (likely upstream issue) |
 | 3 | `frames.py` last-line defense: dangling thumbnails symlink (preflight should have caught) |
 | 4 | Preflight fail — storage path broken; fix before retry |
+| 5 | `--migrate-storage`: backup failed |
+| 6 | `--migrate-storage`: target `.arkiv` already exists (moved aside, not deleted) |
+| 7 | Reconcile mismatch (#393) — a scanned file landed in no bucket, or was counted as in the library but has no DB row. The `Reconcile:` line names the files. |
+
+Precedence when several apply: **2 > 7 > 1**. A partial failure is already named and
+counted in the output; a mismatch is the case that otherwise leaves no trace. If the
+end-of-run DB read itself fails, the reconcile line says `unavailable` and the exit
+code falls back to the other signals (not measured ≠ mismatch).
+
+`watch.py` treats every non-zero code the same way: the file is logged with its code,
+backed off, retried, and quarantined after 3 failures — the watcher keeps running.
 
 Before v0.3.1, `ingest.py` always exited 0 regardless of fail count.
 Runners / launchd / cron now see actual outcome.

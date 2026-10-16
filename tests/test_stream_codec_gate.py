@@ -251,6 +251,56 @@ def test_an_audio_file_is_not_refused_for_not_being_video(
     assert r.status_code == 200, "audio preview must not be gated on video codecs"
 
 
+@pytest.mark.parametrize("name", ["take.mp3", "take.m4a", "take.flac"])
+def test_audio_with_cover_art_is_not_refused_for_its_mjpeg(
+    fastapi_client, server_module, sample_record, tmp_path, monkeypatch, name
+):
+    """Issue #431. An MP3 carrying ID3v2 cover art (APIC) has a second stream,
+    `codec_type=video, codec_name=mjpeg, disposition.attached_pic=1`, and both
+    ingest (first video stream) and `probe_codec` (`-select_streams v:0`) record
+    THAT as the file's codec. Measured with ffprobe on a real MP3 + cover:
+    `-select_streams v:0 … codec_name` → `mjpeg`.
+
+    So the stored codec of most music files is `mjpeg`, which the allow-list
+    rightly calls unplayable — and the only thing standing between that verdict
+    and a 409 on every album is the VIDEO_EXT gate from #420.
+
+    `mp3` as the stored codec (the test above) does not exercise this: `mp3` and
+    `mjpeg` are both "not a playable video codec", but only `mjpeg` is the value
+    real music files actually carry, and it is also the value a JPEG still
+    carries — the case most likely to tempt someone into a content-based guard.
+    """
+    db = importlib.import_module("db")
+    snd = tmp_path / "music" / name
+    snd.parent.mkdir(parents=True, exist_ok=True)
+    snd.write_bytes(b"ID3" + b"\x00" * 32)
+    mid = _seed(db, sample_record, snd, codec="mjpeg", duration_s=30.0,
+                fps=0.0, has_audio=1)
+    monkeypatch.setattr(pathres, "_probe_duration", lambda path: 30.0)
+
+    r = fastapi_client.get("/api/stream/%d" % mid)
+
+    assert r.status_code == 200, "cover art must not gate audio playback (#431)"
+
+
+def test_audio_with_cover_art_and_no_stored_codec_is_not_refused(
+    fastapi_client, server_module, sample_record, tmp_path, monkeypatch
+):
+    """Same file, legacy row: codec column NULL, so the endpoint probes and the
+    probe answers `mjpeg` (the attached picture). The backfill path must reach
+    the same verdict as the stored path."""
+    db = importlib.import_module("db")
+    snd = tmp_path / "music" / "legacy.mp3"
+    snd.parent.mkdir(parents=True, exist_ok=True)
+    snd.write_bytes(b"ID3" + b"\x00" * 32)
+    mid = _seed(db, sample_record, snd, codec=None, duration_s=30.0,
+                fps=0.0, has_audio=1)
+    monkeypatch.setattr(pathres, "_probe_duration", lambda path: 30.0)
+    monkeypatch.setattr(codec, "probe_codec", lambda path, **k: "mjpeg")
+
+    assert fastapi_client.get("/api/stream/%d" % mid).status_code == 200
+
+
 # ── and the builder half, end to end ─────────────────────────────────────────
 @pytest.mark.parametrize("bad", ["mjpeg", "qtrle", "dnxhd"])
 def test_the_builder_builds_the_proxy_the_endpoint_just_demanded(

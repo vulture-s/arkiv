@@ -95,7 +95,10 @@ def admin_purge_trash(
         ttl = body.ttl_days
     else:
         ttl = config.TRASH_TTL_DAYS
-    purged = db.purge_trash(ttl)
+    try:
+        purged = db.purge_trash(ttl)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     return {"ok": True, "purged": purged}
 
 

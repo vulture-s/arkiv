@@ -36,6 +36,8 @@ export const MORE = [
       art: `<circle cx="26" cy="30" r="14"/><circle cx="26" cy="62" r="14"/><path d="M48 46h14" /><path d="M58 42l4 4-4 4"/><rect x="70" y="24" width="78" height="44" rx="3"/><path d="M70 46h78M90 24v44M110 24v44M130 24v44"/><circle cx="110" cy="46" r="5" class="a"/><path d="M98 46h-6M122 46h6" class="a"/>` },
   ]},
   { group: '格式與進階', items: [
+    { t: 'Log 素材還原', d: 'S-Log3、D-Log、C-Log、N-Log、F-Log、Apple Log、V-Log 自動換算成 Rec.709；播放時一鍵切回原始 log，也能匯入自己的 .cube。', w: 'Inspector「COLOR」',
+      art: `<rect x="12" y="22" width="52" height="40" rx="3"/><path d="M12 54l14-12 10 8 12-14 16 18"/>${T(18,78,'LOG')}<path d="M72 42h16" class="a"/><path d="M84 38l4 4-4 4" class="a"/><rect x="96" y="22" width="52" height="40" rx="3" class="a"/><path d="M96 54l14-12 10 8 12-14 16 18" class="a"/>${T(102,78,'709','a')}` },
     { t: '影片、音訊、圖片同一個庫', d: 'mp4／mov／mts／mxf、wav／mp3／flac、jpg／png／webp；瀏覽器播不了的自動產生 proxy。', w: '自動',
       art: `<rect x="12" y="24" width="40" height="42" rx="3"/><path d="M12 32h40M12 58h40M18 24v8M26 24v8M34 24v8M42 24v8M18 58v8M26 58v8M34 58v8M42 58v8"/><path d="M62 45h4M70 36v18M74 30v30M78 38v14M82 32v26M86 40v10M90 34v22M94 42v6" class="a"/><rect x="106" y="24" width="42" height="42" rx="3"/><circle cx="118" cy="36" r="4"/><path d="M106 60l14-14 10 10 6-6 12 12"/>` },
     { t: '內建範例庫', d: '空的素材庫一鍵載入 4 支範例短片，馬上能試搜尋。', w: '空白素材庫畫面',

@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import color_profiles
 import config
 import mediatypes
 
@@ -191,7 +192,7 @@ def _run_ffmpeg(cmd, out_path: Optional[Path] = None, timeout: float = 60) -> bo
     return True
 
 
-def _extract_frame_to(video_path: str, t: float, out: Path) -> bool:
+def _extract_frame_to(video_path: str, t: float, out: Path, lut: Optional[str] = None) -> bool:
     """Extract one frame at time ``t`` to ``out`` atomically: ffmpeg writes a temp
     sibling, then os.replace onto ``out`` only on success. So a forced re-extraction
     (--refresh) that times out / fails can't destroy the prior good thumbnail while
@@ -215,7 +216,9 @@ def _extract_frame_to(video_path: str, t: float, out: Path) -> bool:
     norot = ["-noautorotate"] if getattr(config, "IGNORE_ROTATION", False) else []
     cmd = (
         [config.FFMPEG_PATH] + norot + seek + ["-i", video_path]
-        + _frame_vf_args(video_path)
+        + color_profiles.add_lut_to_vf_args(
+            _frame_vf_args(video_path), lut,
+            color_profiles.yuv_matrix_for(video_path) if lut else "bt709")
         + ["-frames:v", "1", str(tmp), "-y"]
     )
     if _run_ffmpeg(cmd, tmp):
@@ -240,7 +243,8 @@ def _thumbnail_seek(duration_s: float) -> float:
     return min(max(duration_s * 0.5, 1.0), max(duration_s - _EOF_MARGIN_S, 0.0))
 
 
-def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -> Optional[str]:
+def extract_thumbnail(video_path: str, duration_s: float, force: bool = False,
+                      lut: Optional[str] = None) -> Optional[str]:
     """
     Extract one representative frame (50% position) and save permanently
     to thumbnails/{stem}.jpg. Returns saved path or None on failure.
@@ -271,7 +275,7 @@ def extract_thumbnail(video_path: str, duration_s: float, force: bool = False) -
     # assumptions about very short media.
     t = 0.0 if (_is_still_raster(video_path) or duration_s <= 0) \
         else _thumbnail_seek(duration_s)
-    return str(out) if _extract_frame_to(video_path, t, out) else None
+    return str(out) if _extract_frame_to(video_path, t, out, lut) else None
 
 
 def _adaptive_frame_count(duration_s: float) -> int:
@@ -284,7 +288,8 @@ def _adaptive_frame_count(duration_s: float) -> int:
     return 5 + max(1, int((duration_s - 60) / 30))
 
 
-def extract_frames(video_path: str, duration_s: float, fps: float, force: bool = False) -> List[Dict]:
+def extract_frames(video_path: str, duration_s: float, fps: float, force: bool = False,
+                   lut: Optional[str] = None) -> List[Dict]:
     """
     Extract representative frames from a video and persist thumbnails.
     Returns list of {index, timestamp_s, thumbnail_path}.
@@ -301,11 +306,11 @@ def extract_frames(video_path: str, duration_s: float, fps: float, force: bool =
     n_frames = _adaptive_frame_count(duration_s)
 
     if duration_s < 60:
-        results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames, force=force)
+        results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames, force=force, lut=lut)
     else:
-        results = _extract_scene_persistent(video_path, duration_s, stem, max_frames=n_frames, force=force)
+        results = _extract_scene_persistent(video_path, duration_s, stem, max_frames=n_frames, force=force, lut=lut)
         if not results:
-            results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames, force=force)
+            results = _extract_fixed_persistent(video_path, duration_s, fps, stem, n_frames=n_frames, force=force, lut=lut)
 
     if not results:
         # audit M18: a video ending up with zero frames used to look like [OK]
@@ -321,6 +326,7 @@ def _extract_fixed_persistent(
     stem: str,
     n_frames: int = 3,
     force: bool = False,
+    lut: Optional[str] = None,
 ) -> List[Dict]:
     # One frame at t=0 for a still: sampling "50% of 0.04s" would both record a
     # meaningless timestamp and, before the seek fix in _extract_frame_to, extract
@@ -335,7 +341,7 @@ def _extract_fixed_persistent(
         out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
         already_ok = (not force) and out.exists() and out.stat().st_size > 0
         if not already_ok:
-            if not _extract_frame_to(video_path, t, out):
+            if not _extract_frame_to(video_path, t, out, lut):
                 continue
         results.append({
             "index": i,
@@ -351,13 +357,14 @@ def _extract_scene_persistent(
     stem: str,
     max_frames: int = 5,
     force: bool = False,
+    lut: Optional[str] = None,
 ) -> List[Dict]:
     """Use scene detection, then persist top scene-change frames."""
     # First pass: detect scene timestamps via showinfo (stderr), discard frames
     cmd = [
         config.FFMPEG_PATH, "-i", video_path,
         "-vf", "select='gt(scene,0.3)',showinfo",
-        "-vsync", "vfr", "-f", "null", "-"
+        "-fps_mode", "vfr", "-f", "null", "-"
     ]
     # Full-file scene-detect pass scales with clip length — bound it so one
     # bad file can't hang the whole batch; timeout falls back to fixed frames
@@ -402,7 +409,7 @@ def _extract_scene_persistent(
         out = THUMBNAILS_DIR / f"{stem}_frame{i}.jpg"
         already_ok = (not force) and out.exists() and out.stat().st_size > 0
         if not already_ok:
-            if not _extract_frame_to(video_path, t, out):
+            if not _extract_frame_to(video_path, t, out, lut):
                 continue
         results.append({
             "index": i,

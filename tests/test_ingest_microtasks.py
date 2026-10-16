@@ -66,10 +66,11 @@ def test_b4_regenerate_thumbnails_video_only(ingest_mod, sample_record, tmp_path
     monkeypatch.setattr(ingest_mod, "probe", lambda p: {"duration_s": 10.0, "fps": 30})
     fake_thumb = tmp_path / "thumb_a.jpg"; fake_thumb.write_text("t")
     calls = []
-    def _fake_extract(src, dur, force=False):
+    def _fake_extract(src, dur, force=False, lut=None):
         calls.append((src, force))
         return str(fake_thumb)
     monkeypatch.setattr(ingest_mod.frm, "extract_thumbnail", _fake_extract)
+    monkeypatch.setattr(ingest_mod.color_profiles, "detect_profile", lambda p: None)
 
     ingest_mod._regenerate_thumbnails()
 
@@ -79,6 +80,44 @@ def test_b4_regenerate_thumbnails_video_only(ingest_mod, sample_record, tmp_path
     assert calls[0][1] is True, "must force=True or regeneration is a no-op"
     assert db.get_record_by_id(1)["thumbnail_path"]       # video updated
     assert not db.get_record_by_id(2)["thumbnail_path"]   # audio left alone
+
+
+def test_regenerate_thumbnails_backfills_log_profile_and_grades(ingest_mod, sample_record, tmp_path, monkeypatch):
+    """A library ingested before color profiles existed: one regenerate pass detects
+    S-Log3, stores the profile, and passes the LUT to the poster extraction."""
+    vid = tmp_path / "slog.mp4"; vid.write_text("x")
+    db.upsert(sample_record(path=str(vid), filename="slog.mp4", ext=".mp4", thumbnail_path=None))
+    monkeypatch.setattr(ingest_mod, "probe", lambda p: {"duration_s": 10.0, "fps": 30})
+    monkeypatch.setattr(ingest_mod.color_profiles, "detect_profile", lambda p: "sony-slog3-sgamut3cine")
+    monkeypatch.setattr(ingest_mod.color_profiles, "lut_file_for",
+                        lambda pid: "/luts/x.cube" if pid == "sony-slog3-sgamut3cine" else None)
+    fake_thumb = tmp_path / "t.jpg"; fake_thumb.write_text("t")
+    seen = {}
+
+    def _fake_extract(src, dur, force=False, lut=None):
+        seen["lut"] = lut
+        return str(fake_thumb)
+
+    monkeypatch.setattr(ingest_mod.frm, "extract_thumbnail", _fake_extract)
+    ingest_mod._regenerate_thumbnails()
+    assert seen["lut"] == "/luts/x.cube"
+    assert db.get_record_by_id(1)["color_profile"] == "sony-slog3-sgamut3cine"
+
+
+def test_regenerate_thumbnails_respects_user_opt_out(ingest_mod, sample_record, tmp_path, monkeypatch):
+    """color_profile='none' (user said: not log) must not be re-detected over."""
+    vid = tmp_path / "flat.mp4"; vid.write_text("x")
+    db.upsert(sample_record(path=str(vid), filename="flat.mp4", ext=".mp4", thumbnail_path=None,
+                            color_profile="none"))
+    monkeypatch.setattr(ingest_mod, "probe", lambda p: {"duration_s": 10.0, "fps": 30})
+    monkeypatch.setattr(ingest_mod.color_profiles, "detect_profile", lambda p: "sony-slog3-sgamut3cine")
+    fake_thumb = tmp_path / "t.jpg"; fake_thumb.write_text("t")
+    seen = {}
+    monkeypatch.setattr(ingest_mod.frm, "extract_thumbnail",
+                        lambda src, dur, force=False, lut=None: seen.setdefault("lut", lut) or str(fake_thumb))
+    ingest_mod._regenerate_thumbnails()
+    assert seen["lut"] is None
+    assert db.get_record_by_id(1)["color_profile"] == "none"
 
 
 def test_b4_regenerate_thumbnails_skips_missing_source(ingest_mod, sample_record, monkeypatch):

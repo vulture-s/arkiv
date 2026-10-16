@@ -143,6 +143,16 @@ python embed.py --search "drone footage aerial"   # CLI 快速測試
 | 2 | 全 fail — 每個檔 Phase 1 都失敗（通常上游問題）|
 | 3 | `frames.py` 最後防線：dangling thumbnails symlink（preflight 應該已抓到）|
 | 4 | Preflight fail — 儲存路徑壞掉；修了再重跑 |
+| 5 | `--migrate-storage`：備份失敗 |
+| 6 | `--migrate-storage`：目標 `.arkiv` 已存在（挪開，不要刪） |
+| 7 | 對帳不平（#393）—— 掃到的檔沒落到任何分類，或計數說在庫但 DB 沒有那一列。`Reconcile:` 那行會列出檔名 |
+
+同時符合多個時的優先序：**2 > 7 > 1**。部分失敗在輸出裡已經有計數和檔名；對帳不平是
+原本完全不留痕跡的那一種。結束時讀 DB 本身失敗的話，對帳行會寫 `unavailable`，
+exit code 交給其他訊號決定（量不到 ≠ 對帳不平）。
+
+`watch.py` 對所有非 0 一視同仁：記下檔名與 code、退避後重試、連續 3 次就隔離——
+監看本身不會停。
 
 v0.3.1 之前，`ingest.py` 不管 fail 多少都 exit 0。runner / launchd /
 cron 現在能看到實際結果。

@@ -386,7 +386,7 @@ def _ensure_file_records(state, source_files, dsts, organize=None):
     return state
 
 
-def _write_mhl(dst_root, hash_algo, op="offload"):
+def _write_mhl(dst_root, hash_algo, op="offload", known_hashes=None):
     if mhl is None or not hasattr(mhl, "create_manifest"):
         raise RuntimeError("mhl.create_manifest required for MHL emit")
     dst_root = Path(dst_root).expanduser().resolve(strict=False)
@@ -396,8 +396,26 @@ def _write_mhl(dst_root, hash_algo, op="offload"):
         output=output_dir,
         primary_hash=hash_algo,
         op=op,
+        known_hashes=known_hashes,
     )
     return mhl_path
+
+
+def _known_dst_hashes(state, dst_key, hash_algo):
+    """rel (NFC) → (size, mtime_ns, {algo: dst_hash}) for files this run verified.
+    dst_hash was computed by reading the destination file back right after the
+    write, so the manifest can reuse it instead of re-reading every byte (#535).
+    Entries without the recorded size/mtime (state from an older arkiv) are left
+    out → mhl hashes them as before."""
+    known = {}
+    for entry in state.get("files", []):
+        fs = (entry.get("destinations") or {}).get(dst_key) or {}
+        if fs.get("status") != "verified" or not fs.get("dst_hash") or entry.get("rel") is None:
+            continue
+        if fs.get("dst_size") is None or fs.get("dst_mtime_ns") is None:
+            continue
+        known[unicodedata.normalize("NFC", entry["rel"])] = (fs["dst_size"], fs["dst_mtime_ns"], {hash_algo: fs["dst_hash"]})
+    return known
 
 
 def _check_destination_mount(dst_root):
@@ -431,6 +449,7 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
             pass
 
         try:
+            t_copy = time.monotonic()
             with src_path.open("rb") as src_handle, partial_path.open("wb") as dst_handle:
                 hasher = _fallback_hasher(hash_algo)
                 while True:
@@ -448,7 +467,14 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
                 src_hash = hasher.hexdigest().lower()
             if callable(TEST_MUTATOR):
                 TEST_MUTATOR(src_path, partial_path, attempt, file_state["bytes_copied"])
+            t_verify = time.monotonic()
             dst_hash = _hash_file(partial_path, hash_algo)
+            t_done = time.monotonic()
+            # Per-file throughput (#537): a slow destination (e.g. an SMB session that
+            # landed on Wi-Fi) otherwise only shows as "file N/N" sitting for an hour.
+            mib = file_state["bytes_copied"] / 1048576.0
+            file_state["copy_mib_s"] = round(mib / max(t_verify - t_copy, 1e-6), 1)
+            file_state["verify_mib_s"] = round(mib / max(t_done - t_verify, 1e-6), 1)
             file_state["src_hash"] = src_hash
             file_state["dst_hash"] = dst_hash
             if src_hash != dst_hash:
@@ -458,6 +484,11 @@ def _copy_single_file(src_path, dst_root, rel_path, file_state, hash_algo, retry
                     )
                 )
             os.replace(str(partial_path), str(final_path))
+            # Fingerprint the verified file so the MHL pass can trust dst_hash only
+            # while the bytes are provably the ones that were hashed (#535).
+            fst = final_path.stat()
+            file_state["dst_size"] = fst.st_size
+            file_state["dst_mtime_ns"] = fst.st_mtime_ns
             file_state["status"] = "verified"
             file_state["partial"] = None
             file_state["error"] = None
@@ -556,6 +587,8 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
 
         verified_rel_paths = []
         failed = 0
+        copied_bytes = 0
+        copy_secs = 0.0
         total = len(state["files"])
         _emit(progress, {"type": "dst_start", "dst": dst_key, "total": total})
         for idx, file_entry in enumerate(state["files"], 1):
@@ -580,8 +613,14 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
                 verified_rel_paths.append(rel_path)
             else:
                 failed += 1
-            _emit(progress, {"type": "file", "dst": dst_key, "index": idx, "total": total,
-                             "name": src_path.name, "status": "verified" if ok else "failed"})
+            event = {"type": "file", "dst": dst_key, "index": idx, "total": total,
+                     "name": src_path.name, "status": "verified" if ok else "failed"}
+            if ok:
+                event["copy_mib_s"] = file_state.get("copy_mib_s")
+                event["verify_mib_s"] = file_state.get("verify_mib_s")
+                copied_bytes += file_state.get("bytes_copied") or 0
+                copy_secs += (file_state["bytes_copied"] / 1048576.0) / file_state["copy_mib_s"] if file_state.get("copy_mib_s") else 0
+            _emit(progress, event)
 
         dst_state["verified_files"] = len(verified_rel_paths)
         dst_state["failed_files"] = failed
@@ -596,7 +635,8 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
         mhl_path = None
         mhl_error = None
         if emit_mhl and verified_rel_paths:
-            # Two full re-reads of every byte happen below (write, then verify) and
+            # One full re-read of every byte happens below (the verify; the write reuses
+            # the hashes taken when each file was copied, #535) and
             # neither emits anything on its own. Without these markers the UI sits
             # on "file N/N" for as long as the hashing takes — 35 minutes for 89 GB
             # in the 2026-09-06 field run — and looks hung while it is working.
@@ -617,7 +657,8 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
             try:
                 _emit(progress, {"type": "phase", "dst": dst_key, "phase": "mhl_write",
                                  "files": len(verified_rel_paths)})
-                mhl_path = _write_mhl(dst_root, hash_algo, op="offload")
+                mhl_path = _write_mhl(dst_root, hash_algo, op="offload",
+                                      known_hashes=_known_dst_hashes(state, dst_key, hash_algo))
                 dst_state["mhl_path"] = str(mhl_path)
                 _save_state(state_path, state)
                 if verify:
@@ -637,6 +678,7 @@ def run_offload(src, dsts, hash_algo=DEFAULT_HASH, include_heic=False, resume=No
         _save_state(state_path, state)
 
         summary[dst_key] = {
+            "copy_mib_s": round(copied_bytes / 1048576.0 / copy_secs, 1) if copy_secs else None,
             "verified_files": len(verified_rel_paths),
             "failed_files": failed,
             "mhl_path": str(mhl_path) if mhl_path else None,
