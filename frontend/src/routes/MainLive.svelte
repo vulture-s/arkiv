@@ -234,16 +234,17 @@
   async function exportClip(id, fmt, name, trim = null) {
     const stem = (name || `media_${id}`).replace(/\.[^.]+$/, '')
     // trim = {in_s, out_s?} from the inspector IN/OUT points → backend trims the export
+    // trim.markers = 'transcript' → FCPXML/EDL markers from the transcript (8.2i)
     let path = api.exportPath(id, fmt)
-    if (trim && (trim.in_s != null || trim.out_s != null)) {
-      const q = []
-      if (trim.in_s != null) q.push(`in_s=${trim.in_s}`)
-      if (trim.out_s != null) q.push(`out_s=${trim.out_s}`)
-      path += `?${q.join('&')}`
-    }
+    const q = []
+    if (trim && trim.in_s != null) q.push(`in_s=${trim.in_s}`)
+    if (trim && trim.out_s != null) q.push(`out_s=${trim.out_s}`)
+    if (trim && trim.markers) q.push(`markers=${encodeURIComponent(trim.markers)}`)
+    if (q.length) path += `?${q.join('&')}`
+    const file = `${stem}${trim && trim.markers === 'transcript' ? '.transcript' : ''}.${fmt}`
     try {
-      await api.downloadFile(path, `${stem}.${fmt}`)
-      pushToast(`已匯出 · ${stem}.${fmt}`)
+      await api.downloadFile(path, file)
+      pushToast(`已匯出 · ${file}`)
     } catch (e) {
       pushToast(`匯出失敗: ${e.message}`, 'error')
     }

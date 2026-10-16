@@ -426,6 +426,11 @@
   const EXPORT_TITLES = {
     txt: '逐字稿純文字（完整標點）。設了 ✂ 範圍時輸出的是該範圍內的 segment 原文，未經潤稿',
   }
+  // 8.2i: same FCPXML, but its markers come from the transcript segments (who
+  // said what, when) instead of the scene frames. Resolve: marker name = the
+  // line (≤60 chars), marker notes = the full text. Honours ✂ like the others.
+  const TRANSCRIPT_MARKERS_TITLE =
+    'FCPXML，marker 來源改成逐字稿：每段話一個 marker（名稱＝前 60 字，備註＝全文）。設了 ✂ 只輸出範圍內的段落'
 
   const MOCK_TRANSCRIPT = [
     ['00:05', '我們從上海一路騎到拉薩，第十七天。', false],
@@ -778,6 +783,9 @@
           <button class="ak-btn exp" title={EXPORT_TITLES[fmt] || ''}
                   on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{trimArgs ? ' ✂' : ''}</button>
         {/each}
+        <button class="ak-btn exp" title={TRANSCRIPT_MARKERS_TITLE}
+                on:click={() => onExport('fcpxml', { ...(trimArgs || {}), markers: 'transcript' })}
+        >字幕 MARKER{trimArgs ? ' ✂' : ''}</button>
       {:else}
         {#each EXPORT_FMTS as fmt}
           <button class="ak-btn exp">{fmt.toUpperCase()}</button>

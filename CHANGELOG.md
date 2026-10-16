@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**逐字稿可以直接變成 Resolve 時間軸上的 marker。** Inspector 匯出列多一顆「字幕 MARKER」：
+匯出的 FCPXML 每段話一個 marker，名稱是那句話（前 60 字），備註是全文，長度跟著那段話。
+設了 ✂ IN/OUT 只輸出範圍內的段落。API：`/api/media/{id}/export/fcpxml?markers=transcript`
+（`edl-markers` 也吃，但 EDL 的 marker 只能是 ASCII，中文會變成 `?`，中文片請用 FCPXML）。
+原本的場景 marker 不變，仍是預設。
+
 ## v1.5.1 - 2026-10-14
 
 **過卡的 MHL 清單快了一倍以上：複製完之後不再把整張卡重讀 3 遍。**
