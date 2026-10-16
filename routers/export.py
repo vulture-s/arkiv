@@ -30,6 +30,7 @@ from export_builders import (
     _build_metadata_csv,
     _edl_comment,
     _edl_fps_warning,
+    _edl_high_fps_warning,
     _edl_reel,
     _edl_span,
     _edl_timecode,
@@ -258,7 +259,11 @@ def export_media(
         rec_base = _record_base_seconds(clip_fps, is_df)
         rec_start, rec_end = _edl_span(rec_base, duration, clip_fps, is_df)
 
-        edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n\n"
+        edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n"
+        hi_warn = _edl_high_fps_warning(clip_fps)  # B13: high-fps spec limit
+        if hi_warn:
+            edl += hi_warn + "\n"
+        edl += "\n"
         reel = _edl_reel(rec, stem)
         edl += f"001  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
         edl += f"* FROM CLIP NAME: {_edl_comment(filename)}\n"
@@ -546,6 +551,11 @@ def export_timeline(
         fps_warn = _edl_fps_warning(recs, tl_fps)  # B13
         if fps_warn:
             edl += fps_warn + "\n"
+        # B13 high-fps: one line per distinct off-spec rate, not per clip.
+        for r in sorted({round(float(x.get("fps") or tl_fps), 3) for x in recs}):
+            hi_warn = _edl_high_fps_warning(r)
+            if hi_warn:
+                edl += hi_warn + "\n"
         edl += "\n"
         rec_pos = _record_base_seconds(tl_fps, tl_is_df)  # 01:00:00:00 by convention
         for i, rec in enumerate(recs, 1):

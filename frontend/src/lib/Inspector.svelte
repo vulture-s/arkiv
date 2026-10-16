@@ -426,6 +426,11 @@
   const EXPORT_TITLES = {
     txt: '逐字稿純文字（完整標點）。設了 ✂ 範圍時輸出的是該範圍內的 segment 原文，未經潤稿',
   }
+  // B13: CMX3600 only knows 23.976/24/25/29.97/30. media.fps arrives rounded
+  // (MainLive), so 24/25/30 cover the NTSC rates too. Off-spec clips still export
+  // (the server adds a WARNING comment to the EDL) — this just says so up front.
+  $: edlOffSpec = media && typeof media.fps === 'number' && media.fps > 0 && ![24, 25, 30].includes(media.fps)
+  $: edlTitle = edlOffSpec ? `EDL 規格（CMX3600）不支援 ${media.fps}p，Resolve conform 時 TC 可能對不上，建議改用 FCPXML` : ''
 
   const MOCK_TRANSCRIPT = [
     ['00:05', '我們從上海一路騎到拉薩，第十七天。', false],
@@ -775,8 +780,8 @@
     <div class="exports">
       {#if onExport}
         {#each EXPORT_FMTS as fmt}
-          <button class="ak-btn exp" title={EXPORT_TITLES[fmt] || ''}
-                  on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{trimArgs ? ' ✂' : ''}</button>
+          <button class="ak-btn exp" title={(fmt === 'edl' && edlTitle) || EXPORT_TITLES[fmt] || ''}
+                  on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{fmt === 'edl' && edlOffSpec ? ' ⚠' : ''}{trimArgs ? ' ✂' : ''}</button>
         {/each}
       {:else}
         {#each EXPORT_FMTS as fmt}
