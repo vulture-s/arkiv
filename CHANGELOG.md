@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**校正一次就記住：`POST /api/corrections/learn`。** 把「李東煙」改成「李多慧」一次，
+本專案字典就記下這條（同一個錯字再改會更新、不會重複），並把「李多慧」排進**下一次轉錄**的
+Whisper initial_prompt；`apply: true` 會順便只用這一條改寫本專案已存的逐字稿（先備份、可還原）。
+整句話不會被當 hotword 餵給 Whisper（只留作批次校正），避免 prompt 幻覺。
+
+**hotword 清單有長度上限了。** Whisper 的 prompt 只留最後約 223 個 token，超過時會默默丟掉
+**最前面**的詞——也就是 `ARKIV_CUSTOM_VOCABULARY` 與 `vocabulary.txt` 的詞。現在由 arkiv
+自己按優先序裁到 200（估算值，偏保守）：環境變數 → vocabulary.txt → 字典（最近學到的先），
+裝不下的從尾巴丟，轉錄 log 會印出丟了哪些。
+
 ## v1.5.1 - 2026-10-14
 
 **過卡的 MHL 清單快了一倍以上：複製完之後不再把整張卡重讀 3 遍。**

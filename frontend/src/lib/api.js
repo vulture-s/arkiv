@@ -212,6 +212,11 @@ export const getCorrections = (opts) => req('/api/corrections', opts)
 // PUT replaces the whole dictionary → {ok, rules, count}
 export const putCorrections = (rules, opts) =>
   req('/api/corrections', { method: 'PUT', body: { rules }, ...opts })
+// "Fix it once, remember it": upsert one rule (pre on when `to` is term-shaped,
+// post on, learned_at stamped). apply=true also rewrites stored transcripts with
+// THIS rule only (backup first). → {ok, rule, created, hotword, applied?}
+export const learnCorrection = (rule, apply = false, opts) =>
+  req('/api/corrections/learn', { method: 'POST', body: { rule, apply }, ...opts })
 // POST recorrect, dry-run by default — preview only, writes nothing.
 // → {dry_run:true, rules:[{from,to,scope,hits}], media_affected, total_hits, affected:[…]}
 export const recorrectPreview = (opts) =>

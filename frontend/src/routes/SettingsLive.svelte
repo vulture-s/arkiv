@@ -210,7 +210,9 @@
   let applyResult = null // {media_updated,total_hits,backup,embed_rebuild_started}
   let backups = []
   let doRebuild = false
-  const normRule = (r) => ({ from: r.from || '', to: r.to || '', scope: r.scope || 'global', pre: !!r.pre, post: r.post !== false })
+  // learned_at (set by POST /api/corrections/learn) is carried through untouched:
+  // it orders hotword priority, and a Save from here must not erase it.
+  const normRule = (r) => ({ from: r.from || '', to: r.to || '', scope: r.scope || 'global', pre: !!r.pre, post: r.post !== false, ...(r.learned_at ? { learned_at: r.learned_at } : {}) })
   // vocabLoadState: a failed load is NOT an empty dictionary — block Save so the
   // on-screen list can't be PUT over the real one (audit 2026-10-09 K1).
   let vocabCanSave = true
