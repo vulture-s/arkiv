@@ -389,8 +389,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     text = (json.dumps(report, ensure_ascii=False, indent=2) + "\n"
             if args.format == "json" else render_markdown(report))
     if args.output:
-        with open(args.output, "w", encoding="utf-8") as fh:
+        # tmp + replace: an interrupted run never leaves a half-written report
+        # where the previous one was (tests/test_bug_class_guards.py class C).
+        tmp = "{0}.tmp".format(args.output)
+        with open(tmp, "w", encoding="utf-8") as fh:
             fh.write(text)
+        os.replace(tmp, args.output)
         print(args.output)
     else:
         sys.stdout.write(text)
