@@ -500,8 +500,14 @@ def _load_index() -> str:
 
 
 @app.get("/", response_class=HTMLResponse)
-def serve_index():
-    return _load_index()
+def serve_index(request: Request):
+    # P4: the SPA's CSP is set here, not in tauri.conf.json — see webguard.spa_csp
+    # for why Tauri's config never reaches this remote-URL page.
+    from webguard import spa_csp
+    return HTMLResponse(
+        _load_index(),
+        headers={"Content-Security-Policy": spa_csp(request.headers.get("host", ""))},
+    )
 
 
 # (Svelte cutover Phase 3) The /legacy route + the old Tailwind index.html it

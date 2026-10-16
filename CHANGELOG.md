@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Remotion props 吃 IN/OUT。** `GET /api/media/{id}/remotion-props` 接受跟單支匯出同一組
+`in_s`／`out_s`（秒）：只輸出範圍內的字、時間改成從 IN 起算、`duration` 變成範圍長度，
+並多帶 `trim: {in_s, out_s}` 讓渲染端知道要從原檔哪裡開始。跨邊界的字裁到邊界、只碰到邊界的字丟掉，
+規則跟 SRT／EDL／FCPXML 的 trim 匯出共用同一個函式（`transcript_time.trim_window`／`trim_rebase`）。
+Inspector 設了 IN/OUT 時，「Remotion」按鈕會帶上範圍（按鈕顯示 ✂）。不帶範圍時輸出與先前完全相同。
+
+**高 fps 素材匯出 EDL 會先提醒。** CMX3600 EDL 只涵蓋 23.976／24／25／29.97／30，50／59.94／119.88p 這類片在 Resolve conform 時 TC 可能對不上。現在照樣匯出，但 EDL 檔頭多一行 `* WARNING` 註解（解析器會略過，不影響匯入），Inspector 的 EDL 按鈕也會標 ⚠ 並在提示裡建議改用 FCPXML（B13）。
+
 ## v1.5.1 - 2026-10-14
 
 **過卡的 MHL 清單快了一倍以上：複製完之後不再把整張卡重讀 3 遍。**
