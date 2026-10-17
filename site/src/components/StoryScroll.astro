@@ -1,0 +1,145 @@
+---
+import '../styles/story.css';
+import StoryCard from './StoryCard.astro';
+import { MORE, NEXT } from '../lib/feature-cards.mjs';
+// Homepage "收工之後" as a scroll story: one shoot, five chapters, one card that
+// gains a layer per chapter. Replaces the 8-tile feature grid (Hevin 2026-10-09).
+// Facts follow how-it-works.astro; nothing here is a new claim.
+//
+// Server output is the complete story with motion off: every chapter carries
+// its own static snapshot. The script below switches data-motion="on" only
+// when the viewer has not asked for reduced motion and the window is big
+// enough (≥1024 × ≥760); then the snapshots hide and one sticky card on the
+// right follows the scroll. Without JS, on phones, or under reduced motion,
+// the page is the plain, readable version.
+// 🔴 中文段落刻意寫成單行，理由見 index.astro hero 的註解。
+const chapters = [
+  { id: 'story-wrap', n: '01', t: '收工', h: '一張卡，上百支檔',
+    p: '拍完了，手上是一張記憶卡、上百支檔名看不出內容的素材。過片、挑毛片、分類場景、轉字幕，大劇組有 DIT 專門做，小團隊只能自己熬夜。',
+    ev: 'A7520260818_9896.MP4 · A7520260818_9895.MP4 · ⋯' },
+  { id: 'story-offload', n: '02', t: '收檔', h: '先轉存：一張卡，同時拷到多顆碟',
+    p: 'DIT 轉存同時拷到多個目的地，每個檔都做 hash 比對，拷到一半中斷可以接著跑，結束時每個目的地各留一份 ASC MHL 校驗清單。<b>它從不刪除來源卡。</b>介面上按「DIT」就能開始，逐檔看得到進度。',
+    ev: 'ASC MHL v2（urn:ASC:MHL:v2.0）· xxh3／md5／sha1／sha256／c4' },
+  { id: 'story-index', n: '03', t: '看與聽', h: '每一支都被寫成可以搜的文字',
+    p: 'Whisper 把聲音轉成逐字稿，點一句就跳到那一句真正的位置，可匯出 SRT、VTT 或純文字。視覺模型逐場景寫描述與標籤，<b>沒有對白的空景也有文字</b>，逐字稿那欄老實寫「無語音」，不會硬掰字幕。',
+    ev: 'Whisper large-v3-turbo · qwen2.5vl:7b（Ollama）· bge-m3 → ChromaDB，全在本機' },
+  { id: 'story-search', n: '04', t: '找', h: '用口語搜「黃昏 海邊 逆光」，命中那一格',
+    p: '比對的是畫面和逐字稿的<b>意思</b>，不是檔名，中文、日文、英文都可以；同一行再加機型、標籤、語言等條件一起篩。GOOD、REV、N·G 直接標在素材上，Smart Pool 自動分成待審、可用、不用。',
+    ev: '"格爾木氧氣" camera:a7s3 tag:cycling lang:zh' },
+  { id: 'story-handoff', n: '05', t: '交出去', h: '進 Resolve、進剪輯軟體、給 AI 助手',
+    p: '不離開 Resolve 就能搜素材庫：勾選結果一鍵匯入 Media Pool，<b>依攝影機自動分 bin</b>，評等變 clip color（GOOD 綠、REV 黃、N·G 橘），場景描述變時間軸 marker。波形上逐格標 IN／OUT，匯出 EDL、FCPXML 時用攝影機本身的時間碼加上 IN 點，relink 回原始檔落在同一格。MCP 讓 AI 助手查你的素材庫，所有工具都是唯讀的，影片本身不經過 MCP。',
+    ev: 'EDL（CMX3600）· FCPXML 1.8 · SRT · VTT · MCP 7 個唯讀工具' },
+];
+---
+<section class="ss-sec" id="story">
+  <div class="wrap">
+    <h2>收工之後</h2>
+    <p class="ss-lede">跟著一張卡走一遍：從收工、收檔、看與聽、找，到交出去。</p>
+  </div>
+
+  <div class="wrap ss" data-motion="off" data-chapter="1">
+    <div class="ss-body">
+      <ol class="ss-chapters">
+        {chapters.map((c, i) => (
+          <li class="ss-ch" id={c.id} data-ch={i + 1} style={`--len:${i === 0 ? 0.9 : 1.1}`}>
+            <div class="ss-txt">
+              <p class="ss-n"><span>{c.n}</span>{c.t}</p>
+              <h3>{c.h}</h3>
+              <p set:html={c.p} />
+              <p class="ss-ev">{c.ev}</p>
+            </div>
+            <div class="ss-snap"><StoryCard upto={i + 1} /></div>
+          </li>
+        ))}
+      </ol>
+      <div class="ss-stage-col" aria-hidden="true">
+        <div class="ss-stage">
+          <nav class="ss-nav">
+            {chapters.map((c, i) => <a href={`#${c.id}`} tabindex="-1" data-ch={i + 1}><span>{c.n}</span>{c.t}</a>)}
+          </nav>
+          <StoryCard />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h3 class="feat-tier">還有這些</h3>
+    {MORE.map((g) => (
+      <div class="card-group">
+        <h4 class="card-group-h">{g.group}</h4>
+        <div class="card-row">
+          {g.items.map((it) => (
+            <article class="mini">
+              <svg class="mini-art" viewBox="0 0 160 90" aria-hidden="true" set:html={it.art} />
+              <h5>{it.t}</h5>
+              <p>{it.d}</p>
+              <span class={`more-where${it.tag ? ` tag-${it.tag}` : ''}`}>{it.w}</span>
+            </article>
+          ))}
+        </div>
+      </div>
+    ))}
+
+    <h3 class="feat-tier">接下來</h3>
+    <p class="next-note">規劃中，還沒做好，也沒有承諾時程。</p>
+    <div class="card-row next">
+      {NEXT.map((it) => (
+        <article class="mini mini-next">
+          <svg class="mini-art" viewBox="0 0 160 90" aria-hidden="true" set:html={it.art} />
+          <h5>{it.t}</h5>
+          <p>{it.d}</p>
+        </article>
+      ))}
+    </div>
+    <p class="feat-note">素材卡是介面示意：檔名取自實際畫面，場景描述、逐字稿與時間碼為示範。</p>
+  </div>
+</section>
+
+<script is:inline>
+  (function () {
+    var root = document.querySelector('.ss');
+    if (!root) return;
+    var chs = Array.prototype.slice.call(root.querySelectorAll('.ss-ch'));
+    var links = root.querySelectorAll('.ss-nav a');
+    var rm = matchMedia('(prefers-reduced-motion: reduce)');
+    var big = matchMedia('(min-width: 1024px) and (min-height: 760px)');
+    var ticking = false, last = -1;
+
+    function measure() {
+      ticking = false;
+      if (root.dataset.motion !== 'on') return;
+      // A chapter is "playing" once its top passes 60% of the viewport; its
+      // layer finishes when 60% of the chapter has scrolled past that line.
+      var line = innerHeight * 0.6, c = 1, p = 0;
+      for (var i = 0; i < chs.length; i++) {
+        var r = chs[i].getBoundingClientRect();
+        if (r.top <= line) { c = i + 1; p = (line - r.top) / (r.height * 0.6); }
+      }
+      if (c === 1 && chs[0].getBoundingClientRect().top > line) p = 0;
+      p = Math.max(0, Math.min(1, p));
+      root.style.setProperty('--c', c);
+      root.style.setProperty('--p', p.toFixed(3));
+      if (c !== last) {
+        last = c;
+        root.dataset.chapter = c;
+        for (var j = 0; j < links.length; j++) {
+          if (j + 1 === c) links[j].setAttribute('aria-current', 'step');
+          else links[j].removeAttribute('aria-current');
+        }
+      }
+    }
+    function onScroll() { if (!ticking) { ticking = true; requestAnimationFrame(measure); } }
+    function mode() {
+      root.dataset.motion = (!rm.matches && big.matches) ? 'on' : 'off';
+      last = -1;
+      measure();
+    }
+    [rm, big].forEach(function (m) {
+      if (m.addEventListener) m.addEventListener('change', mode); else m.addListener(mode);
+    });
+    addEventListener('scroll', onScroll, { passive: true });
+    addEventListener('resize', onScroll, { passive: true });
+    mode();
+  })();
+</script>
