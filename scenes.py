@@ -133,8 +133,47 @@ def _append_camera_motion(scene: Dict[str, Any], frame: Dict[str, Any]) -> None:
         scene["camera_motion"] = cm
 
 
+def scene_people(start_s: float, end_s: float,
+                 identities: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Names annotated (db.identities rows) on any part of [start_s, end_s).
+
+    A whole-clip row (start_s and end_s both NULL) applies to every scene. A
+    ranged row applies when it overlaps the scene by more than a point — a range
+    ending exactly where a scene starts does not leak into it. A zero-length
+    scene (only possible as the last one of a clip with duration 0 / clamped
+    boundaries) takes the rows that contain its instant. Sorted, de-duplicated.
+    """
+    names = set()
+    for ident in identities or ():
+        i_start, i_end = ident.get("start_s"), ident.get("end_s")
+        if i_start is None and i_end is None:
+            names.add(ident["name"])
+            continue
+        if i_start is None or i_end is None:
+            continue  # half-open rows are rejected at write time; never guess
+        if end_s > start_s:
+            hit = i_start < end_s and i_end > start_s
+        else:
+            hit = i_start <= start_s <= i_end
+        if hit:
+            names.add(ident["name"])
+    return sorted(names)
+
+
+def _append_people(scene: Dict[str, Any],
+                   identities: Optional[List[Dict[str, Any]]]) -> None:
+    """Shared by both surfaces, appended LAST (after keyframe_* and
+    camera_motion) and only when the clip carries at least one person
+    annotation — so every un-annotated clip's body stays byte-identical. On an
+    annotated clip every scene gets the key, [] meaning "annotated clip, nobody
+    marked in this range" (vs absent = nobody annotated this clip at all)."""
+    if identities:
+        scene["people"] = scene_people(scene["start_s"], scene["end_s"], identities)
+
+
 def _scenes_payload(media_id: int, rec: Dict[str, Any],
-                    frames: List[Dict[str, Any]]) -> Dict[str, Any]:
+                    frames: List[Dict[str, Any]],
+                    identities: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """The exact HTTP response body. Byte-frozen by tests/test_scenes_contract.py."""
     payload = _scenes_core(media_id, rec, frames)
     for scene, frame in zip(payload["scenes"], frames):
@@ -143,11 +182,13 @@ def _scenes_payload(media_id: int, rec: Dict[str, Any],
             # scene with no thumbnail omits the key rather than carrying null.
             scene["keyframe_url"] = _keyframe_url(frame["thumbnail_path"])
         _append_camera_motion(scene, frame)
+        _append_people(scene, identities)
     return payload
 
 
 def _scenes_for_mcp(media_id: int, rec: Dict[str, Any],
-                    frames: List[Dict[str, Any]]) -> Dict[str, Any]:
+                    frames: List[Dict[str, Any]],
+                    identities: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """The MCP tool body. Identical to the HTTP one except keyframe_path replaces
     keyframe_url — same position (last), same conditionality."""
     payload = _scenes_core(media_id, rec, frames)
@@ -155,4 +196,5 @@ def _scenes_for_mcp(media_id: int, rec: Dict[str, Any],
         if frame.get("thumbnail_path"):
             scene["keyframe_path"] = _keyframe_path(frame["thumbnail_path"])
         _append_camera_motion(scene, frame)
+        _append_people(scene, identities)
     return payload

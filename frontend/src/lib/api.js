@@ -472,6 +472,18 @@ export const addTag = (id, name, opts) =>
 export const removeTag = (id, name, opts) =>
   req(`/api/media/${id}/tags/${encodeURIComponent(name)}`, { method: 'DELETE', ...opts })
 
+// ---- A6 person annotations (manual; never face recognition) ----
+// GET /api/media/{id}/identities → {media_id, identities:[{id,name,start_s,end_s,source}]}
+export const getIdentities = (id, opts) => req(`/api/media/${id}/identities`, opts)
+// POST {name, start_s?, end_s?} (both omitted = whole clip) → {ok, identity, identities}.
+// Same name overlapping/touching an existing range on this clip is merged server-side.
+export const addIdentity = (id, body, opts) =>
+  req(`/api/media/${id}/identities`, { method: 'POST', body, ...opts })
+export const removeIdentity = (id, identityId, opts) =>
+  req(`/api/media/${id}/identities/${identityId}`, { method: 'DELETE', ...opts })
+// GET /api/identities/names → [{name, count}] (count = clips) for autocomplete
+export const getIdentityNames = (opts) => req('/api/identities/names', opts)
+
 // ---- per-clip re-processing (all SYNCHRONOUS — the request blocks until done,
 // so callers must show a busy state; reingest can run up to ~10 min) ----
 // POST /api/media/{id}/retranscribe {language} → {ok, transcript_length, language}

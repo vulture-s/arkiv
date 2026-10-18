@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 import commands
 import config
@@ -115,6 +115,36 @@ class TagCreate(BaseModel):
         if len(cleaned) > 100:
             raise ValueError("tag name too long (max 100)")
         return cleaned
+
+
+class IdentityCreate(BaseModel):
+    """A6 manual person annotation. Both times omitted/null = the whole clip;
+    otherwise BOTH are required and start_s < end_s (seconds, finite, >= 0)."""
+    name: str
+    start_s: Optional[float] = None
+    end_s: Optional[float] = None
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v: str) -> str:
+        return db.normalize_identity_name(v)
+
+    @field_validator("start_s", "end_s")
+    @classmethod
+    def _finite_nonneg_time(cls, v):
+        if v is None:
+            return v
+        if not math.isfinite(v) or v < 0:
+            raise ValueError("time must be a finite number >= 0")
+        return float(v)
+
+    @model_validator(mode="after")
+    def _range(self):
+        if (self.start_s is None) != (self.end_s is None):
+            raise ValueError("start_s and end_s go together (both null = whole clip)")
+        if self.start_s is not None and not self.start_s < self.end_s:
+            raise ValueError("start_s must be < end_s")
+        return self
 
 
 class RetranscribeRequest(BaseModel):
@@ -697,7 +727,8 @@ def get_media_scenes(
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
-    return _scenes_payload(media_id, rec, db.get_frames(media_id))
+    return _scenes_payload(media_id, rec, db.get_frames(media_id),
+                           db.get_identities(media_id))
 
 
 def _segments_payload(segments_json):
@@ -861,6 +892,60 @@ def remove_tag(
     _tok: dict = Depends(require_scopes("videos_write")),
 ):
     return {"ok": True, "tags": commands.remove_tag(media_id, tag_name, _tok)}
+
+
+# ── A6: manual person annotations (identities) ──────────────────────────────
+# Human-entered names only; no face/biometric data is computed or stored. Same
+# scopes as tags (videos_read / videos_write); the same-site write guard is the
+# global SameSiteWriteGuard middleware, as for every other write.
+
+@router.get("/api/media/{media_id}/identities")
+def list_identities(
+    media_id: int,
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    if not db.get_record_by_id(media_id):
+        raise HTTPException(404, "找不到")
+    return {"media_id": media_id, "identities": db.get_identities(media_id)}
+
+
+@router.post("/api/media/{media_id}/identities")
+def add_identity(
+    media_id: int,
+    body: IdentityCreate,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
+    """Annotate a person on the whole clip (no times) or on [start_s, end_s).
+    Same name on the same clip merges with overlapping/touching ranges; the
+    response's `identity` is the row that now covers the request."""
+    try:
+        out = commands.add_identity(media_id, body.name, body.start_s, body.end_s, _tok)
+    except commands.NotFound:
+        raise HTTPException(404, "找不到")
+    except commands.Invalid as e:
+        raise HTTPException(422, str(e))
+    return {"ok": True, **out}
+
+
+@router.delete("/api/media/{media_id}/identities/{identity_id}")
+def remove_identity(
+    media_id: int,
+    identity_id: int,
+    _tok: dict = Depends(require_scopes("videos_write")),
+):
+    try:
+        rows = commands.remove_identity(media_id, identity_id, _tok)
+    except commands.NotFound:
+        raise HTTPException(404, "找不到")
+    return {"ok": True, "identities": rows}
+
+
+@router.get("/api/identities/names")
+def identity_names(
+    _tok: dict = Depends(require_scopes("videos_read")),
+):
+    """Every annotated name in this library with its clip count (autocomplete)."""
+    return db.get_identity_names()
 
 
 @router.get("/api/media/{media_id}/remotion-props")

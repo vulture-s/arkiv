@@ -39,10 +39,13 @@ class QueryError(ValueError):
 #   numeric : range ([min,max], either bound may be null)
 #   enum    : eq, special NULL handling for rating='unrated'
 #   tag     : subquery against tags
+#   identity: subquery against identities (manual person annotations)
 #   bucket  : ext IN (video/audio buckets)
 #   semantic: not SQL — collected for the vector index
 _FIELDS: Dict[str, Tuple[Optional[str], set, str]] = {
     "tag": (None, {"contains", "eq"}, "tag"),
+    # A6: manual person annotations (identities table), never face recognition
+    "who": (None, {"contains"}, "identity"),
     "transcript": ("transcript", {"contains"}, "text"),
     "filename": ("filename", {"contains", "eq"}, "text"),
     "camera": ("camera_model", {"contains", "eq"}, "text"),
@@ -98,6 +101,16 @@ def _one_condition(cond: Dict[str, Any]) -> Tuple[Optional[str], List[Any], Opti
             # the write path (fable-audit round-5 #11). CJK is unaffected by lower().
             return "id IN (SELECT media_id FROM tags WHERE name = ?)", [v.lower()], None
         return "id IN (SELECT media_id FROM tags WHERE name LIKE ?)", ["%{0}%".format(v)], None
+
+    if kind == "identity":
+        import unicodedata
+        v = unicodedata.normalize("NFC", str(value or "")).strip()  # names stored NFC
+        if not v:
+            raise QueryError("who condition needs a non-empty value")
+        # LIKE wildcards in a name are literal: "who:a_b" must not match "axb".
+        esc = v.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return ("id IN (SELECT media_id FROM identities WHERE name LIKE ? ESCAPE '\\')",
+                ["%{0}%".format(esc)], None)
 
     if kind == "bucket":
         v = str(value or "").lower()

@@ -254,7 +254,8 @@ def get_scenes_impl(media_id: int) -> Optional[Dict[str, Any]]:
     if not rec:
         return None
     frames = db.get_frames(int(media_id))
-    return scenes._scenes_for_mcp(int(media_id), rec, frames)
+    return scenes._scenes_for_mcp(int(media_id), rec, frames,
+                                  db.get_identities(int(media_id)))
 
 
 # segments_json / words_json hold whatever the transcribe backend produced, and
@@ -391,8 +392,13 @@ def _export_item(rec: Dict[str, Any], include_transcript: bool,
             item["transcript"] = rec.get("transcript") or ""
     if include_scenes:
         payload = scenes._scenes_core(mid, rec, db.get_frames(mid))
-        item["scenes"] = [{k: sc.get(k) for k in _EXPORT_SCENE_KEYS}
-                          for sc in payload["scenes"]]
+        idents = db.get_identities(mid)
+        item["scenes"] = []
+        for sc in payload["scenes"]:
+            row = {k: sc.get(k) for k in _EXPORT_SCENE_KEYS}
+            # same rule + same conditionality as get_scenes' `people`
+            scenes._append_people(row, idents)
+            item["scenes"].append(row)
     return item
 
 
@@ -414,7 +420,7 @@ def export_project_impl(
     text, conditions = search_syntax.parse(filters or "")
     if text.strip():
         raise ValueError(
-            "export_project takes filters only (tag:/camera:/lang:/rating:/type:/shot:); "
+            "export_project takes filters only (tag:/camera:/lang:/rating:/type:/shot:/who:); "
             "free text {0!r} is a search — use search_media for that".format(text))
     limit = max(1, min(EXPORT_MAX_LIMIT, int(limit)))
     max_chars = max(1000, int(max_chars))
@@ -487,6 +493,8 @@ def search_media(query: str, limit: int = 20) -> str:
       type:video        video / audio / image
       shot:2025-10      the day the camera rolled: YYYY, YYYY-MM, YYYY-MM-DD,
                         or a range 2025-10-01..2025-10-15 (NOT the ingest date)
+      who:小明          a person manually annotated on the clip (substring;
+                        human-entered labels, not face recognition)
     e.g. `"格爾木氧氣" camera:a7s3 shot:2025-10`. Filters alone (no text) list
     every matching clip, newest first. An invalid filter value is an error, not
     silently ignored; any other `word:word` is treated as plain text. Returns a JSON list of lightweight records:
@@ -557,6 +565,13 @@ def get_scenes(media_id: int) -> str:
           zoom_dir str|null  "in"/"out" when |znet| >= 3.0 and zjitter <= 4.0
                             e.g. "a clean left-right pan" = pan_dir not null;
                             "the shaky take" = higher jitter among siblings.
+      people         list[str]  Names a person manually annotated as on screen
+                            during any part of this scene (whole-clip
+                            annotations apply to every scene). Present only
+                            when the clip has at least one annotation — absent
+                            = nobody annotated this clip, [] = annotated, but
+                            no one marked in this range. Human-entered labels,
+                            never face recognition. Always last.
 
     Every vision field is present on every scene, but is null when that clip has
     not been analysed — check for null rather than for the key. Values are in the
@@ -638,7 +653,7 @@ def export_project(
     get_scenes once per clip.
 
     filters  same filter syntax as search_media, filters only — e.g.
-             "shot:2026-10 camera:fx3", "tag:訪談 rating:good". "" = everything.
+             "shot:2026-10 camera:fx3", "tag:訪談 rating:good", "who:小明". "" = everything.
              Free text is rejected: that is a search, use search_media.
     cursor   0 for the first page, then pass back `next_cursor`.
     limit    max clips per page (1-100).
@@ -654,7 +669,10 @@ def export_project(
       items           [{id, filename, path, duration_s, lang, rating, tags,
                         segments: [{start, end, text}]   (or `transcript` str
                                                           when no timing exists),
-                        scenes: [{start_s, end_s, description, content_type}]}]
+                        scenes: [{start_s, end_s, description, content_type,
+                                  [people]}]}]
+                    `people` follows the get_scenes rule (present only on
+                    clips with person annotations).
     Timecodes are seconds from clip start. Set include_transcript /
     include_scenes false to drop either half and fit more clips per page.
     """

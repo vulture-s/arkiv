@@ -42,7 +42,7 @@ CATEGORIES = {
 MCP_EQUIVALENTS = {
     "GET /api/media": (
         ("search_media", "list_recent", "export_project"),
-        "q= search (incl. tag:/camera:/lang:/rating:/type:/shot: filters, via "
+        "q= search (incl. tag:/camera:/lang:/rating:/type:/shot:/who: filters, via "
         "search_syntax) maps to search_media, newest-first listing to list_recent, "
         "filtered id-cursor paging (with transcripts + scenes inlined) to "
         "export_project; the separate filter params have no MCP form",
@@ -53,6 +53,11 @@ MCP_EQUIVALENTS = {
         ("get_transcript",), "get_transcript returns segments alongside the text",
     ),
     "GET /api/media/{media_id}/tags": (("get_media",), "tags are part of get_media"),
+    "GET /api/media/{media_id}/identities": (
+        ("get_scenes", "export_project"),
+        "manual person annotations surface as per-scene `people`; the raw "
+        "ranges / row ids (needed only to delete) have no MCP form",
+    ),
     "GET /api/stats": (("library_stats",), ""),
     "GET /api/tags": (("list_tags",), "list_tags returns the top N, not all"),
     "GET /api/report/exposure": (
@@ -86,6 +91,7 @@ NOT_EXPOSED = {
     "GET /api/bins/{bin_id}": ("gap", "one bin's items"),
     "GET /api/media/facets/shoot-date": ("gap", "browse by shoot day"),
     "GET /api/media/{media_id}/chapters": ("gap", "chapter markers from scene frames"),
+    "GET /api/identities/names": ("gap", "annotated person names + clip counts (autocomplete); `who:` in search_media covers lookup by name"),
     "GET /api/media/{media_id}/transcripts": ("gap", "archived transcript languages; get_transcript returns only the active one"),
 
     # ── writes ────────────────────────────────────────────────────────────────
@@ -100,6 +106,8 @@ NOT_EXPOSED = {
     "GET /api/color-profiles/{profile_id}/cube": ("ui", "LUT bytes for the WebGL player"),
     "POST /api/media/{media_id}/tags": ("write", "add tag"),
     "DELETE /api/media/{media_id}/tags/{tag_name}": ("write", "remove tag"),
+    "POST /api/media/{media_id}/identities": ("write", "annotate a person (A6)"),
+    "DELETE /api/media/{media_id}/identities/{identity_id}": ("write", "remove a person annotation"),
     "POST /api/media/{media_id}/transcript/activate": ("write", "switch active transcript"),
     "DELETE /api/media/{media_id}": ("write", "delete media (moves to trash)"),
     "POST /api/media/bulk-delete": ("write", "delete media in bulk"),

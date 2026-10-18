@@ -184,3 +184,43 @@ def remove_tag(media_id: int, name: str,
     if _tag_names(tags) != before:
         _audit("remove_tag", media_id, before, _tag_names(tags), token)
     return tags
+
+
+# ── A6: manual person annotations ─────────────────────────────────────────────
+# Not embedded (no reindex): `who:` search reads the identities table directly.
+
+def _identity_view(rows: List[Dict[str, Any]]) -> List[List[Any]]:
+    return [[r["name"], r["start_s"], r["end_s"]] for r in rows]
+
+
+def add_identity(media_id: int, name: str, start_s: Optional[float],
+                 end_s: Optional[float],
+                 token: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Annotate a person on a clip (db.add_identity merges duplicates).
+    Returns {identity, identities}. NotFound / Invalid as the field setters."""
+    rec = db.get_record_by_id(media_id)
+    if not rec:
+        raise NotFound(media_id)
+    dur = rec.get("duration_s") or 0
+    if start_s is not None and dur and start_s >= dur:
+        raise Invalid("起點超出片長")
+    if end_s is not None and dur and end_s > dur:
+        end_s = float(dur)  # an OUT a hair past the end (player rounding) clamps
+    before = _identity_view(db.get_identities(media_id))
+    ident = db.add_identity(media_id, name, start_s, end_s)
+    rows = db.get_identities(media_id)
+    after = _identity_view(rows)
+    if after != before:
+        _audit("add_identity", media_id, before, after, token)
+    return {"identity": ident, "identities": rows}
+
+
+def remove_identity(media_id: int, identity_id: int,
+                    token: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Delete one annotation of this clip. NotFound if no such row on this clip."""
+    before = _identity_view(db.get_identities(media_id))
+    if not db.delete_identity(media_id, identity_id):
+        raise NotFound(media_id)
+    rows = db.get_identities(media_id)
+    _audit("remove_identity", media_id, before, _identity_view(rows), token)
+    return rows
