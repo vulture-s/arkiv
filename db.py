@@ -539,6 +539,24 @@ def init_db():
                 UNIQUE(media_id, lang)
             )
         """)
+        # A6: manual person annotations ("who is on screen"). Human-entered names
+        # only — no face/biometric data is derived or stored here, by decision.
+        # start_s/end_s both NULL = the whole clip; otherwise a [start_s, end_s)
+        # range in seconds. add_identity() merges overlapping/touching ranges of
+        # the same name on the same clip, so a row set stays non-redundant.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS identities (
+                id         INTEGER PRIMARY KEY,
+                media_id   INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                name       TEXT NOT NULL,
+                start_s    REAL,
+                end_s      REAL,
+                source     TEXT DEFAULT 'manual',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_identities_media ON identities(media_id)")
         # Phase 9.7 G5②: persisted settings overrides. config.py holds the
         # baked-in defaults; this table stores only what the operator has
         # explicitly changed. scope='global' is the library-wide default; a
@@ -1289,6 +1307,115 @@ def get_top_tags(limit: int = 10) -> List[Dict]:
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ── Identity (person) annotations — A6 ───────────────────────────────────────
+
+IDENTITY_NAME_MAX = 100
+
+
+def normalize_identity_name(name) -> str:
+    """NFC, strip, drop control chars, collapse inner whitespace. Raises
+    ValueError on empty / too long. Case is preserved (it is a person's name)."""
+    import unicodedata
+    raw = unicodedata.normalize("NFC", str(name or ""))
+    cleaned = " ".join("".join(
+        c for c in raw if c == " " or (ord(c) >= 0x20 and c != "\x7f")).split())
+    if not cleaned:
+        raise ValueError("name must not be empty")
+    if len(cleaned) > IDENTITY_NAME_MAX:
+        raise ValueError("name too long (max {0})".format(IDENTITY_NAME_MAX))
+    return cleaned
+
+
+def _identity_row(r) -> Dict:
+    return {"id": r["id"], "media_id": r["media_id"], "name": r["name"],
+            "start_s": r["start_s"], "end_s": r["end_s"], "source": r["source"],
+            "created_at": r["created_at"]}
+
+
+_IDENTITY_ORDER = "ORDER BY (start_s IS NOT NULL), start_s, name, id"
+
+
+def get_identities(media_id: int, _conn=None) -> List[Dict]:
+    """A clip's person annotations: whole-clip rows first, then by start time."""
+    def _do(c):
+        rows = c.execute(
+            "SELECT * FROM identities WHERE media_id = ? " + _IDENTITY_ORDER,
+            (media_id,)).fetchall()
+        return [_identity_row(r) for r in rows]
+    if _conn is not None:
+        return _do(_conn)
+    with get_conn() as conn:
+        return _do(conn)
+
+
+def add_identity(media_id: int, name: str, start_s: Optional[float] = None,
+                 end_s: Optional[float] = None, source: str = "manual") -> Dict:
+    """Annotate `name` on a clip; returns the row that now covers the request.
+
+    Duplicate rule (same clip + same normalised name) — MERGE, never stack:
+      * a whole-clip row already exists        → no-op, return it
+      * the new one is whole-clip              → it replaces that name's ranges
+      * ranges that overlap OR touch the new one → collapsed into their union
+    Caller validates the range (both-or-neither, finite, start < end).
+    """
+    name = normalize_identity_name(name)
+    whole = start_s is None and end_s is None
+    with get_conn() as c:
+        same = c.execute(
+            "SELECT * FROM identities WHERE media_id = ? AND name = ?",
+            (media_id, name)).fetchall()
+        for r in same:
+            if r["start_s"] is None and r["end_s"] is None:
+                return _identity_row(r)
+        if whole:
+            drop = [r["id"] for r in same]
+        else:
+            lo, hi = float(start_s), float(end_s)
+            drop = []
+            for r in same:
+                if r["start_s"] <= hi and r["end_s"] >= lo:
+                    lo, hi = min(lo, r["start_s"]), max(hi, r["end_s"])
+                    drop.append(r["id"])
+            # A widened union can now reach a range it skipped earlier.
+            changed = True
+            while changed:
+                changed = False
+                for r in same:
+                    if r["id"] not in drop and r["start_s"] <= hi and r["end_s"] >= lo:
+                        lo, hi = min(lo, r["start_s"]), max(hi, r["end_s"])
+                        drop.append(r["id"])
+                        changed = True
+            start_s, end_s = lo, hi
+        if drop:
+            c.execute("DELETE FROM identities WHERE id IN ({0})".format(
+                ",".join("?" * len(drop))), drop)
+        cur = c.execute(
+            "INSERT INTO identities (media_id, name, start_s, end_s, source) "
+            "VALUES (?, ?, ?, ?, ?)", (media_id, name, start_s, end_s, source))
+        row = c.execute("SELECT * FROM identities WHERE id = ?",
+                        (cur.lastrowid,)).fetchone()
+        return _identity_row(row)
+
+
+def delete_identity(media_id: int, identity_id: int) -> bool:
+    """Remove one annotation; scoped by media_id so an id from another clip
+    cannot be deleted through this one's URL. True when a row went away."""
+    with get_conn() as c:
+        cur = c.execute("DELETE FROM identities WHERE id = ? AND media_id = ?",
+                        (identity_id, media_id))
+        return cur.rowcount > 0
+
+
+def get_identity_names() -> List[Dict]:
+    """Every annotated name in this library + how many clips carry it
+    (autocomplete). Most-used first."""
+    with get_conn() as c:
+        rows = c.execute(
+            "SELECT name, COUNT(DISTINCT media_id) AS count FROM identities "
+            "GROUP BY name ORDER BY count DESC, name").fetchall()
+        return [{"name": r["name"], "count": r["count"]} for r in rows]
 
 
 # ── Frame Operations ─────────────────────────────────────────────────────────

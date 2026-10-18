@@ -977,6 +977,53 @@
     }
   }
 
+  // A6 person annotations. Fetched per clip alongside the detail; the names list
+  // (autocomplete) is library-wide and refreshed after every successful add.
+  let identities = null
+  let identitiesId = null
+  let identityNames = []
+  async function fetchIdentities(id) {
+    identitiesId = id
+    identities = null
+    try {
+      const r = await api.getIdentities(id)
+      if (identitiesId === id) identities = r.identities || []
+    } catch (e) {
+      if (identitiesId === id) identities = null
+    }
+  }
+  async function fetchIdentityNames() {
+    try { identityNames = await api.getIdentityNames() } catch (e) { /* autocomplete is optional */ }
+  }
+  $: if (selected && selected.id !== identitiesId) fetchIdentities(selected.id)
+  $: if (selected && !identityNames.length) fetchIdentityNames()
+  async function addIdentity(name, range) {
+    if (!selected) return false
+    const id = selected.id
+    try {
+      const r = await api.addIdentity(id, { name, ...(range || {}) })
+      if (identitiesId === id) identities = r.identities
+      pushToast(`已標註：${r.identity.name}`)
+      fetchIdentityNames()
+      return true
+    } catch (e) {
+      pushToast(`標人物失敗: ${e.message}`, 'error')
+      return false
+    }
+  }
+  async function removeIdentity(identityId) {
+    if (!selected) return
+    const id = selected.id
+    try {
+      const r = await api.removeIdentity(id, identityId)
+      if (identitiesId === id) identities = r.identities
+      pushToast('已移除人物標註')
+      fetchIdentityNames()
+    } catch (e) {
+      pushToast(`移除人物失敗: ${e.message}`, 'error')
+    }
+  }
+
   // Live progress label for the running per-clip action ('12/40'), '' when idle.
   let reProgress = ''
 
@@ -1347,6 +1394,10 @@
         canonicalTags={inspCanonTags}
         onAddTag={selected ? addTag : null}
         onRemoveTag={selected ? removeTag : null}
+        {identities}
+        {identityNames}
+        onAddIdentity={selected ? addIdentity : null}
+        onRemoveIdentity={selected ? removeIdentity : null}
         onReprocess={selected ? reprocess : null}
         colorProfile={detailLive ? detailLive.color_profile : null}
         {colorProfiles}

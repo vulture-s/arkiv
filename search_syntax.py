@@ -26,7 +26,7 @@ import query_builder
 from query_builder import QueryError
 
 # key -> how to turn the value into a query_builder condition
-FILTER_KEYS = ("tag", "camera", "lang", "rating", "type", "shot")
+FILTER_KEYS = ("tag", "camera", "lang", "rating", "type", "shot", "who")
 
 _RATING_ALIASES = {
     "good": "good", "review": "review", "rev": "review",
@@ -70,6 +70,10 @@ def _condition(key: str, value: str) -> Dict[str, Any]:
         raise QueryError("{0}: needs a value".format(key))
     if key == "tag":
         return {"field": "tag", "op": "contains", "value": value}
+    if key == "who":
+        # A6: manual person annotations (db.identities) — substring, ASCII
+        # case-insensitive (SQLite LIKE), same as tag:.
+        return {"field": "who", "op": "contains", "value": value}
     if key == "camera":
         return {"field": "camera", "op": "contains", "value": value}
     if key == "lang":

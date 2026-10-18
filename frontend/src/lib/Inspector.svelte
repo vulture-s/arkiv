@@ -10,6 +10,7 @@
   import { pendingSeek } from './matchTime.js'
   import { parseCube, webgl2Available, createLutRenderer } from './lutGL.js'
   import { selectionToFrom, validateCorrection } from './transcriptCorrect.js'
+  import { identityRange, suggestNames, formatIdentityRange, nameKeyStep } from './identities.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -263,6 +264,51 @@
   export let tags = null
   export let onAddTag = null // (name) => void
   export let onRemoveTag = null // (name) => void
+  // A6 person annotations (manual — never face recognition). identities =
+  // [{id,name,start_s,end_s}] → renders the 人物 block; null → no block (mock
+  // screens unchanged). identityNames = [{name,count}] for autocomplete.
+  // onAddIdentity(name, {start_s,end_s}|{}) → Promise<boolean>; onRemoveIdentity(id).
+  export let identities = null
+  export let identityNames = []
+  export let onAddIdentity = null
+  export let onRemoveIdentity = null
+  let personOpen = false
+  let personInput = ''
+  let personHi = -1
+  let personBusy = false
+  let personEl = null
+  // The range is decided when the box opens AND re-read on submit, so moving the
+  // marks while typing is honoured; the label shows what will be written.
+  $: personRange = identityRange(inSec, outSec, mediaDuration)
+  $: personSuggest = personOpen
+    ? suggestNames(identityNames, personInput, (identities || []).map((i) => i.name))
+    : []
+  $: if (personHi >= personSuggest.length) personHi = -1
+  function openPerson() {
+    personOpen = true
+    personInput = ''
+    personHi = -1
+    setTimeout(() => personEl && personEl.focus(), 0)
+  }
+  function closePerson() { personOpen = false; personInput = ''; personHi = -1 }
+  async function submitPerson(name) {
+    const n = (name || '').trim()
+    if (!n || !onAddIdentity || personBusy) return
+    personBusy = true
+    try {
+      const ok = await onAddIdentity(n, identityRange(inSec, outSec, mediaDuration))
+      if (ok !== false) closePerson()
+    } finally {
+      personBusy = false
+    }
+  }
+  function onPersonKey(e) {
+    const step = nameKeyStep(e.key, personInput, personSuggest, personHi)
+    if (step.action || e.key === 'Enter') e.preventDefault()
+    personHi = step.highlight
+    if (step.action === 'cancel') closePerson()
+    else if (step.action === 'submit') submitPerson(step.name)
+  }
   // LLM-canonicalized tag list (string[]) — semantic-deduped (生肉/生魚→肉類).
   // When present, a toggle switches the Tags block raw ⇄ canonical; default
   // canonical (the cleaner view) unless the user flipped it (persisted).
@@ -726,6 +772,62 @@
     </div>
   {/if}
 
+  {#if identities}
+    <div class="block" data-testid="people-block">
+      <div class="blockhead">
+        <Eyebrow>人物</Eyebrow>
+        <Mono dim style="font-size:9.5px;letter-spacing:0.06em;">人工標註 · {identities.length}</Mono>
+      </div>
+      <div class="people">
+        {#each identities as p (p.id)}
+          <div class="person">
+            <span class="pname">{p.name}</span>
+            {#if p.start_s != null && (useVideo || useAudio)}
+              <button class="ptime seek" title="跳到 {formatIdentityRange(p)} 起點" on:click={() => seekTo(p.start_s)}>{formatIdentityRange(p)}</button>
+            {:else}
+              <Mono dim style="font-size:10px;">{formatIdentityRange(p)}</Mono>
+            {/if}
+            {#if onRemoveIdentity}
+              <button class="tagx" title="移除人物標註" aria-label="移除 {p.name}" on:click={() => onRemoveIdentity(p.id)}>×</button>
+            {/if}
+          </div>
+        {/each}
+        {#if identities.length === 0}
+          <Mono dim style="font-size:10.5px;">（尚未標註）</Mono>
+        {/if}
+      </div>
+      {#if onAddIdentity}
+        {#if personOpen}
+          <div class="personadd">
+            <Mono dim style="font-size:9.5px;">範圍：{formatIdentityRange(personRange)}{personRange.start_s == null ? '（未設 IN/OUT）' : '（IN/OUT）'}</Mono>
+            <div class="personrow">
+              <input class="ak-input taginput" placeholder="名字… Enter 送出 · Esc 取消" bind:this={personEl}
+                bind:value={personInput} on:keydown={onPersonKey} disabled={personBusy}
+                role="combobox" aria-expanded={personSuggest.length > 0} aria-autocomplete="list" aria-controls="person-suggest" />
+              <button class="ak-btn tagaddbtn" on:click={() => submitPerson(personHi >= 0 ? personSuggest[personHi] : personInput)}
+                disabled={personBusy || !personInput.trim() && personHi < 0}>＋</button>
+              <button class="ak-btn tagaddbtn" on:click={closePerson} title="取消（Esc）">取消</button>
+            </div>
+            {#if personSuggest.length}
+              <ul class="psuggest" id="person-suggest" role="listbox">
+                {#each personSuggest as s, i (s)}
+                  <li role="option" aria-selected={i === personHi}>
+                    <button class="psug" class:hi={i === personHi} on:mousedown|preventDefault={() => submitPerson(s)}>{s}</button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {:else}
+          <button class="ak-btn personbtn" on:click={openPerson}
+            title={personRange.start_s == null ? '標註整支片出現的人物' : '標註 IN/OUT 範圍內出現的人物'}>
+            標人物{personRange.start_s == null ? '（整支片）' : `（${formatIdentityRange(personRange)}）`}
+          </button>
+        {/if}
+      {/if}
+    </div>
+  {/if}
+
   <div class="block">
     <div class="blockhead">
       <Eyebrow>Waveform</Eyebrow>
@@ -1090,6 +1192,24 @@
   .tagadd { display: flex; gap: 6px; margin-top: 8px; }
   .taginput { flex: 1; font-size: 11px; padding: 5px 8px; }
   .tagaddbtn { flex: 0 0 auto; padding: 5px 10px; }
+  /* people (A6) */
+  .people { display: flex; flex-direction: column; gap: 4px; }
+  .person { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink); }
+  .person .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ptime {
+    appearance: none; background: transparent; border: none; padding: 0; cursor: pointer;
+    font-family: var(--ak-mono); font-size: 10px; color: var(--ink-2); text-decoration: underline dotted;
+  }
+  .ptime:hover { color: var(--cyan); }
+  .personbtn { margin-top: 8px; font-size: 10px; width: 100%; }
+  .personadd { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .personrow { display: flex; gap: 6px; }
+  .psuggest { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); background: var(--surface-2); }
+  .psug {
+    appearance: none; display: block; width: 100%; text-align: left; background: transparent; border: none;
+    font: inherit; font-size: 11.5px; color: var(--ink); padding: 4px 8px; cursor: pointer;
+  }
+  .psug:hover, .psug.hi { background: var(--invert); color: var(--invert-ink); }
   /* reprocess */
   .reproc { display: flex; flex-direction: column; gap: 6px; }
   .reprow { display: flex; gap: 6px; }

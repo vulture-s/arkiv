@@ -100,6 +100,14 @@ def test_filters_scope(library):
     assert r["clips_in_scope"] == 1
 
 
+def test_filters_who_scopes_to_annotated_clips(library):
+    # A6: `who:` (manual person annotations) narrows the report like any filter.
+    db.add_identity(library["b"], "小明", 5.0, 20.0)
+    r = er.build_exposure_report(["古河"], filters="who:小明")
+    assert [c["filename"] for c in r["clips"]] == ["b.mp4"]
+    assert r["clips_in_scope"] == 1
+
+
 def test_filters_reject_free_text_and_bad_values(library):
     with pytest.raises(er.ReportError):
         er.build_exposure_report(["古河"], filters="古河 camera:FX3")

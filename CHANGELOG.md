@@ -27,6 +27,7 @@ Whisper initial_prompt；`apply: true` 會順便只用這一條改寫本專案�
 
 
 ### 新增
+- **人物標註（A6，人工）**：Inspector 新增「人物」區塊——按「標人物」輸入名字（自動補完本專案用過的名字；Enter 送出、Esc 取消），有 IN/OUT 就標那一段，沒有就標整支片；點時間跳到該處、× 刪除。同一支片同一個名字的重疊／相接區段會自動合併成一段，整支片的標註會吸收該名字的所有區段。名字一律去頭尾空白、NFC 正規化。搜尋框（與 MCP `search_media`／`export_project`、`exposure_report --filters`）多一個 `who:小明`（子字串、英文不分大小寫）。`/api/media/{id}/scenes`、MCP `get_scenes`、`export_project` 的每個 scene 多 `people: [名字…]`（與 scene 時間有重疊的標註；**只有標過人物的片才出現這個 key**，沒標過的片回應一字不變）。API：`GET/POST /api/media/{id}/identities`、`DELETE /api/media/{id}/identities/{identity_id}`、`GET /api/identities/names`（權限比照標籤：`videos_read`／`videos_write`）。**不做任何自動辨識、不存任何臉部或生物特徵資料**；這批人工標註之後當自動化的驗證集。
 - **品牌／物件曝光報告**：給一個或多個詞（品牌名、產品名、物件），統計素材裡命中幾支、總共幾秒、在哪些 scene。比對 keyframe 的 vision 描述與標籤，大小寫、全半形、繁簡都不分；可用搜尋框語法（`shot:` `camera:` `tag:`…）縮小範圍，可依拍攝日期或相機分組。曝光秒數＝命中 scene 的整段長度，scene 切法跟 `get_scenes` 同一套。三個入口：CLI `python exposure_report.py "古河" --filters "shot:2026-10"`（markdown／`--format json`）、REST `GET /api/report/exposure?term=…`、MCP 工具 `exposure_report`。⚠️ 這是依 vision 描述比對，不是逐格偵測：會漏判、會誤判，報告裡也這樣寫；沒做過 vision 分析的素材另外計數，不算成「沒出現」。
 
 **逐字稿可以直接變成 Resolve 時間軸上的 marker。** Inspector 匯出列多一顆「字幕 MARKER」：
