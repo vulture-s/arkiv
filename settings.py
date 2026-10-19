@@ -153,6 +153,16 @@ def _schema() -> Dict[str, Dict[str, Any]]:
             "type": "bool",
             "default": lambda: True,
         },
+        # Issue #558. Consumed by ingest Phase 3 (`ingest.proxies_mode`) and by
+        # /api/stream, which has to tell a user of a `never` library why the
+        # clip has no proxy instead of implying the next ingest will make one.
+        "ingest.proxies": {
+            "group": "ingest",
+            "label": "Browser-playback proxies — auto（瀏覽器播不了的檔自動轉）／never（不轉，只用能直接播原檔的播放器）",
+            "type": "str",
+            "choices": list(config.PROXIES_MODES),
+            "default": lambda: config.PROXIES_MODE,
+        },
     }
 
 
@@ -330,6 +340,16 @@ def source_preset_list(project: Optional[str] = None) -> List[Dict[str, str]]:
 def ingest_recursive(project: Optional[str] = None) -> bool:
     """Effective "recurse into sub-folders" default for the ingest dialog."""
     return for_project("ingest.recursive", project)
+
+
+def ingest_proxies(project: Optional[str] = None) -> str:
+    """Effective proxy policy for this library: "auto" or "never" (issue #558).
+
+    A stored value outside the choices (hand-edited DB, a value from a newer
+    build) reads as "auto" — the safe direction, since "never" is the one that
+    takes something away."""
+    v = str(for_project("ingest.proxies", project) or "").strip().lower()
+    return v if v in config.PROXIES_MODES else "auto"
 
 
 def export_default_dir(project: Optional[str] = None) -> str:

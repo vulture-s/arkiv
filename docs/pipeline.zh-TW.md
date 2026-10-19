@@ -117,6 +117,12 @@ FFmpeg 轉成 H.264 MP4，存 `PROXIES_DIR/{media_id}_{sha1[:10]}.mp4`。
 
 H.264 MP4（譬如 Sony A7M4 預設）瀏覽器可播，skip。
 
+**關掉 Phase 3**（issue #558）：`ingest.py --skip-proxies`（＝`--proxies never`）這次不轉；
+`ARKIV_PROXIES=never` 或庫設定 `ingest.proxies = never`（`PUT /api/settings`）設成這個庫的預設。
+優先序：CLI 旗標 ＞ 庫設定 ＞ `ARKIV_PROXIES` ＞ `auto`。適合只用能直接播原檔的播放器（macOS App／Safari 可播 HEVC）的庫
+—— 871 支手機短片實測 Phase 3 約 5 小時、9 GB。embedding 照跑。這種庫的 `/api/stream` 會回 409 帶
+`code: "proxies_disabled"` 與指向 `--regenerate-proxies` 的說明，之後可用它補建。
+
 ---
 
 ## Stage 4: Embedding（`embed.py`）
@@ -167,7 +173,7 @@ cron 現在能看到實際結果。
 |------|--------|
 | `--migrate-storage` | 升 v0.3.1 後第一次跑（見下方 Upgrade section） |
 | `--migrate-relative` | 升 v0.2.x 後第一次跑（abs path → relative） |
-| `--regenerate-proxies` | 改 codec 設定後 — 砍掉所有 H.264 proxy 重生 |
+| `--regenerate-proxies` | 改 codec 設定後 — 重建所有既有 H.264 proxy，再補建還沒有的（`--skip-proxies` 進庫的也適用） |
 | `--vision-only` | Phase 2 halt 後 resume — 找 `description` 空的 frame 只處理那些 |
 
 ---
