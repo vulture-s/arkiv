@@ -339,6 +339,8 @@ python embed.py --search "interview outdoor"
 # Ingest options
 python ingest.py --dir ./media --limit 10        # process first 10 files only
 python ingest.py --dir ./media --skip-vision     # skip AI frame descriptions
+python ingest.py --dir ./media --skip-proxies    # no browser proxies (player plays originals, e.g. macOS app); ARKIV_PROXIES=never for the default
+python ingest.py --regenerate-proxies            # rebuild proxies + build any missing (also after --skip-proxies)
 python ingest.py --dir ./media --refresh         # re-process already-indexed files (re-extracts frames)
 python ingest.py --dir ./media --skip-failed     # tolerate flaky per-frame vision (overnight runs)
 python ingest.py --dir ./media --max-failures 20 # halt vision only after 20 cumulative frame failures

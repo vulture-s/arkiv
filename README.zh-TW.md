@@ -273,6 +273,8 @@ python embed.py --search "戶外訪談"
 # 匯入選項
 python ingest.py --dir ./media --limit 10        # 只處理前 10 個檔案
 python ingest.py --dir ./media --skip-vision     # 跳過 AI 幀描述
+python ingest.py --dir ./media --skip-proxies    # 不建瀏覽器 proxy（播放器能直接播原檔，如 macOS App）；預設用 ARKIV_PROXIES=never
+python ingest.py --regenerate-proxies            # 重建 proxy 並補建缺的（--skip-proxies 進庫的也適用）
 python ingest.py --dir ./media --refresh         # 重新處理已索引的檔案（會重抽幀）
 python ingest.py --dir ./media --skip-failed     # 容忍零星幀 vision 失敗（無人值守過夜跑）
 python ingest.py --dir ./media --max-failures 20 # 累計 20 個幀失敗才停 vision
