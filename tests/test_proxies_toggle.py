@@ -47,7 +47,8 @@ def test_env_value_parses_and_a_typo_means_auto(tmp_path, raw, want):
         env["ARKIV_PROXIES"] = raw
     env["ARKIV_PROJECT_ROOT"] = str(tmp_path)
     out = subprocess.run([sys.executable, "-c", "import config; print(config.PROXIES_MODE)"],
-                         cwd=str(REPO), env=env, capture_output=True, text=True, check=True)
+                         cwd=str(REPO), env=env, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", check=True)
     assert out.stdout.strip().splitlines()[-1] == want
 
 
