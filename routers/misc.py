@@ -60,6 +60,47 @@ class ClientLogRequest(BaseModel):
     msg: Any = ""
 
 
+# Issue #558: the words a `never` library's 409 carries. Kept as constants so the
+# tests and the frontend agree on the code without either re-typing the prose.
+PROXIES_DISABLED_CODE = "proxies_disabled"
+PROXIES_DISABLED_MESSAGE = (
+    "這個庫關閉了 proxy（ingest.proxies = never），所以這支沒有可在瀏覽器播的版本。"
+    "請用能直接播放原檔的播放器（macOS App／Safari），"
+    "或只為這一支建立 proxy，或執行 `ingest.py --regenerate-proxies` 補齊整庫。"
+)
+
+
+def _need_proxy_response(media_id: int, rec: dict, reason: str) -> JSONResponse:
+    """The 409 half of the build_proxies() ↔ /api/stream pair.
+
+    In an `auto` library the body is byte-for-byte what it always was: the next
+    ingest's Phase 3 will build this proxy, so "build a proxy" is the whole story.
+    In a `never` library that story is false — Phase 3 will skip this clip on
+    every run — so the body says so (`code`, `message`, a hint naming the command
+    that does build it). `need_proxy` stays true: the file does need one, and the
+    per-clip build endpoint still builds it on an explicit click."""
+    content = {
+        "need_proxy": True,
+        "media_id": media_id,
+        "filename": rec.get("filename"),
+        "reason": reason,
+        "hint": "POST /api/proxy/build to queue proxy generation",
+    }
+    try:
+        import settings
+        mode = settings.ingest_proxies()
+    except Exception:  # noqa: BLE001 — a settings read must not turn a 409 into a 500
+        mode = config.PROXIES_MODE
+    if mode == "never":
+        content["code"] = PROXIES_DISABLED_CODE
+        content["proxies"] = "never"
+        content["message"] = PROXIES_DISABLED_MESSAGE
+        content["hint"] = ("proxies are disabled for this library: play the original in a "
+                           "player that decodes it, POST /api/proxy/build/{id} for this clip, "
+                           "or run `ingest.py --regenerate-proxies`")
+    return JSONResponse(status_code=409, content=content)
+
+
 @router.get("/api/stream/{media_id}")
 def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read"))):
     """Stream a media file with range request support for seeking.
@@ -115,16 +156,10 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
     # cannot demux. That is a black player with no error rather than a 409 the UI
     # can turn into "build a proxy".
     if codec.container_needs_remux(str(file_path)):
-        return JSONResponse(
-            status_code=409,
-            content={
-                "need_proxy": True,
-                "media_id": media_id,
-                "filename": rec.get("filename"),
-                "reason": "container cannot be demuxed in a browser ({0}); proxy required".format(
-                    file_path.suffix.lower()),
-                "hint": "POST /api/proxy/build to queue proxy generation",
-            },
+        return _need_proxy_response(
+            media_id, rec,
+            "container cannot be demuxed in a browser ({0}); proxy required".format(
+                file_path.suffix.lower()),
         )
 
     if serving_editor_proxy:
@@ -161,20 +196,12 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
         # never ran.
         if playable is False:
             in_proxy_set = stored_codec in codec.PROXY_CODECS
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "need_proxy": True,
-                    "media_id": media_id,
-                    "filename": rec.get("filename"),
-                    "reason": (
-                        "browser-incompatible codec (HEVC/ProRes); proxy required for playback"
-                        if in_proxy_set else
-                        "browser cannot decode this codec ({0}); proxy required for playback".format(
-                            stored_codec)
-                    ),
-                    "hint": "POST /api/proxy/build to queue proxy generation",
-                },
+            return _need_proxy_response(
+                media_id, rec,
+                "browser-incompatible codec (HEVC/ProRes); proxy required for playback"
+                if in_proxy_set else
+                "browser cannot decode this codec ({0}); proxy required for playback".format(
+                    stored_codec),
             )
 
     mime, _ = mimetypes.guess_type(str(file_path))

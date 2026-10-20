@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### 新增
+- **ingest 可以不建 proxy**（#558）：`ingest.py --skip-proxies`（＝`--proxies never`）跳過 Phase 3；
+  `ARKIV_PROXIES=never` 或庫設定 `ingest.proxies` 設成這個庫的預設（優先序：旗標 ＞ 庫設定 ＞ 環境變數 ＞ `auto`）。
+  只在 Mac（App／Safari 能直接播 HEVC）看片的庫省下整段轉檔——871 支手機短片實測約 5 小時、9 GB。
+  預設 `auto` 行為不變；關掉 proxy 不影響 embedding。這種庫的 `/api/stream` 會明講「這個庫關閉了 proxy」，
+  播放面板顯示原因、按鈕改為「只為這一支建立 proxy」。
+- **`--regenerate-proxies` 會補建還沒有的 proxy**，不再只重建已存在的——對從沒建過 proxy 的庫原本什麼都不做。
+
+### 修正
+- **配樂／噪音底下的真講話不再被當靜音丟掉**：faster-whisper 在這種情況會對整段真講話回 `no_speech_prob` 0.9–1.0
+  （信心 −0.07、每秒約 9 字），Guard 2 只看 no_speech > 0.8 就整段丟、不留紀錄；只有這種段落的短片會在 Guard 1 被整份清空。
+  實測一支 177 秒的解說片少了 20 段。現在同一解碼視窗 ≥5 秒、每秒 ≥2 字、信心 > −0.5 就保留；規則沿用 whisper-guard 0.3.2（不另抄一份）。
+  靜音幻覺（「Thank you.」「由 Amara.org 社群提供的字幕」）每秒 <1 字，照舊擋下。需要 `whisper-guard>=0.3.2`。
+
 ## v1.6.0 - 2026-10-19
 
 **過卡更安全、誰在畫面裡標得出來、逐字稿直接進 Resolve。**

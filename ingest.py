@@ -729,6 +729,38 @@ def build_proxies() -> tuple:
     return proxy_ok, proxy_skip
 
 
+def proxies_mode(cli_value: Optional[str] = None) -> str:
+    """Issue #558: should Phase 3 build proxies for this run? "auto" | "never".
+
+    CLI (`--proxies` / `--skip-proxies`) > this library's `ingest.proxies`
+    setting > ARKIV_PROXIES > "auto". The setting's default IS the env value, so
+    one accessor covers the last three layers."""
+    if cli_value:
+        return cli_value
+    try:
+        import settings
+        return settings.ingest_proxies()
+    except Exception as exc:  # noqa: BLE001 — a settings read must not cost the ingest
+        print(f"[proxies] could not read the ingest.proxies setting ({exc}); using {config.PROXIES_MODE}")
+        return config.PROXIES_MODE
+
+
+def run_proxy_phase(mode: str):
+    """Ingest Phase 3. `auto` is exactly the old unconditional `build_proxies()`.
+
+    `never` skips the transcode and nothing else — auto-embed runs after this
+    phase and must not be dragged along with it (tests pin that). Returns
+    build_proxies()'s (ok, skipped), or None when the phase was skipped."""
+    print(f"\n{'─'*60}")
+    if mode == "never":
+        print("Phase 3: Proxy generation skipped (proxies = never for this library).")
+        print("  Clips a browser cannot decode will play only where the original does")
+        print("  (macOS app / Safari). Build them later with: ingest.py --regenerate-proxies")
+        return None
+    print("Phase 3: Proxy generation for browser-incompatible codecs...")
+    return build_proxies()
+
+
 # Proxy encode timeout scales with clip length. A flat 600s killed every long
 # 4K HEVC clip: on an M2 Max with VideoToolbox decode, 4K60 HEVC → 720p ran at
 # ~0.9x realtime (17.2 min clip = 902s, 20.9 min = 1104s; 2026-10-14), so
@@ -1496,7 +1528,21 @@ def _run_vision_only(args):
 
 
 def _regenerate_proxies():
-    """Rebuild all existing proxies with latest encoding settings."""
+    """Rebuild all existing proxies with latest encoding settings, then build the
+    ones that were never made.
+
+    Issue #558: this is the command `/api/stream` names for a library ingested
+    with proxies = never. It used to rebuild only what already existed and stop
+    at "No existing proxies to regenerate." — so on exactly that library it did
+    nothing. The fill-in step is `build_proxies()` itself, so it decides "needs a
+    proxy" the same way the stream gate does, and it ignores the never setting:
+    running this command is the explicit request."""
+    _rebuild_existing_proxies()
+    print("\nBuilding proxies that do not exist yet...")
+    build_proxies()
+
+
+def _rebuild_existing_proxies():
     proxy_dir = config.PROXIES_DIR
     existing = sorted(proxy_dir.glob("*.mp4")) if proxy_dir.exists() else []
     if not existing:
@@ -2396,7 +2442,16 @@ def main():
     parser.add_argument(
         "--regenerate-proxies",
         action="store_true",
-        help="刪除並重建所有 HEVC/ProRes proxy（套用最新編碼設定）",
+        help="重建所有既有 proxy（套用最新編碼設定），並補建還沒有 proxy 的瀏覽器播不了的檔 —— 包括從沒建過 proxy 的庫（#558）。不受 --proxies / ARKIV_PROXIES 影響：這是明確要求。",
+    )
+    _proxy_flags = parser.add_mutually_exclusive_group()
+    _proxy_flags.add_argument(
+        "--proxies", choices=list(config.PROXIES_MODES), default=None,
+        help="issue #558: Phase 3 browser-playback proxies for this run. auto = build one for every clip a browser cannot decode (the default, unchanged); never = skip Phase 3 (embedding still runs). Omit = this library's `ingest.proxies` setting, else ARKIV_PROXIES, else auto.",
+    )
+    _proxy_flags.add_argument(
+        "--skip-proxies", dest="proxies", action="store_const", const="never",
+        help="Shorthand for --proxies never.",
     )
     parser.add_argument(
         "--regenerate-thumbnails",
@@ -2965,9 +3020,7 @@ def main():
         print("\nNo new files to run vision on.")
 
     # ── Phase 3: Proxy generation (browser-incompatible codecs) ────────────
-    print(f"\n{'─'*60}")
-    print("Phase 3: Proxy generation for browser-incompatible codecs...")
-    build_proxies()
+    run_proxy_phase(proxies_mode(getattr(args, "proxies", None)))
 
     batch_elapsed = _time.time() - batch_start
     total_dur = sum(b["duration_s"] for b in bench_log)

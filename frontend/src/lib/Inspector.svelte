@@ -4,7 +4,7 @@
   import Mono from './Mono.svelte'
   import Thumb from './Thumb.svelte'
   import Waveform from './Waveform.svelte'
-  import { diagnosePlaybackFailure, playbackFailureMessage } from './streamDiag.js'
+  import { diagnosePlaybackFailure, playbackFailureMessage, proxyButtonLabel } from './streamDiag.js'
   import { onDestroy } from 'svelte'
   import { createInOutWriter } from './inoutWriter.js'
   import { pendingSeek } from './matchTime.js'
@@ -649,9 +649,9 @@
            appears only when the endpoint itself says a proxy is the fix. -->
       <div class="playfail">
         <Mono dim style="font-size:11px;">{playbackFailureMessage(videoDiag)}</Mono>
-        {#if onReprocess && videoDiag && videoDiag.canProxy}
+        {#if onReprocess && proxyButtonLabel(videoDiag)}
           <button class="ak-btn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
-            {reBusy === 'proxy' ? '排入中…' : '建立 proxy 後可播放'}
+            {reBusy === 'proxy' ? '排入中…' : proxyButtonLabel(videoDiag)}
           </button>
         {/if}
       </div>

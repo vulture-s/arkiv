@@ -298,6 +298,7 @@ def _accessors(settings):
         "export.subtitle_max_cjk": (30, settings.subtitle_max_cjk),
         "ingest.recursive": (False, settings.ingest_recursive),
         "ingest.source_presets": ("CARD|/Volumes/CARD/DCIM", settings.ingest_source_presets),
+        "ingest.proxies": ("never", settings.ingest_proxies),
     }
 
 
