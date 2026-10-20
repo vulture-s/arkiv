@@ -12,8 +12,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  diagnosePlaybackFailure, playbackFailureMessage,
-  CODEC, FORBIDDEN, MISSING, SERVER, UNREACHABLE,
+  diagnosePlaybackFailure, playbackFailureMessage, proxyButtonLabel,
+  CODEC, FORBIDDEN, MISSING, SERVER, UNREACHABLE, PROXIES_DISABLED,
 } from '../src/lib/streamDiag.js'
 
 const reply = (status, body = null, ok = status >= 200 && status < 300) => async () => ({
@@ -105,4 +105,49 @@ test('the probe asks for one byte, or it downloads the whole original', async ()
   })
   assert.equal(seen.headers.Range, 'bytes=0-0')
   assert.equal(seen.cache, 'no-store')
+})
+
+// ── #558: a library with proxies turned off ─────────────────────────────────
+// The 409 still says need_proxy (the file does need one, and the per-clip build
+// still builds it), but the next ingest will NOT — so "建立 proxy 後可播放" as
+// the only words on screen implies a path that does not exist for this library.
+const disabledBody = {
+  need_proxy: true,
+  code: 'proxies_disabled',
+  reason: 'browser-incompatible codec (HEVC/ProRes); proxy required for playback',
+  message: '這個庫關閉了 proxy（ingest.proxies = never）……或執行 `ingest.py --regenerate-proxies` 補齊整庫。',
+}
+
+test('a proxies-off 409 shows the endpoint\'s explanation, not the codec line', async () => {
+  const d = await diagnosePlaybackFailure('/api/stream/1', reply(409, disabledBody))
+  assert.equal(PROXIES_DISABLED, 'proxies_disabled')
+  assert.equal(d.kind, CODEC)
+  assert.equal(d.proxiesDisabled, true)
+  assert.equal(playbackFailureMessage(d), disabledBody.message)
+  assert.match(playbackFailureMessage(d), /--regenerate-proxies/)
+})
+
+test('a proxies-off 409 relabels the button to the one clip it builds', async () => {
+  const d = await diagnosePlaybackFailure('/api/stream/1', reply(409, disabledBody))
+  assert.equal(proxyButtonLabel(d), '只為這一支建立 proxy')
+})
+
+test('an ordinary 409 keeps its wording and its button', async () => {
+  const d = await diagnosePlaybackFailure('/api/stream/1',
+    reply(409, { need_proxy: true, reason: 'dnxhd is not playable in a browser' }))
+  assert.equal(d.proxiesDisabled, false)
+  assert.equal(playbackFailureMessage(d), '此編碼瀏覽器播不了（dnxhd is not playable in a browser）')
+  assert.equal(proxyButtonLabel(d), '建立 proxy 後可播放')
+})
+
+test('no button when the endpoint did not offer one', async () => {
+  assert.equal(proxyButtonLabel(null), null)
+  const d = await diagnosePlaybackFailure('/api/stream/1', reply(404))
+  assert.equal(proxyButtonLabel(d), null)
+})
+
+test('a proxies-off code without a message falls back to the codec line', async () => {
+  const d = await diagnosePlaybackFailure('/api/stream/1',
+    reply(409, { need_proxy: true, code: 'proxies_disabled', reason: 'hevc' }))
+  assert.equal(playbackFailureMessage(d), '此編碼瀏覽器播不了（hevc）')
 })

@@ -179,7 +179,7 @@ def _mcp(path):
 def test_mcp_service_exists_and_runs_the_http_server(compose):
     svc = _mcp(compose)
     assert svc["command"] == ["python", "mcp_http_server.py"]
-    assert "8502:8502" in svc["ports"]
+    assert "${ARKIV_BIND_HOST:-127.0.0.1}:8502:8502" in svc["ports"]
 
 
 @pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
@@ -266,3 +266,18 @@ def test_upload_tunables_match_the_code_defaults():
                     env_key, compose.name, shown, code_default
                 )
             )
+
+
+# ── host port publishing is loopback by default ─────────────────────────────
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_every_published_port_binds_loopback_unless_opted_in(compose):
+    """A bare "8501:8501" publishes on 0.0.0.0, and Docker's iptables rules
+    route around the host firewall — the library API (and, on the single-host
+    file, an unauthenticated Ollama) becomes reachable from the whole LAN. Every
+    published port must carry the ARKIV_BIND_HOST prefix whose default is
+    127.0.0.1; LAN serving stays possible, but only as an explicit choice."""
+    services = _load(compose)["services"]
+    published = [(name, p) for name, svc in services.items() for p in svc.get("ports", [])]
+    assert published, "expected at least one published port"
+    for name, p in published:
+        assert str(p).startswith("${ARKIV_BIND_HOST:-127.0.0.1}:"), f"{name}: {p}"

@@ -152,16 +152,17 @@ class PgCollection:
     def get(self, where: Optional[Dict[str, Any]] = None,
             include: Optional[List[str]] = None,
             limit: Optional[int] = None, **_) -> Dict[str, Any]:
-        """Returns ``{"ids": [...], "embeddings": [[...], ...]}`` — the shape
-        ``find_similar`` / the legacy compat probe read. Ordered by ``doc_id`` so
-        ``limit=1`` deterministically picks a media's first chunk."""
+        """Returns ``{"ids", "embeddings", "documents"}`` — the shape
+        ``find_similar`` / the legacy compat probe / ``embedder_drift`` read.
+        Ordered by ``doc_id`` so ``limit=1`` deterministically picks a media's
+        first chunk."""
         where = where or {}
         clauses = ["collection = %s"]
         params: List[Any] = [self.collection]
         if "media_id" in where:
             clauses.append("payload->>'media_id' = %s")
             params.append(str(where["media_id"]))
-        sql = (f"SELECT doc_id, embedding::text FROM {self.table} "
+        sql = (f"SELECT doc_id, embedding::text, content FROM {self.table} "
                f"WHERE {' AND '.join(clauses)} ORDER BY doc_id")
         if limit:
             sql += f" LIMIT {int(limit)}"
@@ -171,6 +172,7 @@ class PgCollection:
         return {
             "ids": [r[0] for r in fetched],
             "embeddings": [_parse_vec(r[1]) for r in fetched],
+            "documents": [r[2] for r in fetched],
         }
 
     def query(self, query_embeddings, n_results: int = 10,

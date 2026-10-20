@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).parent
 # Backend product version. Keep in sync with the release tag + frontend
 # version.js at release time. Served by GET /api/version and included in
 # GET /api/health so a user/support can identify the build.
-VERSION = "1.3.0"
+VERSION = "1.6.0"
 
 # Codex Round-2 audit (J3): without bounds, ARKIV_PROXIES_DIR=/etc would have
 # arkiv write generated proxy mp4 files into /etc on every HEVC ingest. Same
@@ -400,6 +400,22 @@ _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
 # so encode stays libx264). Defaults on for arm64 macOS, off elsewhere; the encoder
 # retries in software if a source's codec/pix_fmt isn't hardware-decodable.
 PROXY_HEIGHT = int(os.getenv("ARKIV_PROXY_HEIGHT", "720"))
+# Issue #558: whether ingest Phase 3 builds browser-playback proxies at all.
+#   auto  = today's behaviour — every clip a browser cannot decode gets one.
+#   never = skip Phase 3. For a library only watched where the original plays
+#           (the macOS app / Safari decode HEVC), proxies are pure cost: measured
+#           ~5 h and ~9 GB on 871 phone clips, half of the whole ingest.
+# A per-library override lives in settings (`ingest.proxies`), and `ingest.py
+# --proxies` / `--skip-proxies` beats both. An unrecognised value falls back to
+# auto: a typo must not be the thing that silently stops proxies being built.
+PROXIES_MODES = ("auto", "never")
+PROXIES_MODE = os.getenv("ARKIV_PROXIES", "auto").strip().lower()
+if PROXIES_MODE not in PROXIES_MODES:
+    PROXIES_MODE = "auto"
+# Editing proxy (editor_proxy.py): ProRes Proxy written to <source dir>/Proxy/ for
+# the NLE. Separate from PROXY_HEIGHT on purpose — the browser proxy wants small,
+# an editing proxy wants enough picture to cut on. Never upscales.
+EDITOR_PROXY_HEIGHT = int(os.getenv("ARKIV_EDITOR_PROXY_HEIGHT", "1080"))
 _hwd = os.getenv("ARKIV_PROXY_HWDECODE", "auto").strip().lower()
 PROXY_HWDECODE_DEFAULT = _IS_MLX if _hwd in ("", "auto") else _hwd in ("1", "true", "yes", "on")
 
@@ -599,6 +615,17 @@ try:
     OLLAMA_NUM_PARALLEL = max(1, int(os.getenv("OLLAMA_NUM_PARALLEL", "1")))
 except ValueError:
     OLLAMA_NUM_PARALLEL = 1
+# Client-side: how many vision requests describe_frames keeps in flight. This is
+# NOT Ollama's server setting above (that one is read by `ollama serve`, not by
+# arkiv). Default 1 = the original strictly serial loop. Opt-in: 2 against a
+# server at NUM_PARALLEL=1 measured +26% frames/min on a dedicated M2 Max server
+# (docs/bench/2026-10-17-ollama-num-parallel-ab.md), but a re-measure through
+# describe_frames on an everyday server saw no gain (#555) — raise it only after
+# timing it on your own machine. Clamped to [1, 8] by vision.py.
+try:
+    VISION_CONCURRENCY = max(1, int(os.getenv("ARKIV_VISION_CONCURRENCY", "1")))
+except ValueError:
+    VISION_CONCURRENCY = 1
 
 def discover_projects():
     from projects import discover_projects as _discover_projects

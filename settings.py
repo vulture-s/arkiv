@@ -153,7 +153,42 @@ def _schema() -> Dict[str, Dict[str, Any]]:
             "type": "bool",
             "default": lambda: True,
         },
+        # Extra folders ingest may read, ADDED to webguard's allowlist (never
+        # replacing it — ARKIV_INGEST_ROOTS env is the replace knob). Exists for
+        # the Windows NAS user: a UNC folder (\\nas\home\Photos) has no drive
+        # letter, so neither the default list nor the network-drive sweep can
+        # reach it. Admin-only to write (PUT /api/settings). A local disk root is
+        # refused here (422) and again when read, so the J1 bound survives.
+        "ingest.extra_roots": {
+            "group": "ingest",
+            "label": "額外允許匯入的資料夾 — 一行一個（或以分號分隔），例：\\\\nas\\home\\Photos; D:\\Footage",
+            "type": "str",
+            "default": lambda: "",
+            "validate": lambda v: _validate_extra_roots(v),
+        },
+        # Issue #558. Consumed by ingest Phase 3 (`ingest.proxies_mode`) and by
+        # /api/stream, which has to tell a user of a `never` library why the
+        # clip has no proxy instead of implying the next ingest will make one.
+        "ingest.proxies": {
+            "group": "ingest",
+            "label": "Browser-playback proxies — auto（瀏覽器播不了的檔自動轉）／never（不轉，只用能直接播原檔的播放器）",
+            "type": "str",
+            "choices": list(config.PROXIES_MODES),
+            "default": lambda: config.PROXIES_MODE,
+        },
     }
+
+
+def _validate_extra_roots(value: str) -> None:
+    """Refuse an `ingest.extra_roots` value that would void the J1 bound (a bare
+    local disk root) or that is not a full path. The rule lives in webguard,
+    which owns the boundary; imported lazily because webguard sits at the bottom
+    of the import graph and must not import settings at module load."""
+    import webguard
+    for entry in webguard._split_extra_roots(value):
+        problem = webguard._extra_root_problem(entry)
+        if problem:
+            raise SettingError(problem)
 
 
 # Built once per process; cheap to rebuild but stable across a request.
@@ -190,6 +225,9 @@ def _coerce(key: str, raw: Any) -> Any:
         choices = spec.get("choices")
         if choices is not None and v not in choices:
             raise SettingError(f"{key} must be one of {choices}")
+        validate = spec.get("validate")
+        if validate is not None:
+            validate(v)
         return v
     raise SettingError(f"unsupported setting type: {t}")
 
@@ -327,9 +365,24 @@ def source_preset_list(project: Optional[str] = None) -> List[Dict[str, str]]:
     return out
 
 
+def ingest_extra_roots(project: Optional[str] = None) -> str:
+    """The raw `ingest.extra_roots` string; webguard splits + filters it."""
+    return str(for_project("ingest.extra_roots", project) or "")
+
+
 def ingest_recursive(project: Optional[str] = None) -> bool:
     """Effective "recurse into sub-folders" default for the ingest dialog."""
     return for_project("ingest.recursive", project)
+
+
+def ingest_proxies(project: Optional[str] = None) -> str:
+    """Effective proxy policy for this library: "auto" or "never" (issue #558).
+
+    A stored value outside the choices (hand-edited DB, a value from a newer
+    build) reads as "auto" — the safe direction, since "never" is the one that
+    takes something away."""
+    v = str(for_project("ingest.proxies", project) or "").strip().lower()
+    return v if v in config.PROXIES_MODES else "auto"
 
 
 def export_default_dir(project: Optional[str] = None) -> str:

@@ -28,6 +28,10 @@ export const MISSING = 'missing'        // 404 — the row or the file is gone
 export const SERVER = 'server'          // 5xx and anything else the server said
 export const UNREACHABLE = 'unreachable' // the request never got an answer
 
+// The `code` /api/stream puts on a 409 from a library whose ingest.proxies is
+// `never` (#558). Mirrors routers/misc.py PROXIES_DISABLED_CODE.
+export const PROXIES_DISABLED = 'proxies_disabled'
+
 /**
  * Ask `/api/stream` what actually went wrong.
  *
@@ -59,6 +63,10 @@ export async function diagnosePlaybackFailure(url, doFetch = fetch) {
       // every 409 is proxyable: a future refusal that a proxy cannot fix would
       // otherwise inherit the button.
       canProxy: !!(body && body.need_proxy),
+      // #558: the library has proxies turned off, so the next ingest will NOT
+      // build this one. The endpoint's own sentence says what to do instead.
+      proxiesDisabled: !!(body && body.code === PROXIES_DISABLED),
+      message: (body && typeof body.message === 'string' && body.message) || null,
     }
   }
 
@@ -86,6 +94,9 @@ export function playbackFailureMessage(diag) {
   if (!diag) return '播放失敗'
   switch (diag.kind) {
     case CODEC:
+      // #558: in a proxies-off library "build a proxy" is not what the next
+      // ingest will do, so show the endpoint's own explanation instead.
+      if (diag.proxiesDisabled && diag.message) return diag.message
       return diag.reason ? `此編碼瀏覽器播不了（${diag.reason}）` : '此編碼瀏覽器播不了'
     case FORBIDDEN:
       return '沒有權限讀取這個檔案 —— 這不是編碼問題'
@@ -96,4 +107,17 @@ export function playbackFailureMessage(diag) {
     default:
       return `伺服器回報錯誤（${diag.status}）`
   }
+}
+
+/**
+ * The label on the build button, or null when there should be no button.
+ *
+ * #558: in a library with proxies turned off the button still works — the
+ * per-clip build endpoint is an explicit request and ignores the library policy
+ * — but "建立 proxy 後可播放" would read as the normal path. Say that it builds
+ * this one clip, so the user knows the rest of the library stays as it is.
+ */
+export function proxyButtonLabel(diag) {
+  if (!diag || !diag.canProxy) return null
+  return diag.proxiesDisabled ? '只為這一支建立 proxy' : '建立 proxy 後可播放'
 }

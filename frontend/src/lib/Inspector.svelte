@@ -4,7 +4,13 @@
   import Mono from './Mono.svelte'
   import Thumb from './Thumb.svelte'
   import Waveform from './Waveform.svelte'
-  import { diagnosePlaybackFailure, playbackFailureMessage } from './streamDiag.js'
+  import { diagnosePlaybackFailure, playbackFailureMessage, proxyButtonLabel } from './streamDiag.js'
+  import { onDestroy } from 'svelte'
+  import { createInOutWriter } from './inoutWriter.js'
+  import { pendingSeek } from './matchTime.js'
+  import { parseCube, webgl2Available, createLutRenderer } from './lutGL.js'
+  import { selectionToFrom, validateCorrection } from './transcriptCorrect.js'
+  import { identityRange, suggestNames, formatIdentityRange, nameKeyStep } from './identities.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -103,12 +109,19 @@
   // once more if the detail lands after the switch), but never clobber an edit the
   // user already made on this clip (tracked by _ioTouched). Keyed on media.id so a
   // clip-switch resets, fixing the old bug where marks leaked across clips / were lost.
+  // The clip id and values are bound when the write is scheduled (not when the
+  // timer fires) — see inoutWriter.js for the cross-clip clobber this prevents.
+  const _ioWriter = createInOutWriter(350)
+  onDestroy(() => _ioWriter.flush())
   let _ioLoadedId = null
   let _ioTouched = false
   $: _hydrateInOut(media && media.id, inPoint, outPoint)
   function _hydrateInOut(id, ip, op) {
     if (id == null) return
     if (id !== _ioLoadedId) {
+      // Land any still-debounced mark on the clip it was made on BEFORE the
+      // marks are reset for the new clip (audit N1).
+      _ioWriter.flush()
       _ioLoadedId = id
       _ioTouched = false
       inSec = ip ?? null
@@ -120,12 +133,10 @@
   }
   // Debounced persist — waveform marker drags fire onTrim rapidly, so coalesce the
   // writes; marking the clip as touched locks out further auto-hydration.
-  let _ioTimer = null
   function _persistInOut() {
     _ioTouched = true
     if (!onInOut) return
-    if (typeof clearTimeout !== 'undefined') clearTimeout(_ioTimer)
-    _ioTimer = setTimeout(() => onInOut(inSec, outSec), 350)
+    _ioWriter.schedule(onInOut, media && media.id, inSec, outSec)
   }
   // When frameExact, mark at the exact frame boundary (curFrame from rVFC),
   // expressed back in seconds so the ?in_s/out_s export contract is unchanged —
@@ -160,6 +171,7 @@
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
     if (!(useVideo || useAudio)) return
     switch (e.key) {
+      case ' ': if (lutShown) { lutTogglePlay(); e.preventDefault() } break
       case 'i': case 'I': setIn(); e.preventDefault(); break
       case 'o': case 'O': setOut(); e.preventDefault(); break
       case ',': if (frameExact) { stepFrame(-1); e.preventDefault() } break
@@ -182,7 +194,20 @@
   function onLoadedMeta() {
     if (playerEl && playerEl.duration) mediaDuration = playerEl.duration
     if (frameExact) { curFrame = 0; trackFrame() }
+    applyStartAt()
   }
+  // Deep-link from a search hit: {id, t} — open the clip at the matched second.
+  // Seeks only (no autoplay), once per link, and only for that clip.
+  export let startAt = null
+  let startApplied = null
+  function applyStartAt() {
+    const s = pendingSeek(startAt, media && media.id, startApplied)
+    if (!s || !playerEl || !playerEl.duration) return
+    playerEl.currentTime = Math.min(s.t, playerEl.duration)
+    startApplied = s.key
+  }
+  // the clip may already be loaded when the link arrives (same clip re-opened)
+  $: if (startAt && media) applyStartAt()
   const _tc = (s) => {
     if (s == null) return '—'
     s = Math.max(0, Math.round(s))
@@ -223,10 +248,13 @@
   // the export buttons become live; null → mock screens keep the inert buttons.
   export let onExport = null
   // Extra clip actions (live only): onChapters(format) downloads YouTube chapters,
-  // onRemotion() downloads Remotion caption props, onReveal() reveals the source
+  // onRemotion(trim) downloads Remotion caption props (trim = IN/OUT window or null), onReveal() reveals the source
   // file in Finder/Explorer. null → button hidden (mock screens unchanged).
   export let onChapters = null
   export let onRemotion = null
+  // Parent's in-flight export key ('clip:edl', 'chapters', …) or null. While set,
+  // export buttons disable and the running one shows … (B11 — no silent wait).
+  export let exportBusy = null
   export let onReveal = null
   // Live delete. onDelete = () => void; when set, a "刪除素材" button appears. The
   // parent owns the confirm dialog + the API call (so it can also drive bulk delete).
@@ -236,6 +264,51 @@
   export let tags = null
   export let onAddTag = null // (name) => void
   export let onRemoveTag = null // (name) => void
+  // A6 person annotations (manual — never face recognition). identities =
+  // [{id,name,start_s,end_s}] → renders the 人物 block; null → no block (mock
+  // screens unchanged). identityNames = [{name,count}] for autocomplete.
+  // onAddIdentity(name, {start_s,end_s}|{}) → Promise<boolean>; onRemoveIdentity(id).
+  export let identities = null
+  export let identityNames = []
+  export let onAddIdentity = null
+  export let onRemoveIdentity = null
+  let personOpen = false
+  let personInput = ''
+  let personHi = -1
+  let personBusy = false
+  let personEl = null
+  // The range is decided when the box opens AND re-read on submit, so moving the
+  // marks while typing is honoured; the label shows what will be written.
+  $: personRange = identityRange(inSec, outSec, mediaDuration)
+  $: personSuggest = personOpen
+    ? suggestNames(identityNames, personInput, (identities || []).map((i) => i.name))
+    : []
+  $: if (personHi >= personSuggest.length) personHi = -1
+  function openPerson() {
+    personOpen = true
+    personInput = ''
+    personHi = -1
+    setTimeout(() => personEl && personEl.focus(), 0)
+  }
+  function closePerson() { personOpen = false; personInput = ''; personHi = -1 }
+  async function submitPerson(name) {
+    const n = (name || '').trim()
+    if (!n || !onAddIdentity || personBusy) return
+    personBusy = true
+    try {
+      const ok = await onAddIdentity(n, identityRange(inSec, outSec, mediaDuration))
+      if (ok !== false) closePerson()
+    } finally {
+      personBusy = false
+    }
+  }
+  function onPersonKey(e) {
+    const step = nameKeyStep(e.key, personInput, personSuggest, personHi)
+    if (step.action || e.key === 'Enter') e.preventDefault()
+    personHi = step.highlight
+    if (step.action === 'cancel') closePerson()
+    else if (step.action === 'submit') submitPerson(step.name)
+  }
   // LLM-canonicalized tag list (string[]) — semantic-deduped (生肉/生魚→肉類).
   // When present, a toggle switches the Tags block raw ⇄ canonical; default
   // canonical (the cleaner view) unless the user flipped it (persisted).
@@ -254,6 +327,77 @@
   // Live re-processing. onReprocess = async (action, opts) => {ok, message};
   // action ∈ 'retranscribe' | 'retry-vision' | 'reingest'. null → no block (mock).
   export let onReprocess = null
+  // ---- log → Rec.709 preview (color profiles) -------------------------------
+  // colorProfile: the clip's profile id ('sony-slog3-…', 'user:<lut>', 'none', or
+  // null). colorProfiles: [{id,label,vendor,source}] for the picker. The proxy is
+  // log; when a profile is set the player is drawn through its LUT in WebGL and
+  // the toggle shows the original. getCube(id) → .cube text.
+  export let colorProfile = null
+  export let colorProfiles = []
+  export let onSetColorProfile = null // (id|null) => Promise
+  export let onImportLut = null // (File) => Promise<id>
+  export let getCube = null // (id) => Promise<string>
+  const glOK = typeof document !== 'undefined' && webgl2Available()
+  let lutOn = true
+  let lutCanvas = null
+  let lutRenderer = null
+  let lutErr = ''
+  let lutFor = null // profile id currently uploaded to the renderer
+  const cubeCache = new Map()
+  $: lutApplies = useVideo && !videoFailed && glOK && !!getCube && !!colorProfile && colorProfile !== 'none'
+  $: lutShown = lutApplies && lutOn && !lutErr
+  $: if (lutShown && lutCanvas && playerEl) _ensureLut(colorProfile)
+  $: if (!lutShown && lutRenderer) _dropLut()
+  async function _ensureLut(id) {
+    try {
+      if (!lutRenderer) { lutRenderer = createLutRenderer(lutCanvas, playerEl); lutFor = null }
+      if (lutFor === id) return
+      lutFor = id
+      if (!cubeCache.has(id)) cubeCache.set(id, getCube(id).then(parseCube))
+      const cube = await cubeCache.get(id)
+      if (lutRenderer && lutFor === id) lutRenderer.setLut(cube)
+    } catch (e) {
+      cubeCache.delete(id)
+      lutErr = 'LUT 載入失敗：' + ((e && e.message) || e)
+      _dropLut()
+    }
+  }
+  function _dropLut() {
+    if (lutRenderer) lutRenderer.destroy()
+    lutRenderer = null
+    lutFor = null
+  }
+  onDestroy(_dropLut)
+  // The canvas covers the native control bar, so it takes over play/pause.
+  function lutTogglePlay() {
+    if (!playerEl) return
+    if (playerEl.paused) playerEl.play && playerEl.play().catch(() => {})
+    else playerEl.pause && playerEl.pause()
+  }
+  let cpBusy = false
+  let cpMsg = ''
+  async function pickProfile(e) {
+    const v = e.target.value
+    if (v === '__import') { e.target.value = colorProfile || ''; lutFile && lutFile.click(); return }
+    if (!onSetColorProfile) return
+    cpBusy = true; cpMsg = ''; lutErr = ''
+    try { await onSetColorProfile(v || null) } catch (err) { cpMsg = (err && err.message) || String(err) }
+    cpBusy = false
+  }
+  let lutFile = null
+  async function importPicked(e) {
+    const f = e.target.files && e.target.files[0]
+    e.target.value = ''
+    if (!f || !onImportLut) return
+    cpBusy = true; cpMsg = ''
+    try {
+      const id = await onImportLut(f)
+      if (id && onSetColorProfile) await onSetColorProfile(id)
+    } catch (err) { cpMsg = (err && err.message) || String(err) }
+    cpBusy = false
+  }
+  $: vendors = [...new Set((colorProfiles || []).filter((p) => p.source === 'builtin').map((p) => p.vendor))]
+  $: userLuts = (colorProfiles || []).filter((p) => p.source === 'user')
   export let languages = null // [{code,label}] for the retranscribe picker
   export let mediaLang = null // current clip language → default selection
   let imgFailed = false
@@ -332,6 +476,17 @@
   const EXPORT_TITLES = {
     txt: '逐字稿純文字（完整標點）。設了 ✂ 範圍時輸出的是該範圍內的 segment 原文，未經潤稿',
   }
+  // B13: CMX3600 only knows 23.976/24/25/29.97/30. media.fps arrives rounded
+  // (MainLive), so 24/25/30 cover the NTSC rates too. Off-spec clips still export
+  // (the server adds a WARNING comment to the EDL) — this just says so up front.
+  $: edlOffSpec = media && typeof media.fps === 'number' && media.fps > 0 && ![24, 25, 30].includes(media.fps)
+  $: edlTitle = edlOffSpec ? `EDL 規格（CMX3600）不支援 ${media.fps}p，Resolve conform 時 TC 可能對不上，建議改用 FCPXML` : ''
+
+  // 8.2i: same FCPXML, but its markers come from the transcript segments (who
+  // said what, when) instead of the scene frames. Resolve: marker name = the
+  // line (≤60 chars), marker notes = the full text. Honours ✂ like the others.
+  const TRANSCRIPT_MARKERS_TITLE =
+    'FCPXML，marker 來源改成逐字稿：每段話一個 marker（名稱＝前 60 字，備註＝全文）。設了 ✂ 只輸出範圍內的段落'
 
   const MOCK_TRANSCRIPT = [
     ['00:05', '我們從上海一路騎到拉薩，第十七天。', false],
@@ -362,11 +517,112 @@
     ? (pathLabel ?? media.name)
     : (pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`)
   const rateBtns = [['good', 'Good'], ['rev', 'Review'], ['ng', 'N·G'], ['none', '—']]
+
+  // ── 選字 → 校正 ──────────────────────────────────────────────────────────
+  // Select text inside ONE transcript segment (drag, or double-click a word) →
+  // a small 「校正…」 chip appears → type the right spelling → Enter sends it to
+  // onCorrect(from, to, apply). onCorrect is the parent's learnCorrection call; it
+  // resolves on success (parent toasts + reloads the transcript) and throws on
+  // failure (the error stays in the form so the user can fix and resend).
+  // null → transcript stays read-only (mock screens, archived languages).
+  export let onCorrect = null
+  // corr: null | {stage:'chip'|'refuse'|'form', from, seg, reason, x, y, to, apply, busy, err}
+  let corr = null
+  let linesEl = null
+  let corrEl = null
+  const POP_W = 300
+  // A selection boundary can be (text node, offset) or — WebKit does this when a
+  // drag crosses block boundaries — (element, child index). Resolve the latter to
+  // the child it points at before looking for the segment.
+  function segOf(node, offset) {
+    if (node && node.nodeType === 1 && node.childNodes.length) {
+      node = node.childNodes[Math.min(offset || 0, node.childNodes.length - 1)]
+    }
+    const el = node && (node.nodeType === 1 ? node : node.parentElement)
+    const host = el && el.closest ? el.closest('[data-seg]') : null
+    return host && linesEl && linesEl.contains(host) ? Number(host.dataset.seg) : null
+  }
+  function hasSelection() {
+    const s = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null
+    return !!(s && s.rangeCount && !s.isCollapsed && s.toString().trim())
+  }
+  function readSelection() {
+    if (!onCorrect || (corr && corr.stage === 'form')) return
+    const s = window.getSelection()
+    if (!s || !s.rangeCount || s.isCollapsed) { corr = null; return }
+    const range = s.getRangeAt(0)
+    // a selection that never touches the transcript is someone else's business
+    if (!linesEl || !linesEl.contains(range.commonAncestorContainer)) {
+      if (!(linesEl && range.intersectsNode(linesEl))) { corr = null; return }
+    }
+    const startSeg = segOf(range.startContainer, range.startOffset)
+    const endSeg = segOf(range.endContainer, range.endOffset)
+    const segText = startSeg != null && lines[startSeg] ? lines[startSeg][1] : null
+    const r = selectionToFrom({ startSeg, endSeg, text: s.toString(), segText })
+    if (!r.ok && r.reason === 'empty') { corr = null; return }
+    const rect = range.getBoundingClientRect()
+    const x = Math.max(8, Math.min(rect.left, window.innerWidth - POP_W - 8))
+    const pos = { x, top: rect.top, bottom: rect.bottom }
+    corr = r.ok
+      ? { stage: 'chip', from: r.from, seg: r.seg, ...pos }
+      : { stage: 'refuse', reason: r.reason, ...pos }
+  }
+  // Below the selection when it fits, else above it (the transcript sits at the
+  // bottom of a scrolling panel, so "above" is the common case for late lines).
+  function popStyle(c) {
+    const h = c.stage === 'form' ? 190 : 34
+    if (c.bottom + 6 + h <= window.innerHeight - 8) return `left:${c.x}px;top:${c.bottom + 6}px;`
+    return `left:${c.x}px;bottom:${Math.max(8, window.innerHeight - c.top + 6)}px;`
+  }
+  // WebKit finalises the selection after mouseup's handlers; read it a tick later.
+  function onLinesMouseUp() { if (onCorrect) setTimeout(readSelection, 0) }
+  function openCorrForm() {
+    if (!corr || corr.stage !== 'chip') return
+    corr = { ...corr, stage: 'form', to: corr.from, apply: true, busy: false, err: null }
+  }
+  function closeCorr() { corr = null }
+  async function submitCorr() {
+    if (!corr || corr.stage !== 'form' || corr.busy) return
+    const v = validateCorrection(corr.from, corr.to)
+    if (!v.ok) { corr = { ...corr, err: v.reason }; return }
+    const mine = corr
+    corr = { ...corr, busy: true, err: null }
+    try {
+      await onCorrect(v.from, v.to, mine.apply)
+      if (corr && corr.from === mine.from) corr = null
+      const s = window.getSelection()
+      if (s) s.removeAllRanges()
+    } catch (e) {
+      if (corr && corr.from === mine.from) corr = { ...corr, busy: false, err: (e && e.message) || String(e) }
+    }
+  }
+  function onCorrKey(e) {
+    // IME: the Enter that commits a 注音/拼音 candidate must not submit
+    // (WebKit reports it as keyCode 229 and/or isComposing).
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); submitCorr() }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCorr() }
+  }
+  function onDocMouseDown(e) {
+    if (!corr) return
+    if (corrEl && corrEl.contains(e.target)) return
+    if (corr.stage === 'form') { if (!corr.busy) closeCorr(); return }
+    // chip/refuse: a new mousedown starts a new selection; mouseup re-reads it
+    corr = null
+  }
+  function onWinKey(e) {
+    if (corr && e.key === 'Escape' && corr.stage !== 'form') { closeCorr(); return }
+    onKey(e)
+  }
+  function focusInput(node) { node.focus(); node.select() }
+  // switching clips (or the parent turning correction off) drops a pending correction
+  let _corrMid = null
+  $: if ((media && media.id) !== _corrMid) { _corrMid = media && media.id; corr = null }
+  $: if (!onCorrect) corr = null
 </script>
 
-<svelte:window on:keydown={onKey} />
+<svelte:window on:keydown={onWinKey} on:mousedown={onDocMouseDown} />
 
-<aside class="inspector">
+<aside class="inspector" on:scroll={() => { if (corr && corr.stage !== 'form') corr = null }}>
   <div class="header">
     <Eyebrow style="margin-bottom:8px;">
       Inspector · {media.kind === 'image' ? 'IMAGE' : media.kind === 'audio' ? 'AUDIO' : `${media.fps}p · ${media.res}`}
@@ -393,15 +649,26 @@
            appears only when the endpoint itself says a proxy is the fix. -->
       <div class="playfail">
         <Mono dim style="font-size:11px;">{playbackFailureMessage(videoDiag)}</Mono>
-        {#if onReprocess && videoDiag && videoDiag.canProxy}
+        {#if onReprocess && proxyButtonLabel(videoDiag)}
           <button class="ak-btn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
-            {reBusy === 'proxy' ? '排入中…' : '建立 proxy 後可播放'}
+            {reBusy === 'proxy' ? '排入中…' : proxyButtonLabel(videoDiag)}
           </button>
         {/if}
       </div>
     {:else if useVideo}
       <!-- svelte-ignore a11y-media-has-caption -->
       <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} on:error={onVideoError} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
+      {#if lutShown}
+        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+        <canvas bind:this={lutCanvas} class="lutcanvas" on:click={lutTogglePlay} title="點擊播放／暫停（空白鍵）"></canvas>
+      {/if}
+      {#if lutApplies}
+        <div class="lutpill">
+          <button class="ak-btn lutbtn" class:on={lutOn && !lutErr} on:click={() => { lutOn = !lutOn; lutErr = '' }}
+            title={lutOn ? '顯示原始 log 畫面' : '套用色彩設定檔'}>{lutOn && !lutErr ? 'LUT ●' : 'LOG ○'}</button>
+          {#if lutShown}<button class="ak-btn lutbtn" on:click={lutTogglePlay} title="播放／暫停（空白鍵）">▶︎❚❚</button>{/if}
+        </div>
+      {/if}
     {:else if useAudio}
       {#if thumbUrl && !imgFailed}
         <img class="previmg" src={thumbUrl} alt={media.name} on:error={() => (imgFailed = true)} />
@@ -435,6 +702,30 @@
       <Mono dim>ISO</Mono><Mono>{media.iso} · {media.ap} · {media.fl}</Mono>
       <Mono dim>TC</Mono><Mono>{media.tc}</Mono>
       <Mono dim>SIZE</Mono><Mono>{media.size} · {media.dur}</Mono>
+      {#if onSetColorProfile && media.kind !== 'audio'}
+        <Mono dim>COLOR</Mono>
+        <div class="cprow">
+          <select class="cpsel" value={colorProfile || ''} disabled={cpBusy} on:change={pickProfile} title="log 素材的色彩設定檔（縮圖、關鍵畫面、播放器套用）">
+            <option value="">未指定</option>
+            <option value="none">非 log（不套用）</option>
+            {#each vendors as v}
+              <optgroup label={v}>
+                {#each colorProfiles.filter((p) => p.source === 'builtin' && p.vendor === v) as p}
+                  <option value={p.id} title={p.note || ''}>{p.label}</option>
+                {/each}
+              </optgroup>
+            {/each}
+            {#if userLuts.length}
+              <optgroup label="自訂 LUT">
+                {#each userLuts as p}<option value={p.id}>{p.label}</option>{/each}
+              </optgroup>
+            {/if}
+            {#if onImportLut}<option value="__import">匯入 .cube…</option>{/if}
+          </select>
+          <input bind:this={lutFile} type="file" accept=".cube" style="display:none" on:change={importPicked} />
+        </div>
+        {#if cpMsg || lutErr}<span></span><Mono style="font-size:10px;color:#d9534f;">{cpMsg || lutErr}</Mono>{/if}
+      {/if}
     </div>
   </div>
 
@@ -476,6 +767,62 @@
             <input class="ak-input taginput" placeholder="加標籤…" bind:value={tagInput} />
             <button class="ak-btn tagaddbtn" type="submit" disabled={!tagInput.trim()}>＋</button>
           </form>
+        {/if}
+      {/if}
+    </div>
+  {/if}
+
+  {#if identities}
+    <div class="block" data-testid="people-block">
+      <div class="blockhead">
+        <Eyebrow>人物</Eyebrow>
+        <Mono dim style="font-size:9.5px;letter-spacing:0.06em;">人工標註 · {identities.length}</Mono>
+      </div>
+      <div class="people">
+        {#each identities as p (p.id)}
+          <div class="person">
+            <span class="pname">{p.name}</span>
+            {#if p.start_s != null && (useVideo || useAudio)}
+              <button class="ptime seek" title="跳到 {formatIdentityRange(p)} 起點" on:click={() => seekTo(p.start_s)}>{formatIdentityRange(p)}</button>
+            {:else}
+              <Mono dim style="font-size:10px;">{formatIdentityRange(p)}</Mono>
+            {/if}
+            {#if onRemoveIdentity}
+              <button class="tagx" title="移除人物標註" aria-label="移除 {p.name}" on:click={() => onRemoveIdentity(p.id)}>×</button>
+            {/if}
+          </div>
+        {/each}
+        {#if identities.length === 0}
+          <Mono dim style="font-size:10.5px;">（尚未標註）</Mono>
+        {/if}
+      </div>
+      {#if onAddIdentity}
+        {#if personOpen}
+          <div class="personadd">
+            <Mono dim style="font-size:9.5px;">範圍：{formatIdentityRange(personRange)}{personRange.start_s == null ? '（未設 IN/OUT）' : '（IN/OUT）'}</Mono>
+            <div class="personrow">
+              <input class="ak-input taginput" placeholder="名字… Enter 送出 · Esc 取消" bind:this={personEl}
+                bind:value={personInput} on:keydown={onPersonKey} disabled={personBusy}
+                role="combobox" aria-expanded={personSuggest.length > 0} aria-autocomplete="list" aria-controls="person-suggest" />
+              <button class="ak-btn tagaddbtn" on:click={() => submitPerson(personHi >= 0 ? personSuggest[personHi] : personInput)}
+                disabled={personBusy || !personInput.trim() && personHi < 0}>＋</button>
+              <button class="ak-btn tagaddbtn" on:click={closePerson} title="取消（Esc）">取消</button>
+            </div>
+            {#if personSuggest.length}
+              <ul class="psuggest" id="person-suggest" role="listbox">
+                {#each personSuggest as s, i (s)}
+                  <li role="option" aria-selected={i === personHi}>
+                    <button class="psug" class:hi={i === personHi} on:mousedown|preventDefault={() => submitPerson(s)}>{s}</button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {:else}
+          <button class="ak-btn personbtn" on:click={openPerson}
+            title={personRange.start_s == null ? '標註整支片出現的人物' : '標註 IN/OUT 範圍內出現的人物'}>
+            標人物{personRange.start_s == null ? '（整支片）' : `（${formatIdentityRange(personRange)}）`}
+          </button>
         {/if}
       {/if}
     </div>
@@ -532,20 +879,50 @@
         {/if}
       </div>
     {/if}
-    <div class="lines">
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="lines" class:correctable={!!onCorrect} bind:this={linesEl} on:mouseup={onLinesMouseUp}>
       {#if lines.length === 0}
         <Mono dim style="font-size:11px;">（無語音 · no speech detected）</Mono>
       {:else}
-        {#each lines as [tc, text, hl, t]}
+        {#each lines as [tc, text, hl, t], i}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
           <div class="line" class:seekable={typeof t === 'number' && (useVideo || useAudio)}
-            on:click={() => (typeof t === 'number') && seekTo(t)}>
+            on:click={() => (typeof t === 'number') && !hasSelection() && seekTo(t)}>
             <Mono dim style="font-size:10.5px;flex:0 0 36px;">{tc}</Mono>
-            <span class="ttext" class:hl>{text}</span>
+            <span class="ttext" class:hl data-seg={i}>{text}</span>
           </div>
         {/each}
       {/if}
     </div>
+    {#if onCorrect && lines.length}
+      <div class="corrhint">選取一段字（或雙擊一個詞）可校正錯字</div>
+    {/if}
+    {#if corr}
+      <div class="corrpop" class:form={corr.stage === 'form'} bind:this={corrEl}
+        style={popStyle(corr)}>
+        {#if corr.stage === 'chip'}
+          <button class="corrchip" on:click={openCorrForm} title="把這段字的正確寫法教給本專案">校正「{corr.from}」…</button>
+        {:else if corr.stage === 'refuse'}
+          <div class="corrrefuse" role="status">{corr.reason}</div>
+        {:else}
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+          <div class="corrform" role="dialog" aria-label="校正逐字稿" tabindex="-1" on:keydown={onCorrKey}>
+            <div class="corrfrom">原文 <b>{corr.from}</b></div>
+            <input class="corrinput" type="text" bind:value={corr.to} use:focusInput
+              disabled={corr.busy} aria-label="正確寫法" placeholder="正確寫法" />
+            <label class="corrapply">
+              <input type="checkbox" bind:checked={corr.apply} disabled={corr.busy} />
+              套用到本專案所有逐字稿
+            </label>
+            {#if corr.err}<div class="correrr" role="alert">{corr.err}</div>{/if}
+            <div class="corractions">
+              <button class="ak-btn" on:click={closeCorr} disabled={corr.busy}>取消 · Esc</button>
+              <button class="ak-btn ak-btn--primary" on:click={submitCorr} disabled={corr.busy}>{corr.busy ? '處理中…' : '校正 · Enter'}</button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   {#if frameScenes && frameScenes.length}
@@ -617,6 +994,12 @@
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
           {reBusy === 'proxy' ? '排入中…' : '建立 proxy'}
         </button>
+        <!-- ProRes Proxy into <source dir>/Proxy/<name>.mov, with source TC and
+             every audio track, so Resolve can relink it. Not the button above:
+             that one is the 720p H.264 the browser plays. -->
+        <button class="ak-btn rebtn" disabled={!!reBusy} title="ProRes Proxy 寫到原始檔旁的 Proxy/，保留 TC 與全部音軌；不覆蓋既有檔" on:click={() => doReprocess('editor-proxy')}>
+          {reBusy === 'editor-proxy' ? (reProgress ? `生成中… ${reProgress}` : '生成中…') : '剪輯用 proxy'}
+        </button>
       </div>
       {#if reMsg}<Mono dim style="font-size:10px;line-height:1.45;display:block;">{reMsg}</Mono>{/if}
     </div>
@@ -640,9 +1023,14 @@
     <div class="exports">
       {#if onExport}
         {#each EXPORT_FMTS as fmt}
-          <button class="ak-btn exp" title={EXPORT_TITLES[fmt] || ''}
-                  on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{trimArgs ? ' ✂' : ''}</button>
+          <button class="ak-btn exp" title={(fmt === 'edl' && edlTitle) || EXPORT_TITLES[fmt] || ''}
+                  disabled={!!exportBusy} aria-busy={exportBusy === `clip:${fmt}`}
+                  on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{fmt === 'edl' && edlOffSpec ? ' ⚠' : ''}{trimArgs ? ' ✂' : ''}{exportBusy === `clip:${fmt}` ? ' …' : ''}</button>
         {/each}
+        <button class="ak-btn exp" title={TRANSCRIPT_MARKERS_TITLE}
+                disabled={!!exportBusy} aria-busy={exportBusy === 'clip:fcpxml.transcript'}
+                on:click={() => onExport('fcpxml', { ...(trimArgs || {}), markers: 'transcript' })}
+        >字幕 MARKER{trimArgs ? ' ✂' : ''}{exportBusy === 'clip:fcpxml.transcript' ? ' …' : ''}</button>
       {:else}
         {#each EXPORT_FMTS as fmt}
           <button class="ak-btn exp">{fmt.toUpperCase()}</button>
@@ -654,8 +1042,8 @@
       <span class="moreexp" on:click={() => (showMore = !showMore)}>{showMore ? '成品輔助 ▴' : '更多 · 成品輔助 ▾'}</span>
       {#if showMore}
         <div class="exports sub">
-          {#if onChapters}<button class="ak-btn exp ghost" on:click={() => onChapters('youtube')} title="YouTube 章節文字（成品輔助，非 arkiv 核心）">YT 章節</button>{/if}
-          {#if onRemotion}<button class="ak-btn exp ghost" on:click={onRemotion} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion</button>{/if}
+          {#if onChapters}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'chapters'} on:click={() => onChapters('youtube')} title="YouTube 章節文字（成品輔助，非 arkiv 核心）">YT 章節</button>{/if}
+          {#if onRemotion}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'remotion'} on:click={() => onRemotion(trimArgs)} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion{trimArgs ? ' ✂' : ''}{exportBusy === 'remotion' ? ' …' : ''}</button>{/if}
         </div>
       {/if}
     {/if}
@@ -703,6 +1091,14 @@
   .previmg { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* the real player: contain (don't crop footage) on black; audio sits at the bottom */
   video.previmg { object-fit: contain; background: #000; }
+  /* LUT preview: drawn over the video (same contain box); takes over play/pause
+     because it covers the native control bar. */
+  .lutcanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; cursor: pointer; }
+  .lutpill { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; }
+  .lutbtn { font-size: 10px; padding: 2px 8px; background: rgba(0,0,0,0.55); color: #f3f2ee; border-color: rgba(255,255,255,0.25); }
+  .lutbtn.on { border-color: #e8b04a; color: #e8b04a; }
+  .cprow { display: flex; gap: 6px; align-items: center; }
+  .cpsel { font: inherit; font-size: 11px; background: var(--surface-2); color: inherit; border: 1px solid var(--rule); padding: 1px 4px; max-width: 100%; }
   /* The native control bar renders light-on-white by default, which in this
      dark inspector reads as a broken white box rather than a play control
      (#420). `color-scheme` is what tells the engine to draw its own widgets
@@ -745,6 +1141,31 @@
   .line.seekable:hover .ttext { color: var(--invert); }
   .ttext { color: var(--ink); }
   .ttext.hl { border-bottom: 1px solid var(--invert); padding-bottom: 1px; }
+  .lines.correctable .ttext { cursor: text; }
+  .corrhint { margin-top: 8px; font-size: 10px; color: var(--quiet); }
+  .corrpop { position: fixed; z-index: 900; max-width: 300px; }
+  .corrchip {
+    appearance: none; cursor: pointer; font-family: var(--ak-mono); font-size: 10.5px;
+    background: var(--invert); color: var(--invert-ink); border: 1px solid var(--invert);
+    padding: 4px 8px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .corrrefuse {
+    font-size: 11px; color: var(--ink); background: var(--surface-2);
+    border: 1px dashed var(--rule-hi); padding: 6px 8px;
+  }
+  .corrform {
+    width: 300px; box-sizing: border-box; background: var(--bg); color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--invert); padding: 12px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .corrfrom { font-size: 11px; color: var(--ink-2); word-break: break-all; }
+  .corrfrom b { color: var(--ink); font-weight: 600; }
+  .corrinput {
+    font: inherit; font-size: 13px; background: var(--surface-2); color: var(--ink);
+    border: 1px solid var(--rule-hi); padding: 5px 7px; width: 100%; box-sizing: border-box;
+  }
+  .corrapply { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-2); }
+  .correrr { font-size: 11px; color: var(--ink); border-left: 2px solid var(--invert); padding-left: 6px; word-break: break-all; }
+  .corractions { display: flex; justify-content: flex-end; gap: 6px; }
   /* tags */
   .tagrow { display: flex; flex-wrap: wrap; gap: 5px; }
   .tagchip {
@@ -771,12 +1192,33 @@
   .tagadd { display: flex; gap: 6px; margin-top: 8px; }
   .taginput { flex: 1; font-size: 11px; padding: 5px 8px; }
   .tagaddbtn { flex: 0 0 auto; padding: 5px 10px; }
+  /* people (A6) */
+  .people { display: flex; flex-direction: column; gap: 4px; }
+  .person { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink); }
+  .person .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ptime {
+    appearance: none; background: transparent; border: none; padding: 0; cursor: pointer;
+    font-family: var(--ak-mono); font-size: 10px; color: var(--ink-2); text-decoration: underline dotted;
+  }
+  .ptime:hover { color: var(--cyan); }
+  .personbtn { margin-top: 8px; font-size: 10px; width: 100%; }
+  .personadd { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .personrow { display: flex; gap: 6px; }
+  .psuggest { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); background: var(--surface-2); }
+  .psug {
+    appearance: none; display: block; width: 100%; text-align: left; background: transparent; border: none;
+    font: inherit; font-size: 11.5px; color: var(--ink); padding: 4px 8px; cursor: pointer;
+  }
+  .psug:hover, .psug.hi { background: var(--invert); color: var(--invert-ink); }
   /* reprocess */
   .reproc { display: flex; flex-direction: column; gap: 6px; }
   .reprow { display: flex; gap: 6px; }
   .relang { flex: 0 0 auto; font-size: 11px; padding: 5px 6px; }
   .rebtn { flex: 1; font-size: 10px; }
   .rebtn:disabled { opacity: 0.5; cursor: default; }
+  /* B11: other exports dim while one runs; the running one stays legible */
+  .exp:disabled { opacity: 0.45; cursor: default; }
+  .exp[aria-busy='true'] { opacity: 1; cursor: progress; }
   .rate { padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
   .ratebtns { display: flex; gap: 4px; }
   .ratebtn {

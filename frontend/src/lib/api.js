@@ -144,7 +144,7 @@ export const syncProjects = (opts) => req('/api/projects/sync', { method: 'POST'
 // A bin references clips by (project_name, media_id) — the identity that survives
 // federation's path sanitization. GET /api/bins/{id} returns each item with a
 // reachability `status` (ok | project_unregistered | db_missing | nas_unmounted |
-// row_missing | file_missing | …) — never an absolute path (Phase 16.2).
+// inaccessible | row_missing | file_missing | …) — never an absolute path (Phase 16.2).
 export const getBins = (opts) => req('/api/bins', opts)
 export const createBin = (name, opts) => req('/api/bins', { method: 'POST', body: { name }, ...opts })
 export const getBin = (id, opts) => req(`/api/bins/${encodeURIComponent(id)}`, opts)
@@ -212,6 +212,11 @@ export const getCorrections = (opts) => req('/api/corrections', opts)
 // PUT replaces the whole dictionary → {ok, rules, count}
 export const putCorrections = (rules, opts) =>
   req('/api/corrections', { method: 'PUT', body: { rules }, ...opts })
+// "Fix it once, remember it": upsert one rule (pre on when `to` is term-shaped,
+// post on, learned_at stamped). apply=true also rewrites stored transcripts with
+// THIS rule only (backup first). → {ok, rule, created, hotword, applied?}
+export const learnCorrection = (rule, apply = false, opts) =>
+  req('/api/corrections/learn', { method: 'POST', body: { rule, apply }, ...opts })
 // POST recorrect, dry-run by default — preview only, writes nothing.
 // → {dry_run:true, rules:[{from,to,scope,hits}], media_affected, total_hits, affected:[…]}
 export const recorrectPreview = (opts) =>
@@ -267,6 +272,11 @@ export const uploadFiles = (files, opts) => {
 export const rebuildEmbedIndex = (opts) =>
   req('/api/embed/rebuild', { method: 'POST', ...opts })
 
+// GET /api/embed/status — how many clips the semantic index has gone stale on
+// (text/tags changed after embedding) or never indexed. Requires videos_read.
+// → {total_media, fresh_media, stale_media, unindexed_media, rebuild_running}
+export const getEmbedStatus = (opts) => req('/api/embed/status', opts)
+
 // ---- DIT offload (card → backup) ----
 // POST /api/offload/preview {src, organize?, include_heic?, limit?} → read-only
 // layout {src, count, organize, files:[{source, rel, size_mb}]}. videos_write.
@@ -290,6 +300,13 @@ export async function offloadRun(body, { signal } = {}) {
   }
   return res
 }
+
+// POST /api/offload/resolve {src, dst, rel, action:"rename"|"skip", new_name?, confirm?}
+// → {status, summary, file}. Settles ONE same-name conflict of a finished
+// offload: copy that clip under a new name (hash-verified, never overwrites) or —
+// confirmed — skip it (NOT backed up; the card can then never read as done).
+export const offloadResolve = (body, opts) =>
+  req('/api/offload/resolve', { method: 'POST', body, ...opts })
 
 // /api/media?limit&offset&projects&tag&rating  → {items, total, search}
 export const getMedia = (params = {}, opts) => req(`/api/media${qs(params)}`, opts)
@@ -368,6 +385,9 @@ export async function downloadFile(path, filename) {
   // revoking immediately can invalidate the blob before WebKit reads it →
   // empty/failed saves (Codex review P2). A short delay lets the click settle.
   setTimeout(() => URL.revokeObjectURL(url), 10000)
+  // What landed, for the success toast (B11). The save location is not knowable
+  // from a blob download (browser or WKWebView), so only name + size.
+  return { filename, size: blob.size }
 }
 // Path-only builders (no BASE) for downloadFile, which prepends BASE itself.
 export const exportPath = (id, fmt) => `/api/media/${id}/export/${fmt}`
@@ -379,7 +399,13 @@ export const exportTimelinePath = (ids, fmt) =>
 export const getChapters = (id, format = 'youtube', opts) =>
   req(`/api/media/${id}/chapters?format=${format}`, opts)
 // /api/media/{id}/remotion-props → word-level caption props (JSON)
-export const getRemotionProps = (id, opts) => req(`/api/media/${id}/remotion-props`, opts)
+// trim = {in_s, out_s?} (inspector IN/OUT) → captions limited to the window, rebased to 0 = IN
+export const getRemotionProps = (id, opts, trim = null) => {
+  const q = []
+  if (trim && trim.in_s != null) q.push(`in_s=${trim.in_s}`)
+  if (trim && trim.out_s != null) q.push(`out_s=${trim.out_s}`)
+  return req(`/api/media/${id}/remotion-props${q.length ? `?${q.join('&')}` : ''}`, opts)
+}
 // POST /api/open-file {path?, media_id?, reveal} → reveal in Finder/Explorer or open.
 // Send media_id whenever it is known: a library indexed before the relative-path
 // migration reports only a basename as its path, which the server cannot match back
@@ -409,6 +435,7 @@ export function downloadText(text, filename, mime = 'text/plain') {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10000)
+  return { filename, size: blob.size }
 }
 // DaVinci Resolve metadata CSV (File → Import Metadata from CSV). ids optional
 // (CSV of media ids) → batch-scoped; omitted/empty → whole library.
@@ -416,10 +443,17 @@ export const metadataCsvPath = (ids = null) =>
   `/api/export/metadata-csv${ids && ids.length ? `?ids=${ids.join(',')}` : ''}`
 
 // ---- writes ----
-// note: backend PATCH writes BOTH rating + rating_note, so an omitted note
-// clears any existing note. Always pass the current note through to preserve it.
-export const setRating = (id, rating, note = null, opts) =>
-  req(`/api/media/${id}/rating`, { method: 'PATCH', body: { rating, note }, ...opts })
+// PATCH semantics (backend audit M20): an OMITTED field is left untouched, an
+// explicit null clears it. So `note` is only sent when the caller passes one —
+// the old "always send the current note" workaround sent `note: null` whenever
+// the clip's detail had not loaded yet, wiping the stored note (audit
+// 2026-10-09 K1). Pass `null` explicitly to clear.
+export const setRating = (id, rating, note = undefined, opts) =>
+  req(`/api/media/${id}/rating`, {
+    method: 'PATCH',
+    body: note === undefined ? { rating } : { rating, note },
+    ...opts,
+  })
 
 // PATCH /api/media/{id}/inout {in_point, out_point} → persist the IN/OUT trim
 // window (seconds; null clears a mark). Lets the inspector restore a clip's range
@@ -437,6 +471,18 @@ export const addTag = (id, name, opts) =>
 // source). encodeURIComponent so spaces / CJK tag names survive the path.
 export const removeTag = (id, name, opts) =>
   req(`/api/media/${id}/tags/${encodeURIComponent(name)}`, { method: 'DELETE', ...opts })
+
+// ---- A6 person annotations (manual; never face recognition) ----
+// GET /api/media/{id}/identities → {media_id, identities:[{id,name,start_s,end_s,source}]}
+export const getIdentities = (id, opts) => req(`/api/media/${id}/identities`, opts)
+// POST {name, start_s?, end_s?} (both omitted = whole clip) → {ok, identity, identities}.
+// Same name overlapping/touching an existing range on this clip is merged server-side.
+export const addIdentity = (id, body, opts) =>
+  req(`/api/media/${id}/identities`, { method: 'POST', body, ...opts })
+export const removeIdentity = (id, identityId, opts) =>
+  req(`/api/media/${id}/identities/${identityId}`, { method: 'DELETE', ...opts })
+// GET /api/identities/names → [{name, count}] (count = clips) for autocomplete
+export const getIdentityNames = (opts) => req('/api/identities/names', opts)
 
 // ---- per-clip re-processing (all SYNCHRONOUS — the request blocks until done,
 // so callers must show a busy state; reingest can run up to ~10 min) ----
@@ -495,9 +541,12 @@ export const restoreTrash = (trashId, opts) =>
   })
 // POST /api/media/prune-missing {dry_run} → {scanned, pruned, pruned_ids, dry_run}.
 // Clears ghost rows whose source file was manually deleted. Requires media_delete.
+// The endpoint takes a JSON body ({dry_run}); a query-string flag made every call
+// 422. Response carries `unavailable_roots` (unmounted storage, never pruned).
 export const pruneMissing = (dryRun = true, opts) =>
-  req(`/api/media/prune-missing${qs({ dry_run: dryRun ? 1 : 0 })}`, {
+  req('/api/media/prune-missing', {
     method: 'POST',
+    body: { dry_run: dryRun },
     ...opts,
   })
 
@@ -512,5 +561,41 @@ export const buildProxies = (opts) => req('/api/proxy/build', { method: 'POST', 
 // just one clip's proxy in the background.
 export const buildProxyOne = (id, opts) =>
   req(`/api/proxy/build/${id}`, { method: 'POST', ...opts })
+// Editing proxy (ProRes → <source dir>/Proxy/<stem>.mov, for the NLE). Separate
+// from the browser proxy above. POST queues in the background (409 if a batch is
+// already running); poll editorProxyStatus until running=false, then read
+// results[] for where it wrote or why not. Never overwrites an existing file.
+export const buildEditorProxies = (ids, opts) =>
+  req('/api/proxy/editor', { method: 'POST', body: { ids }, ...opts })
+export const editorProxyStatus = (opts) => req('/api/proxy/editor/status', opts)
+export const editorProxyFor = (id, opts) => req(`/api/proxy/editor/${id}`, opts)
 
 export { ApiError }
+
+// ---- color profiles (log → Rec.709 preview) --------------------------------
+// GET /api/color-profiles → {profiles:[{id,label,vendor,source:'builtin'|'user',note}], user_lut_dir}
+export const getColorProfiles = (opts) => req('/api/color-profiles', opts)
+// GET /api/color-profiles/{id}/cube → .cube text (the player applies it live in WebGL)
+export const getColorCube = (id, opts) =>
+  req(`/api/color-profiles/${encodeURIComponent(id)}/cube`, opts)
+// PATCH /api/media/{id}/color-profile {color_profile} — a profile id, 'none' (not
+// log; stops auto-detect) or null (forget). The poster is rebuilt with it.
+export const setColorProfile = (id, color_profile, opts) =>
+  req(`/api/media/${id}/color-profile`, { method: 'PATCH', body: { color_profile }, ...opts })
+// POST /api/media/color-profile {ids, color_profile} → {updated, missing}; posters
+// rebuild in the background.
+export const setColorProfileBatch = (ids, color_profile, opts) =>
+  req('/api/media/color-profile', { method: 'POST', body: { ids, color_profile }, ...opts })
+// POST /api/color-profiles/import (multipart) → {id:'user:<name>'}. Bespoke fetch:
+// req() always JSON-encodes its body, which would turn FormData into "{}".
+export async function importLut(file, { signal } = {}) {
+  const form = new FormData()
+  form.append('file', file)
+  const headers = {}
+  if (_token) headers['Authorization'] = `Bearer ${_token}`
+  const res = await fetch(`${BASE}/api/color-profiles/import`, { method: 'POST', headers, body: form, signal })
+  let body = null
+  try { body = await res.json() } catch { /* non-json */ }
+  if (!res.ok) throw new ApiError(res.status, '/api/color-profiles/import', body)
+  return body
+}

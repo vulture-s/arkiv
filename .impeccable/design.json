@@ -1,0 +1,394 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-04T22:51:24+08:00",
+  "title": "Design System: arkiv",
+  "extensions": {
+    "colorMeta": {
+      "bg": {
+        "role": "neutral",
+        "displayName": "Lamp-off Black",
+        "canonical": "oklch(14.6% 0.004 285.9)",
+        "tonalRamp": [
+          "oklch(15% 0.004 285.9)",
+          "oklch(26% 0.004 285.9)",
+          "oklch(38% 0.004 285.9)",
+          "oklch(50% 0.004 285.9)",
+          "oklch(62% 0.004 285.9)",
+          "oklch(74% 0.004 285.9)",
+          "oklch(85% 0.004 285.9)",
+          "oklch(95% 0.004 285.9)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Desk",
+        "canonical": "oklch(17.9% 0.006 285.8)",
+        "tonalRamp": [
+          "oklch(15% 0.006 285.8)",
+          "oklch(26% 0.006 285.8)",
+          "oklch(38% 0.006 285.8)",
+          "oklch(50% 0.006 285.8)",
+          "oklch(62% 0.006 285.8)",
+          "oklch(74% 0.006 285.8)",
+          "oklch(85% 0.006 285.8)",
+          "oklch(95% 0.006 285.8)"
+        ]
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Desk Raised",
+        "canonical": "oklch(20.6% 0.006 285.9)",
+        "tonalRamp": [
+          "oklch(15% 0.006 285.9)",
+          "oklch(26% 0.006 285.9)",
+          "oklch(38% 0.006 285.9)",
+          "oklch(50% 0.006 285.9)",
+          "oklch(62% 0.006 285.9)",
+          "oklch(74% 0.006 285.9)",
+          "oklch(85% 0.006 285.9)",
+          "oklch(95% 0.006 285.9)"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(27.0% 0.007 285.9)",
+        "tonalRamp": [
+          "oklch(15% 0.007 285.9)",
+          "oklch(26% 0.007 285.9)",
+          "oklch(38% 0.007 285.9)",
+          "oklch(50% 0.007 285.9)",
+          "oklch(62% 0.007 285.9)",
+          "oklch(74% 0.007 285.9)",
+          "oklch(85% 0.007 285.9)",
+          "oklch(95% 0.007 285.9)"
+        ]
+      },
+      "rule-hi": {
+        "role": "neutral",
+        "displayName": "Hairline Strong",
+        "canonical": "oklch(35.0% 0.009 285.9)",
+        "tonalRamp": [
+          "oklch(15% 0.009 285.9)",
+          "oklch(26% 0.009 285.9)",
+          "oklch(38% 0.009 285.9)",
+          "oklch(50% 0.009 285.9)",
+          "oklch(62% 0.009 285.9)",
+          "oklch(74% 0.009 285.9)",
+          "oklch(85% 0.009 285.9)",
+          "oklch(95% 0.009 285.9)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Paper Ink",
+        "canonical": "oklch(96.1% 0.005 95.1)",
+        "tonalRamp": [
+          "oklch(15% 0.005 95.1)",
+          "oklch(26% 0.005 95.1)",
+          "oklch(38% 0.005 95.1)",
+          "oklch(50% 0.005 95.1)",
+          "oklch(62% 0.005 95.1)",
+          "oklch(74% 0.005 95.1)",
+          "oklch(85% 0.005 95.1)",
+          "oklch(95% 0.005 95.1)"
+        ]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Pencil",
+        "canonical": "oklch(77.2% 0.007 97.4)",
+        "tonalRamp": [
+          "oklch(15% 0.007 97.4)",
+          "oklch(26% 0.007 97.4)",
+          "oklch(38% 0.007 97.4)",
+          "oklch(50% 0.007 97.4)",
+          "oklch(62% 0.007 97.4)",
+          "oklch(74% 0.007 97.4)",
+          "oklch(85% 0.007 97.4)",
+          "oklch(95% 0.007 97.4)"
+        ]
+      },
+      "quiet": {
+        "role": "neutral",
+        "displayName": "Graphite",
+        "canonical": "oklch(63.5% 0.006 286.2)",
+        "tonalRamp": [
+          "oklch(15% 0.006 286.2)",
+          "oklch(26% 0.006 286.2)",
+          "oklch(38% 0.006 286.2)",
+          "oklch(50% 0.006 286.2)",
+          "oklch(62% 0.006 286.2)",
+          "oklch(74% 0.006 286.2)",
+          "oklch(85% 0.006 286.2)",
+          "oklch(95% 0.006 286.2)"
+        ]
+      },
+      "cyan": {
+        "role": "primary",
+        "displayName": "Notebook Cyan",
+        "canonical": "oklch(72.0% 0.128 220.5)",
+        "tonalRamp": [
+          "oklch(15% 0.128 220.5)",
+          "oklch(26% 0.128 220.5)",
+          "oklch(38% 0.128 220.5)",
+          "oklch(50% 0.128 220.5)",
+          "oklch(62% 0.128 220.5)",
+          "oklch(74% 0.128 220.5)",
+          "oklch(85% 0.128 220.5)",
+          "oklch(95% 0.128 220.5)"
+        ]
+      },
+      "no-red": {
+        "role": "tertiary",
+        "displayName": "Strike Coral",
+        "canonical": "oklch(66.6% 0.152 19.6)",
+        "tonalRamp": [
+          "oklch(15% 0.152 19.6)",
+          "oklch(26% 0.152 19.6)",
+          "oklch(38% 0.152 19.6)",
+          "oklch(50% 0.152 19.6)",
+          "oklch(62% 0.152 19.6)",
+          "oklch(74% 0.152 19.6)",
+          "oklch(85% 0.152 19.6)",
+          "oklch(95% 0.152 19.6)"
+        ]
+      },
+      "invert": {
+        "role": "neutral",
+        "displayName": "Invert",
+        "canonical": "oklch(96.1% 0.005 95.1)",
+        "tonalRamp": [
+          "oklch(15% 0.005 95.1)",
+          "oklch(26% 0.005 95.1)",
+          "oklch(38% 0.005 95.1)",
+          "oklch(50% 0.005 95.1)",
+          "oklch(62% 0.005 95.1)",
+          "oklch(74% 0.005 95.1)",
+          "oklch(85% 0.005 95.1)",
+          "oklch(95% 0.005 95.1)"
+        ]
+      },
+      "invert-ink": {
+        "role": "neutral",
+        "displayName": "Invert Ink",
+        "canonical": "oklch(14.6% 0.004 285.9)",
+        "tonalRamp": [
+          "oklch(15% 0.004 285.9)",
+          "oklch(26% 0.004 285.9)",
+          "oklch(38% 0.004 285.9)",
+          "oklch(50% 0.004 285.9)",
+          "oklch(62% 0.004 285.9)",
+          "oklch(74% 0.004 285.9)",
+          "oklch(85% 0.004 285.9)",
+          "oklch(95% 0.004 285.9)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Wordmark",
+        "purpose": "Homepage arkiv. wordmark only."
+      },
+      "ledger-title": {
+        "displayName": "Ledger Title",
+        "purpose": "Read-page titles; CJK falls to Noto Sans TC 900."
+      },
+      "lede": {
+        "displayName": "Lede",
+        "purpose": "One-sentence answer under the homepage wordmark."
+      },
+      "ledger-lede": {
+        "displayName": "Ledger Lede",
+        "purpose": "Opening answer under a read-page title, 52ch."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Homepage section headings."
+      },
+      "group": {
+        "displayName": "Group Heading",
+        "purpose": "Heading between runs of ledger rows."
+      },
+      "question": {
+        "displayName": "Question",
+        "purpose": "Ledger left column; sticky on desktop."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Ledger answers, 68ch."
+      },
+      "evidence": {
+        "displayName": "Evidence",
+        "purpose": "Mono proof line under each answer."
+      },
+      "label-mono": {
+        "displayName": "Label Mono",
+        "purpose": "Table heads, badges, button sub-lines."
+      }
+    },
+    "shadows": [
+      {
+        "name": "pin-lift",
+        "value": "0 2px 8px rgba(0,0,0,.55)",
+        "purpose": "Only on numbered pins over screenshots."
+      }
+    ],
+    "motion": [
+      {
+        "name": "button-nudge",
+        "value": "transform .12s ease, opacity .12s ease",
+        "purpose": "Button hover: -1px lift, .9 opacity."
+      },
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(.16,1,.3,1)",
+        "purpose": "Pin scale and shared-row arrival."
+      },
+      {
+        "name": "row-arrive",
+        "value": "lg-arrive .9s cubic-bezier(.16,1,.3,1)",
+        "purpose": "One cyan wash when a row is opened by URL hash; off under reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "home-sm",
+        "value": "600px"
+      },
+      {
+        "name": "ledger-stack",
+        "value": "760px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Inverted solid download button with optional mono sub-line.",
+      "html": "<a class=\"ds-btn\" href=\"#\">下載 macOS<small>Apple Silicon · .dmg</small></a>",
+      "css": ":host{--ak-display:'Archivo Black','Inter',sans-serif;--ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;--ak-mono:'JetBrains Mono',ui-monospace,monospace;--bg:#0a0a0c;--surface:#111114;--surface-2:#17171a;--rule:#26262a;--rule-hi:#3a3a3f;--ink:#f3f2ee;--ink-2:#b6b5b0;--quiet:#8a8a8e;--invert:#f3f2ee;--invert-ink:#0a0a0c;--cyan:#18b6dc} .ds-btn{display:inline-flex;flex-direction:column;gap:2px;background:var(--invert);color:var(--invert-ink);text-decoration:none;border-radius:10px;padding:13px 22px;font-family:var(--ak-sans);font-weight:600;font-size:15px;transition:transform .12s ease,opacity .12s ease}.ds-btn:hover{transform:translateY(-1px);opacity:.9}.ds-btn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}.ds-btn small{font-weight:400;font-size:11.5px;opacity:.62;font-family:var(--ak-mono)}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary action: transparent with strong hairline.",
+      "html": "<a class=\"ds-btn-ghost\" href=\"#\">GitHub<small>原始碼</small></a>",
+      "css": ":host{--ak-display:'Archivo Black','Inter',sans-serif;--ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;--ak-mono:'JetBrains Mono',ui-monospace,monospace;--bg:#0a0a0c;--surface:#111114;--surface-2:#17171a;--rule:#26262a;--rule-hi:#3a3a3f;--ink:#f3f2ee;--ink-2:#b6b5b0;--quiet:#8a8a8e;--invert:#f3f2ee;--invert-ink:#0a0a0c;--cyan:#18b6dc} .ds-btn-ghost{display:inline-flex;flex-direction:column;gap:2px;background:transparent;color:var(--ink);border:1px solid var(--rule-hi);text-decoration:none;border-radius:10px;padding:13px 22px;font-family:var(--ak-sans);font-weight:600;font-size:15px;transition:transform .12s ease,opacity .12s ease}.ds-btn-ghost:hover{transform:translateY(-1px);opacity:.9}.ds-btn-ghost:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}.ds-btn-ghost small{font-weight:400;font-size:11.5px;opacity:.62;font-family:var(--ak-mono)}"
+    },
+    {
+      "name": "Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Mono pill on the homepage hero; key word in cyan.",
+      "html": "<span class=\"ds-badge\"><b>免費</b>　任何用途</span>",
+      "css": ":host{--ak-display:'Archivo Black','Inter',sans-serif;--ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;--ak-mono:'JetBrains Mono',ui-monospace,monospace;--bg:#0a0a0c;--surface:#111114;--surface-2:#17171a;--rule:#26262a;--rule-hi:#3a3a3f;--ink:#f3f2ee;--ink-2:#b6b5b0;--quiet:#8a8a8e;--invert:#f3f2ee;--invert-ink:#0a0a0c;--cyan:#18b6dc} .ds-badge{font-family:var(--ak-mono);font-size:12px;color:var(--ink-2);border:1px solid var(--rule-hi);border-radius:999px;padding:5px 13px;background:var(--bg)}.ds-badge b{color:var(--cyan);font-weight:500}"
+    },
+    {
+      "name": "Email Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Signup field with cyan focus outline.",
+      "html": "<input class=\"ds-input\" type=\"email\" placeholder=\"you@example.com\">",
+      "css": ":host{--ak-display:'Archivo Black','Inter',sans-serif;--ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;--ak-mono:'JetBrains Mono',ui-monospace,monospace;--bg:#0a0a0c;--surface:#111114;--surface-2:#17171a;--rule:#26262a;--rule-hi:#3a3a3f;--ink:#f3f2ee;--ink-2:#b6b5b0;--quiet:#8a8a8e;--invert:#f3f2ee;--invert-ink:#0a0a0c;--cyan:#18b6dc} .ds-input{background:var(--surface-2);border:1px solid var(--rule-hi);color:var(--ink);border-radius:10px;padding:13px 16px;font-size:15px;font-family:var(--ak-sans)}.ds-input:focus{outline:2px solid var(--cyan);outline-offset:1px}"
+    },
+    {
+      "name": "Top Navigation",
+      "kind": "nav",
+      "refersTo": "nav-link",
+      "description": "Wordmark with cyan dot, quiet links, cyan inset underline on the current page.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-mark\" href=\"#\">arkiv<span>.</span></a><ul><li><a href=\"#\">首頁</a></li><li><a href=\"#\" aria-current=\"page\">運作方式</a></li><li><a href=\"#\">誠實清單</a></li></ul></nav>",
+      "css": ":host{--ak-display:'Archivo Black','Inter',sans-serif;--ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;--ak-mono:'JetBrains Mono',ui-monospace,monospace;--bg:#0a0a0c;--surface:#111114;--surface-2:#17171a;--rule:#26262a;--rule-hi:#3a3a3f;--ink:#f3f2ee;--ink-2:#b6b5b0;--quiet:#8a8a8e;--invert:#f3f2ee;--invert-ink:#0a0a0c;--cyan:#18b6dc} .ds-nav{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:56px;padding:0 24px;background:var(--bg);border-bottom:1px solid var(--rule);font-family:var(--ak-sans)}.ds-nav-mark{font-family:var(--ak-display);font-size:20px;color:var(--ink);text-decoration:none;letter-spacing:-.02em}.ds-nav-mark span{color:var(--cyan)}.ds-nav ul{list-style:none;display:flex;gap:4px 18px;margin:0;padding:0}.ds-nav ul a{color:var(--ink-2);text-decoration:none;font-size:14px}.ds-nav ul a:hover,.ds-nav ul a[aria-current=page]{color:var(--ink)}.ds-nav ul a[aria-current=page]{box-shadow:inset 0 -2px 0 var(--cyan)}.ds-nav a:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}"
+    },
+    {
+      "name": "Ledger Row",
+      "kind": "custom",
+      "refersTo": "ledger-question",
+      "description": "Signature: question (self-link) left, answer and mono evidence right, hairline above.",
+      "html": "<div class=\"ds-row\" id=\"r1\"><h2 class=\"ds-q\"><svg class=\"ds-mk ds-mk-yes\" viewBox=\"0 0 20 20\" role=\"img\" aria-label=\"做得到\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4.5 10.5l3.6 3.6 7.4-8.2\"/></svg><a href=\"#r1\">素材會不會<wbr>傳出去？</a></h2><div class=\"ds-a\"><p>不會。索引、逐字稿與縮圖都寫在<b>你自己的硬碟</b>上。</p><p class=\"ds-ev\">config.py · DATA_DIR = ~/.arkiv</p></div></div>",
+      "css": ":host{--ak-display:'Archivo Black','Inter',sans-serif;--ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;--ak-mono:'JetBrains Mono',ui-monospace,monospace;--bg:#0a0a0c;--surface:#111114;--surface-2:#17171a;--rule:#26262a;--rule-hi:#3a3a3f;--ink:#f3f2ee;--ink-2:#b6b5b0;--quiet:#8a8a8e;--invert:#f3f2ee;--invert-ink:#0a0a0c;--cyan:#18b6dc} .ds-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:12px 48px;padding:28px 0 32px;border-top:1px solid var(--rule);background:var(--bg);font-family:var(--ak-sans)}.ds-row:target{border-top-color:var(--cyan);box-shadow:inset 0 1px 0 var(--cyan)}.ds-q{display:flex;gap:12px;align-items:flex-start;font-size:17px;font-weight:600;line-height:1.5;letter-spacing:-.005em;color:var(--ink);word-break:keep-all;margin:0}.ds-q a{color:inherit;text-decoration:none}.ds-q a:hover{text-decoration:underline;text-decoration-color:var(--rule-hi);text-underline-offset:4px}.ds-q a:focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:2px}.ds-a{max-width:68ch;font-size:16px;line-height:1.75;color:var(--ink-2)}.ds-a p{margin:0}.ds-a > * + *{margin-top:12px}.ds-a b{color:var(--ink);font-weight:600}.ds-ev{font-family:var(--ak-mono);font-size:12.5px;line-height:1.6;color:var(--quiet);font-variant-numeric:tabular-nums}.ds-mk{flex:0 0 auto;width:20px;height:20px;margin-top:3px}.ds-mk-yes{color:var(--cyan)}@media (max-width:760px){.ds-row{grid-template-columns:1fr;gap:10px}}"
+    },
+    {
+      "name": "Status Marks",
+      "kind": "custom",
+      "refersTo": "ledger-question",
+      "description": "Drawn SVG marks sharing one stroke: yes (cyan), no (coral), conditional (pencil).",
+      "html": "<p class=\"ds-key\"><span><svg class=\"ds-mk ds-mk-yes\" viewBox=\"0 0 20 20\" role=\"img\" aria-label=\"做得到\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4.5 10.5l3.6 3.6 7.4-8.2\"/></svg>做得到</span><span><svg class=\"ds-mk ds-mk-no\" viewBox=\"0 0 20 20\" role=\"img\" aria-label=\"做不到\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5.5 5.5l9 9M14.5 5.5l-9 9\"/></svg>做不到</span><span><svg class=\"ds-mk ds-mk-cond\" viewBox=\"0 0 20 20\" role=\"img\" aria-label=\"有條件\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M10 3.8l6.6 11.7H3.4z\"/></svg>有條件</span></p>",
+      "css": ":host{--ak-display:'Archivo Black','Inter',sans-serif;--ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;--ak-mono:'JetBrains Mono',ui-monospace,monospace;--bg:#0a0a0c;--surface:#111114;--surface-2:#17171a;--rule:#26262a;--rule-hi:#3a3a3f;--ink:#f3f2ee;--ink-2:#b6b5b0;--quiet:#8a8a8e;--invert:#f3f2ee;--invert-ink:#0a0a0c;--cyan:#18b6dc} .ds-key{display:flex;flex-wrap:wrap;gap:8px 24px;font-family:var(--ak-sans);font-size:13.5px;color:var(--quiet);background:var(--bg);padding:12px}.ds-key span{display:inline-flex;align-items:center;gap:8px}.ds-mk{width:20px;height:20px}.ds-mk-yes{color:var(--cyan)}.ds-mk-no{color:#e2686d}.ds-mk-cond{color:var(--ink-2)}"
+    },
+    {
+      "name": "Demo Pin",
+      "kind": "custom",
+      "refersTo": "pin",
+      "description": "Numbered cyan pin over a screenshot; scales and inverts on hover or when its row is active.",
+      "html": "<a class=\"ds-pin\" href=\"#r1\">1</a>",
+      "css": ":host{--ak-display:'Archivo Black','Inter',sans-serif;--ak-sans:'Inter','Noto Sans TC',system-ui,sans-serif;--ak-mono:'JetBrains Mono',ui-monospace,monospace;--bg:#0a0a0c;--surface:#111114;--surface-2:#17171a;--rule:#26262a;--rule-hi:#3a3a3f;--ink:#f3f2ee;--ink-2:#b6b5b0;--quiet:#8a8a8e;--invert:#f3f2ee;--invert-ink:#0a0a0c;--cyan:#18b6dc} .ds-pin{width:26px;height:26px;border-radius:50%;display:inline-grid;place-items:center;font-family:var(--ak-mono);font-size:12px;font-weight:500;background:var(--cyan);color:var(--invert-ink);text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.55);transition:transform .25s cubic-bezier(.16,1,.3,1),background-color .2s}.ds-pin:hover{transform:scale(1.25);background:var(--ink)}.ds-pin:focus-visible{outline:2px solid var(--ink);outline-offset:2px}@media (prefers-reduced-motion:reduce){.ds-pin{transition:none}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Script Supervisor's Notebook",
+    "overview": "arkiv 的官網是一本攤開在剪輯台旁的深色場記本：近黑的底、暖白的墨、一支青色筆。首頁用一個巨大的 Archivo Black 字標加一句回答開場；內頁（運作方式、實際畫面、案例、誠實清單、隱私）全部是同一種形狀 —— 左欄是讀者會問的問題，右欄是答案與一行等寬字證據，一列一列用 1px 細線隔開。\n\n密度偏讀物而非行銷頁：段落 62–68ch、行高 1.7–1.75、區塊之間大量留黑。強調只靠一個青色（`cyan`）與墨色層級完成，沒有漸層、沒有插圖、沒有色塊卡片堆疊。證據（版本、檔名、實測數字）一律等寬字，讓「查過的事實」在視覺上與散文分開。\n\n本系統由已上線的程式碼記錄而來（`site/src/styles/home.css`、`site.css`、`ledger.css`）；PRODUCT.md 仍是草稿，這裡只採用它與實作一致的品牌承諾（小寫字標接青色句點、單一青色、中文段落原始碼不折行）。",
+    "keyCharacteristics": [
+      "深色單一地面，三階表面只差 3–6% 明度。",
+      "一個強調色；紅色只表示「做不到」。",
+      "細線分隔取代卡片（內頁）；首頁保有少數幾個帶框面板。",
+      "等寬字 = 證據與標籤，不是裝飾。",
+      "中文優先排版：`word-break:keep-all` 加作者手動標的 `<wbr>` 斷句點。"
+    ],
+    "rules": [
+      {
+        "name": "The One Pen Rule",
+        "body": "只有一支彩色筆。青色標記「可操作」或「是」；不要引入第二個強調色，紅色不是強調而是否定。",
+        "section": "colors"
+      },
+      {
+        "name": "The Readable Gray Rule",
+        "body": "任何要被閱讀的小字最暗只能到 `quiet`（5.8:1）。不准為了「更低調」再引入比它暗的文字色；WCAG AA 是 PRODUCT.md 的承諾。",
+        "section": "colors"
+      },
+      {
+        "name": "The Stamp Rule",
+        "body": "Archivo Black 只用於字標與頁標題。它沒有中文字形，所以中文標題的字體堆疊必須是 `'Archivo Black','Noto Sans TC',sans-serif` 且字重 900，否則會掉到系統字 400。",
+        "section": "typography"
+      },
+      {
+        "name": "The Evidence-in-Mono Rule",
+        "body": "版本號、檔名、指令、環境變數、實測數字用等寬字；散文不用。",
+        "section": "typography"
+      },
+      {
+        "name": "The Phrase Break Rule",
+        "body": "中文標題與問題用 `word-break:keep-all`，可斷點由作者在詞組邊界手動插入 `<wbr>`（Row 元件的 `|`），中文詞不得被拆開。中文段落在原始碼不折行。",
+        "section": "typography"
+      },
+      {
+        "name": "The Ledger Rule",
+        "body": "內頁一律是問題／答案／證據的列，不是「標題＋三張卡片＋CTA」。新增內頁內容時加列，不加卡片。",
+        "section": "layout"
+      },
+      {
+        "name": "The Hairline Rule",
+        "body": "分隔用 1px `rule`；需要更強的分隔（群組、軸線、上下頁）升到 `rule-hi`，不加陰影、不加底色塊。",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** 用問題／答案／證據的列來寫內頁，每列有 id 並可用 hash 分享。",
+      "**Do** 狀態用 Mark 元件的繪製 SVG（勾／叉／三角），配 `aria-label`。",
+      "**Do** 小字用 `quiet`；證據行用 JetBrains Mono 12.5px。",
+      "**Do** 中文標題用 `'Archivo Black','Noto Sans TC',sans-serif` 900，並在詞組邊界標 `<wbr>`。",
+      "**Do** 讓青色保持唯一強調；紅色只表示否定或錯誤。",
+      "**Do** 動態只用在狀態回饋（按鈕、圖釘、被分享列），並尊重 `prefers-reduced-motion`。"
+    ],
+    "donts": [
+      "**Don't** 在內頁用卡片、色塊框或「標題＋三張卡片＋CTA」。",
+      "**Don't** 用比 `quiet` 更暗的灰（例如舊值 #6a6a6d，3.7:1）排可讀文字。",
+      "**Don't** 用 ✓✕ 等字元當狀態圖示；用繪製 SVG。",
+      "**Don't** 在原始碼裡折行中文段落。",
+      "**Don't** 加入陰影來表現層次；圖釘是唯一例外。"
+    ]
+  }
+}

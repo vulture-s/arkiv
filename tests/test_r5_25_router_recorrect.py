@@ -33,6 +33,7 @@ def test_router_owns_recorrect_routes_and_models():
     assert pairs == {
         ("/api/corrections", "GET"),
         ("/api/corrections", "PUT"),
+        ("/api/corrections/learn", "POST"),
         ("/api/recorrect", "POST"),
         ("/api/recorrect/backups", "GET"),
         ("/api/recorrect/revert", "POST"),
@@ -70,6 +71,7 @@ def test_recorrect_routes_mounted_and_auth_guarded(server_module):
     with TestClient(server_module.app) as c:
         assert c.get("/api/corrections").status_code == 401
         assert c.put("/api/corrections", json={"rules": []}).status_code == 401
+        assert c.post("/api/corrections/learn", json={"rule": {}}).status_code == 401
         assert c.post("/api/recorrect").status_code == 401
         assert c.get("/api/recorrect/backups").status_code == 401
         assert c.post("/api/recorrect/revert", json={}).status_code == 401
