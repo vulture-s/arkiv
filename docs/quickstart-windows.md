@@ -76,7 +76,7 @@ git clone https://github.com/vulture-s/arkiv.git
 cd arkiv
 py -3.12 -m venv .venv
 .\.venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 python health.py        # confirm everything is READY (see step 3)
 python server.py        # then open http://localhost:8501
 ```

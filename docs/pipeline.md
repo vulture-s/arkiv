@@ -119,6 +119,15 @@ FFmpeg transcodes to H.264 MP4 at `PROXIES_DIR/{media_id}_{sha1[:10]}.mp4`.
 
 H.264 MP4 files (e.g. Sony A7M4 default) are browser-compatible and skipped.
 
+**Turning it off** (issue #558): `ingest.py --skip-proxies` (= `--proxies never`)
+skips Phase 3 for that run; `ARKIV_PROXIES=never` or the per-library setting
+`ingest.proxies = never` (`PUT /api/settings`) makes it the library default.
+Precedence: CLI flag > library setting > `ARKIV_PROXIES` > `auto`. Useful when
+every player decodes the originals (the macOS app / Safari play HEVC) — on 871
+phone clips Phase 3 was ~5 h and ~9 GB. Embedding still runs. In such a library
+`/api/stream` answers 409 with `code: "proxies_disabled"` and a message pointing at
+`--regenerate-proxies`, which builds the missing proxies later.
+
 ---
 
 ## Stage 4: Embedding (`embed.py`)
@@ -146,6 +155,17 @@ Reads `media.transcript` → chunks → Ollama `bge-m3` →
 | 2 | All-fail — every file failed Phase 1 (likely upstream issue) |
 | 3 | `frames.py` last-line defense: dangling thumbnails symlink (preflight should have caught) |
 | 4 | Preflight fail — storage path broken; fix before retry |
+| 5 | `--migrate-storage`: backup failed |
+| 6 | `--migrate-storage`: target `.arkiv` already exists (moved aside, not deleted) |
+| 7 | Reconcile mismatch (#393) — a scanned file landed in no bucket, or was counted as in the library but has no DB row. The `Reconcile:` line names the files. |
+
+Precedence when several apply: **2 > 7 > 1**. A partial failure is already named and
+counted in the output; a mismatch is the case that otherwise leaves no trace. If the
+end-of-run DB read itself fails, the reconcile line says `unavailable` and the exit
+code falls back to the other signals (not measured ≠ mismatch).
+
+`watch.py` treats every non-zero code the same way: the file is logged with its code,
+backed off, retried, and quarantined after 3 failures — the watcher keeps running.
 
 Before v0.3.1, `ingest.py` always exited 0 regardless of fail count.
 Runners / launchd / cron now see actual outcome.
@@ -160,7 +180,7 @@ These modes don't require `--dir`:
 |------|-------------|
 | `--migrate-storage` | First run after v0.3.1 upgrade (see Upgrade section below) |
 | `--migrate-relative` | First run after v0.2.x upgrade (abs paths → relative) |
-| `--regenerate-proxies` | After changing codec settings — deletes and rebuilds all H.264 proxies |
+| `--regenerate-proxies` | After changing codec settings — rebuilds all existing H.264 proxies, then builds any still missing (also for a library ingested with `--skip-proxies`) |
 | `--vision-only` | Resume Phase 2 after a halt; finds frames with empty `description` and processes only those |
 
 ---

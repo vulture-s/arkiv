@@ -102,7 +102,8 @@ def cmd_arkiv(args):
     result = subprocess.run(
         [sys.executable, "ingest.py", "--dir", str(Path(media).parent),
          "--limit", "1"],
-        capture_output=True, text=True, cwd=str(Path(__file__).parent),
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(Path(__file__).parent),
         env={**__import__("os").environ, "PYTHONUTF8": "1"}
     )
     elapsed = time.time() - start
@@ -115,7 +116,7 @@ def cmd_arkiv(args):
     dur_cmd = subprocess.run(
         [FFPROBE_PATH, "-v", "quiet", "-show_entries", "format=duration",
          "-of", "csv=p=0", media],
-        capture_output=True, text=True
+        capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
     duration = float(dur_cmd.stdout.strip()) if dur_cmd.stdout.strip() else 0
 

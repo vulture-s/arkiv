@@ -34,6 +34,7 @@ def test_router_owns_analytics_routes_and_helpers():
         ("/api/collections", "GET"),
         ("/api/duration-by-lang", "GET"),
         ("/api/size-by-ext", "GET"),
+        ("/api/report/exposure", "GET"),
     }
     for name in ("_current_project_registry_name", "_thumb_url",
                  "get_stats", "get_all_tags", "list_collections"):
@@ -61,7 +62,8 @@ def test_analytics_routes_mounted_and_auth_guarded(server_module):
     with TestClient(server_module.app) as c:
         # each aggregate route is mounted (401 from the auth dep, not a 404 miss)
         for path in ("/api/stats", "/api/tags", "/api/collections",
-                     "/api/duration-by-lang", "/api/size-by-ext"):
+                     "/api/duration-by-lang", "/api/size-by-ext",
+                     "/api/report/exposure?term=x"):
             assert c.get(path).status_code == 401, path
         assert c.get("/api/statszz").status_code == 404
 

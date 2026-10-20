@@ -28,6 +28,11 @@ def _readiness_ok(monkeypatch):
     bypass it here (monkeypatch auto-resets). Readiness itself is exercised over
     the real protocol in tests/test_mcp_e2e.py, which is where it belongs."""
     monkeypatch.setattr(m, "_DB_READY", True)
+    # get_scenes / export_project also read the A6 person annotations; with the
+    # other db reads mocked there is no seeded DB to read them from. None
+    # annotated = the pre-A6 shape these tests pin (tests/test_identities.py
+    # covers the annotated path against a real DB).
+    monkeypatch.setattr(db, "get_identities", lambda mid, _conn=None: [])
 
 
 # ── fakes ─────────────────────────────────────────────────────────────────────
