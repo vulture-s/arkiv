@@ -31,6 +31,7 @@
     chroma_missing: { label: '庫無向量', sev: 'warn' },
     nas_unmounted: { label: '庫離線', sev: 'warn' },
     path_not_found: { label: '庫不存在', sev: 'bad' },
+    inaccessible: { label: '無法存取', sev: 'warn' },
     timeout: { label: '逾時', sev: 'warn' },
     row_missing: { label: '已從庫刪除', sev: 'bad' },
     // 這個 id 現在是另一支素材了（SQLite 會把刪掉的 id 發給下一次匯入）。

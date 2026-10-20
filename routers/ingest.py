@@ -40,6 +40,7 @@ import orphan_guard
 import settings as settings_store
 from auth import require_scopes
 from config import BASE_DIR
+from health import path_access_message
 from pathres import _display_path, _resolve_media_path
 from reqopts import _INGEST_LANGUAGES, _ingest_cmd_opts
 from state import _acquire_ingest_slot, _release_ingest_slot, ingest_ws
@@ -70,6 +71,20 @@ class IngestRequest(BaseModel):
 
 # _INGEST_LANGUAGES / _INGEST_LANGUAGE_CODES / _ingest_cmd_opts moved to
 # reqopts.py (R5-25 / #51), imported above.
+
+
+def _user_dir_or_400(raw: str, not_dir_msg: str) -> Path:
+    """Resolve a user-typed directory and confirm it is one — with an OSError
+    (SMB share not logged in, access denied, network name gone) answered as a
+    400 the user can act on instead of escaping as a 500."""
+    try:
+        target = Path(raw).expanduser().resolve()
+        is_dir = target.is_dir()
+    except OSError as exc:
+        raise HTTPException(400, path_access_message(exc, "匯入"))
+    if not is_dir:
+        raise HTTPException(400, not_dir_msg)
+    return target
 
 
 class ScanRequest(BaseModel):
@@ -229,9 +244,7 @@ def scan_media(
     _tok: dict = Depends(require_scopes("ingest_write")),
 ):
     """Quick scan — return file list without processing."""
-    target = Path(body.path).expanduser().resolve()
-    if not target.is_dir():
-        raise HTTPException(400, "路徑不是有效的目錄")
+    target = _user_dir_or_400(body.path, "路徑不是有效的目錄")
     _assert_ingest_path_safe(target)
     files = []
     unsupp: dict = {}  # ext -> count, for the MANIFEST "skipped" line
@@ -370,9 +383,7 @@ def ingest_media(
     scripted ones.
     """
     import subprocess, sys
-    target = Path(body.path).expanduser().resolve()
-    if not target.is_dir():
-        raise HTTPException(400, "路徑不是有效的目錄")
+    target = _user_dir_or_400(body.path, "路徑不是有效的目錄")
     _assert_ingest_path_safe(target)
     cmd = [sys.executable, str(BASE_DIR / "ingest.py"), "--dir", str(target)]
     if body.limit > 0:
@@ -920,9 +931,7 @@ async def ingest_media_ws(
     could drive the ingest pipeline over an arbitrary directory (Codex-class
     finding from the overnight audit).
     """
-    target = Path(body.path).expanduser().resolve()
-    if not target.is_dir():
-        raise HTTPException(400, f"路徑不是有效的目錄：{body.path}")
+    target = _user_dir_or_400(body.path, f"路徑不是有效的目錄：{body.path}")
     _assert_ingest_path_safe(target)
     if not _acquire_ingest_slot():  # audit H3 — shared single-flight with REST ingest/reingest
         raise HTTPException(409, "已有匯入進行中，請等待完成後再試")

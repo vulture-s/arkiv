@@ -54,7 +54,7 @@ def _all_projects_exit_code(payload: Dict[str, Any]) -> int:
         stages = {error.get("stage") for error in payload["errors"] if isinstance(error, dict)}
         if payload.get("items"):
             return 0
-        if stages & {"path_not_found", "db_missing", "chroma_missing", "nas_unmounted"}:
+        if stages & {"path_not_found", "db_missing", "chroma_missing", "nas_unmounted", "inaccessible"}:
             return 4
         if payload.get("projects_queried", 0) and payload.get("projects_failed", 0) >= payload.get("projects_queried", 0):
             return 2

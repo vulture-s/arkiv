@@ -20,6 +20,7 @@ import config
 import orphan_guard
 from auth import require_scopes
 from config import BASE_DIR
+from health import path_access_message
 from webguard import _assert_offload_dst_safe
 
 router = APIRouter()
@@ -80,6 +81,17 @@ class OffloadRequest(BaseModel):
     include_heic: bool = False
 
 
+def _user_src_exists(raw: str):
+    """Resolve the user's source path and report whether it exists — an OSError
+    from merely looking (share not logged in, access denied) becomes a 400 with
+    a next step instead of a 500."""
+    try:
+        src = Path(raw).expanduser().resolve()
+        return src, src.exists()
+    except OSError as exc:
+        raise HTTPException(400, path_access_message(exc, "轉存"))
+
+
 @router.post("/api/offload/preview")
 def offload_preview(
     body: OffloadPreviewRequest,
@@ -88,8 +100,8 @@ def offload_preview(
     """Read-only layout preview for the DIT Offload UI — shows source→dest mapping
     under the --organize template without copying anything."""
     import offload as _offload
-    src = Path(body.src).expanduser().resolve()
-    if not src.exists():
+    src, src_exists = _user_src_exists(body.src)
+    if not src_exists:
         raise HTTPException(400, "來源路徑不存在")
     # Clamp the limit server-side: it's client-controlled and a 0 / negative / huge
     # value would otherwise disable the cap and force full enumeration + exiftool +
@@ -115,8 +127,8 @@ def offload_run(
     are arbitrary by design (card → backup drives); gated by videos_write (loopback
     is token-free, a remote read token is refused)."""
     import subprocess, sys
-    src = Path(body.src).expanduser().resolve()
-    if not src.exists():
+    src, src_exists = _user_src_exists(body.src)
+    if not src_exists:
         raise HTTPException(400, "來源路徑不存在")
     if not body.dst:
         raise HTTPException(400, "至少需要一個目的地 (dst)")
@@ -226,8 +238,8 @@ def offload_resolve(
     (same card → same state), so the card must still be mounted; the engine
     re-checks the clip against the state before copying."""
     import offload as _offload
-    src = Path(body.src).expanduser().resolve()
-    if not src.exists():
+    src, src_exists = _user_src_exists(body.src)
+    if not src_exists:
         raise HTTPException(400, "來源路徑不存在（卡片要插著才能補拷）")
     _assert_offload_dst_safe(body.dst)
     state_cwd = config.THUMBNAILS_DIR.parent
