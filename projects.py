@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import entitlements
-from health import HealthStatus, project_health
+from health import HealthStatus, path_access_message, project_health
 
 
 REGISTRY_VERSION = 1
@@ -24,6 +24,12 @@ _REGISTRY_LOCK = threading.Lock()
 
 class RegistryError(Exception):
     pass
+
+
+class PathAccessError(RegistryError):
+    """The project path could not even be inspected (auth / permission / network
+    error), as opposed to not existing. A RegistryError so callers that map those
+    to 400 keep doing so."""
 
 
 class ProjectEntitlementError(RegistryError):
@@ -351,7 +357,11 @@ def _find_by_name(projects: Iterable[ProjectMeta], name: str) -> Optional[Projec
 
 def add_project(name: str, path: str, tags: Optional[List[str]] = None) -> ProjectMeta:
     project_path = Path(path).expanduser()
-    if not project_path.exists():
+    try:
+        present = project_path.exists()
+    except OSError as exc:
+        raise PathAccessError(path_access_message(exc, "加入")) from exc
+    if not present:
         raise RegistryError("project path not found: {0}".format(path))
 
     with _REGISTRY_LOCK:
@@ -420,9 +430,14 @@ def sync_projects() -> List[ProjectMeta]:
         projects = [ProjectMeta.from_mapping(raw) for raw in registry.get("projects", [])]
         updated = []
         for project in projects:
-            db_path = resolve_project_db(project.path)
-            if db_path.exists():
-                project.last_indexed_at = _iso_from_mtime(db_path)
+            # A project on a share this session cannot reach keeps its previous
+            # timestamp; it must not abort the sync for every other project.
+            try:
+                db_path = resolve_project_db(project.path)
+                if db_path.exists():
+                    project.last_indexed_at = _iso_from_mtime(db_path)
+            except OSError:
+                pass
             updated.append(project)
         registry["projects"] = [item.to_dict() for item in updated]
         save_registry(registry)

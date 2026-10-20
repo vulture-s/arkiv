@@ -144,7 +144,7 @@ export const syncProjects = (opts) => req('/api/projects/sync', { method: 'POST'
 // A bin references clips by (project_name, media_id) — the identity that survives
 // federation's path sanitization. GET /api/bins/{id} returns each item with a
 // reachability `status` (ok | project_unregistered | db_missing | nas_unmounted |
-// row_missing | file_missing | …) — never an absolute path (Phase 16.2).
+// inaccessible | row_missing | file_missing | …) — never an absolute path (Phase 16.2).
 export const getBins = (opts) => req('/api/bins', opts)
 export const createBin = (name, opts) => req('/api/bins', { method: 'POST', body: { name }, ...opts })
 export const getBin = (id, opts) => req(`/api/bins/${encodeURIComponent(id)}`, opts)
