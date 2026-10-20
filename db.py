@@ -828,12 +828,24 @@ def find_moved_row(file_hash: str) -> Optional[Dict]:
 
 def repoint_media_path(media_id: int, new_abs_path: str, _conn=None) -> None:
     """Point an existing row at a new location (the file moved). Preserves the row's
-    ratings / tags / transcript / frames — only the path changes (round-5 #8). Stored
-    in the same relative form a fresh ingest would use."""
+    ratings / tags / transcript / frames — only the location changes (round-5 #8). Stored
+    in the same relative form a fresh ingest would use.
+
+    filename / ext are DERIVED from the path (ingest's record builder writes
+    ``path.name`` / ``path.suffix.lower()``; nothing lets a user edit them), so they
+    move with it: a moved+RENAMED clip used to keep its old filename, and export /
+    trash-restore / reconcile then used a name that no longer exists on disk (#393).
+    The vector index re-embeds on its own — build_doc_text folds the filename into
+    the content hash embed.py compares against media.embed_hash."""
     new_stored = to_relative(new_abs_path)
+    new_name = Path(new_abs_path).name
+    new_ext = Path(new_abs_path).suffix.lower()
 
     def _do(c):
-        c.execute("UPDATE media SET path=? WHERE id=?", (new_stored, media_id))
+        c.execute(
+            "UPDATE media SET path=?, filename=?, ext=? WHERE id=?",
+            (new_stored, new_name, new_ext, media_id),
+        )
     if _conn is not None:
         _do(_conn)
     else:
