@@ -35,10 +35,12 @@ def test_find_moved_row_detects_and_repoint_preserves_metadata(tmp_db, tmp_path,
     db.repoint_media_path(mid, str(new_abs))
 
     with db.get_conn() as c:
-        r = c.execute("SELECT path, rating FROM media WHERE id=?", (mid,)).fetchone()
+        r = c.execute("SELECT path, filename, ext, rating FROM media WHERE id=?", (mid,)).fetchone()
         tags = [t["name"] for t in c.execute("SELECT name FROM tags WHERE media_id=?", (mid,))]
         n = c.execute("SELECT COUNT(*) AS n FROM media").fetchone()["n"]
     assert r["path"] == "new/clip.mp4"   # stored relative to PROJECT_ROOT
+    assert r["filename"] == "clip.mp4"    # move-only: name unchanged
+    assert r["ext"] == ".mp4"
     assert r["rating"] == "good"          # ratings preserved
     assert tags == ["keeper"]             # tags preserved
     assert n == 1                         # re-pointed, NOT duplicated
@@ -60,3 +62,37 @@ def test_find_moved_row_ignores_live_duplicate_and_misses(tmp_db, tmp_path, monk
     assert db.find_moved_row("DUP") is None    # live path → NOT re-pointed
     assert db.find_moved_row("") is None        # empty hash
     assert db.find_moved_row("no-such-hash") is None
+
+
+def test_repoint_moved_and_renamed_updates_filename(tmp_db, tmp_path, monkeypatch):
+    """#393: a moved+RENAMED clip must not keep its old filename. filename/ext are
+    derived from the path (ingest writes path.name / path.suffix.lower()), so a stale
+    name made export / trash-restore copy under a name that no longer exists and the
+    reconcile listing report false misses."""
+    db = importlib.import_module("db")
+    config = importlib.import_module("config")
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+
+    with db.get_conn() as c:
+        c.execute(
+            "INSERT INTO media (path, filename, ext, file_hash, hash_algo, rating) "
+            "VALUES (?,?,?,?,?,?)",
+            ("old/C0001.MP4", "C0001.MP4", ".mp4", "HASHREN", "xxh3", "good"),
+        )
+        mid = c.execute("SELECT id FROM media WHERE file_hash=?", ("HASHREN",)).fetchone()["id"]
+    db.add_tag(mid, "keeper")
+
+    assert db.find_moved_row("HASHREN")["id"] == mid
+    new_abs = tmp_path / "sorted" / "interview_A.mov"
+    new_abs.parent.mkdir(parents=True)
+    new_abs.write_bytes(b"x")
+    db.repoint_media_path(mid, str(new_abs))
+
+    with db.get_conn() as c:
+        r = c.execute("SELECT path, filename, ext, rating FROM media WHERE id=?", (mid,)).fetchone()
+        tags = [t["name"] for t in c.execute("SELECT name FROM tags WHERE media_id=?", (mid,))]
+        n = c.execute("SELECT COUNT(*) AS n FROM media").fetchone()["n"]
+    assert r["path"] == "sorted/interview_A.mov"
+    assert r["filename"] == "interview_A.mov"   # was left as C0001.MP4 before the fix
+    assert r["ext"] == ".mov"                   # same derivation as ingest (lowercased)
+    assert r["rating"] == "good" and tags == ["keeper"] and n == 1
