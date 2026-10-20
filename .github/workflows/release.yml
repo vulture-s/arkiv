@@ -101,7 +101,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build frontend (SPA that assemble-backend + generate_context! embed)
@@ -112,51 +112,70 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
       - name: Build .venv (assemble-backend needs .venv/lib/python3.12/site-packages)
         run: |
           python -m venv .venv
           ./.venv/bin/pip install --upgrade pip
-          ./.venv/bin/pip install -r requirements.txt
+          ./.venv/bin/pip install -r requirements.txt -c constraints.txt
 
       - name: Assemble self-contained backend bundle
         run: bash src-tauri/assemble-backend.sh
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      # -- tauri-cli: cache the BINARY, don't rebuild it every release ---------
-      # `cargo install tauri-cli` compiles the CLI from source. Measured on the
-      # v1.1.1 tag run (32446240446): 9m38s on the macOS leg and 10m05s on the
-      # Windows one — ~20 minutes per release spent producing a binary that is
-      # byte-identical to the last one, because the version is pinned above.
-      #
-      # This is a different cache from the WiX/NSIS one further down in the
-      # Windows leg (#340). That one holds what the BUNDLER downloads at build
-      # time; this one holds the CLI itself. #340 hit on v1.1.1 (2s) while this
-      # cost stayed — the two were conflated in the notes at the time.
-      #
-      # Only the binary is cached, not ~/.cargo/registry: the registry is large,
-      # varies with the toolchain, and is worthless on a hit (nothing compiles).
-      - name: Cache tauri-cli binary
-        id: tauri-cli-cache
-        uses: actions/cache@v6
+      - uses: dtolnay/rust-toolchain@master
         with:
-          path: |
-            ~/.cargo/bin/cargo-tauri
-            ~/.cargo/bin/cargo-tauri.exe
-          key: tauri-cli-${{ runner.os }}-${{ env.TAURI_CLI_VERSION }}
+          toolchain: "1.99.1"  # = rust-toolchain.toml (tests/test_toolchain_pins.py)
 
-      - name: Install tauri-cli
-        if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
-        run: cargo install tauri-cli --version "${{ env.TAURI_CLI_VERSION }}" --locked
+      # -- tauri-cli: download the official prebuilt BINARY, don't compile it --
+      # `cargo install tauri-cli` compiles the CLI from source: 9m38s (macOS) and
+      # 10m05s (Windows) on the v1.1.1 tag run (32446240446); still 3m20s / 9m14s
+      # on v1.5.1 (38526072411).
+      #
+      # #345 tried to fix that with actions/cache. It never hit on a release, and
+      # it CANNOT: v1.5.1 logged `Cache not found for input keys:
+      # tauri-cli-macOS-2.11.4` while that exact key already existed, saved three
+      # hours earlier by v1.5.0 -- under ref `refs/tags/v1.5.0`. A tag run can only
+      # restore caches from its own tag or the default branch, so each release
+      # wrote a cache only that same tag could ever read. Priming from main would
+      # not hold either: releases are weeks apart, GitHub evicts entries unused
+      # for 7 days, and this repo sits above its 10 GB cache quota (rust-cache
+      # entries are ~300-450 MB each), so LRU eviction is constant.
+      #
+      # So: no cache. tauri-apps publishes the CLI as a release asset for each
+      # target (the same files `cargo binstall` would fetch). Pinned by version
+      # (TAURI_CLI_VERSION above) AND by sha256, so a bump has to touch the hash
+      # here too -- a mismatch fails the step instead of shipping an unknown
+      # bundler. Hashes = the `digest` GitHub reports for each asset:
+      #   gh api repos/tauri-apps/tauri/releases/tags/tauri-cli-v<VER> \
+      #     -q '.assets[]|[.name,.digest]|@tsv'
+      # Not `cargo binstall`: its metadata for aarch64-apple-darwin says .tgz while
+      # the asset is a .zip, so on this Mac leg it would fall back to compiling.
+      - name: Install tauri-cli (prebuilt, sha256-pinned)
+        shell: bash
+        env:
+          TAURI_CLI_TARGET: aarch64-apple-darwin
+          TAURI_CLI_SHA256: 82bdcb9ae7f407882321680ae50750f11623fae22445f8b00b096e10f815d604
+        run: |
+          set -euo pipefail
+          url="https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v${TAURI_CLI_VERSION}/cargo-tauri-${TAURI_CLI_TARGET}.zip"
+          zip="$RUNNER_TEMP/cargo-tauri.zip"
+          curl -fsSL --retry 3 --retry-all-errors -o "$zip" "$url"
+          echo "${TAURI_CLI_SHA256}  $zip" | shasum -a 256 -c -
+          bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$bin"
+          unzip -o -j "$zip" cargo-tauri -d "$bin"
+          chmod +x "$bin/cargo-tauri"
 
-      # A restored binary is only useful if it actually runs; a cache poisoned by
-      # a partial upload would otherwise surface much later as a confusing bundler
-      # failure. Cheap to check, and it also prints the version into the log so a
-      # future "which bundler built this installer?" is answerable from the run.
+      # Prove the binary runs and is the pinned version (a wrong-arch or wrong-
+      # version file would otherwise surface much later as a confusing bundler
+      # failure). It also prints the version into the log so a future "which
+      # bundler built this installer?" is answerable from the run.
       - name: Verify tauri-cli
         shell: bash
-        run: cargo tauri --version
+        run: |
+          v="$(cargo tauri --version | tr -d '\r')"
+          echo "$v"
+          [ "$v" = "tauri-cli ${TAURI_CLI_VERSION}" ] || { echo "::error::expected tauri-cli ${TAURI_CLI_VERSION}, got '$v'"; exit 1; }
 
       - name: Import Apple signing cert (only when configured)
         if: steps.signcfg.outputs.signing == 'full'
@@ -188,7 +207,7 @@ jobs:
 
       - name: Attach artifacts to the GitHub Release (tag only)
         if: ${{ github.ref_type == 'tag' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             src-tauri/target/release/bundle/dmg/*.dmg
@@ -244,7 +263,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
 
       - name: Stamp version from tag (so the bundle can't drift from the tag)
         if: ${{ github.ref_type == 'tag' }}
@@ -262,7 +281,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build frontend (SPA that assemble-backend-win + generate_context! embed)
@@ -282,51 +301,87 @@ jobs:
         # `python`, not `py -3.12`: setup-python puts its interpreter on PATH but
         # does not necessarily register it with the py launcher, so `py -3.12`
         # can resolve to a different (or absent) install on a hosted runner.
+        #
+        # Every native call is checked: pwsh does NOT stop on a non-zero exit code,
+        # and this step used to "succeed" with the CPU-index torch install failing
+        # (ResolutionImpossible) — requirements.txt then quietly pulled torch from
+        # PyPI instead. The CPU-index install pins only torch's version (read from
+        # constraints.txt): the full constraints file names versions of torch's
+        # own deps that the CPU index does not carry, which is what made it fail.
         run: |
-          python -m venv .venv-pack
-          .\.venv-pack\Scripts\python.exe -m pip install --upgrade pip
-          .\.venv-pack\Scripts\pip.exe install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
-          .\.venv-pack\Scripts\pip.exe install -r requirements.txt
+          function Check($what) { if ($LASTEXITCODE -ne 0) { Write-Error "$what failed (exit $LASTEXITCODE)"; exit 1 } }
+          $m = Select-String -Path constraints.txt -Pattern "^torch==([0-9][0-9.]*) ; python_full_version >= '3\.10'"
+          if (-not $m) { Write-Error "torch pin for Python >= 3.10 not found in constraints.txt"; exit 1 }
+          $torch = $m.Matches[0].Groups[1].Value
+          python -m venv .venv-pack; Check "venv"
+          .\.venv-pack\Scripts\python.exe -m pip install --upgrade pip; Check "pip upgrade"
+          .\.venv-pack\Scripts\pip.exe install --index-url https://download.pytorch.org/whl/cpu "torch==$torch"; Check "CPU torch $torch"
+          .\.venv-pack\Scripts\pip.exe install -r requirements.txt -c constraints.txt; Check "requirements"
+          $v = .\.venv-pack\Scripts\python.exe -c "import torch; print(torch.__version__)"; Check "torch import"
+          if ($v -notmatch '\+cpu$') { Write-Error "expected a +cpu torch build, got $v"; exit 1 }
+          Write-Host "torch $v"
 
       - name: Assemble self-contained backend bundle
         shell: pwsh
         run: .\src-tauri\assemble-backend-win.ps1
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      # -- tauri-cli: cache the BINARY, don't rebuild it every release ---------
-      # `cargo install tauri-cli` compiles the CLI from source. Measured on the
-      # v1.1.1 tag run (32446240446): 9m38s on the macOS leg and 10m05s on the
-      # Windows one — ~20 minutes per release spent producing a binary that is
-      # byte-identical to the last one, because the version is pinned above.
-      #
-      # This is a different cache from the WiX/NSIS one further down in the
-      # Windows leg (#340). That one holds what the BUNDLER downloads at build
-      # time; this one holds the CLI itself. #340 hit on v1.1.1 (2s) while this
-      # cost stayed — the two were conflated in the notes at the time.
-      #
-      # Only the binary is cached, not ~/.cargo/registry: the registry is large,
-      # varies with the toolchain, and is worthless on a hit (nothing compiles).
-      - name: Cache tauri-cli binary
-        id: tauri-cli-cache
-        uses: actions/cache@v6
+      - uses: dtolnay/rust-toolchain@master
         with:
-          path: |
-            ~/.cargo/bin/cargo-tauri
-            ~/.cargo/bin/cargo-tauri.exe
-          key: tauri-cli-${{ runner.os }}-${{ env.TAURI_CLI_VERSION }}
+          toolchain: "1.99.1"  # = rust-toolchain.toml (tests/test_toolchain_pins.py)
 
-      - name: Install tauri-cli
-        if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
-        run: cargo install tauri-cli --version "${{ env.TAURI_CLI_VERSION }}" --locked
+      # -- tauri-cli: download the official prebuilt BINARY, don't compile it --
+      # `cargo install tauri-cli` compiles the CLI from source: 9m38s (macOS) and
+      # 10m05s (Windows) on the v1.1.1 tag run (32446240446); still 3m20s / 9m14s
+      # on v1.5.1 (38526072411).
+      #
+      # #345 tried to fix that with actions/cache. It never hit on a release, and
+      # it CANNOT: v1.5.1 logged `Cache not found for input keys:
+      # tauri-cli-macOS-2.11.4` while that exact key already existed, saved three
+      # hours earlier by v1.5.0 -- under ref `refs/tags/v1.5.0`. A tag run can only
+      # restore caches from its own tag or the default branch, so each release
+      # wrote a cache only that same tag could ever read. Priming from main would
+      # not hold either: releases are weeks apart, GitHub evicts entries unused
+      # for 7 days, and this repo sits above its 10 GB cache quota (rust-cache
+      # entries are ~300-450 MB each), so LRU eviction is constant.
+      #
+      # So: no cache. tauri-apps publishes the CLI as a release asset for each
+      # target (the same files `cargo binstall` would fetch). Pinned by version
+      # (TAURI_CLI_VERSION above) AND by sha256, so a bump has to touch the hash
+      # here too -- a mismatch fails the step instead of shipping an unknown
+      # bundler. Hashes = the `digest` GitHub reports for each asset:
+      #   gh api repos/tauri-apps/tauri/releases/tags/tauri-cli-v<VER> \
+      #     -q '.assets[]|[.name,.digest]|@tsv'
+      # Not `cargo binstall`: its metadata for aarch64-apple-darwin says .tgz while
+      # the asset is a .zip, so on this Mac leg it would fall back to compiling.
+      - name: Install tauri-cli (prebuilt, sha256-pinned)
+        shell: pwsh
+        env:
+          TAURI_CLI_TARGET: x86_64-pc-windows-msvc
+          TAURI_CLI_SHA256: 0743e30a661a35d63339b24cf63828f97ba5389a1d7f13b368a542794dd0a3f3
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = "https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v$env:TAURI_CLI_VERSION/cargo-tauri-$env:TAURI_CLI_TARGET.zip"
+          $zip = Join-Path $env:RUNNER_TEMP 'cargo-tauri.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
+          $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($got -ne $env:TAURI_CLI_SHA256) { throw "cargo-tauri zip sha256 mismatch: got $got, want $env:TAURI_CLI_SHA256" }
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $HOME '.cargo' }
+          $bin = Join-Path $cargoHome 'bin'
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          $out = Join-Path $env:RUNNER_TEMP 'cargo-tauri'
+          Expand-Archive -Path $zip -DestinationPath $out -Force
+          Copy-Item (Join-Path $out 'cargo-tauri.exe') (Join-Path $bin 'cargo-tauri.exe') -Force
 
-      # A restored binary is only useful if it actually runs; a cache poisoned by
-      # a partial upload would otherwise surface much later as a confusing bundler
-      # failure. Cheap to check, and it also prints the version into the log so a
-      # future "which bundler built this installer?" is answerable from the run.
+      # Prove the binary runs and is the pinned version (a wrong-arch or wrong-
+      # version file would otherwise surface much later as a confusing bundler
+      # failure). It also prints the version into the log so a future "which
+      # bundler built this installer?" is answerable from the run.
       - name: Verify tauri-cli
         shell: bash
-        run: cargo tauri --version
+        run: |
+          v="$(cargo tauri --version | tr -d '\r')"
+          echo "$v"
+          [ "$v" = "tauri-cli ${TAURI_CLI_VERSION}" ] || { echo "::error::expected tauri-cli ${TAURI_CLI_VERSION}, got '$v'"; exit 1; }
 
       # -- Cache the bundler's packaging toolchain --------------------------
       # tauri-bundler downloads WiX and NSIS from GitHub *at build time*, so every
@@ -404,7 +459,7 @@ jobs:
 
       - name: Attach artifacts to the GitHub Release (tag only)
         if: ${{ github.ref_type == 'tag' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             src-tauri/target/release/bundle/nsis/*-setup.exe

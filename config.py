@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).parent
 # Backend product version. Keep in sync with the release tag + frontend
 # version.js at release time. Served by GET /api/version and included in
 # GET /api/health so a user/support can identify the build.
-VERSION = "1.1.2"
+VERSION = "1.6.0"
 
 # Codex Round-2 audit (J3): without bounds, ARKIV_PROXIES_DIR=/etc would have
 # arkiv write generated proxy mp4 files into /etc on every HEVC ingest. Same
@@ -371,6 +371,21 @@ def _detect_ffmpeg_tool(tool: str, env_var: str) -> str:
 
 
 FFMPEG_PATH = _detect_ffmpeg_tool("ffmpeg", "ARKIV_FFMPEG_PATH")
+
+# Ignore the container's rotation metadata (display matrix / tags.rotate).
+#
+# Cameras write that flag from an orientation sensor, and the sensor can be
+# wrong — a body on a gimbal, or pointed steeply up/down, can record a 90°
+# flag over footage that is already correctly framed landscape. Honouring it
+# then rotates good footage into a sideways, pillarboxed mess, and because the
+# swap happens at ingest every downstream artifact inherits it: stored
+# width/height, thumbnails, the frames vision reads, and proxies. Nothing
+# errors — the vision descriptions come back plausible-sounding for a sideways
+# image, so the damage is invisible in the data.
+#
+# Off by default: genuinely vertical footage exists and its flag is correct.
+# Turn it on per-ingest for a shoot you have confirmed is mis-flagged.
+IGNORE_ROTATION = os.getenv("ARKIV_IGNORE_ROTATION", "0").lower() in ("1", "true", "yes")
 FFPROBE_PATH = _detect_ffmpeg_tool("ffprobe", "ARKIV_FFPROBE_PATH")
 
 import platform as _plat
@@ -385,6 +400,22 @@ _IS_MLX = _plat.system() == "Darwin" and _plat.machine() == "arm64"
 # so encode stays libx264). Defaults on for arm64 macOS, off elsewhere; the encoder
 # retries in software if a source's codec/pix_fmt isn't hardware-decodable.
 PROXY_HEIGHT = int(os.getenv("ARKIV_PROXY_HEIGHT", "720"))
+# Issue #558: whether ingest Phase 3 builds browser-playback proxies at all.
+#   auto  = today's behaviour — every clip a browser cannot decode gets one.
+#   never = skip Phase 3. For a library only watched where the original plays
+#           (the macOS app / Safari decode HEVC), proxies are pure cost: measured
+#           ~5 h and ~9 GB on 871 phone clips, half of the whole ingest.
+# A per-library override lives in settings (`ingest.proxies`), and `ingest.py
+# --proxies` / `--skip-proxies` beats both. An unrecognised value falls back to
+# auto: a typo must not be the thing that silently stops proxies being built.
+PROXIES_MODES = ("auto", "never")
+PROXIES_MODE = os.getenv("ARKIV_PROXIES", "auto").strip().lower()
+if PROXIES_MODE not in PROXIES_MODES:
+    PROXIES_MODE = "auto"
+# Editing proxy (editor_proxy.py): ProRes Proxy written to <source dir>/Proxy/ for
+# the NLE. Separate from PROXY_HEIGHT on purpose — the browser proxy wants small,
+# an editing proxy wants enough picture to cut on. Never upscales.
+EDITOR_PROXY_HEIGHT = int(os.getenv("ARKIV_EDITOR_PROXY_HEIGHT", "1080"))
 _hwd = os.getenv("ARKIV_PROXY_HWDECODE", "auto").strip().lower()
 PROXY_HWDECODE_DEFAULT = _IS_MLX if _hwd in ("", "auto") else _hwd in ("1", "true", "yes", "on")
 
@@ -584,6 +615,17 @@ try:
     OLLAMA_NUM_PARALLEL = max(1, int(os.getenv("OLLAMA_NUM_PARALLEL", "1")))
 except ValueError:
     OLLAMA_NUM_PARALLEL = 1
+# Client-side: how many vision requests describe_frames keeps in flight. This is
+# NOT Ollama's server setting above (that one is read by `ollama serve`, not by
+# arkiv). Default 1 = the original strictly serial loop. Opt-in: 2 against a
+# server at NUM_PARALLEL=1 measured +26% frames/min on a dedicated M2 Max server
+# (docs/bench/2026-10-17-ollama-num-parallel-ab.md), but a re-measure through
+# describe_frames on an everyday server saw no gain (#555) — raise it only after
+# timing it on your own machine. Clamped to [1, 8] by vision.py.
+try:
+    VISION_CONCURRENCY = max(1, int(os.getenv("ARKIV_VISION_CONCURRENCY", "1")))
+except ValueError:
+    VISION_CONCURRENCY = 1
 
 def discover_projects():
     from projects import discover_projects as _discover_projects
@@ -611,3 +653,45 @@ if VECTOR_BACKEND == "pg" and not ARKIV_PG_DSN:
         "ARKIV_VECTOR_BACKEND=pg requires ARKIV_PG_DSN "
         "(e.g. postgresql://rag:PASSWORD@100.64.0.10:5433/rag)"
     )
+
+# ── Ingest 的兩道截止線（見 ingest_budget.py 的完整推導）─────────────────────
+# 係數來自 2026-09-06 的 200 支現場實測迴歸（n=33）：單檔秒 ≈ 5.0 + 5.6 × 幀數，
+# R² = 0.88。⚠️ M2 Max + qwen2.5vl:7b 上量的，換機器要重新量 —— 所以可用環境變數覆寫。
+def _ingest_num(name, default, lo=None):
+    """Read a tuning constant without letting a typo take down the process.
+
+    These are bare `float(os.getenv(...))` at import time, and every module in
+    the codebase imports config — so `ARKIV_INGEST_BUDGET_FLOOR=30m` does not
+    produce a bad budget, it produces an API that will not start, with a
+    ValueError from config.py as the only clue. This file already solves that
+    three other ways (see _read_vision_num_ctx / _read_subtitle_max_cjk / the
+    GPU_MEM_THRESHOLD try-except); this matches them.
+
+    `lo` also guards the values that are nonsense rather than unparseable:
+    a BUDGET_FACTOR below 1.0 makes the budget smaller than the estimate it is
+    supposed to be a safety margin over.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        print("[config] {0}={1!r} is not a number — using {2}".format(name, raw, default))
+        return default
+    if lo is not None and v < lo:
+        print("[config] {0}={1} below the {2} floor — using {2}".format(name, v, lo))
+        return lo
+    return v
+
+
+INGEST_PER_FILE_SECONDS = _ingest_num("ARKIV_INGEST_PER_FILE_SECONDS", 5.0, lo=0.0)
+INGEST_PER_FRAME_SECONDS = _ingest_num("ARKIV_INGEST_PER_FRAME_SECONDS", 5.6, lo=0.0)
+# 預算 = 估值 × 這個係數。估值不是死線，這個乘積才是。
+INGEST_BUDGET_FACTOR = _ingest_num("ARKIV_INGEST_BUDGET_FACTOR", 2.0, lo=1.0)
+# 下限：模型暖機一次就 ~100 秒，沒有下限的話最小的匯入反而最容易被誤殺。
+INGEST_BUDGET_FLOOR_SECONDS = _ingest_num("ARKIV_INGEST_BUDGET_FLOOR", 1800, lo=0.0)
+# 可以沉默多久才算卡住。whisper 解碼期間完全不出聲，而最慢的路徑
+# （faster-whisper large-v3 在 CPU 上）實測 RTF 1.22 —— 門檻要隨最長的素材放大。
+INGEST_STALL_FLOOR_SECONDS = _ingest_num("ARKIV_INGEST_STALL_FLOOR", 600, lo=0.0)
+INGEST_STALL_RTF = _ingest_num("ARKIV_INGEST_STALL_RTF", 1.3, lo=0.0)

@@ -3,6 +3,17 @@
 Local Media Asset Manager — Phase 1 Ingest CLI
 Usage:
     python ingest.py --dir /path/to/media [--limit N] [--skip-vision] [--db /path/to/media.db]
+
+Exit codes (full table: docs/pipeline.md § Exit Codes):
+    0  clean — every scanned file is in the library
+    1  partial failure (Phase 1 or Phase 2)
+    2  every file failed Phase 1 (usually an upstream problem)
+    3  dangling thumbnails symlink (frames.py last-line guard)
+    4  storage preflight failed
+    5  --migrate-storage: backup failed
+    6  --migrate-storage: target .arkiv already exists
+    7  reconcile mismatch — a scanned file landed in no bucket, or was counted as
+       in the library but has no DB row (issue #393). Precedence: 2 > 7 > 1.
 """
 from __future__ import annotations
 import argparse
@@ -20,6 +31,7 @@ from typing import Dict, List
 
 import codec
 import collection_defs
+import color_profiles
 import config
 import db
 import frames as frm
@@ -38,7 +50,9 @@ IMAGE_EXT = mediatypes.IMAGE_EXT
 # Raster stills (png/jpg/webp/gif) have a pixel stream ffprobe can read and we can
 # sample a frame from — they get a thumbnail + one frame like video. .svg is
 # vector: no pixel stream, so it records filename/ext only, no pixel assets.
-RASTER_IMAGE_EXTS = IMAGE_EXT - {".svg"}
+# Alias kept for readability at the call sites below; the set itself lives in
+# mediatypes so frames.py answers "is this a still?" from the same source.
+RASTER_IMAGE_EXTS = mediatypes.STILL_RASTER_EXT
 # Codecs needing browser-playable proxy — single source of truth in codec.py.
 PROXY_CODECS = codec.PROXY_CODECS
 logger = logging.getLogger(__name__)
@@ -54,6 +68,12 @@ _STAGE_EVENTS = os.environ.get("ARKIV_STAGE_EVENTS") == "1"
 # brick 4: per-run whisper language override (None = auto-detect / guard-layer
 # hint, the default). Set from --language in main(), read at the transcribe call.
 _LANGUAGE_OVERRIDE = None
+# A7 camera motion (camera_motion.py). Opt-in: it is one extra full read + decode
+# of every video (~20-55 s per minute of 4K long-GOP on an M2 Max, see
+# camera_motion._keyframe_dense), far more than the frame-extraction stage it
+# follows. `--camera-motion` or ARKIV_CAMERA_MOTION=1 turns it on for an ingest;
+# `--refresh-motion` backfills an existing library without touching vision.
+_CAMERA_MOTION = os.environ.get("ARKIV_CAMERA_MOTION", "").strip().lower() in ("1", "true", "yes", "on")
 
 # Pro/cinema codecs ffmpeg can't decode without vendor SDKs — a --dir scan drops
 # them silently, so a user who dumps a C300/RED/BRAW card sees "Found 0 media
@@ -308,6 +328,24 @@ def _white_balance_string(kelvin, tint, path=None):
     return "{0}K T{1}".format(int(round(kelvin_value)), int(round(tint_value)))
 
 
+def _real_video_stream(path: str, streams) -> Optional[Dict]:
+    """First video stream that is actual picture content (issue #521).
+
+    Returns None for audio-extension files and skips `attached_pic` streams
+    (embedded cover art), so codec / fps / width / height / start_tc are never
+    read off an album cover.
+    """
+    if Path(path).suffix.lower() in mediatypes.AUDIO_EXT:
+        return None
+    for s in streams:
+        if s.get("codec_type") != "video":
+            continue
+        if (s.get("disposition") or {}).get("attached_pic") == 1:
+            continue
+        return s
+    return None
+
+
 def probe(path: str) -> Optional[Dict]:
     # `-v error` (not `quiet`) so real ffprobe errors surface on stderr — a
     # silent `-v quiet` failure mid-ingest used to print only "[ffprobe failed]"
@@ -345,7 +383,14 @@ def probe(path: str) -> Optional[Dict]:
     fmt = data.get("format", {})
     streams = data.get("streams", [])
 
-    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    # Issue #521: an audio file's embedded cover art (ID3v2 APIC, m4a `covr`,
+    # FLAC PICTURE) is reported by ffprobe as a VIDEO stream — `codec=mjpeg`,
+    # `r_frame_rate=90000/1`, the cover's width/height — flagged only by
+    # `disposition.attached_pic=1`. Taking "the first video stream" recorded that
+    # picture as the file's picture track. Skip attached pictures, and never
+    # read video geometry from an audio-extension file at all: whatever video
+    # stream an audio container carries is artwork, not footage.
+    video_stream = _real_video_stream(path, streams)
     audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
 
     duration = float(fmt.get("duration") or 0)
@@ -390,7 +435,15 @@ def probe(path: str) -> Optional[Dict]:
                 if "rotation" in sd:
                     try: rot = abs(int(sd["rotation"]))
                     except (ValueError, TypeError): pass
-        if rot in (90, 270):
+        if rot:
+            # Surfacing, not silence: a rotation flag is the one piece of
+            # geometry we take on trust from the file, and when it is wrong
+            # every artifact below it is wrong too with nothing to show for it.
+            print("  [rotation] {0}: metadata says {1}° — {2}".format(
+                os.path.basename(path), rot,
+                "ignored (ARKIV_IGNORE_ROTATION=1)"
+                if getattr(config, "IGNORE_ROTATION", False) else "applied"))
+        if rot in (90, 270) and not getattr(config, "IGNORE_ROTATION", False):
             w, h = h, w
 
     return {
@@ -640,7 +693,10 @@ def build_proxies() -> tuple:
             # stored as "h264", so this branch used to skip it — and the stream
             # endpoint now tells the user to build a proxy for exactly those
             # files. Without this the two halves disagree and the 409 never clears.
-            want_proxy = (stored_codec.lower() in codec.PROXY_CODECS
+            # `is False`, not `not playable`: None means the stored value told us
+            # nothing, and that must keep the old "leave it alone" behaviour rather
+            # than transcoding every row whose codec column is junk.
+            want_proxy = (codec.is_browser_playable_video(stored_codec) is False
                           or codec.container_needs_remux(resolved_path))
         else:
             verdict = codec.needs_proxy(resolved_path)
@@ -671,6 +727,61 @@ def build_proxies() -> tuple:
     else:
         print("No files need proxy (all browser-compatible)")
     return proxy_ok, proxy_skip
+
+
+def proxies_mode(cli_value: Optional[str] = None) -> str:
+    """Issue #558: should Phase 3 build proxies for this run? "auto" | "never".
+
+    CLI (`--proxies` / `--skip-proxies`) > this library's `ingest.proxies`
+    setting > ARKIV_PROXIES > "auto". The setting's default IS the env value, so
+    one accessor covers the last three layers."""
+    if cli_value:
+        return cli_value
+    try:
+        import settings
+        return settings.ingest_proxies()
+    except Exception as exc:  # noqa: BLE001 — a settings read must not cost the ingest
+        print(f"[proxies] could not read the ingest.proxies setting ({exc}); using {config.PROXIES_MODE}")
+        return config.PROXIES_MODE
+
+
+def run_proxy_phase(mode: str):
+    """Ingest Phase 3. `auto` is exactly the old unconditional `build_proxies()`.
+
+    `never` skips the transcode and nothing else — auto-embed runs after this
+    phase and must not be dragged along with it (tests pin that). Returns
+    build_proxies()'s (ok, skipped), or None when the phase was skipped."""
+    print(f"\n{'─'*60}")
+    if mode == "never":
+        print("Phase 3: Proxy generation skipped (proxies = never for this library).")
+        print("  Clips a browser cannot decode will play only where the original does")
+        print("  (macOS app / Safari). Build them later with: ingest.py --regenerate-proxies")
+        return None
+    print("Phase 3: Proxy generation for browser-incompatible codecs...")
+    return build_proxies()
+
+
+# Proxy encode timeout scales with clip length. A flat 600s killed every long
+# 4K HEVC clip: on an M2 Max with VideoToolbox decode, 4K60 HEVC → 720p ran at
+# ~0.9x realtime (17.2 min clip = 902s, 20.9 min = 1104s; 2026-10-14), so
+# anything over ~11 min timed out after burning the full 600s. 3x realtime
+# leaves room for the software-decode retry and a loaded machine; the floor
+# keeps short clips' old budget, the cap bounds a bogus probed duration.
+PROXY_TIMEOUT_FLOOR_S = 600
+PROXY_TIMEOUT_PER_SOURCE_S = 3.0
+PROXY_TIMEOUT_CAP_S = 4 * 3600
+
+
+def _proxy_timeout_s(path: str) -> float:
+    from pathres import _probe_duration
+    try:  # a probe problem must never cost the proxy itself — fall back to the floor
+        duration = _probe_duration(path)
+    except Exception:
+        duration = None
+    if not duration or duration <= 0:
+        return float(PROXY_TIMEOUT_FLOOR_S)
+    return float(min(max(PROXY_TIMEOUT_FLOOR_S, duration * PROXY_TIMEOUT_PER_SOURCE_S),
+                     PROXY_TIMEOUT_CAP_S))
 
 
 def generate_proxy(media_id: int, path: str, force: bool = False,
@@ -704,12 +815,14 @@ def generate_proxy(media_id: int, path: str, force: bool = False,
     tmp_path = proxy_path.with_name("{0}.tmp.{1}{2}".format(proxy_path.stem, os.getpid(), proxy_path.suffix))
     tmp_path.unlink(missing_ok=True)
 
+    timeout_s = _proxy_timeout_s(path)
+
     def _run(use_hw: bool):
         # encoding pinned: Windows zh-TW default cp950 can't decode ffmpeg's
         # utf-8 stderr → UnicodeDecodeError crashes proxy gen on headless ingest.
         return subprocess.run(
             _build_proxy_cmd(path, str(tmp_path), height, use_hw),
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_s,
         )
 
     try:
@@ -735,7 +848,7 @@ def generate_proxy(media_id: int, path: str, force: bool = False,
         return None
     except subprocess.TimeoutExpired:
         tmp_path.unlink(missing_ok=True)
-        print("[proxy] timeout after 600s: {0}".format(path))
+        print("[proxy] timeout after {0:.0f}s: {1}".format(timeout_s, path))
         return None
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)
@@ -893,9 +1006,19 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # SVG/vector stills are intentionally excluded — no pixel stream, no thumbnail.
     is_video = ext in VIDEO_EXT
     still_raster = ext in RASTER_IMAGE_EXTS
+
+    # Log footage (S-Log3 etc.) is unwatchable flat; posters and the frames vision
+    # reads get a log→Rec.709 LUT. A profile already on the row (set by the user,
+    # or "none" to opt out) wins over auto-detection. Proxies stay log on purpose:
+    # the player applies the LUT live so the original stays one toggle away.
+    color_profile = (existing or {}).get("color_profile") or (
+        color_profiles.detect_profile(str(path)) if is_video else None)
+    if color_profile:
+        record["color_profile"] = color_profile
+    lut = color_profiles.lut_file_for(color_profile)
     if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("thumb", "thumbnail")
-        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh)
+        thumb_path = frm.extract_thumbnail(str(path), meta["duration_s"], force=refresh, lut=lut)
         # Only record a thumbnail when extraction succeeded — omitting the key on
         # failure preserves the prior value on refresh (H6) and leaves new rows
         # at the column default (NULL).
@@ -905,11 +1028,17 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     # Frame extraction (video + raster still) — persistent thumbnails + DB records
     if (is_video and meta["duration_s"] > 0) or still_raster:
         _stage("frames", "frames")
-        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh)
+        frame_data = frm.extract_frames(str(path), meta["duration_s"], meta["fps"] or 30, force=refresh, lut=lut)
         for frame in frame_data:
             if frame.get("thumbnail_path"):
                 frame["thumbnail_path"] = db.to_relative(frame["thumbnail_path"])
         record["_frames"] = frame_data  # pass to caller for DB insert
+
+        # Camera motion (optional, video only): per-scene pan/zoom/jitter,
+        # cut on the same boundaries scenes.py serves. Never fails the ingest.
+        if _CAMERA_MOTION and is_video and frame_data:
+            _stage("motion", "camera motion")
+            _attach_camera_motion(str(path), frame_data, meta["duration_s"])
 
         # Vision description (optional)
         if not skip_vision and frame_data:
@@ -928,6 +1057,65 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
     if not _STAGE_EVENTS:
         print(" [OK]")
     return record
+
+
+def _attach_camera_motion(path: str, frame_data: List[Dict], duration_s: float) -> bool:
+    """Measure and stash each scene's motion JSON on its frame dict under
+    "camera_motion" (written by the caller next to the frame row). False on any
+    failure — a clip that cannot be measured stays NULL ("not measured")."""
+    import camera_motion as cmo
+    try:
+        ordered = sorted(frame_data, key=lambda f: f["index"])
+        metrics = cmo.measure_scenes(path, ordered, duration_s,
+                                     ffmpeg=config.FFMPEG_PATH,
+                                     ffprobe=config.FFPROBE_PATH)
+    except Exception as e:  # measurement is advisory; ingest must not die on it
+        print(f"  [motion] skipped: {e}")
+        return False
+    for fd, m in zip(ordered, metrics):
+        fd["camera_motion"] = cmo.to_db(m)
+    return True
+
+
+def _run_refresh_motion(args) -> int:
+    """`--refresh-motion`: backfill camera motion on already-indexed videos.
+
+    Re-reads only the video stream; vision, transcript, thumbnails and frames are
+    untouched. Picks media with at least one frame whose camera_motion is NULL or
+    from an older measurement version — "has a value" is not the resume
+    condition, "has THIS version's value" is. Returns the count of media written."""
+    import camera_motion as cmo
+    import time as _time
+    marker = '%"v": {0}%'.format(cmo.SCHEMA_VERSION)
+    with db.get_conn() as conn:
+        rows = conn.execute("""
+            SELECT DISTINCT m.id, m.path, m.filename, m.duration_s
+            FROM media m JOIN frames f ON f.media_id = m.id
+            WHERE f.camera_motion IS NULL OR f.camera_motion NOT LIKE ?
+            ORDER BY m.id
+        """, (marker,)).fetchall()
+    todo = [r for r in rows if Path(r["filename"] or "").suffix.lower() in VIDEO_EXT]
+    if args.limit:
+        todo = todo[:args.limit]
+    print(f"Camera motion backfill: {len(todo)} video(s) to measure")
+    done = 0
+    for i, r in enumerate(todo, 1):
+        src = db.resolve_path(r["path"])
+        if not os.path.exists(src):
+            print(f"[{i}/{len(todo)}] {r['filename']}  [missing — skipped]")
+            continue
+        frames = db.get_frames(r["id"])
+        fdata = [{"index": f["frame_index"], "timestamp_s": f["timestamp_s"]} for f in frames]
+        t0 = _time.time()
+        if not _attach_camera_motion(src, fdata, float(r["duration_s"] or 0.0)):
+            continue
+        with db.get_conn() as conn:
+            for fd in fdata:
+                db.set_frame_camera_motion(r["id"], fd["index"], fd.get("camera_motion"), _conn=conn)
+        done += 1
+        print(f"[{i}/{len(todo)}] {r['filename']}  [{_time.time() - t0:.1f}s]")
+    print(f"Camera motion backfill done: {done}/{len(todo)}")
+    return done
 
 
 def _run_queue_cmd(args):
@@ -1000,6 +1188,122 @@ _VISION_CONSECUTIVE_HALT = 20
 # so halt fast. The counter resets on any ok/skip/move (proof the drive is readable),
 # so a few genuinely-corrupt clips never trip it. Env-tunable; 0 disables.
 _INGEST_CONSECUTIVE_HALT = int(os.getenv("ARKIV_INGEST_HALT_STREAK", "5") or 0)
+
+
+# issue #393: a batch silently lost one file and still exited 0 — the only way to
+# notice was `comm` between the disk listing and `media.filename`. The exit code
+# answers "did it crash", not "did it finish", and BENCHMARK SUMMARY only lists the
+# files that WERE processed, so a file that fell through every counter left no
+# trace at all. This report closes that gap with output only: every queued file
+# must land in exactly one bucket, and every file we claim is in the library is
+# checked against the DB itself rather than against our own counters.
+# Exit code: a mismatch — a file in no bucket, or a file counted as in the library
+# with no DB row — exits EXIT_RECONCILE_MISMATCH (7), see main(). Callers were
+# audited first: watch.py, /api/ingest, /api/ingest/ws, bins, seed_sample and
+# build_sample_prebuilt all test `!= 0`, none branches on a specific value, so a
+# new number cannot collide with an existing meaning.
+# Exit codes in use by ingest.py / frames.py: 0 clean, 1 partial failure,
+# 2 all failed, 3 dangling thumbnails symlink (frames.py), 4 storage preflight,
+# 5 --migrate-storage backup failed, 6 --migrate-storage target blocked.
+EXIT_RECONCILE_MISMATCH = 7
+_RECONCILE_BUCKETS = ("ingested", "already-indexed", "moved", "failed")
+_RECONCILE_NAME_CAP = 50
+
+
+def _reconcile_report(queued, outcomes, known_paths, not_reached=(),
+                      deferred=0, prefiltered_known=0, frame_skips=(),
+                      skip_failed=False, name_cap=_RECONCILE_NAME_CAP):
+    """Return the end-of-ingest reconciliation as a list of printable lines.
+
+    queued            : the files the Phase-1 loop was given (Path objects)
+    outcomes          : {str(path): bucket} for every file the loop finished with
+    known_paths       : set of `media.path` values read from the DB AFTER the run
+    not_reached       : files after an [INGEST HALTED] break
+    deferred          : files found but left out by --limit
+    prefiltered_known : already-indexed files dropped before the loop (--limit path)
+    frame_skips       : [(filename, n_failed, n_frames)] from Phase-2 vision
+    skip_failed       : whether --skip-failed was on (labels the frame-skip list)
+
+    Pure: no I/O, so it can be tested without running a batch.
+    """
+    return _reconcile(queued, outcomes, known_paths, not_reached=not_reached,
+                      deferred=deferred, prefiltered_known=prefiltered_known,
+                      frame_skips=frame_skips, skip_failed=skip_failed,
+                      name_cap=name_cap)[0]
+
+
+def _reconcile_mismatch(queued, outcomes, known_paths, not_reached=()):
+    """Number of files the batch cannot account for (issue #393 point 2):
+    scanned-but-in-no-bucket + counted-as-in-library-but-no-DB-row.
+
+    Deliberately NOT counted: `failed` and `not reached` — those already have a
+    record (the failed count, the [INGEST HALTED] line) and their own exit code.
+    This is only the part that used to leave no trace at all. Pure."""
+    return _reconcile(queued, outcomes, known_paths, not_reached=not_reached)[1]
+
+
+def _reconcile(queued, outcomes, known_paths, not_reached=(),
+               deferred=0, prefiltered_known=0, frame_skips=(),
+               skip_failed=False, name_cap=_RECONCILE_NAME_CAP):
+    """Shared body of _reconcile_report / _reconcile_mismatch → (lines, mismatch),
+    so the exit code and the printed line can never disagree about a file."""
+    counts = {b: 0 for b in _RECONCILE_BUCKETS}
+    by_bucket = {b: [] for b in _RECONCILE_BUCKETS}
+    unaccounted, missing_in_db = [], []
+    not_reached_set = {str(p) for p in not_reached}
+    for p in queued:
+        key = str(p)
+        bucket = outcomes.get(key)
+        if bucket is None:
+            if key not in not_reached_set:
+                unaccounted.append(p)
+            continue
+        counts[bucket] = counts.get(bucket, 0) + 1
+        by_bucket.setdefault(bucket, []).append(p)
+        # A counter is our own claim; the DB row is the fact. Check every file we
+        # say is in the library — including SKIP and MOVED, whose "already there"
+        # verdict came from a snapshot taken before the batch started.
+        if bucket != "failed" and not any(
+                v in known_paths for v in db.dedup_path_variants(key)):
+            missing_in_db.append(p)
+
+    scanned = len(queued) + deferred + prefiltered_known
+    head = ("Reconcile: scanned={0}  ingested={1}  already-indexed={2}  moved={3}  "
+            "failed={4}").format(scanned, counts["ingested"],
+                                 counts["already-indexed"] + prefiltered_known,
+                                 counts["moved"], counts["failed"])
+    if not_reached:
+        head += "  not-reached={0}".format(len(not_reached))
+    if deferred:
+        head += "  deferred(--limit)={0}".format(deferred)
+    problems = len(unaccounted) + len(missing_in_db) + counts["failed"] + len(not_reached)
+    head += "  →  " + ("✓ every file accounted for" if problems == 0
+                         else "⚠ {0} file(s) need attention".format(problems))
+    lines = [head]
+
+    def _names(label, paths):
+        if not paths:
+            return
+        lines.append("  {0} ({1}):".format(label, len(paths)))
+        for p in paths[:name_cap]:
+            lines.append("    {0}".format(Path(p).name))
+        if len(paths) > name_cap:
+            lines.append("    … and {0} more".format(len(paths) - name_cap))
+
+    _names("⚠ unaccounted — scanned but in no bucket", unaccounted)
+    _names("⚠ counted as in the library but no DB row", missing_in_db)
+    _names("failed", by_bucket["failed"])
+    _names("not reached (ingest halted)", list(not_reached))
+    if frame_skips:
+        label = ("--skip-failed skipped vision frames in" if skip_failed
+                 else "vision frames left empty in")
+        lines.append("  {0} {1} file(s) (re-run --vision-only to retry):".format(
+            label, len(frame_skips)))
+        for fn, n, tot in list(frame_skips)[:name_cap]:
+            lines.append("    {0}: {1}/{2} frames".format(fn, n, tot))
+        if len(frame_skips) > name_cap:
+            lines.append("    … and {0} more".format(len(frame_skips) - name_cap))
+    return lines, len(unaccounted) + len(missing_in_db)
 
 
 def _ingest_halt_decision(consecutive_failed, threshold=None):
@@ -1209,10 +1513,14 @@ def _run_vision_only(args):
     if failed_files:
         total = sum(n for _, n, _ in failed_files)
         print(f"\n⚠ {total} frame(s) across {len(failed_files)} file(s) left empty (re-run --vision-only to retry just those):")
-        for fn, n, tot in failed_files[:20]:
+        # issue #393: when --skip-failed is what let the run continue past these,
+        # every name is printed — a skipped file must be findable from the log
+        # alone, not only the first 20 of them.
+        _cap = len(failed_files) if skip_failed else 20
+        for fn, n, tot in failed_files[:_cap]:
             print(f"    {fn}: {n}/{tot}")
-        if len(failed_files) > 20:
-            print(f"    … and {len(failed_files) - 20} more file(s)")
+        if len(failed_files) > _cap:
+            print(f"    … and {len(failed_files) - _cap} more file(s)")
     if not halted:
         suffix = f", {len(failed_files)} with skipped frames." if failed_files else "."
         print(f"\nVision-only done. {ok} file(s) fully patched{suffix}")
@@ -1220,7 +1528,21 @@ def _run_vision_only(args):
 
 
 def _regenerate_proxies():
-    """Rebuild all existing proxies with latest encoding settings."""
+    """Rebuild all existing proxies with latest encoding settings, then build the
+    ones that were never made.
+
+    Issue #558: this is the command `/api/stream` names for a library ingested
+    with proxies = never. It used to rebuild only what already existed and stop
+    at "No existing proxies to regenerate." — so on exactly that library it did
+    nothing. The fill-in step is `build_proxies()` itself, so it decides "needs a
+    proxy" the same way the stream gate does, and it ignores the never setting:
+    running this command is the explicit request."""
+    _rebuild_existing_proxies()
+    print("\nBuilding proxies that do not exist yet...")
+    build_proxies()
+
+
+def _rebuild_existing_proxies():
     proxy_dir = config.PROXIES_DIR
     existing = sorted(proxy_dir.glob("*.mp4")) if proxy_dir.exists() else []
     if not existing:
@@ -1281,13 +1603,39 @@ def _fmt_size_delta(delta_bytes: int) -> str:
     return f"{sign}{abs(delta_bytes) / 1_000_000:.1f} MB"
 
 
+def regrade_thumbnail(media_id: int) -> Optional[str]:
+    """Rebuild one clip's poster with its current color_profile (used right after
+    the user picks a profile in the UI). Returns the new thumbnail path or None
+    when the source is unreachable / extraction failed (row left untouched)."""
+    rec = db.get_record_by_id(media_id)
+    if not rec or Path(rec["path"]).suffix.lower() not in VIDEO_EXT:
+        return None
+    try:
+        src = db.resolve_path(rec["path"])
+    except ValueError:
+        return None
+    if not Path(src).exists():
+        return None
+    meta = probe(src)
+    dur = meta.get("duration_s", 0) if meta else 0
+    if dur <= 0:
+        return None
+    thumb = frm.extract_thumbnail(src, dur, force=True,
+                                  lut=color_profiles.lut_file_for(rec.get("color_profile")))
+    if thumb:
+        with db.get_conn() as conn:
+            conn.execute("UPDATE media SET thumbnail_path=? WHERE id=?",
+                         (db.to_relative(thumb), media_id))
+    return thumb
+
+
 def _regenerate_thumbnails():
     """B4: rebuild the poster thumbnail for every video record (mirror of
     --regenerate-proxies). Re-runs extract_thumbnail and updates
     media.thumbnail_path. Frame thumbnails (which carry vision descriptions) are
     intentionally left untouched — use --vision-only / --refresh for those."""
     with db.get_conn() as conn:
-        rows = conn.execute("SELECT id, path, filename FROM media").fetchall()
+        rows = conn.execute("SELECT id, path, filename, color_profile FROM media").fetchall()
         records = [dict(r) for r in rows]
     videos = [r for r in records if Path(r["path"]).suffix.lower() in VIDEO_EXT]
     if not videos:
@@ -1313,13 +1661,19 @@ def _regenerate_thumbnails():
         meta = probe(src)
         dur = meta.get("duration_s", 0) if meta else 0
         print(f"  [{idx}/{len(videos)}] id={rec['id']} {rec['filename']}", end="", flush=True)
-        thumb = frm.extract_thumbnail(src, dur, force=True) if dur > 0 else None
+        # Backfill: rows ingested before color profiles existed get detected here,
+        # so one --regenerate-thumbnails pass grades an existing log library.
+        profile = rec.get("color_profile") or color_profiles.detect_profile(src)
+        lut = color_profiles.lut_file_for(profile)
+        thumb = frm.extract_thumbnail(src, dur, force=True, lut=lut) if dur > 0 else None
         if thumb:
             with db.get_conn() as conn:
                 conn.execute(
-                    "UPDATE media SET thumbnail_path=? WHERE id=?",
-                    (db.to_relative(thumb), rec["id"]),
+                    "UPDATE media SET thumbnail_path=?, color_profile=? WHERE id=?",
+                    (db.to_relative(thumb), profile, rec["id"]),
                 )
+            if lut:
+                print(f" [{profile}]", end="")
             print(" [OK]")
             ok += 1
         else:
@@ -2049,6 +2403,10 @@ def _run_apply_aliases(args):
 
 
 def main():
+    # Server-spawned? Then die with the server if it is SIGKILLed (desktop app
+    # quit) instead of running on as an orphan — inert for CLI runs (audit N1).
+    import orphan_guard
+    orphan_guard.install()
     # Windows: the console codepage (cp950 on zh-TW) can't encode chars the CLI
     # prints (⚠, →, emoji) → UnicodeEncodeError crashes mid-run. Force UTF-8 on
     # stdout/stderr so progress output is robust on every platform.
@@ -2084,7 +2442,16 @@ def main():
     parser.add_argument(
         "--regenerate-proxies",
         action="store_true",
-        help="刪除並重建所有 HEVC/ProRes proxy（套用最新編碼設定）",
+        help="重建所有既有 proxy（套用最新編碼設定），並補建還沒有 proxy 的瀏覽器播不了的檔 —— 包括從沒建過 proxy 的庫（#558）。不受 --proxies / ARKIV_PROXIES 影響：這是明確要求。",
+    )
+    _proxy_flags = parser.add_mutually_exclusive_group()
+    _proxy_flags.add_argument(
+        "--proxies", choices=list(config.PROXIES_MODES), default=None,
+        help="issue #558: Phase 3 browser-playback proxies for this run. auto = build one for every clip a browser cannot decode (the default, unchanged); never = skip Phase 3 (embedding still runs). Omit = this library's `ingest.proxies` setting, else ARKIV_PROXIES, else auto.",
+    )
+    _proxy_flags.add_argument(
+        "--skip-proxies", dest="proxies", action="store_const", const="never",
+        help="Shorthand for --proxies never.",
     )
     parser.add_argument(
         "--regenerate-thumbnails",
@@ -2107,6 +2474,8 @@ def main():
     parser.add_argument("--json", action="store_true", help="With --status: emit JSON instead of human-readable")
     parser.add_argument("--retraditionalize", action="store_true", help="Phase 9.8b backfill: retro-convert existing SIMPLIFIED zh transcripts (transcript + segments + words + the per-language archive) to Taiwan Traditional (s2twp), so the pre-9.8b backlog stops missing a 記憶體 query on a 內存 clip. GATED: only genuine Simplified rows convert; already-Traditional / mixed rows are skipped (never fed to the phrase layer, so never corrupted). Idempotent, timing-safe. Follow with `embed.py --rebuild`. No --dir / re-transcribe needed.")
     parser.add_argument("--dry-run", action="store_true", help="With --retraditionalize: report what would convert without writing.")
+    parser.add_argument("--camera-motion", action="store_true", help="A7: also measure per-scene camera motion (pan / jitter / zoom / zjitter) during this ingest — zero VLM, ffmpeg+numpy. Opt-in because it re-reads and decodes every video (~20-55 s per minute of 4K). Same as ARKIV_CAMERA_MOTION=1.")
+    parser.add_argument("--refresh-motion", action="store_true", help="A7 backfill: measure camera motion for already-indexed videos missing it (or measured by an older version). No re-vision, no re-transcribe, no --dir needed. Honours --limit.")
     args = parser.parse_args()
 
     # brick 4: apply the per-run whisper preset + language override before any
@@ -2115,8 +2484,10 @@ def main():
     # transcribe CLI); language is a direct override read at the transcribe call.
     if args.whisper_guard is not None:
         tr._apply_whisper_guard_mode(tr._resolve_whisper_guard_mode(args.whisper_guard))
-    global _LANGUAGE_OVERRIDE
+    global _LANGUAGE_OVERRIDE, _CAMERA_MOTION
     _LANGUAGE_OVERRIDE = args.language or None
+    if args.camera_motion:
+        _CAMERA_MOTION = True
     # One-time notice: with no explicit --language, Whisper falls back to zh, so
     # English/Japanese footage gets silently transcribed as garbled Chinese.
     if _LANGUAGE_OVERRIDE is None and (getattr(args, "dir", None) or getattr(args, "files", None)):
@@ -2133,7 +2504,7 @@ def main():
         or args.canonicalize_tags
         or args.propose_aliases or args.apply_aliases
         or args.propose_collections or args.apply_collections
-        or args.retraditionalize
+        or args.retraditionalize or args.refresh_motion
         or bool(args.queue) or args.status
     )
     if not maintenance_mode and not args.dir and not args.files:
@@ -2181,6 +2552,10 @@ def main():
 
     if args.regenerate_thumbnails:
         _regenerate_thumbnails()
+        return
+
+    if args.refresh_motion:
+        _run_refresh_motion(args)
         return
 
     # ── Vision-only mode: patch missing vision descriptions ──────────────
@@ -2297,13 +2672,19 @@ def main():
         # Windows (backslash) DB row isn't re-ingested as a duplicate (round-5 #9).
         return any(v in _known_paths for v in db.dedup_path_variants(str(p)))
 
+    # issue #393 reconciliation: files the --limit path drops before the loop
+    # still have to be counted, or "scanned" would silently shrink to the queue.
+    prefiltered_known, deferred = 0, 0
     if args.limit and not args.refresh:
         # Filter out already-processed files before applying limit
         new_files = [f for f in files if not _is_known(f)]
         skipped_count = total - len(new_files)
         files = new_files[:args.limit]
+        prefiltered_known = skipped_count
+        deferred = len(new_files) - len(files)
         print(f"Found {total} media files ({skipped_count} already indexed). Processing {len(files)}...\n")
     elif args.limit:
+        deferred = max(0, len(files) - args.limit)
         files = files[:args.limit]
         print(f"Found {total} media files. Processing {len(files)}...\n")
     else:
@@ -2312,6 +2693,8 @@ def main():
     import time as _time
 
     ok, skipped, failed, moved = 0, 0, 0, 0
+    outcomes = {}  # issue #393: str(path) -> bucket, one entry per file the loop finished
+    not_reached = []  # files after an [INGEST HALTED] break
     consecutive_ingest_fail = 0  # whole-file failures in a row → drive-gone halt
     refreshed_ids = set()  # already-indexed ids re-processed this run → force re-embed
     bench_log = []  # per-file benchmark records
@@ -2329,6 +2712,7 @@ def main():
         if already and not args.refresh:
             print(f"[{i}/{len(files)}] SKIP {f.name}")
             skipped += 1
+            outcomes[str(f)] = "already-indexed"
             consecutive_ingest_fail = 0  # a readable skip proves the drive is alive
             continue
 
@@ -2347,6 +2731,7 @@ def main():
                     db.repoint_media_path(mrow["id"], str(f))
                     print(f"[{i}/{len(files)}] MOVED {f.name} → re-pointed id={mrow['id']}")
                     moved += 1
+                    outcomes[str(f)] = "moved"
                     consecutive_ingest_fail = 0  # a readable move proves the drive is alive
                     continue
 
@@ -2419,6 +2804,9 @@ def main():
                                     edit_reason=fd.get("edit_reason"),
                                     _conn=conn,
                                 )
+                                if fd.get("camera_motion"):
+                                    db.set_frame_camera_motion(
+                                        mid, fd["index"], fd["camera_motion"], _conn=conn)
                 # Queue for Phase 2 vision
                 if frames and need_vision:
                     # fable-audit round-5 #28: the FULL record (transcript +
@@ -2442,14 +2830,17 @@ def main():
                 })
                 print(f"  [{file_elapsed:.1f}s | {dur/max(file_elapsed,1):.1f}x RT]")
                 ok += 1
+                outcomes[str(f)] = "ingested"
                 consecutive_ingest_fail = 0  # a healthy read resets the drive-gone streak
                 _emit_progress({"t": "file", "index": i, "total": len(files), "file": f.name, "status": "phase1_done"})
             else:
                 failed += 1
+                outcomes[str(f)] = "failed"
                 consecutive_ingest_fail += 1
         except Exception as e:
             print(f" [ERROR: {e}]")
             failed += 1
+            outcomes[str(f)] = "failed"
             consecutive_ingest_fail += 1
 
         # Phase-1 counterpart to the vision halt: an unbroken run of whole-file
@@ -2464,6 +2855,7 @@ def main():
                 "and re-run — already-indexed files skip.".format(
                     _reason, ok, failed, len(files) - i)
             )
+            not_reached = list(files[i:])
             break
 
     # ── Phase 2: Vision (unload LLM first to free VRAM) ───────────────────
@@ -2628,9 +3020,7 @@ def main():
         print("\nNo new files to run vision on.")
 
     # ── Phase 3: Proxy generation (browser-incompatible codecs) ────────────
-    print(f"\n{'─'*60}")
-    print("Phase 3: Proxy generation for browser-incompatible codecs...")
-    build_proxies()
+    run_proxy_phase(proxies_mode(getattr(args, "proxies", None)))
 
     batch_elapsed = _time.time() - batch_start
     total_dur = sum(b["duration_s"] for b in bench_log)
@@ -2638,6 +3028,24 @@ def main():
     _moved_suffix = f"  moved={moved}" if moved else ""
     print(f"\nDone. OK={ok}  skip={skipped}  fail={failed}{_moved_suffix}")
     print(f"DB: {db.get_db_path()}")
+    # issue #393: one line that says whether every scanned file is accounted for,
+    # checked against the DB as it is NOW (not the pre-batch snapshot). A mismatch
+    # sets the exit code (EXIT_RECONCILE_MISMATCH, decided at the end of main).
+    # A failure to read the DB must not turn a finished ingest into a crash, so it
+    # degrades to a visible note — and to "not measured", which leaves the exit
+    # code to the other signals rather than inventing a mismatch.
+    reconcile_mismatch = 0
+    try:
+        with db.get_conn() as conn:
+            _known_after = {r[0] for r in conn.execute("SELECT path FROM media").fetchall()}
+        _lines, reconcile_mismatch = _reconcile(
+                files, outcomes, _known_after, not_reached=not_reached,
+                deferred=deferred, prefiltered_known=prefiltered_known,
+                frame_skips=vision_failed_files, skip_failed=skip_failed)
+        for _line in _lines:
+            print(_line)
+    except Exception as exc:  # noqa: BLE001 — report-only; never fail the run on it
+        print(f"Reconcile: unavailable ({type(exc).__name__}: {exc})")
 
     # Auto-build the vector index so semantic search + chat work immediately.
     # ingest writes SQLite records; embeddings live in ChromaDB and were a
@@ -2694,8 +3102,18 @@ def main():
     # Phase 8.0e (R1): exit code reflects actual ingest outcome.
     # Before this, main() always fell through to exit 0 — 222/222 fail
     # on 2026-05-25 still returned 0, hiding the regression from runner.
+    #
+    # Issue #393: 0 used to mean "did not crash", not "every file is in the
+    # library". Precedence 2 > 7 > 1: "everything failed" is still the loudest
+    # (it is usually upstream); a file that left NO trace outranks a partial
+    # failure, because a failure is already named in the output and counted,
+    # while the mismatch is the one that otherwise goes unnoticed.
     if failed and not ok:
         sys.exit(2)  # all phase 1 failed
+    if reconcile_mismatch:
+        print(f"[exit {EXIT_RECONCILE_MISMATCH}] reconcile mismatch: "
+              f"{reconcile_mismatch} file(s) not accounted for (see Reconcile above)")
+        sys.exit(EXIT_RECONCILE_MISMATCH)
     if failed or vision_fail or vision_halted:
         sys.exit(1)  # partial fail (phase 1) or vision failure/halt (phase 2)
     # else: implicit exit 0
@@ -2709,6 +3127,7 @@ def detect_gpu() -> str:
             r = subprocess.run(
                 ["system_profiler", "SPDisplaysDataType"],
                 capture_output=True, text=True, timeout=5,
+                encoding="utf-8", errors="replace",
             )
             chipset = metal = None
             for line in r.stdout.splitlines():
@@ -2726,6 +3145,7 @@ def detect_gpu() -> str:
         r = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True, text=True, timeout=5,
+            encoding="utf-8", errors="replace",
         )
         if r.returncode == 0:
             lines = r.stdout.strip().splitlines()

@@ -242,3 +242,52 @@ def test_db_file_is_owner_only(tmp_db):
         conn.execute("SELECT 1")
     mode = stat.S_IMODE(os.stat(db.get_db_path()).st_mode)
     assert mode & 0o077 == 0, f"DB world/group-accessible: {oct(mode)}"
+
+
+def test_a_posix_absolute_row_survives_being_read_on_windows():
+    """A DB row outlives the machine that wrote it, and `is_absolute()` does not.
+
+    `Path.is_absolute()` is PLATFORM-dependent: on Windows a path needs a drive
+    letter, so a row holding `/Volumes/NAS/clip.mp4` — written by a Mac — answers
+    False there, gets joined to PROJECT_ROOT as if it were relative, lands at
+    `C:/Volumes/NAS/clip.mp4`, escapes the root, and raises. The docstring's
+    "absolute paths are passed through as-is" therefore only held on the platform
+    the row was written on.
+
+    🔴 The existing pass-through test could not catch this because it branches on
+    `sys.platform` and asks each platform about its OWN absolute form. Rows travel
+    between platforms; the test never did. This one asserts the same input on
+    every platform, which is the only version of the question that matters.
+
+    Measured 2026-09-18 on Windows before the fix: all three raise. One library in
+    this fleet still stores 427/427 absolute paths, written on a Mac — and the way
+    it failed is the quiet one, `media_delete` catching the ValueError into
+    `resolved = ""` so a delete degrades to metadata-only with no warning at all.
+    """
+    db = importlib.import_module("db")
+    for row in ("/Volumes/NAS/proj/clip.mp4",
+                "/Users/someone/media/a.mov",
+                "/mnt/library/b.mxf"):
+        assert db.resolve_path(row) == row, row
+
+
+def test_the_traversal_guard_still_bites_after_the_passthrough_widened():
+    """The J2 guard is about RELATIVE escapes and must not have been loosened.
+
+    Letting a leading `/` through is only safe because that is already what POSIX
+    did; a `../` row must still raise on both platforms.
+    """
+    import pytest
+    db = importlib.import_module("db")
+    for row in ("../../../etc/passwd", "media/../../../../tmp/escape", ".."):
+        with pytest.raises(ValueError, match="逃出 PROJECT_ROOT"):
+            db.resolve_path(row)
+
+
+def test_a_relative_row_is_still_joined_to_the_project_root():
+    """The common case, pinned next to the two above so a future edit to the
+    leading-slash branch cannot quietly swallow ordinary rows."""
+    db = importlib.import_module("db")
+    out = db.resolve_path("media/sub/clip.mp4").replace("\\", "/")
+    assert out.endswith("media/sub/clip.mp4")
+    assert out != "media/sub/clip.mp4", "a relative row must be made absolute"

@@ -1,0 +1,7 @@
+# Pinned Rust toolchain for src-tauri (rustup reads this from any subdirectory).
+# CI/release pass the same version to dtolnay/rust-toolchain — tests/
+# test_toolchain_pins.py fails if the two disagree. Bump deliberately: update
+# this file, then the `toolchain:` inputs in .github/workflows/*.yml.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"

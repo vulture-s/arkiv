@@ -207,19 +207,111 @@ def _assert_collection_compatible(col) -> None:
 _CHROMA_LOCK = threading.Lock()
 
 
+def _drop_chroma_system_cache() -> bool:
+    """Drop chromadb's process-global System cache. Returns whether it happened.
+
+    Named rather than inlined at the two call sites for two reasons. It is the
+    seam the tests monkeypatch — `tests/conftest.py` installs a stub `chromadb`
+    module with no `chromadb.api` submodule, so a test that patches
+    `SharedSystemClient` never runs against anything and passes vacuously. And
+    the boolean lets the caller distinguish "cache dropped" from "this chromadb
+    has no such API", which the staleness tracker below depends on.
+
+    Best-effort by design: a chromadb version without this API just means the
+    pre-existing restart-to-see-it behaviour, never a crash.
+
+    Acquires no lock — both callers already hold `_CHROMA_LOCK`, which is a
+    plain non-reentrant `threading.Lock`.
+    """
+    try:
+        from chromadb.api.shared_system_client import SharedSystemClient
+        SharedSystemClient.clear_system_cache()
+        return True
+    except Exception:
+        return False
+
+
 def clear_client_cache():
     """Drop chromadb's process-global System cache so the NEXT PersistentClient(path)
     rebuilds from the on-disk dir. After rmtree'ing CHROMA_PATH, the cached System
     still serves the DELETED index in-process until the server restarts — so a
     rebuild is invisible and search returns the old deleted index all session
-    (fable-audit round-5 #15). Best-effort: a chromadb version without this API just
-    means the pre-existing restart-to-see-it behaviour, never a crash."""
+    (fable-audit round-5 #15)."""
     with _CHROMA_LOCK:
-        try:
-            from chromadb.api.shared_system_client import SharedSystemClient
-            SharedSystemClient.clear_system_cache()
-        except Exception:
-            pass
+        _drop_chroma_system_cache()
+
+
+# ── Cross-process HNSW staleness ──────────────────────────────────────────────
+# chromadb caches the PersistentClient per OS process. When `embed.py`, the MCP
+# server or an ingest subprocess writes through a SEPARATE process, this one's
+# in-memory HNSW index keeps serving the vectors it loaded at warm-up.
+#
+# 🔴 The failure is quiet in the worst way: `count()` reads SQLite and is
+# correct, while `query()` reads the stale in-memory index and silently misses
+# the new rows. Measured on chromadb 1.5.5 — parent writes 1, a child process
+# writes 3, parent then reports `count()==4` but `query()` returns 1 of 4. The
+# UI says "4 indexed" and the user cannot find three of them, which reads as
+# "search is bad", not "search is broken".
+#
+# Reported as issue #408 by pixb, who also published the mtime-tracking
+# approach used here (pixb/arkiv#18).
+_CHROMA_DB_MTIME: float = 0.0
+
+
+def _check_chroma_staleness() -> None:
+    """Detect an external write to chroma.sqlite3 and drop the stale client cache.
+
+    Caller must hold `_CHROMA_LOCK` (see `_drop_chroma_system_cache`).
+
+    🔴 The mtime advances ONLY after the cache was actually dropped. Recording it
+    first and then attempting the drop — the obvious ordering — means a failed
+    drop still marks that mtime as handled, so the next call compares equal and
+    that particular staleness is never retried: one silent failure and the index
+    stays stale until the process restarts.
+    """
+    global _CHROMA_DB_MTIME
+    current = _chroma_db_mtime()
+    if current is None:
+        # No DB on disk yet (fresh install, or a pg backend that never writes
+        # one). Nothing to be stale against.
+        return
+    if current == _CHROMA_DB_MTIME:
+        return
+    if _drop_chroma_system_cache():
+        _CHROMA_DB_MTIME = current
+
+
+def _chroma_db_mtime():
+    """`chroma.sqlite3`'s mtime, or None when it is not there yet."""
+    try:
+        return (CHROMA_PATH / "chroma.sqlite3").stat().st_mtime
+    except OSError:
+        return None
+
+
+def _record_chroma_mtime() -> None:
+    """Re-read the mtime AFTER the client has been rebuilt, and treat that as the
+    high-water mark.
+
+    🔴 Without this the staleness check feeds itself. Dropping the System cache
+    forces the next `PersistentClient(path)` to rebuild from disk, and that
+    rebuild WRITES to chroma.sqlite3 — after `_check_chroma_staleness` recorded
+    the old mtime. So the next call sees a newer file, drops again, rebuilds
+    again, writes again. Measured: six `get_collection()` calls with no external
+    write at all produced six cache drops, each one reloading the whole HNSW
+    index; with this, six calls produce one.
+
+    The check was written to catch someone ELSE's write. It could not tell that
+    write apart from the one it had just caused.
+
+    A genuine external write landing between the check and this re-read is
+    recorded here as already-seen — a one-call window, closed by that writer's
+    next write. That is the trade for not thrashing on every single search.
+    """
+    global _CHROMA_DB_MTIME
+    current = _chroma_db_mtime()
+    if current is not None:
+        _CHROMA_DB_MTIME = current
 
 
 def get_collection(reset: bool = False):
@@ -236,6 +328,7 @@ def get_collection(reset: bool = False):
         return col
 
     with _CHROMA_LOCK:  # audit M11
+        _check_chroma_staleness()
         client = chromadb.PersistentClient(path=str(CHROMA_PATH))
         if reset:
             try:
@@ -250,6 +343,10 @@ def get_collection(reset: bool = False):
             # on 1.5.x), so the stamp only lands when the collection is created/reset.
             metadata={"hnsw:space": "cosine", "embed_model": EMBED_MODEL, "embed_dim": EMBED_DIM},
         )
+        # Still inside the lock: the rebuild above may have written to
+        # chroma.sqlite3, and if that write is not folded into the high-water
+        # mark now, the next call reads it as somebody else's change.
+        _record_chroma_mtime()
     _assert_collection_compatible(col)
     return col
 
@@ -293,6 +390,59 @@ def build_doc_text(record: dict) -> str:
                     chunks.append(kw.strip())
             if chunks:
                 parts.append(" ".join(chunks))
+    manual = record.get("manual_tags")
+    if manual:
+        parts.append(" ".join(t for t in manual if isinstance(t, str) and t.strip()))
+    canon = record.get("canonical_tags")
+    if canon:
+        if isinstance(canon, str):
+            try:
+                canon = json.loads(canon)
+            except (json.JSONDecodeError, TypeError):
+                canon = [canon]
+        if isinstance(canon, (list, tuple)):
+            parts.append(" ".join(str(t) for t in canon if isinstance(t, str) and t.strip()))
+    return " ".join(parts)
+
+
+def build_tag_doc(record: dict) -> str:
+    """Searchable text from filename + frame_tags + manual/canonical tags — i.e.
+    everything EXCEPT the transcript. Used for the always-present '_f0' tag chunk
+    so tag/vision search works even for clips that also have a transcript (previously
+    only transcript chunks were indexed for those, dropping all visual/tag signal)."""
+    parts = ["[%s]" % record.get("filename", "")]
+    ft = record.get("frame_tags")
+    if ft:
+        try:
+            frames = json.loads(ft) if isinstance(ft, str) else ft
+        except (json.JSONDecodeError, TypeError):
+            frames = []
+        if isinstance(frames, list):
+            for f in frames:
+                if not isinstance(f, dict):
+                    continue
+                desc = f.get("description")
+                if isinstance(desc, str) and desc.strip():
+                    parts.append(desc.strip())
+                tags_field = f.get("tags")
+                if isinstance(tags_field, list):
+                    parts.extend(t.strip() for t in tags_field
+                                 if isinstance(t, str) and t.strip())
+                kw = f.get("keywords")
+                if isinstance(kw, str) and kw.strip():
+                    parts.append(kw.strip())
+    manual = record.get("manual_tags")
+    if manual:
+        parts.append(" ".join(t for t in manual if isinstance(t, str) and t.strip()))
+    canon = record.get("canonical_tags")
+    if canon:
+        if isinstance(canon, str):
+            try:
+                canon = json.loads(canon)
+            except (json.JSONDecodeError, TypeError):
+                canon = [canon]
+        if isinstance(canon, (list, tuple)):
+            parts.append(" ".join(str(t) for t in canon if isinstance(t, str) and t.strip()))
     return " ".join(parts)
 
 
@@ -323,7 +473,6 @@ def upsert_record(col, record: dict) -> int:
     # would stack stale vectors (H5).
     delete_media(col, media_id)
     transcript = record.get("transcript") or ""
-    frame_doc = build_doc_text(record)
 
     meta_base = {
         "media_id": media_id,
@@ -337,6 +486,15 @@ def upsert_record(col, record: dict) -> int:
 
     ids, embeddings, documents, metadatas = [], [], [], []
 
+    # Always index the tag/vision chunk (_f0) — even for clips that also have a
+    # transcript — so manual/canonical/frame tags are searchable regardless.
+    tag_doc = build_tag_doc(record)
+    if tag_doc.strip():
+        ids.append(f"{media_id}_f0")
+        documents.append(tag_doc)
+        embeddings.append(embed(tag_doc))
+        metadatas.append({**meta_base, "chunk_type": "tags", "chunk_idx": 0})
+
     if transcript:
         chunks = chunk_text(transcript)
         vectors = embed_batch(chunks)  # audit M27: one HTTP call for all chunks
@@ -346,13 +504,6 @@ def upsert_record(col, record: dict) -> int:
             documents.append(chunk)
             embeddings.append(vec)
             metadatas.append({**meta_base, "chunk_type": "transcript", "chunk_idx": i})
-    else:
-        # No transcript — embed frame tags / filename only
-        doc_id = f"{media_id}_f0"
-        ids.append(doc_id)
-        documents.append(frame_doc)
-        embeddings.append(embed(frame_doc))
-        metadatas.append({**meta_base, "chunk_type": "frame_tags", "chunk_idx": 0})
 
     try:
         col.upsert(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
@@ -463,3 +614,48 @@ def find_similar(
         n_results,
         skip_media_ids=set([media_id_str]),
     )
+
+
+# ── Embedder drift (index ↔ current embedder) ─────────────────────────────────
+# _assert_collection_compatible catches a renamed model. It cannot catch the same
+# model NAME now producing different vectors — an Ollama upgrade, a re-pulled tag
+# whose weights changed, a different quantization. Queries are then embedded in a
+# slightly different space from the stored chunks and ranking degrades with no
+# error anywhere. Re-embedding a few stored chunks and comparing them against
+# their stored vectors measures exactly that.
+#
+# Floor: measured 2026-10-14 on bge-m3 — same machine 1.000000; vectors stored on
+# an M2 Max (Metal) re-embedded on an RTX 4070 (CUDA) min 0.999986. 0.999 leaves
+# two orders of magnitude for cross-machine noise.
+DRIFT_COS_FLOOR = 0.999
+
+
+def _cosine(a, b) -> float:
+    a, b = list(a), list(b)
+    if len(a) != len(b) or not a:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def embedder_drift(col=None, sample: int = 5) -> Optional[Dict[str, Any]]:
+    """Re-embed up to ``sample`` stored chunks with the active embedder and compare
+    them with the vectors stored in the index.
+
+    Returns ``{"min_cos", "n", "ok"}``, or ``None`` when nothing can be measured
+    (empty index, or a backend that returns no stored text) — the caller must
+    report that as unmeasured, never as a pass."""
+    col = col if col is not None else get_collection()
+    got = col.get(include=["documents", "embeddings"], limit=sample) or {}
+    docs = got.get("documents") or []
+    embs = got.get("embeddings")
+    embs = list(embs) if embs is not None else []
+    pairs = [(d, e) for d, e in zip(docs, embs) if d and e is not None and len(e)]
+    if not pairs:
+        return None
+    fresh = embed_batch([d for d, _ in pairs])
+    cos = [_cosine(f, s) for f, (_, s) in zip(fresh, pairs)]
+    worst = min(cos)
+    return {"min_cos": worst, "n": len(cos), "ok": worst >= DRIFT_COS_FLOOR}

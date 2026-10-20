@@ -53,6 +53,21 @@ AUDIO_EXT = frozenset({".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"})
 # frame, nor vision (frontend renders a placeholder).
 IMAGE_EXT = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"})
 
+# The image formats that DO have a decodable pixel stream — IMAGE_EXT minus the
+# vector one. Named here rather than re-derived per module because frames.py now
+# needs it too: a still must never be seeked into.
+#
+# Measured 2026-09-03. ffprobe reports a `.jpg` as codec `mjpeg` and, once the
+# file is big enough for it to compute a bit_rate (a 1600x900 photo is; a 1.5 KB
+# swatch is not), hands back duration `0.040000` — one frame at an assumed 25fps.
+# `.png` / `.webp` report `duration=N/A` → 0.0. So "is this a still?" cannot be
+# answered by `duration_s <= 0`, and that misread is not cosmetic: for exactly the
+# JPEGs that carry a duration, an `-ss` placed before `-i` makes ffmpeg exit 0
+# having encoded nothing ("Output file is empty"), even at `-ss 0`. Every JPEG a
+# camera or editor produces is on the wrong side of that line, so they silently
+# landed with no thumbnail, no frames, and therefore no vision tags at all.
+STILL_RASTER_EXT = IMAGE_EXT - {".svg"}
+
 # Everything the ingest pipeline accepts (video + audio + image partition
 # MEDIA_EXT).
 MEDIA_EXT = VIDEO_EXT | AUDIO_EXT | IMAGE_EXT

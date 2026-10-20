@@ -287,8 +287,14 @@ def _edl_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:
     """EDL timecode: HH:MM:SS:FF (NDF) or HH:MM:SS;FF (DF)."""
     if fps <= 0:
         fps = 30.0
+    return _frames_to_edl_label(round(seconds * fps), fps, drop_frame)
+
+
+def _frames_to_edl_label(total_frames: int, fps: float, drop_frame: bool = False) -> str:
+    """Absolute frame count → HH:MM:SS:FF (NDF) or HH:MM:SS;FF (DF)."""
+    if fps <= 0:
+        fps = 30.0
     int_fps = round(fps)
-    total_frames = round(seconds * fps)
 
     if drop_frame and int_fps in (30, 60):
         # Drop-frame: skip frame 0,1 (30p) or 0,1,2,3 (60p) each minute except every 10th
@@ -320,19 +326,98 @@ def _edl_timecode(seconds: float, fps: float, drop_frame: bool = False) -> str:
     return f"{hh:02d}:{mm:02d}:{ss:02d}{sep}{ff:02d}"
 
 
+def _is_ntsc_df_rate(fps: float) -> bool:
+    """29.97 / 59.94 — the only rates where drop-frame labelling exists."""
+    try:
+        return round(float(fps), 2) in (29.97, 59.94)
+    except (TypeError, ValueError):
+        return False
+
+
+def _tc_is_drop(rec: dict, fps: float) -> bool:
+    """Is this clip's timecode drop-frame?
+
+    The camera's own TC string decides: ffprobe keeps the separator, `;` for DF
+    and `:` for NDF (ingest stores it verbatim). Only when there is no camera TC
+    do we fall back to the old "29.97/59.94 are DF" convention. Deciding from the
+    rate alone exported every NDF 29.97 clip (common on Sony/Canon) as DROP
+    FRAME — 108 frames per hour away from the clip's real TC track (audit N1).
+    """
+    if not _is_ntsc_df_rate(fps):
+        return False
+    tc = rec.get("start_tc") or ""
+    if isinstance(tc, str) and tc.count(":") + tc.count(";") == 3:
+        return ";" in tc
+    return True
+
+
+def _tc_label_to_frames(tc: str, fps: float) -> "int | None":
+    """HH:MM:SS:FF / HH:MM:SS;FF → absolute frame count.
+
+    A TC label counts frames at the NOMINAL integer rate (23.976 → 24, 29.97 →
+    30); drop-frame labels additionally skip frame numbers 0-1 (0-3 at 59.94)
+    every minute except each tenth. None when the string is not a timecode."""
+    if not isinstance(tc, str):
+        return None
+    drop = ";" in tc and _is_ntsc_df_rate(fps)
+    parts = tc.strip().replace(";", ":").split(":")
+    if len(parts) != 4:
+        return None
+    try:
+        hh, mm, ss, ff = (int(p) for p in parts)
+    except ValueError:
+        return None
+    nominal = int(round(fps)) if fps and fps > 0 else 30
+    frames = ((hh * 3600) + (mm * 60) + ss) * nominal + ff
+    if drop:
+        d = 2 if nominal == 30 else 4
+        total_minutes = hh * 60 + mm
+        frames -= d * (total_minutes - total_minutes // 10)
+    return frames
+
+
+def _edl_span(start_s: float, dur_s: float, fps: float, drop: bool):
+    """(in_label, out_label) for one EDL side, with out = in + round(dur*fps)
+    frames. Rounding the two ends independently let the source and record
+    sides of one event differ by a frame (src 26 vs rec 25 for a 1 s window
+    starting half a frame in) — CMX3600 reads that as a speed change (audit
+    N1). Counting the length once makes both sides agree whenever they share a
+    rate."""
+    if fps <= 0:
+        fps = 30.0
+    f_in = round(start_s * fps)
+    n = round(dur_s * fps)
+    return _frames_to_edl_label(f_in, fps, drop), _frames_to_edl_label(f_in + n, fps, drop)
+
+
+def _record_base_seconds(fps: float, drop: bool) -> float:
+    """Media seconds of the conventional record start 01:00:00:00 (;00 for DF).
+    `3600.0` is 01:00:00:00 only at integer rates; at 23.976 it labels as
+    00:59:56:10."""
+    label = "01:00:00;00" if drop else "01:00:00:00"
+    frames = _tc_label_to_frames(label, fps)
+    return frames / fps if frames is not None and fps > 0 else 3600.0
+
+
 def _start_tc_seconds(rec: dict, clip_fps: float) -> float:
-    """Parse a record's camera body start timecode (HH:MM:SS:FF) into seconds."""
-    start_tc_str = rec.get("start_tc") or ""
-    if not start_tc_str:
+    """Media time (seconds) of the clip's first frame per its camera start TC.
+
+    Returned as frames / real fps, so `round(seconds * fps)` gives back exactly
+    the TC's frame count and `_edl_timecode` re-renders the same label. The old
+    version summed the label's fields as if they were wall seconds
+    (h*3600+m*60+s+f/fps); a 23.976 TC counts 24 frames per TC-second, so
+    01:00:00:00 came back out as 00:59:56:10 — before the clip's first frame
+    (audit N1)."""
+    try:
+        fps = float(clip_fps)
+    except (TypeError, ValueError):
         return 0.0
-    _tc = start_tc_str.replace(";", ":").split(":")
-    if len(_tc) == 4:
-        try:
-            _h, _m, _s, _f = int(_tc[0]), int(_tc[1]), int(_tc[2]), int(_tc[3])
-            return _h * 3600 + _m * 60 + _s + _f / clip_fps
-        except (ValueError, ZeroDivisionError):
-            return 0.0
-    return 0.0
+    if fps <= 0:
+        return 0.0
+    frames = _tc_label_to_frames(rec.get("start_tc") or "", fps)
+    if frames is None:
+        return 0.0
+    return frames / fps
 
 
 def _edl_fps_warning(recs: list, tl_fps: float) -> "str | None":
@@ -353,6 +438,31 @@ def _edl_fps_warning(recs: list, tl_fps: float) -> "str | None":
     )
 
 
+# CMX3600's frame-rate vocabulary: the FCM header only knows DROP / NON-DROP,
+# and conform tooling assumes one of these film/video rates. Anything else
+# (50 / 59.94 / 60 / 119.88 …) imports, but some NLEs conform the source TC
+# against a different rate than the clip's — FCPXML carries the exact rational.
+_EDL_SPEC_FPS = (23.976, 24.0, 25.0, 29.97, 30.0)
+
+
+def _edl_high_fps_warning(fps) -> "str | None":
+    """B13 (high-fps): EDL comment line when a clip's rate is outside the
+    CMX3600 set (_EDL_SPEC_FPS), else None. Non-blocking on purpose — Resolve
+    imports a 59.94 EDL fine when the timeline is also 59.94, so a hard 422
+    would break a working path; the comment tells the editor to prefer FCPXML
+    if conform drifts. Comment lines are ignored by EDL parsers. Pure."""
+    try:
+        f = float(fps)
+    except (TypeError, ValueError):
+        return None
+    if f <= 0 or any(abs(f - s) < 0.01 for s in _EDL_SPEC_FPS):
+        return None
+    return (
+        f"* WARNING: {f:g} fps is outside the CMX3600 EDL rates "
+        f"(23.976/24/25/29.97/30); if conform TC drifts, export FCPXML instead."
+    )
+
+
 # ── FCPXML ───────────────────────────────────────────────────────────────────
 
 def _fcpxml_rational(fps: float):
@@ -365,3 +475,73 @@ def _fcpxml_rational(fps: float):
     if rounded in _fps_map:
         return _fps_map[rounded]
     return "1", str(round(fps))
+
+
+# ── Transcript markers (roadmap 8.2i) ─────────────────────────────────────────
+# The scene markers (edl-markers / fcpxml) come from analysed FRAMES. These come
+# from the transcript's segments, so an editor sees on the Resolve timeline who
+# said what, when. Pure: segments in, marker cues out; the route serialises.
+
+TRANSCRIPT_MARKER_NAME_MAX = 60     # same cap the scene markers already use
+TRANSCRIPT_MARKER_NOTE_MAX = 500    # full text goes in the note, within reason
+TRANSCRIPT_MARKER_MIN_SPAN_S = 1.5  # a marker shorter than this absorbs the next
+TRANSCRIPT_MARKER_MAX_GAP_S = 1.0   # ...unless there is a pause longer than this
+
+
+def _marker_text(text) -> str:
+    """One line, no control characters (CR/LF would start a new EDL line, and
+    C0 controls are not legal in XML 1.0 at all)."""
+    if not text:
+        return ""
+    one_line = " ".join(str(text).split())
+    return "".join(c for c in one_line if ord(c) >= 0x20 and ord(c) != 0x7F)
+
+
+def _join_marker_text(a: str, b: str) -> str:
+    # Latin words need a space between them; CJK runs do not.
+    if a and b and a[-1].isascii() and a[-1].isalnum() and b[0].isascii() and b[0].isalnum():
+        return a + " " + b
+    return a + b
+
+
+def truncate_marker_name(text: str, limit: int = TRANSCRIPT_MARKER_NAME_MAX,
+                         ellipsis: str = "…") -> str:
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - len(ellipsis))] + ellipsis
+
+
+def transcript_marker_cues(segments, min_span: float = TRANSCRIPT_MARKER_MIN_SPAN_S,
+                           max_gap: float = TRANSCRIPT_MARKER_MAX_GAP_S,
+                           note_max: int = TRANSCRIPT_MARKER_NOTE_MAX) -> list:
+    """Transcript segments → [{start, end, text}] marker cues.
+
+    One cue per segment, except that a cue shorter than ``min_span`` swallows the
+    following segment when the pause between them is at most ``max_gap`` and the
+    joined text still fits ``note_max`` — Whisper emits sub-second fragments
+    ("嗯", "對") that would otherwise stack unreadable markers frame-on-frame.
+    Segments with no text are dropped. Times are taken as given (the caller has
+    already trimmed/rebased them); ``end`` never precedes ``start``.
+    """
+    cues = []
+    cur = None
+    ordered = sorted(
+        (s for s in (segments or []) if isinstance(s, dict)),
+        key=lambda s: float(s.get("start") or 0),
+    )
+    for seg in ordered:
+        text = _marker_text(seg.get("text"))
+        if not text:
+            continue
+        start = float(seg.get("start") or 0)
+        end = max(start, float(seg.get("end") or start))
+        if (cur is not None
+                and cur["end"] - cur["start"] < min_span
+                and start - cur["end"] <= max_gap
+                and len(cur["text"]) + len(text) + 1 <= note_max):
+            cur["end"] = max(cur["end"], end)
+            cur["text"] = _join_marker_text(cur["text"], text)
+            continue
+        cur = {"start": start, "end": end, "text": text[:note_max]}
+        cues.append(cur)
+    return cues

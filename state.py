@@ -82,6 +82,12 @@ retranscribe.reset_progress(
 # mid-build playback streamed truncated proxies.
 proxy_build = SingleFlight("proxy_build")
 
+# Editing proxies (editor_proxy.py): ProRes written beside the source. Its own slot,
+# not proxy_build's — the two outputs are independent, and a long ProRes batch must
+# not make the browser-proxy button answer "already running".
+editor_proxy_build = SingleFlight("editor_proxy_build")
+editor_proxy_build.reset_progress(running=False, total=0, done=0, created=0, exists=0, failed=0, current=None, results=[])
+
 # First-run: /api/sample/seed loads the bundled CC-BY sample clips (single-flight +
 # progress poll). Seed the poll shape so GET /api/sample/seed/status returns the
 # full dict even before the first run.
@@ -104,6 +110,13 @@ def _rebuild_embeddings():
     except Exception as e:
         print(f"[embed] rebuild failed: {e}")
     finally:
+        # embed.py just rewrote the vector store from a SEPARATE OS process, so
+        # this process's cached chroma client is now serving a stale HNSW index
+        # (#408). get_collection() would catch it on the next call via the
+        # mtime check, but dropping it here closes the window immediately and
+        # covers the case where the rebuild leaves mtime unchanged.
+        import vectordb as _vectordb
+        _vectordb.clear_client_cache()
         embed_rebuild.release()  # audit M8: always free the single-flight slot
 
 # ── Ingest single-flight guard ────────────────────────────────────────────────
