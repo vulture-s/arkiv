@@ -50,7 +50,8 @@ def _allowed_export_roots() -> list:
         (home / "Desktop").resolve(),
         (home / "Documents").resolve(),
         (home / "Downloads").resolve(),
-        (home / "Movies").resolve(),
+        (home / "Movies").resolve(),   # macOS name
+        (home / "Videos").resolve(),   # Windows / Linux name for the same folder
         # Cross-platform tmp + project root for tests / scripted exports
         Path("/tmp").resolve(),
         Path(os.environ.get("TMPDIR", "/tmp")).resolve(),
@@ -90,7 +91,7 @@ def _assert_export_dest_safe(dest: Path) -> None:
     # boundary. Return stable labels instead.
     raise HTTPException(
         403,
-        "匯出路徑必須在批准的目錄下（Desktop / Documents / Downloads / Movies / temp，"
+        "匯出路徑必須在批准的目錄下（Desktop / Documents / Downloads / Movies / Videos / temp，"
         "或 ARKIV_EXPORT_ROOTS 指定的目錄）",
     )
 
@@ -212,27 +213,159 @@ def _assert_offload_dst_safe(dst: str) -> None:
 
 # ── ingest path allowlist (filesystem-inventory-leak boundary) ───────────────
 
+# Windows GetDriveTypeW() return value for a mapped network drive.
+_DRIVE_REMOTE = 4
+_IS_WINDOWS = os.name == "nt"
+
+
+def _win_kernel32():
+    """kernel32 via ctypes, or None off Windows. A function (not a module-level
+    handle) so tests can substitute a fake without importing ctypes.windll on a
+    POSIX host, where it does not exist."""
+    if not _IS_WINDOWS:
+        return None
+    import ctypes
+    return ctypes.windll.kernel32
+
+
+def _windows_network_drives() -> list:
+    """Drive letters ("Z:") of the currently mapped network drives on Windows —
+    the Windows counterpart of a NAS share mounted under /Volumes on a Mac.
+
+    GetLogicalDrives() + GetDriveTypeW() rather than os.listdrives(): the latter
+    only exists from Python 3.12 and arkiv still supports 3.9. Only DRIVE_REMOTE
+    counts; a fixed disk (C:), a USB stick or a CD drive is not a network drive and
+    stays subject to the normal allowlist. Any failure answers [] — fewer roots,
+    never more."""
+    k32 = _win_kernel32()
+    if k32 is None:
+        return []
+    out = []
+    try:
+        mask = int(k32.GetLogicalDrives())
+        for i in range(26):
+            if mask & (1 << i):
+                letter = chr(ord("A") + i)
+                if int(k32.GetDriveTypeW("{0}:\\".format(letter))) == _DRIVE_REMOTE:
+                    out.append(letter + ":")
+    except Exception:
+        return []
+    return out
+
+
+def _drive_root(drive: str):
+    """`Z:` → its resolved root. On Windows resolve() may hand back the UNC form
+    (`\\\\nas\\home\\`) for a mapped drive; _is_bare_local_root accepts both."""
+    return Path(drive + "\\").resolve()
+
+
+def _is_bare_local_root(path, remote_drives=()) -> bool:
+    r"""True when `path` is a filesystem root that would make the J1 bound a no-op.
+
+    The old guard was simply `str(r) == r.anchor`, which also threw away the two
+    roots a Windows NAS user actually needs: a mapped network drive is used at its
+    root (`Z:\`), and a UNC share root (`\\nas\home\`) is an anchor too. Neither
+    exposes THIS machine's filesystem — they are the same thing `/Volumes/home`
+    is on a Mac — so they are allowed. Still refused:
+      * `/`, `C:\` and any other local drive root (the original J1 case);
+      * `\\host\C$\` — an admin share addresses a whole drive, local or not;
+      * `\\?\…` / `\\.\…` device-namespace roots.
+    `remote_drives` is the list from _windows_network_drives() ("Z:")."""
+    s = str(path)
+    if s != path.anchor:
+        return False                       # not a root at all
+    drive = getattr(path, "drive", "") or ""
+    if drive.startswith(("\\\\?\\", "\\\\.\\", "//?/", "//./")):
+        return True
+    if drive.startswith(("\\\\", "//")):            # UNC share root
+        share = drive.replace("/", "\\").rstrip("\\").split("\\")[-1]
+        return len(share) == 2 and share[0].isalpha() and share[1] == "$"
+    if len(drive) == 2 and drive[1] == ":":
+        return drive.upper() not in {d.upper() for d in remote_drives}
+    return True
+
+
+def _split_extra_roots(raw) -> list:
+    """`ingest.extra_roots` is one string: entries separated by ';' or newlines.
+    ';' and not ':' or os.pathsep, because ':' is inside every Windows drive path
+    and the same stored value must parse on whichever OS reads it."""
+    out = []
+    for chunk in str(raw or "").replace("\r", "\n").replace(";", "\n").split("\n"):
+        chunk = chunk.strip().strip('"').strip()
+        if chunk and chunk not in out:
+            out.append(chunk)
+    return out
+
+
+def _extra_root_problem(entry: str) -> str:
+    """'' if `entry` is acceptable as an extra ingest root, else why not (zh, for
+    the settings 422). Shared by the PUT validation and the read side, so a value
+    that got into the DB some other way is still filtered at use."""
+    p = Path(entry).expanduser()
+    if not p.is_absolute():
+        return "不是完整路徑（要從磁碟機或 \\\\伺服器\\分享 開頭）：{0}".format(entry)
+    if _is_bare_local_root(p, _windows_network_drives()):
+        return "不能把整顆本機磁碟加入允許清單：{0}".format(entry)
+    return ""
+
+
+def _extra_ingest_roots() -> list:
+    r"""Roots from the per-library setting `ingest.extra_roots` (admin-only to
+    write: PUT /api/settings requires the `admin` scope). This is the path for a
+    UNC folder — `\\nas\home\Photos` has no drive letter, so the network-drive
+    sweep cannot find it. A settings/DB failure answers [] (fail closed)."""
+    try:
+        import settings as settings_store
+        raw = settings_store.ingest_extra_roots()
+    except Exception:
+        return []
+    roots = []
+    for entry in _split_extra_roots(raw):
+        if _extra_root_problem(entry):
+            continue
+        p = Path(entry).expanduser()
+        try:
+            roots.append(p.resolve())
+        except OSError:
+            # Windows realpath() raises on some UNC failures it does not treat as
+            # "missing" — measured on real Windows: WinError 1326 (bad
+            # credentials) for \\nas\home. Keep the literal absolute form; it is
+            # what the target will be compared in when it resolves the same way.
+            roots.append(Path(os.path.abspath(str(p))))
+        except ValueError:
+            continue
+    return roots
+
+
 def _allowed_ingest_roots() -> list:
     """Approved roots for ingest scan / ingest endpoints.
 
     Default: PROJECT_ROOT (where arkiv 's own DB lives) + standard user media
-    locations. Override with ARKIV_INGEST_ROOTS env (colon-separated).
+    locations (Movies on macOS, Videos on Windows/Linux) + network storage the OS
+    has mounted: /Volumes/* on a Mac, mapped network drives (Z:) on Windows.
+    ARKIV_INGEST_ROOTS env (os.pathsep-separated) REPLACES those defaults — the
+    Docker deploy relies on that (tests/test_compose_deploy.py). The per-library
+    setting `ingest.extra_roots` is ADDED on top of either.
 
     Codex Round-2 audit (J1): without bounds, /api/ingest/scan walked any path
     a Tailscale collaborator could supply, returning size + abs path of every
-    media file — full filesystem inventory leak.
+    media file — full filesystem inventory leak. That is why a local disk root
+    (`/`, `C:\\`) is never allowed through the defaults or the setting.
     """
+    extra = _extra_ingest_roots()
     custom = os.environ.get("ARKIV_INGEST_ROOTS", "").strip()
     if custom:
         # os.pathsep, not ':' — Windows uses ';' AND ':' appears in drive letters
         # (C:\...), so splitting on ':' shredded every Windows path.
-        return [Path(p).expanduser().resolve() for p in custom.split(os.pathsep) if p.strip()]
+        roots = [Path(p).expanduser().resolve() for p in custom.split(os.pathsep) if p.strip()]
+        return roots + [r for r in extra if r not in roots]
     home = Path.home()
     roots = [
         config.PROJECT_ROOT.resolve() if config.PROJECT_ROOT else None,
         (home / "Desktop").resolve(),
         (home / "Documents").resolve(),
-        (home / "Movies").resolve(),
+        (home / "Movies").resolve(),    # macOS
+        (home / "Videos").resolve(),    # Windows / Linux
         (home / "Pictures").resolve(),
     ]
     # /Volumes/* (Mac SMB mounts of NAS shares) — allow each top-level mount
@@ -249,8 +382,39 @@ def _allowed_ingest_roots() -> list:
                         roots.append(resolved)
         except OSError:
             pass
-    # Final guard: never allow a bare filesystem/drive root through (defeats J1).
-    return [r for r in roots if r is not None and str(r) != r.anchor]
+    # Windows mapped network drives (Z:) — the /Volumes equivalent. Added at their
+    # root, which is an anchor; _is_bare_local_root lets a DRIVE_REMOTE root (and
+    # the UNC share root resolve() may turn it into) through, never C:\.
+    remote = _windows_network_drives()
+    for drive in remote:
+        try:
+            roots.append(_drive_root(drive))
+        except (OSError, ValueError):
+            continue
+    roots.extend(extra)
+    # Final guard: never allow a bare LOCAL filesystem/drive root through (J1).
+    out = []
+    for r in roots:
+        if r is None or _is_bare_local_root(r, remote) or r in out:
+            continue
+        out.append(r)
+    return out
+
+
+def ingest_forbidden_message(target) -> str:
+    """The 403 body for a path outside the allowlist — written for the person who
+    picked a NAS folder in the app, not for an operator: what happened, then the
+    two things they can actually do. Deliberately does not list the resolved
+    allowed roots (that leaks the home layout to anyone probing the boundary — the
+    same reasoning as the export 403); the path echoed is the caller's own."""
+    return (
+        "這個資料夾不在 arkiv 允許匯入的位置：{0}\n"
+        "如果是 NAS／網路資料夾：在 Windows 上先把它對應成網路磁碟機（例如 Z:），"
+        "或到 設定 → 匯入 → 額外允許的資料夾 加入這個路徑"
+        "（Mac 上先在 Finder 連上伺服器，掛在 /Volumes 底下就能直接匯入）。\n"
+        "預設允許：這個庫的資料夾、Desktop、Documents、Movies／Videos、Pictures、已連上的網路磁碟。"
+        "進階：ARKIV_INGEST_ROOTS 環境變數可整份取代預設清單。"
+    ).format(target)
 
 
 def _assert_ingest_path_safe(target: Path) -> None:
@@ -262,10 +426,7 @@ def _assert_ingest_path_safe(target: Path) -> None:
             return
         except ValueError:
             continue
-    raise HTTPException(
-        403,
-        f"ingest 路徑必須在批准的目錄底下：{[str(r) for r in roots]} (override via ARKIV_INGEST_ROOTS env)",
-    )
+    raise HTTPException(403, ingest_forbidden_message(target))
 
 
 # ── same-site (CSRF) guard ───────────────────────────────────────────────────

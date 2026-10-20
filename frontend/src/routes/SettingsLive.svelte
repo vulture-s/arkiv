@@ -24,6 +24,7 @@
   let section = 'general'
   const nav = [
     ['general', 'General'],
+    ['ingest', 'Ingest · 匯入'],
     ['transcription', 'Transcription'],
     ['vision', 'Vision tagging'],
     ['export', 'Export defaults'],
@@ -50,6 +51,8 @@
   let settingsBusy = false
   let settingsMsg = ''
   let visModel = '', visNumCtx = 16384, expDir = '', subMaxCjk = 14  // local edit buffers
+  // ingest.extra_roots — stored as one ';'-separated string, edited one per line.
+  let extraRoots = ''
   function settingMeta(key) { return settingsList.find((s) => s.key === key) || null }
   async function loadSettings() {
     try { settingsList = (await api.getSettings()).settings || [] } catch { settingsList = [] }
@@ -57,6 +60,8 @@
     const vc = settingMeta('vision.num_ctx'); if (vc) visNumCtx = vc.value
     const ed = settingMeta('export.default_dir'); if (ed) expDir = ed.value
     const sm = settingMeta('export.subtitle_max_cjk'); if (sm) subMaxCjk = sm.value
+    const er = settingMeta('ingest.extra_roots')
+    if (er) extraRoots = String(er.value || '').split(/[;\n]/).map((x) => x.trim()).filter(Boolean).join('\n')
   }
   async function saveSetting(values) {
     settingsBusy = true; settingsMsg = ''
@@ -451,6 +456,30 @@
               {#if retr}
                 <Mono dim style="font-size:11px;">{retr.done}/{retr.total} 完成{retr.failed ? ` · ${retr.failed} 失敗` : ''}{retr.running ? '…' : ' · 完成'}</Mono>
               {/if}
+            </div>
+          </section>
+        {:else if section === 'ingest'}
+          <section>
+            <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">INGEST · ALLOWED FOLDERS</Eyebrow>
+              <div class="ak-display fstitle">額外允許的資料夾</div>
+              <div class="fsdesc">arkiv 預設只讀這個庫的資料夾、Desktop、Documents、Movies／Videos、Pictures，以及已連上的網路磁碟（Mac 的 /Volumes、Windows 對應的網路磁碟機如 Z:）。NAS 上的資料夾如果是 <code>\\伺服器\分享\…</code> 這種網路路徑，加在這裡就能匯入。<strong>真實生效</strong>：匯入前的路徑檢查會讀這裡（整顆本機磁碟如 C:\ 不能加）。</div>
+            </div>
+            <div class="frows">
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">額外允許的資料夾 · 一行一個</Mono>
+                <div class="setctl">
+                  <textarea class="ak-input" rows="4" bind:value={extraRoots} spellcheck="false"
+                            placeholder={'\\\\100.64.154.6\\home\\Photos\nD:\\Footage'}></textarea>
+                  {#if settingMeta('ingest.extra_roots')}<span class="srctag">{settingMeta('ingest.extra_roots').source}</span>{/if}
+                </div>
+              </div>
+              <div class="frow"><span></span>
+                <div class="setctl">
+                  <button class="ak-btn" on:click={() => saveSetting({ 'ingest.extra_roots': extraRoots.split('\n').map((x) => x.trim()).filter(Boolean).join('; ') })} disabled={settingsBusy}>儲存</button>
+                  <button class="ak-btn" on:click={() => resetSettingKey('ingest.extra_roots')} disabled={settingsBusy}>重設</button>
+                  {#if settingsMsg}<span class="setmsg">{settingsMsg}</span>{/if}
+                </div>
+              </div>
             </div>
           </section>
         {:else if section === 'transcription'}

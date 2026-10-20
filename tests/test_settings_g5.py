@@ -1,6 +1,7 @@
 """Phase 9.7 G5② — persisted settings overrides (module + API)."""
 import importlib
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -299,6 +300,10 @@ def _accessors(settings):
         "ingest.recursive": (False, settings.ingest_recursive),
         "ingest.source_presets": ("CARD|/Volumes/CARD/DCIM", settings.ingest_source_presets),
         "ingest.proxies": ("never", settings.ingest_proxies),
+        # tempdir rather than "/tmp/…": the value is validated as an absolute
+        # path, and "/tmp" is not absolute on Windows (no drive).
+        "ingest.extra_roots": (str(Path(tempfile.gettempdir()) / "arkiv-in"),
+                               settings.ingest_extra_roots),
     }
 
 

@@ -129,7 +129,11 @@ def test_ingest_roots_default_never_include_filesystem_root(monkeypatch):
     monkeypatch.delenv("ARKIV_INGEST_ROOTS", raising=False)
     roots = webguard._allowed_ingest_roots()
     assert roots, "default roots should be non-empty"
-    assert all(str(r) != r.anchor for r in roots)
+    # A mapped network drive (Z:\) / UNC share root is an anchor too and is
+    # allowed on purpose (the /Volumes/<share> equivalent); a LOCAL root is not.
+    remote = webguard._windows_network_drives()
+    assert not any(webguard._is_bare_local_root(r, remote) for r in roots)
+    assert all(str(r) != r.anchor for r in roots if not remote and not str(r).startswith("\\\\"))
 
 
 def test_same_site_rejects_cross_site_and_passes_non_browser():
