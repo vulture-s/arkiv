@@ -12,7 +12,7 @@ fastapi>=0.141.1; python_version >= "3.10"
 fastapi>=0.128.8; python_version < "3.10"
 uvicorn>=0.52.1; python_version >= "3.10"
 uvicorn>=0.39.0; python_version < "3.10"
-pydantic>=2.0,<3
+pydantic>=2.13.5,<3
 chromadb>=1.5.9,<2
 # upload endpoint (routers/ingest.py: UploadFile = File(...)) needs this at
 # import/collection time — a fresh install without it dies on import even
