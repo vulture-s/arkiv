@@ -8,7 +8,7 @@
 # unsatisfiable on 3.9 from #234 on — hidden because CI's 3.9 leg installed a
 # hand-copied list instead of this file. Split by marker: 3.10+ keeps the
 # bumped floor, 3.9 gets the newest release that still supports it.
-fastapi>=0.140.6; python_version >= "3.10"
+fastapi>=0.141.1; python_version >= "3.10"
 fastapi>=0.128.8; python_version < "3.10"
 uvicorn>=0.52.1; python_version >= "3.10"
 uvicorn>=0.39.0; python_version < "3.10"
