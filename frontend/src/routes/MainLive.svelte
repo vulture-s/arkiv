@@ -5,7 +5,10 @@
      thumbnail_path(abs fs path → /thumbnails/<basename>), rating(null), tags[]. -->
 <script>
   import { onMount } from 'svelte'
+  import { createExportGuard, downloadedMsg } from '../lib/exportFeedback.js'
   import * as api from '../lib/api.js'
+  import { describeDelete } from '../lib/deleteOutcome.js'
+  import { describeLearn } from '../lib/transcriptCorrect.js'
   import TopBar from '../lib/TopBar.svelte'
   import PoolSidebar from '../lib/PoolSidebar.svelte'
   import MediaCard from '../lib/MediaCard.svelte'
@@ -21,6 +24,7 @@
   import { pushToast } from '../lib/toast.js'
   import { createViewGen } from '../lib/viewGen.js'
   import { shotYearRows, mediaParams } from '../lib/shotYear.js'
+  import { parseStartParam } from '../lib/matchTime.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
@@ -149,7 +153,9 @@
     const refs = picked.map((id) => ({
       project_name: projectRegName,
       media_id: String(id),
-      filename: (byId.get(id) || {}).name || `#${id}`,
+      // 名字拿不到就送空字串，不要送 `#id`：它永遠不會等於真檔名，
+      // 會讓後端的 id-reuse 比對每一支都誤判。顯示端本來就有 #id fallback。
+      filename: (byId.get(id) || {}).name || '',
     }))
     let binId = targetBinId
     try {
@@ -165,24 +171,33 @@
     } catch (e) { pushToast('加入精選集失敗: ' + e.message, 'error') }
   }
   const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
-  async function exportTimeline(fmt) {
+  // One export in flight at a time; exportBusy = the running key (e.g.
+  // 'timeline:edl') so the clicked button shows … and the rest disable (B11).
+  let exportBusy = null
+  const exportGuard = createExportGuard((b) => (exportBusy = b))
+  function exportTimeline(fmt) {
     if (!picked.length) return
-    try {
-      await api.downloadFile(api.exportTimelinePath(picked, fmt), `arkiv-timeline.${fmt}`)
-      pushToast(`時間軸已匯出 · ${picked.length} 支 · ${fmt.toUpperCase()}`)
-    } catch (e) {
-      pushToast(`匯出失敗: ${e.message}`, 'error')
-    }
+    const n = picked.length
+    return exportGuard.run(`timeline:${fmt}`, async () => {
+      try {
+        const r = await api.downloadFile(api.exportTimelinePath(picked, fmt), `arkiv-timeline.${fmt}`)
+        pushToast(downloadedMsg(r.filename, r.size, `時間軸 ${n} 支`))
+      } catch (e) {
+        pushToast(`時間軸 ${fmt.toUpperCase()} 匯出失敗: ${e.message}`, 'error')
+      }
+    })
   }
   // DaVinci Resolve metadata CSV (auth-safe download). ids=null → whole library;
   // ids=picked → just the selected clips (camera-report / DIT handoff deliverable).
-  async function exportMetadataCsv(ids = null) {
-    try {
-      await api.downloadFile(api.metadataCsvPath(ids), 'arkiv_davinci_metadata.csv')
-      pushToast(ids ? `中繼資料 CSV 已匯出 · ${ids.length} 支` : '中繼資料 CSV 已匯出 · 全庫')
-    } catch (e) {
-      pushToast(`CSV 匯出失敗: ${e.message}`, 'error')
-    }
+  function exportMetadataCsv(ids = null) {
+    return exportGuard.run(ids ? 'csv:picked' : 'csv:all', async () => {
+      try {
+        const r = await api.downloadFile(api.metadataCsvPath(ids), 'arkiv_davinci_metadata.csv')
+        pushToast(downloadedMsg(r.filename, r.size, ids ? `中繼資料 ${ids.length} 支` : '中繼資料 · 全庫'))
+      } catch (e) {
+        pushToast(`CSV 匯出失敗: ${e.message}`, 'error')
+      }
+    })
   }
   // ---- media delete (reversible: original moved to trash, metadata removed) ----
   // confirmDel holds the pending delete so the ConfirmDialog can show context and
@@ -202,21 +217,19 @@
   async function confirmDelete() {
     if (!confirmDel) return
     const ids = confirmDel.ids
-    const set = new Set(ids)
     delBusy = true
     try {
-      if (confirmDel.kind === 'single') {
-        const r = await api.deleteMedia(ids[0], true)
-        if (r && r.external) pushToast(`外部檔案僅移除資料：${r.message || ''}`)
-        else pushToast(`已移至回收桶 · ${r && r.filename ? r.filename : ids[0]}`)
-      } else {
-        const r = await api.bulkDeleteMedia(ids, true)
-        const n = (r && r.deleted && r.deleted.length) || 0
-        const skipped = (r && r.skipped && r.skipped.length) || 0
-        pushToast(`已刪除 ${n} 支` + (skipped ? ` · 跳過 ${skipped} 支` : ''))
-      }
-      // remove from the grid source so the card/list row disappears immediately
-      items = items.filter((m) => !set.has(m.id))
+      // describeDelete reads what the backend actually returns (file_deleted /
+      // warning / not_trashed) — a metadata-only delete must not be announced as
+      // 「已移至回收桶」 (audit 2026-10-09 K1).
+      const r = confirmDel.kind === 'single'
+        ? await api.deleteMedia(ids[0], true)
+        : await api.bulkDeleteMedia(ids, true)
+      const out = describeDelete(confirmDel.kind, r, confirmDel.label, ids)
+      pushToast(out.msg, out.kind)
+      // remove only the rows that are actually gone; a hard per-item error keeps its card
+      const gone = new Set(out.removeIds)
+      items = items.filter((m) => !gone.has(m.id))
       if (confirmDel.kind === 'single' && selectedId === ids[0]) selectedId = null
       clearPicks()
       confirmDel = null
@@ -229,37 +242,45 @@
   }
 
   // single-clip export from the inspector (auth-safe download).
-  async function exportClip(id, fmt, name, trim = null) {
+  function exportClip(id, fmt, name, trim = null) {
     const stem = (name || `media_${id}`).replace(/\.[^.]+$/, '')
     // trim = {in_s, out_s?} from the inspector IN/OUT points → backend trims the export
+    // trim.markers = 'transcript' → FCPXML/EDL markers from the transcript (8.2i)
     let path = api.exportPath(id, fmt)
-    if (trim && (trim.in_s != null || trim.out_s != null)) {
-      const q = []
-      if (trim.in_s != null) q.push(`in_s=${trim.in_s}`)
-      if (trim.out_s != null) q.push(`out_s=${trim.out_s}`)
-      path += `?${q.join('&')}`
-    }
-    try {
-      await api.downloadFile(path, `${stem}.${fmt}`)
-      pushToast(`已匯出 · ${stem}.${fmt}`)
-    } catch (e) {
-      pushToast(`匯出失敗: ${e.message}`, 'error')
-    }
+    const q = []
+    if (trim && trim.in_s != null) q.push(`in_s=${trim.in_s}`)
+    if (trim && trim.out_s != null) q.push(`out_s=${trim.out_s}`)
+    if (trim && trim.markers) q.push(`markers=${encodeURIComponent(trim.markers)}`)
+    if (q.length) path += `?${q.join('&')}`
+    const transcriptMarkers = !!(trim && trim.markers === 'transcript')
+    const file = `${stem}${transcriptMarkers ? '.transcript' : ''}.${fmt}`
+    return exportGuard.run(`clip:${fmt}${transcriptMarkers ? '.transcript' : ''}`, async () => {
+      try {
+        const r = await api.downloadFile(path, file)
+        pushToast(downloadedMsg(r.filename, r.size))
+      } catch (e) {
+        pushToast(`${fmt.toUpperCase()} 匯出失敗: ${e.message}`, 'error')
+      }
+    })
   }
   const _stem = (id, name) => (name || `media_${id}`).replace(/\.[^.]+$/, '')
-  async function exportChapters(id, name, format = 'youtube') {
-    try {
-      const r = await api.getChapters(id, format)
-      api.downloadText(r.chapters || '', `${_stem(id, name)}.chapters.txt`)
-      pushToast(`章節已匯出 · ${_stem(id, name)}.chapters.txt`)
-    } catch (e) { pushToast(`章節匯出失敗: ${e.message}`, 'error') }
+  function exportChapters(id, name, format = 'youtube') {
+    return exportGuard.run('chapters', async () => {
+      try {
+        const r = await api.getChapters(id, format)
+        const d = api.downloadText(r.chapters || '', `${_stem(id, name)}.chapters.txt`)
+        pushToast(downloadedMsg(d.filename, d.size, '章節'))
+      } catch (e) { pushToast(`章節匯出失敗: ${e.message}`, 'error') }
+    })
   }
-  async function exportRemotion(id, name) {
-    try {
-      const r = await api.getRemotionProps(id)
-      api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
-      pushToast(`Remotion props 已匯出 · ${_stem(id, name)}.remotion.json`)
-    } catch (e) { pushToast(`Remotion 匯出失敗: ${e.message}`, 'error') }
+  function exportRemotion(id, name, trim = null) {
+    return exportGuard.run('remotion', async () => {
+      try {
+        const r = await api.getRemotionProps(id, undefined, trim)
+        const d = api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
+        pushToast(downloadedMsg(d.filename, d.size, 'Remotion props'))
+      } catch (e) { pushToast(`Remotion 匯出失敗: ${e.message}`, 'error') }
+    })
   }
   async function revealFile(path, mediaId = null) {
     try { await api.openFile(path, true, undefined, mediaId) } catch (e) { pushToast(`在 Finder 顯示失敗: ${e.message}`, 'error') }
@@ -680,9 +701,14 @@
       })
     }
   }
+  // #/main-live?sel=<id>&t=<sec>: a search hit's matched second. Handed to the
+  // Inspector, which seeks once the player has metadata.
+  let startAt = null
   async function selectFromParam() {
     const sel = readSelParam()
     if (sel == null) return
+    const t = parseStartParam(readHashParam('t'))
+    startAt = t == null ? null : { id: sel, t }
     if (items.find((m) => m.id === sel)) { selectedId = sel; return }
     // Prepending into whatever view is current: if the user moved on while the detail
     // fetch was in flight, this would splice an unrelated clip into the new grid.
@@ -701,7 +727,30 @@
       engineLangs = e?.languages || null
     } catch (e) { /* picker falls back to its built-in zh/en list */ }
   }
+  // log → Rec.709 preview profiles for the inspector picker (best-effort: an older
+  // backend without the route just hides the picker's options).
+  let colorProfiles = []
+  async function loadColorProfiles() {
+    try { colorProfiles = (await api.getColorProfiles()).profiles || [] } catch { colorProfiles = [] }
+  }
+  // The poster is rebuilt in place under the same filename, so the inspector's
+  // <img> needs a cache-bust after a profile change.
+  let thumbBust = {}
+  async function setColorProfileLive(pid) {
+    if (!selected) return
+    const id = selected.id
+    await api.setColorProfile(id, pid)
+    if (detail && detail.id === id) detail = { ...detail, color_profile: pid }
+    thumbBust = { ...thumbBust, [id]: Date.now() }
+  }
+  async function importLutLive(file) {
+    const r = await api.importLut(file)
+    await loadColorProfiles()
+    pushToast(`已匯入 LUT：${file.name}`)
+    return r.id
+  }
   onMount(async () => {
+    loadColorProfiles()
     // Deep-link from chat: #/main-live?ids=<csv>&sel=<id> filters the grid to that
     // relevant subset (not the full library) before selecting the clicked clip.
     const ids = readHashParam('ids')
@@ -795,6 +844,26 @@
     } catch (e) { pushToast(`切換主要語言失敗: ${e.message}`, 'error') }  // round-5 #43
   }
 
+  // 選字 → 校正: teach the project dictionary one correction (POST
+  // /api/corrections/learn) and, when asked, rewrite every stored transcript with
+  // it; then reload THIS clip so the inspector shows the corrected text. Throws on
+  // failure so the inspector keeps its form open with the error.
+  async function correctTranscript(from, to, apply) {
+    const id = selected && selected.id
+    let res
+    try {
+      res = await api.learnCorrection({ from, to }, apply)
+    } catch (e) {
+      pushToast(`校正失敗: ${e.message}`, 'error')
+      throw e
+    }
+    pushToast(describeLearn(res, apply), 'ok', 6000)
+    if (id != null && apply) await Promise.all([fetchDetail(id), fetchTranscripts(id)])
+  }
+  // Only the ACTIVE language is correctable: recorrect rewrites media.* (the
+  // active transcript); archived languages would silently not change.
+  $: canCorrect = !!selected && (!tdLive || !viewLang || !!(_viewedRow && _viewedRow.active))
+
   // Real audio waveform peaks (0..1) from the backend ffmpeg endpoint — fetched
   // per clip, passed to the inspector's <Waveform>. Replaces the old mock sin bars.
   let wavePeaks = null
@@ -864,7 +933,11 @@
         }))
       })()
     : null
-  $: inspThumb = selected ? selected.thumb : null
+  $: inspThumb = selected
+    ? (selected.thumb && thumbBust[selected.id]
+        ? `${selected.thumb}${selected.thumb.includes('?') ? '&' : '?'}v=${thumbBust[selected.id]}`
+        : selected.thumb)
+    : null
   // Real playback stream for the inspector player (loopback = token-free; remote
   // carries ?token). Inspector turns this into a <video>/<audio> element.
   $: inspVideoSrc = selected ? api.streamUrl(selected.id) : null
@@ -901,6 +974,53 @@
     } catch (e) {
       if (detail && detail.id === id && prev) detail = { ...detail, tags: prev }
       pushToast(`刪標籤失敗: ${e.message}`, 'error')  // round-5 #43 — was a silent revert
+    }
+  }
+
+  // A6 person annotations. Fetched per clip alongside the detail; the names list
+  // (autocomplete) is library-wide and refreshed after every successful add.
+  let identities = null
+  let identitiesId = null
+  let identityNames = []
+  async function fetchIdentities(id) {
+    identitiesId = id
+    identities = null
+    try {
+      const r = await api.getIdentities(id)
+      if (identitiesId === id) identities = r.identities || []
+    } catch (e) {
+      if (identitiesId === id) identities = null
+    }
+  }
+  async function fetchIdentityNames() {
+    try { identityNames = await api.getIdentityNames() } catch (e) { /* autocomplete is optional */ }
+  }
+  $: if (selected && selected.id !== identitiesId) fetchIdentities(selected.id)
+  $: if (selected && !identityNames.length) fetchIdentityNames()
+  async function addIdentity(name, range) {
+    if (!selected) return false
+    const id = selected.id
+    try {
+      const r = await api.addIdentity(id, { name, ...(range || {}) })
+      if (identitiesId === id) identities = r.identities
+      pushToast(`已標註：${r.identity.name}`)
+      fetchIdentityNames()
+      return true
+    } catch (e) {
+      pushToast(`標人物失敗: ${e.message}`, 'error')
+      return false
+    }
+  }
+  async function removeIdentity(identityId) {
+    if (!selected) return
+    const id = selected.id
+    try {
+      const r = await api.removeIdentity(id, identityId)
+      if (identitiesId === id) identities = r.identities
+      pushToast('已移除人物標註')
+      fetchIdentityNames()
+    } catch (e) {
+      pushToast(`移除人物失敗: ${e.message}`, 'error')
     }
   }
 
@@ -1003,6 +1123,31 @@
       const r = await api.buildProxyOne(id)
       return { ok: true, message: r.message || '已排入 proxy 生成（背景）' }
     }
+    if (action === 'editor-proxy') {
+      // ProRes into <source dir>/Proxy/ for the NLE. The POST only queues, so wait
+      // for the batch here — the button stays busy and ends on a real answer
+      // (written / already there / why it failed) instead of "queued".
+      await api.buildEditorProxies([id])
+      const deadline = Date.now() + 60 * 60 * 1000
+      let s = null
+      while (Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 1500))
+        try {
+          s = await api.editorProxyStatus()
+        } catch (_) {
+          continue
+        }
+        if (s && !s.running) break
+        if (s && s.total) reProgress = `${s.done || 0}/${s.total}`
+      }
+      reProgress = ''
+      const res = s && (s.results || []).find((x) => x.media_id === id)
+      if (!s || s.running || !res) return { ok: false, message: '仍在背景生成中，稍後再看 Proxy/ 資料夾' }
+      if (res.status === 'created') return { ok: true, message: `已寫入 ${res.path}` }
+      if (res.status === 'exists') return { ok: true, message: `Proxy/ 已有同名檔，未覆蓋：${res.path}` }
+      if (res.status === 'skipped') return { ok: false, message: '不是影片，略過' }
+      return { ok: false, message: `失敗：${res.reason || '見後端 log'}` }
+    }
     return { ok: false, message: `未知動作: ${action}` }
   }
 
@@ -1012,14 +1157,14 @@
     if (!selected) return
     const backendVal = RATING_MAP[uiRating] ?? null
     const id = selected.id
-    // preserve any existing rating_note (backend PATCH overwrites both fields →
-    // omitting note would silently delete it). Codex review P2.
-    const note = detailLive && detailLive.id === id ? detailLive.rating_note ?? null : null
+    // Rating only — no note. The backend is PATCH (omitted = untouched), and the
+    // UI has no note editor; sending `detailLive?.rating_note ?? null` wiped the
+    // stored note whenever the detail had not loaded yet (audit 2026-10-09 K1).
     // optimistic: reflect immediately in grid + inspector (which both read item.rating)
     const prev = selected.rating
     items = items.map((m) => (m.id === id ? { ...m, rating: uiRating } : m))
     try {
-      await api.setRating(id, backendVal, note)
+      await api.setRating(id, backendVal)
     } catch (e) {
       // revert on failure
       items = items.map((m) => (m.id === id ? { ...m, rating: prev } : m))
@@ -1067,8 +1212,10 @@
         <button
           class="ak-btn metacsv"
           on:click={() => exportMetadataCsv(null)}
+          disabled={!!exportBusy}
+          aria-busy={exportBusy === 'csv:all'}
           title="匯出整庫 metadata CSV（DaVinci Resolve）"
-        >CSV ↓</button>
+        >{exportBusy === 'csv:all' ? 'CSV …' : 'CSV ↓'}</button>
         <FilterRow bind:activeFilter bind:activeRating />
         <ViewToggle bind:view />
         <button class="ak-btn trash" on:click={() => (trashOpen = true)} title="回收桶（已刪除、可還原）">回收桶</button>
@@ -1080,9 +1227,13 @@
           <div class="expbtns">
             <span class="barlabel">時間軸</span>
             {#each EXPORT_FMTS as fmt}
-              <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}>{fmt.toUpperCase()}</button>
+              <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}
+                      disabled={!!exportBusy} aria-busy={exportBusy === `timeline:${fmt}`}
+              >{fmt.toUpperCase()}{exportBusy === `timeline:${fmt}` ? ' …' : ''}</button>
             {/each}
-            <button class="ak-btn expbtn" on:click={() => exportMetadataCsv(picked)} title="匯出所選 metadata CSV">CSV</button>
+            <button class="ak-btn expbtn" on:click={() => exportMetadataCsv(picked)} title="匯出所選 metadata CSV"
+                    disabled={!!exportBusy} aria-busy={exportBusy === 'csv:picked'}
+            >CSV{exportBusy === 'csv:picked' ? ' …' : ''}</button>
             <div class="barvrule"></div>
             <span class="barlabel">精選集</span>
             <select class="ak-input binsel" bind:value={targetBinId} disabled={!projectRegName}
@@ -1230,30 +1381,42 @@
         peaks={inspPeaks}
         pathLabel={inspPath}
         transcriptLines={inspTranscript}
+        {startAt}
         {particleStat}
         {transcriptLangs}
         {viewLang}
         {onViewLang}
         {onActivateLang}
+        onCorrect={canCorrect ? correctTranscript : null}
         frameDescriptions={inspFrames}
         frameScenes={inspScenes}
         tags={inspTags}
         canonicalTags={inspCanonTags}
         onAddTag={selected ? addTag : null}
         onRemoveTag={selected ? removeTag : null}
+        {identities}
+        {identityNames}
+        onAddIdentity={selected ? addIdentity : null}
+        onRemoveIdentity={selected ? removeIdentity : null}
         onReprocess={selected ? reprocess : null}
+        colorProfile={detailLive ? detailLive.color_profile : null}
+        {colorProfiles}
+        onSetColorProfile={selected && colorProfiles.length ? setColorProfileLive : null}
+        onImportLut={importLutLive}
+        getCube={api.getColorCube}
         {reProgress}
         languages={engineLangs}
         mediaLang={detailLive ? detailLive.lang : null}
         onExport={selected ? (fmt, trim) => exportClip(selected.id, fmt, selected.name, trim) : null}
         onChapters={selected ? (fmt) => exportChapters(selected.id, selected.name, fmt) : null}
-        onRemotion={selected ? () => exportRemotion(selected.id, selected.name) : null}
+        onRemotion={selected ? (trim) => exportRemotion(selected.id, selected.name, trim) : null}
+        {exportBusy}
         onReveal={inspPath ? () => revealFile(inspPath, selected && selected.id) : null}
         onDelete={selected ? askDeleteSingle : null}
         onRate={rate}
         inPoint={detailLive ? detailLive.in_point : null}
         outPoint={detailLive ? detailLive.out_point : null}
-        onInOut={selected ? (inS, outS) => saveInOut(selected.id, inS, outS) : null}
+        onInOut={selected ? (inS, outS, id) => saveInOut(id ?? selected.id, inS, outS) : null}
       />
     {/if}
   </div>
@@ -1262,7 +1425,7 @@
     open={!!confirmDel}
     title={confirmDel ? (confirmDel.kind === 'bulk' ? '刪除所選素材' : '刪除素材') : '確認'}
     message={confirmDel
-      ? `確定要將「${confirmDel.label}」移至回收桶嗎？\n原始檔會保留 30 天，可從回收桶還原。`
+      ? `確定要將「${confirmDel.label}」移至回收桶嗎？\n原始檔會保留 30 天，可從回收桶還原；\n但標籤、評分／備註、IN/OUT、手改逐字稿不會隨還原回來。`
       : ''}
     confirmLabel="移至回收桶"
     danger={true}
@@ -1344,6 +1507,10 @@
   .expbtn { font-size: 10px; padding: 5px 10px; text-decoration: none; }
   .expbtn.clear { opacity: 0.7; }
   .expbtn:disabled { opacity: 0.4; cursor: default; }
+  /* B11: other exports dim while one runs; the running one stays legible */
+  .expbtn[aria-busy='true'] { opacity: 1; cursor: progress; }
+  .metacsv:disabled { opacity: 0.4; cursor: default; }
+  .metacsv[aria-busy='true'] { opacity: 1; cursor: progress; }
   .barlabel { font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--quiet); }
   .barvrule { width: 1px; height: 16px; background: var(--rule-hi); margin: 0 4px; }
   .binsel, .binnew { font-size: 10px; padding: 4px 6px; }

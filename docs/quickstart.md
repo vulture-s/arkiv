@@ -23,7 +23,7 @@ Linux / Windows: see [install.md](install.md).
 ```bash
 git clone https://github.com/vulture-s/arkiv.git && cd arkiv
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 pip install mlx-whisper          # Apple Silicon
 # pip install faster-whisper torch  # NVIDIA GPU
 ```

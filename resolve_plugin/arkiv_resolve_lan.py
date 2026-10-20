@@ -23,6 +23,7 @@ Usage:
 """
 import json
 import os
+import shutil
 import tempfile
 import urllib.request
 import urllib.parse
@@ -90,18 +91,30 @@ def _download_media(media_id, filename):
     resolves the file server-side) and hand Resolve a local path it can import
     by reference. Returns the local path, or None on failure.
     """
-    os.makedirs(_DOWNLOAD_DIR, exist_ok=True)
-    safe_name = "{0}_{1}".format(media_id, os.path.basename(filename or "clip"))
-    dest = os.path.join(_DOWNLOAD_DIR, safe_name)
+    # Keep the ORIGINAL filename (in a per-id folder so two cards' C0001.MP4
+    # don't collide): the metadata CSV matches clips by File Name, and an
+    # "{id}_C0001.MP4" rename made every row miss (audit N1).
+    base = os.path.basename(str(filename or "clip").replace("\\", "/")) or "clip"
+    folder = os.path.join(_DOWNLOAD_DIR, str(int(media_id)))
+    os.makedirs(folder, exist_ok=True)
+    dest = os.path.join(folder, base)
+    partial = dest + ".partial"
     url = "{0}/api/stream/{1}".format(ARKIV_API, media_id)
     try:
+        # Stream to disk — resp.read() held the whole clip (tens of GB for
+        # ProRes) in Resolve's embedded Python. Write to .partial and rename so
+        # an interrupted download never leaves a truncated file at `dest`.
         with urllib.request.urlopen(_api_request(url), timeout=600) as resp:
-            data = resp.read()
-        with open(dest, "wb") as f:
-            f.write(data)
+            with open(partial, "wb") as f:
+                shutil.copyfileobj(resp, f, 1024 * 1024)
+        os.replace(partial, dest)
         print(f"[arkiv] 已下載 {filename} → {dest}")
         return dest
     except Exception as e:
+        try:
+            os.remove(partial)
+        except OSError:
+            pass
         print(f"[arkiv] 下載失敗 (id={media_id}, {filename}): {e}")
         return None
 
@@ -202,6 +215,38 @@ RATING_COLORS = {
 }
 
 
+def _norm_path(p):
+    return os.path.normcase(os.path.normpath(str(p).replace("\\", "/")))
+
+
+def _lookup_by_clip(mpi, mapping):
+    """Value in `mapping` (keyed by the imported file path) for one imported
+    MediaPoolItem. Exact source-path match first (Resolve's "File Path" clip
+    property); else a basename match only when it is UNAMBIGUOUS. Two cards'
+    C0001.MP4 must never borrow each other's rating/tags (audit N1)."""
+    if not mapping:
+        return None
+    try:
+        src = mpi.GetClipProperty("File Path")
+    except Exception:
+        src = None
+    if isinstance(src, str) and src:
+        want = _norm_path(src)
+        for path, val in mapping.items():
+            if _norm_path(path) == want:
+                return val
+    name = mpi.GetName() or ""
+    hits = [val for path, val in mapping.items()
+            if name and os.path.basename(str(path).replace("\\", "/")) == name]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _row_key(item):
+    """Results-tree key: the media id (filenames repeat across cards/days)."""
+    mid = item.get("id")
+    return str(mid) if mid is not None else "name:" + str(item.get("filename", ""))
+
+
 def _get_camera_folder(path):
     """Extract camera/source folder name from file path."""
     parts = path.replace("\\", "/").rstrip("/").split("/")
@@ -287,28 +332,27 @@ def import_to_resolve(resolve, file_paths, ratings=None, tags=None, media_ids=No
 
     if all_imported_clips:
         # Apply clip colors based on rating
+        # Matched by the clip's source FILE PATH, not a substring of its name:
+        # `clip_name in path` gave C0001.MP4 the rating of whichever C0001.MP4
+        # (or AC0001.MP4) came first in the dict (audit N1).
         if ratings:
             for mpi in all_imported_clips:
                 clip_name = mpi.GetName()
-                for path, rating in ratings.items():
-                    if clip_name and (clip_name in path or path.endswith(clip_name)):
-                        color = RATING_COLORS.get(rating)
-                        if color:
-                            mpi.SetClipColor(color)
-                            print(f"[arkiv]   {clip_name} → {color} ({rating})")
-                        break
+                rating = _lookup_by_clip(mpi, ratings)
+                color = RATING_COLORS.get(rating) if rating else None
+                if color:
+                    mpi.SetClipColor(color)
+                    print(f"[arkiv]   {clip_name} → {color} ({rating})")
         # Set tags as metadata (Keywords + Comments for Smart Bin filtering)
         if tags:
             for mpi in all_imported_clips:
                 clip_name = mpi.GetName()
-                for path, tag_list in tags.items():
-                    if clip_name and (clip_name in path or path.endswith(clip_name)):
-                        if tag_list:
-                            tag_str = ", ".join(tag_list)
-                            mpi.SetMetadata("Keywords", tag_str)
-                            mpi.SetMetadata("Comments", f"[arkiv] {tag_str}")
-                            print(f"[arkiv]   {clip_name} → Tags: {tag_str}")
-                        break
+                tag_list = _lookup_by_clip(mpi, tags)
+                if tag_list:
+                    tag_str = ", ".join(tag_list)
+                    mpi.SetMetadata("Keywords", tag_str)
+                    mpi.SetMetadata("Comments", f"[arkiv] {tag_str}")
+                    print(f"[arkiv]   {clip_name} → Tags: {tag_str}")
         print(f"[arkiv] 完成：共匯入 {total_imported} 個片段到 {len(groups)} 個 Bin")
 
         # Phase 7.6d: auto-download metadata CSV and tell the user how to import.
@@ -386,8 +430,9 @@ def add_markers_to_timeline(resolve, media_items):
         if not ti:
             # Try without extension
             stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+            # exact stem only — `startswith` matched C0001 to C00012.MP4 (audit N1)
             for k, v in clip_map.items():
-                if k.startswith(stem):
+                if (k.rsplit(".", 1)[0] if "." in k else k) == stem:
                     ti = v
                     break
         if not ti:
@@ -521,13 +566,15 @@ def create_ui(resolve):
     hdr.Text[2] = "評級"
     hdr.Text[3] = "語言"
     hdr.Text[4] = "得分"
+    hdr.Text[5] = "id"
     tree.SetHeaderItem(hdr)
-    tree.ColumnCount = 5
+    tree.ColumnCount = 6
     tree.ColumnWidth[0] = 280
     tree.ColumnWidth[1] = 70
     tree.ColumnWidth[2] = 60
     tree.ColumnWidth[3] = 60
     tree.ColumnWidth[4] = 60
+    tree.ColumnWidth[5] = 0  # hidden: media id, the row key (filenames repeat)
 
     # Store results for import
     results_map = {}
@@ -545,8 +592,10 @@ def create_ui(resolve):
             row.Text[2] = (item.get("rating") or "—").upper()
             row.Text[3] = item.get("lang") or "?"
             row.Text[4] = f"{round(item.get('score', 0) * 100)}%" if item.get("score") else ""
+            key = _row_key(item)
+            row.Text[5] = key
             tree.AddTopLevelItem(row)
-            results_map[fname] = item
+            results_map[key] = item
         win.Find("StatusLabel").Text = f"找到 {len(items)} 個結果"
 
     def on_search(ev):
@@ -621,8 +670,7 @@ def create_ui(resolve):
             media_ids = []
             for sel_id in selected:
                 row = selected[sel_id]
-                fname = row.Text[0]
-                item_data = results_map.get(fname)
+                item_data = results_map.get(row.Text[5])
                 if not item_data or not item_data.get("id"):
                     continue
                 # LAN: download the file locally, then import the local copy
@@ -667,8 +715,7 @@ def create_ui(resolve):
             items = []
             for sel_id in selected:
                 row = selected[sel_id]
-                fname = row.Text[0]
-                item_data = results_map.get(fname)
+                item_data = results_map.get(row.Text[5])
                 if item_data:
                     items.append(item_data)
             if not items:

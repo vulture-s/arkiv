@@ -77,6 +77,8 @@ venv/
 .venv-pack/
 *.db-journal
 pages/
+# …but not the Astro site's routes, which the unanchored rule above would swallow.
+!site/src/pages/
 src-tauri/target/
 # Assembled backend bundle (~1.3 GB portable python + site-packages + src).
 # Rebuilt by src-tauri/assemble-backend.sh before `cargo tauri build`. The empty
@@ -97,3 +99,10 @@ frontend/vite.config.dev8502.js
 
 # Settings overrides per-install — never commit local state.
 settings.local.json
+
+# impeccable (design skill): keep the surface briefs, DESIGN sidecar and config;
+# screenshots, decision-round payloads and question state are local scratch.
+.impeccable/*
+!.impeccable/surfaces/
+!.impeccable/design.json
+!.impeccable/config.json

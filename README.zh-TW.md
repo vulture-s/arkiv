@@ -23,7 +23,7 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 - **AI 剪輯工具只看得懂「有人在講話」的素材** → arkiv 對每支 clip 做視覺分析 + 轉錄，大量 B-roll、無語音空景一樣可搜可管。
 - **素材庫要能餵給下游任何剪法** → 手動剪、自動剪、腳本剪都接得上：Resolve 原生 plugin、EDL / FCPXML 匯出、API / MCP 介面。
 
-> **授權一句話**：arkiv **任何用途免費，包含商業工作**（source-available），做出來的東西 **100% 是你的**。唯一不准的是把 arkiv 變成跟它競爭的產品。
+> **授權一句話**：arkiv **任何用途免費，包含商業工作**（source-available），做出來的東西 **100% 是你的**。不准的是：把 arkiv 變成跟它競爭的產品，以及修改它來繞過免費額度。
 >
 > **實戰驗證**：已在 **1,506 支真實產品拍攝素材**（其中 1,161 支無對白 B-roll）、單張 RTX 4070 上完整索引跑通。
 
@@ -66,6 +66,8 @@ arkiv 介於素材硬碟與 DaVinci Resolve 之間：自動 ingest footage、附
 ```
 
 → **完整 pipeline（4 階段、儲存路徑、exit code、maintenance modes）**：[docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md) · 架構總覽 [ARCHITECTURE.md](ARCHITECTURE.md)
+
+→ **給腳本／cron 看的 exit code**：`0` 掃到的檔全部在庫 · `1` 部分失敗 · `2` 全部失敗 · `4` 儲存路徑 preflight 失敗 · **`7` 對帳不平** —— 有檔案掃到了卻沒落到任何分類，或計數說進庫了但 DB 沒有那一列（執行輸出的 `Reconcile:` 那行會列出檔名）。非 0 一律代表「沒有乾淨做完」；完整對照見 [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)。
 
 </details>
 
@@ -271,6 +273,8 @@ python embed.py --search "戶外訪談"
 # 匯入選項
 python ingest.py --dir ./media --limit 10        # 只處理前 10 個檔案
 python ingest.py --dir ./media --skip-vision     # 跳過 AI 幀描述
+python ingest.py --dir ./media --skip-proxies    # 不建瀏覽器 proxy（播放器能直接播原檔，如 macOS App）；預設用 ARKIV_PROXIES=never
+python ingest.py --regenerate-proxies            # 重建 proxy 並補建缺的（--skip-proxies 進庫的也適用）
 python ingest.py --dir ./media --refresh         # 重新處理已索引的檔案（會重抽幀）
 python ingest.py --dir ./media --skip-failed     # 容忍零星幀 vision 失敗（無人值守過夜跑）
 python ingest.py --dir ./media --max-failures 20 # 累計 20 個幀失敗才停 vision
@@ -286,7 +290,7 @@ python offload.py --watch --dst /Volumes/Backup # 插卡自動轉存
 
 # 自動監看資料夾（匯入）
 python watch.py /path/to/footage
-python watch.py ~/Movies/rushes --interval 10
+python watch.py ~/Movies/rushes --poll-interval 10
 
 # API 搜尋（需要 server 運行中）
 # Linux / macOS / Git Bash
@@ -306,9 +310,9 @@ Invoke-RestMethod "http://localhost:8501/api/media?q=關鍵字&limit=5"
 
 | 變數 | 預設值 | 說明 |
 |------|--------|------|
-| `ARKIV_DB_PATH` | `./media.db` | SQLite 資料庫路徑 |
-| `ARKIV_CHROMA_PATH` | `./chroma_db` | ChromaDB 向量庫 |
-| `ARKIV_THUMBNAILS_DIR` | `./thumbnails` | 縮圖輸出目錄 |
+| `ARKIV_DB_PATH` | `<PROJECT_ROOT>/.arkiv/project.db` | SQLite 資料庫路徑 |
+| `ARKIV_CHROMA_PATH` | `<PROJECT_ROOT>/.arkiv/chroma_db` | ChromaDB 向量庫 |
+| `ARKIV_THUMBNAILS_DIR` | `<PROJECT_ROOT>/.arkiv/thumbnails` | 縮圖輸出目錄 |
 | `ARKIV_OLLAMA_URL` | `http://localhost:11434` | Ollama API 端點 |
 | `ARKIV_EMBED_MODEL` | `bge-m3` | 嵌入模型 —— **建索引後請勿更換**（見下方說明） |
 | `ARKIV_VISION_MODEL` | `qwen2.5vl:7b` | 視覺模型（幀描述）。**預設刻意用 2.5-VL 而非 qwen3-vl:8b**：Qwen3-VL 在 Ollama 下的視覺路徑約慢 10×（實測 ~60s/幀 vs ~8s/幀），2000 幀就是 30 小時 vs 3.5 小時、標註品質相當。要更高上限可設 `ARKIV_OLLAMA_VISION_MODEL=qwen3-vl:8b` |
@@ -411,21 +415,21 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 
 ## 開發者資訊
 
-[ARCHITECTURE.md](ARCHITECTURE.md)（架構總覽） · [docs/api.zh-TW.md](docs/api.zh-TW.md)（API + Chat） · [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)（完整 pipeline） · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
+[ARCHITECTURE.md](ARCHITECTURE.md)（架構總覽） · [docs/api.zh-TW.md](docs/api.zh-TW.md)（API + Chat） · [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)（完整 pipeline） · [BENCHMARK.md](BENCHMARK.md)（轉錄速度實測，Mac MLX vs PC CUDA） · [docs/adr/](docs/adr/)（架構決策紀錄） · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
 
 ## 授權
 
-PolyForm Perimeter License 1.0.1 — 見 [LICENSE](LICENSE)。
+PolyForm Perimeter License 1.0.1 加附加條款 —— 見 [LICENSE](LICENSE)。
 
-arkiv **任何用途皆免費，包含商業工作**：接案、工作室內部使用、有補助的製作都可以。你用它剪出的影片、時間軸、匯出檔都是你的，授權不加任何限制。唯一不允許的是**提供他人跟 arkiv 競爭的產品** —— 把它 fork 成對手素材管理工具、包成索引服務賣給第三方、或重新實作成替代品，即使免費提供也一樣。
+arkiv **任何用途皆免費，包含商業工作**：接案、工作室內部使用、有補助的製作都可以。你用它剪出的影片、時間軸、匯出檔都是你的，授權不加任何限制。不允許的有兩件：**修改 arkiv 來超過免費額度或開啟 Pro 功能**——自己用也一樣（附加條款第 1–2 點；1.1.0 前就在使用的安裝維持豁免）；以及**提供他人跟 arkiv 競爭的產品** —— 把它 fork 成對手素材管理工具、包成索引服務賣給第三方、或重新實作成替代品，即使免費提供也一樣。
 
 界線在於**你的客戶買的是什麼**：買你用 arkiv 做出來的成品，是一般的工具使用；買 arkiv 的功能本身（當成產品、服務、函式庫或外掛），就構成競爭。
 
 ## Pro 附加元件
 
-免費核心支援 **3 個專案**。選購的 **Pro 附加元件**（另一個閉源元件）解鎖無限專案與跨專案聚合（跨專案搜尋與精選集），**NT$3,000 一次買斷、終身有效**。無訂閱、無啟用伺服器、不對外回報。條款：[docs/pro-addon-license.md](docs/pro-addon-license.md)。
+免費核心支援 **3 個專案**。選購的 **Pro 附加元件**（另外授權的付費方案，以簽章授權檔啟用）解鎖無限專案與跨專案聚合（跨專案搜尋與精選集），**NT$3,000 一次買斷、終身有效**。無訂閱、無啟用伺服器、不對外回報。條款：[docs/pro-addon-license.md](docs/pro-addon-license.md)。
 
-> 尚未開賣 —— 購買流程還在建。條款先公開，讓你在那之前就能讀。
+> 2026-10-03 起於 Waffle House 商店販售 —— 見[產品頁](https://vulture-s.github.io/arkiv/)。
 
 ## 公益方案
 

@@ -190,10 +190,12 @@ def test_query_applies_project_scope(pg_col):
 
 def test_get_returns_ids_and_embeddings(pg_col):
     col, rec = pg_col
-    rec.fetchall_vals.append([("1_t0", "[0.5,0.6]")])
+    rec.fetchall_vals.append([("1_t0", "[0.5,0.6]", "chunk text")])
     out = col.get(where={"media_id": "1"}, include=["embeddings"], limit=1)
     assert out["ids"] == ["1_t0"]
     assert out["embeddings"] == [[0.5, 0.6]]
+    # embedder_drift re-embeds the stored text, so get() must hand it back
+    assert out["documents"] == ["chunk text"]
     sql, params = rec.execs[-1]
     assert "payload->>'media_id' = %s" in sql
     assert "LIMIT 1" in sql

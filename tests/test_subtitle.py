@@ -117,8 +117,16 @@ def test_segments_to_srt_basic():
         {"start": 2.0, "end": 4.0, "text": "再見"},
     ]
     srt = sub.segments_to_srt(segs)
-    assert "1\n00:00:00,000 --> 00:00:02,000\n你好世界\n" in srt
+    # The first cue now ends a min_gap early: Whisper hands us end[0] == start[1]
+    # and two cues that swap with no blank frame read as a flicker.
+    assert "1\n00:00:00,000 --> 00:00:01,920\n你好世界\n" in srt
     assert "2\n00:00:02,000 --> 00:00:04,000\n再見\n" in srt
+
+    # Starts are untouched — text must never precede the words it transcribes.
+    assert "00:00:02,000 --> 00:00:04,000\n再見" in srt
+
+    legacy = sub.segments_to_srt(segs, timing=sub.TimingPolicy(enabled=False))
+    assert "1\n00:00:00,000 --> 00:00:02,000\n你好世界\n" in legacy
 
 
 def test_segments_to_srt_skips_empty():
@@ -225,10 +233,38 @@ GOLDEN_SRT = (
 
 
 def test_srt_layout_is_byte_identical_after_the_extraction():
-    """`restrict_punct=False` is the pre-punctuation-policy output. Layout has not
-    moved a byte since the layout/render split; only the punctuation policy did."""
+    """The pre-timing layout is still reproducible, byte for byte.
+
+    This golden was captured before `layout_cues` was extracted, to catch a
+    refactor silently changing what lands in someone's Resolve timeline. The
+    timing pass changes that output DELIBERATELY, so the guard now runs against
+    `TimingPolicy(enabled=False)` — which keeps its original meaning (nothing
+    drifted by accident) and additionally pins the claim that disabling timing
+    restores the old engine exactly, split arithmetic included.
+    """
     assert sub.segments_to_srt(GOLDEN_SEGMENTS, translate_key="translation",
-                               restrict_punct=False) == GOLDEN_SRT
+                               restrict_punct=False,
+                               timing=sub.TimingPolicy(enabled=False)) == GOLDEN_SRT
+
+
+# The same input with timing on. Captured so an accidental change to the NEW
+# behaviour is caught the same way the old one was.
+GOLDEN_SRT_TIMED = (
+    # No gap carved out of cue 1: the blank segment at 3.0-4.0 is dropped, so
+    # the next cue starts at 4.0 and there is nothing to pull away from.
+    "1\n00:00:00,000 --> 00:00:03,000\n今天天氣很好，我們去了海邊。\n"
+    "\n"
+    "2\n00:00:04,000 --> 00:00:10,060\n這是一段很長的旁白，\n長到一行字幕根本放不下，\n"
+    "\n"
+    "3\n00:00:10,140 --> 00:00:15,920\n所以引擎會把它拆成好幾個\ncue，時間按比例分。\n"
+    "\n"
+    "4\n00:00:16,000 --> 00:00:19,500\nHello world, state-of-the-art 3.5公斤。\n你好世界。\n"
+)
+
+
+def test_srt_with_timing_is_pinned_too():
+    assert sub.segments_to_srt(GOLDEN_SEGMENTS, translate_key="translation",
+                               restrict_punct=False) == GOLDEN_SRT_TIMED
 
 
 def test_layout_cues_returns_start_end_lines():
@@ -245,12 +281,35 @@ def test_layout_cues_drops_blank_segments():
     assert not any(3.0 <= s < 4.0 for s, _e, _lines in cues)
 
 
-def test_layout_cues_splits_a_long_segment_and_divides_the_span():
-    cues = sub.layout_cues([{"start": 4.0, "end": 16.0, "text": GOLDEN_SEGMENTS[2]["text"]}])
+def test_layout_cues_legacy_split_is_by_cue_count():
+    """The pre-timing division: every chunk got span/n regardless of its text."""
+    cues = sub.layout_cues([{"start": 4.0, "end": 16.0, "text": GOLDEN_SEGMENTS[2]["text"]}],
+                           timing=sub.TimingPolicy(enabled=False))
 
     assert len(cues) == 2
     assert cues[0][0] == 4.0 and cues[1][1] == 16.0
     assert cues[0][1] == cues[1][0] == 10.0  # contiguous, evenly split by cue count
+
+
+def test_layout_cues_splits_a_long_segment_in_proportion_to_its_text():
+    """🔴 Equal division was measured producing a 28x reading-speed swing inside
+    one sentence: 9.5 cps on the chunk carrying the words, 0.3 on the short tail
+    that inherited an equal slice of time. Time follows the text now."""
+    cues = sub.layout_cues([{"start": 4.0, "end": 16.0, "text": GOLDEN_SEGMENTS[2]["text"]}])
+
+    assert len(cues) == 2
+    assert cues[0][0] == 4.0 and cues[1][1] == 16.0
+
+    w0 = sum(sub.display_units(ln) for ln in cues[0][2])
+    w1 = sum(sub.display_units(ln) for ln in cues[1][2])
+    d0 = cues[0][1] - cues[0][0]
+    d1 = cues[1][1] - cues[1][0]
+    # Reading speed is what the split is FOR, so assert on cps rather than on
+    # the boundary: the two cues must demand a similar speed of the viewer.
+    assert abs((w0 / d0) - (w1 / d1)) < 0.5
+
+    # The gap comes out of the earlier cue; the segment still ends where it ended.
+    assert cues[1][0] - cues[0][1] >= sub.DEFAULT_TIMING.min_gap - 1e-9
 
 
 def test_layout_cues_keeps_a_bilingual_segment_as_one_cue():

@@ -19,6 +19,7 @@ So the unit tests below patch `vectordb._drop_chroma_system_cache`, a seam on
 our own module, and the end-to-end behaviour is covered by a subprocess test
 that runs against the real chromadb.
 """
+import os
 import importlib
 import subprocess
 import sys
@@ -190,7 +191,9 @@ def test_search_sees_another_process_write(tmp_path):
     chroma.mkdir()
     r = subprocess.run(
         [sys.executable, "-c", _E2E, str(chroma), str(config.BASE_DIR)],
-        capture_output=True, text=True, timeout=180,
+        capture_output=True, text=True, encoding="utf-8", timeout=180,
+        # Parent decodes utf-8; the child writes the locale encoding by default.
+        env=dict(os.environ, PYTHONIOENCODING="utf-8"),
     )
     assert r.returncode == 0, r.stderr[-2000:]
     hits = [l for l in r.stdout.splitlines() if l.startswith("HITS")]
