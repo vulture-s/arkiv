@@ -2,6 +2,307 @@
 
 ## Unreleased
 
+### 新增
+- **ingest 可以不建 proxy**（#558）：`ingest.py --skip-proxies`（＝`--proxies never`）跳過 Phase 3；
+  `ARKIV_PROXIES=never` 或庫設定 `ingest.proxies` 設成這個庫的預設（優先序：旗標 ＞ 庫設定 ＞ 環境變數 ＞ `auto`）。
+  只在 Mac（App／Safari 能直接播 HEVC）看片的庫省下整段轉檔——871 支手機短片實測約 5 小時、9 GB。
+  預設 `auto` 行為不變；關掉 proxy 不影響 embedding。這種庫的 `/api/stream` 會明講「這個庫關閉了 proxy」，
+  播放面板顯示原因、按鈕改為「只為這一支建立 proxy」。
+- **`--regenerate-proxies` 會補建還沒有的 proxy**，不再只重建已存在的——對從沒建過 proxy 的庫原本什麼都不做。
+
+### 修正
+- **加入還沒登入的網路磁碟不再只看到「API 500」**：在 Windows 填 `\\NAS\share\...` 這類尚未登入的 SMB 路徑，
+  系統會回「帳號或密碼不正確／拒絕存取」，原本這個錯誤沒被接住，Projects 頁只顯示「arkiv API 500」。
+  現在加入專案、匯入掃描、DIT 轉存、匯出 CSV 遇到這種路徑會回 400，並說明原因與下一步：
+  「無法存取這個路徑（系統原因）。如果是網路磁碟，請先在檔案總管開啟這個位置並登入，再回來加入。」
+  專案健康檢查／同步也不再因為其中一個專案連不到就整個失敗——那個專案會標成「無法存取」（`inaccessible`），其他照常。
+
+- **Windows：NAS 資料夾、自己的「影片」資料夾都匯入不了**（403「ingest 路徑必須在批准的目錄底下」）。
+  允許匯入的清單只寫了 Mac 的 `Movies`，Windows／Linux 的 `Videos` 不在裡面；Mac 會自動放行 `/Volumes/*`（NAS 掛載），
+  Windows 沒有對應。現在：預設加入 `~/Videos`（匯出允許清單也是）；Windows 已對應的**網路磁碟機**（`Z:` 等，只限 DRIVE_REMOTE）
+  自動放行；`\\伺服器\分享\…` 這種網路路徑可到 設定 → Ingest · 匯入 → 額外允許的資料夾 加入（庫設定 `ingest.extra_roots`）。
+  本機整顆磁碟（`C:\`、`/`）仍然擋，`\\host\C$` 這種管理分享也擋。`ARKIV_INGEST_ROOTS` 仍是「整份取代」，設定是額外加入。
+  403 訊息改成講得出下一步的白話，且不再列出伺服器上的實際路徑。
+
+- **設定 → Projects 頁不再被誤當成「開新專案」**：2026-10-20 Windows 首次使用實測，新使用者把跨庫註冊表的
+  「加入專案」當成開始使用 arkiv 的地方，登記了一個 NAS 素材資料夾。頁首改用一般語言說明這頁只登記**其他已建好的
+  arkiv 素材庫**供跨庫搜尋、不會建庫也不會匯入；`ARKIV_PROJECT_ROOT`／`~/.arkiv-projects.json` 收進「技術細節」。
+  目前開啟的庫沒有自己的素材時（扣掉自動載入的範例片），頁頂顯示「請按右上角 ＋ INGEST」引導並附按鈕直達匯入。
+  登記後若該資料夾沒有 `.arkiv/`（health `db_missing`）會明講「不是 arkiv 素材庫，請改用 ＋ INGEST」；
+  加入失敗訊息改成人話，健康狀態欄顯示中文標籤。邏輯在 `frontend/src/lib/projectsFirstRun.js`（附 node 測試）。
+- **配樂／噪音底下的真講話不再被當靜音丟掉**：faster-whisper 在這種情況會對整段真講話回 `no_speech_prob` 0.9–1.0
+  （信心 −0.07、每秒約 9 字），Guard 2 只看 no_speech > 0.8 就整段丟、不留紀錄；只有這種段落的短片會在 Guard 1 被整份清空。
+  實測一支 177 秒的解說片少了 20 段。現在同一解碼視窗 ≥5 秒、每秒 ≥2 字、信心 > −0.5 就保留；規則沿用 whisper-guard 0.3.2（不另抄一份）。
+  靜音幻覺（「Thank you.」「由 Amara.org 社群提供的字幕」）每秒 <1 字，照舊擋下。需要 `whisper-guard>=0.3.2`。
+
+## v1.6.0 - 2026-10-19
+
+**過卡更安全、誰在畫面裡標得出來、逐字稿直接進 Resolve。**
+換卡不再沿用前一張卡的續傳狀態、目的地同名不同內容一律不覆蓋；可以手動標「誰在畫面裡」並用 `who:` 搜；
+逐字稿可匯出成 Resolve 時間軸 marker；字典改一次就記住、下次轉錄就聽對。
+
+### 修正（資料安全）
+- **過卡：第二張卡不再被當成「已驗證」。** 卡 A 過完、退卡、卡 B 掛在同一個掛載點再按 offload，舊版會沿用卡 A 的續傳狀態，
+  卡 B 的檔不被列舉、同名的被當成已驗證，回 `done`——DIT 看到 done 就格式化卡 B。續傳狀態現在綁卡片內容指紋，換卡就重來。
+- **過卡：目的地已有同名但內容不同的檔，絕不覆蓋**（例如兩張卡都有 `C0001.MP4`）。改成標「需要改名」並跳出改名對話框；
+  內容相同則視為已驗證、不重拷。MHL 會比對每個檔第一次被記錄的 hash，備份被改過就判失敗。
+- **關掉 App 時，正在跑的 ingest／whisper／offload 會一起停**，不再在背景變成孤兒繼續寫庫（重開後也不會跟孤兒搶記憶體）。
+- **刪除重複列、還原逐字稿、移除範例片，不再波及別支素材**（素材編號會被重用，舊版只認編號）。
+- **切換逐字稿語言再切回來，字典校正不會不見。**
+- **重建關鍵畫面後，畫面不再一直顯示舊圖**（原本要重開 App 才會更新）。
+
+### 其他新增
+- **運鏡欄位（A7，opt-in）**：每個 scene 多 `camera_motion`（左右搖、推拉、手持晃動），不靠 VLM。ingest 加 `--camera-motion`，
+  既有庫用 `--refresh-motion` 補量；只量水平軸。
+- **MCP `export_project`**：一次讀整個庫（或篩選後）的逐字稿段落＋場景描述＋時間碼，分頁，給 AI 規劃整場拍攝用。
+- **匯出時看得到在跑**：匯出中按鈕顯示 `…`、其他匯出按鈕暫停，完成 toast 寫出檔名與大小。
+- **素材陸續到位時 watch 會合批進庫**（同一輪最多 8 支一次轉錄），不再每支都重新載入模型。
+- **vision 併發（opt-in）**：`ARKIV_VISION_CONCURRENCY=2` 可同時送兩張 frame；實測效益依機器而定，預設仍是 1。
+
+### 安全
+- **App 與瀏覽器介面現在真的有 CSP。** 舊的 Tauri CSP 設定其實碰不到 App 載入的頁面，改由後端在頁面回應帶上。
+
+
+**依賴版本固化：每條安裝路徑裝到的是同一組版本。**
+新增 `constraints.txt`（`scripts/lock.sh`，uv universal 解析，一份涵蓋 3.9–3.12 與 macOS／Windows／Linux），
+CI、release、Docker、安裝文件一律 `pip install -r … -c constraints.txt`；CI 會重跑 lock，有差異就紅。
+Python／Node／Rust 版本各自只有一個來源（`.python-version`／`.nvmrc`／`rust-toolchain.toml`），
+`scripts/doctor.py` 對照本機、`--fix` 一鍵建 venv。
+
+- **修：`requirements.txt` 在 Python 3.9 上裝不起來。** #234 起 fastapi／uvicorn／pillow 的下限都要 3.10，
+  而 CI 的 3.9 測試腿裝的是另一份手抄清單，所以兩個月沒人發現。3.9 改用各自最後支援 3.9 的版本。
+- **Windows 安裝包的 torch 從 2.9.1 對齊到跟 Mac 一樣的版本**：打包時多裝的 `torchaudio`（沒有任何程式用到）
+  把 torch 鎖在 2.9.1。
+- Docker：UI 建置從 Node 25 改為 22（與 CI 同版），Python 3.11 → 3.12（與正式環境同版）。
+
+**校正一次就記住：`POST /api/corrections/learn`。** 把「李東煙」改成「李多慧」一次，
+本專案字典就記下這條（同一個錯字再改會更新、不會重複），並把「李多慧」排進**下一次轉錄**的
+Whisper initial_prompt；`apply: true` 會順便只用這一條改寫本專案已存的逐字稿（先備份、可還原）。
+整句話不會被當 hotword 餵給 Whisper（只留作批次校正），避免 prompt 幻覺。
+
+**hotword 清單有長度上限了。** Whisper 的 prompt 只留最後約 223 個 token，超過時會默默丟掉
+**最前面**的詞——也就是 `ARKIV_CUSTOM_VOCABULARY` 與 `vocabulary.txt` 的詞。現在由 arkiv
+自己按優先序裁到 200（估算值，偏保守）：環境變數 → vocabulary.txt → 字典（最近學到的先），
+裝不下的從尾巴丟，轉錄 log 會印出丟了哪些。
+
+
+
+### 新增
+- **人物標註（A6，人工）**：Inspector 新增「人物」區塊——按「標人物」輸入名字（自動補完本專案用過的名字；Enter 送出、Esc 取消），有 IN/OUT 就標那一段，沒有就標整支片；點時間跳到該處、× 刪除。同一支片同一個名字的重疊／相接區段會自動合併成一段，整支片的標註會吸收該名字的所有區段。名字一律去頭尾空白、NFC 正規化。搜尋框（與 MCP `search_media`／`export_project`、`exposure_report --filters`）多一個 `who:小明`（子字串、英文不分大小寫）。`/api/media/{id}/scenes`、MCP `get_scenes`、`export_project` 的每個 scene 多 `people: [名字…]`（與 scene 時間有重疊的標註；**只有標過人物的片才出現這個 key**，沒標過的片回應一字不變）。API：`GET/POST /api/media/{id}/identities`、`DELETE /api/media/{id}/identities/{identity_id}`、`GET /api/identities/names`（權限比照標籤：`videos_read`／`videos_write`）。**不做任何自動辨識、不存任何臉部或生物特徵資料**；這批人工標註之後當自動化的驗證集。
+- **品牌／物件曝光報告**：給一個或多個詞（品牌名、產品名、物件），統計素材裡命中幾支、總共幾秒、在哪些 scene。比對 keyframe 的 vision 描述與標籤，大小寫、全半形、繁簡都不分；可用搜尋框語法（`shot:` `camera:` `tag:`…）縮小範圍，可依拍攝日期或相機分組。曝光秒數＝命中 scene 的整段長度，scene 切法跟 `get_scenes` 同一套。三個入口：CLI `python exposure_report.py "古河" --filters "shot:2026-10"`（markdown／`--format json`）、REST `GET /api/report/exposure?term=…`、MCP 工具 `exposure_report`。⚠️ 這是依 vision 描述比對，不是逐格偵測：會漏判、會誤判，報告裡也這樣寫；沒做過 vision 分析的素材另外計數，不算成「沒出現」。
+
+**逐字稿可以直接變成 Resolve 時間軸上的 marker。** Inspector 匯出列多一顆「字幕 MARKER」：
+匯出的 FCPXML 每段話一個 marker，名稱是那句話（前 60 字），備註是全文，長度跟著那段話。
+設了 ✂ IN/OUT 只輸出範圍內的段落。API：`/api/media/{id}/export/fcpxml?markers=transcript`
+（`edl-markers` 也吃，但 EDL 的 marker 只能是 ASCII，中文會變成 `?`，中文片請用 FCPXML）。
+原本的場景 marker 不變，仍是預設。
+
+**Remotion props 吃 IN/OUT。** `GET /api/media/{id}/remotion-props` 接受跟單支匯出同一組
+`in_s`／`out_s`（秒）：只輸出範圍內的字、時間改成從 IN 起算、`duration` 變成範圍長度，
+並多帶 `trim: {in_s, out_s}` 讓渲染端知道要從原檔哪裡開始。跨邊界的字裁到邊界、只碰到邊界的字丟掉，
+規則跟 SRT／EDL／FCPXML 的 trim 匯出共用同一個函式（`transcript_time.trim_window`／`trim_rebase`）。
+Inspector 設了 IN/OUT 時，「Remotion」按鈕會帶上範圍（按鈕顯示 ✂）。不帶範圍時輸出與先前完全相同。
+
+**高 fps 素材匯出 EDL 會先提醒。** CMX3600 EDL 只涵蓋 23.976／24／25／29.97／30，50／59.94／119.88p 這類片在 Resolve conform 時 TC 可能對不上。現在照樣匯出，但 EDL 檔頭多一行 `* WARNING` 註解（解析器會略過，不影響匯入），Inspector 的 EDL 按鈕也會標 ⚠ 並在提示裡建議改用 FCPXML（B13）。
+
+## v1.5.1 - 2026-10-14
+
+**過卡的 MHL 清單快了一倍以上：複製完之後不再把整張卡重讀 3 遍。**
+寫清單時沿用複製當下已經讀回驗證過的 hash（檔案大小與修改時間都沒變才採用），
+確認清單時只讀一遍（原本同一份資料算兩次）。每個檔在目的地上的讀取次數從 4 次降為 2 次。
+實際一次 117 GB、SMB 走 Wi-Fi 的過卡：MHL 階段原本 6 小時 42 分，照新流程約為原本的三分之一（#535）。
+
+**DIT 頁顯示每個檔的複製速度。** 「最近的檔」每列多一欄 MiB/s，`--progress json` 的
+`file` 事件帶 `copy_mib_s`／`verify_mib_s`，每個目的地的 summary 帶整體 `copy_mib_s`。
+過卡慢的時候當下就看得出來，不用事後查（#537）。
+
+> 💡 **NAS 用 Bonjour 名稱掛載時，SMB 可能一直走 Wi-Fi**（實測 6 MiB/s，有線網卡閒著）。
+> 改用 IP 掛（`smb://<NAS 的 IP>/<共享名稱>`）可以避開。arkiv 的複製本身跟 `cp` 一樣快。
+
+## v1.5.0 - 2026-10-14
+
+**Log 素材進庫就是正常顏色了。** S-Log3、D-Log、C-Log、N-Log、F-Log、Apple Log、V-Log 這類
+log 模式拍的片，縮圖、vision 讀的關鍵畫面、播放器以前全是灰的；現在會換算成 Rec.709 給你看，
+原始檔一個 byte 都沒動。
+
+- **12 個內建色彩設定檔**：Sony S-Log3／S-Gamut3、S-Gamut3.Cine，DJI D-Log，Insta360 I-Log，
+  Canon C-Log2／C-Log3，Nikon N-Log，Fujifilm F-Log／F-Log2／F-Log2 C，Apple Log，Panasonic V-Log。
+  每一個都是 arkiv **依廠商公開發表的曲線與色域公式自己算出來的**，不內附任何廠商的 LUT 檔；
+  曲線用白皮書上的 0%／18%／90% 參考點逐一驗過。這是技術轉換、不是廠商的調色風格，
+  跟廠商 LUT 不會逐點相同（以 Sony s709 對照：18% 灰 0.426 vs 0.429，90% 白 0.791 vs 0.780）。
+- **Sony 自動辨識**：A7 系列、FX 系列的 XAVC 檔會自己標上 S-Log3。其他廠牌在 Inspector 指定一次即可。
+- **自訂 LUT**：Inspector 的 COLOR 選單「匯入 .cube…」，或把 `.cube` 放進 `~/.arkiv-luts/`
+  （`ARKIV_LUT_DIR` 可改）。**DJI D-Log M 與 Apple Log 2 沒有公開數學**，請匯入廠商提供的 `.cube`。
+- **播放器即時套用**：有設定檔的片子，Inspector 播放器右上「LUT ● / LOG ○」隨時切回原始 log
+  （proxy 本身保持 log，所以切得回去）。套用中時點畫面或按空白鍵播放／暫停。
+- **舊素材庫一次補完**：`python ingest.py --regenerate-thumbnails` 會偵測並重生封面；
+  關鍵畫面要等下次 `--refresh` 才套用。
+- API：`GET /api/color-profiles`、`PATCH /api/media/{id}/color-profile`、批次 `POST /api/media/color-profile`、
+  `POST /api/color-profiles/import`。
+
+**長片的 proxy 不再白等 10 分鐘然後失敗。** proxy 轉檔的時限原本寫死 600 秒，
+4K60 HEVC 在 M2 Max 上大約 0.9 倍即時，超過約 11 分鐘的片全部燒滿 10 分鐘才放棄
+（實際一次 ingest：25 支裡 4 支沒有 proxy、多等 40 分鐘）。現在時限依片長給（片長 × 3，最少 600 秒、最多 4 小時）。
+
+**FFmpeg 7 以上：長片的關鍵畫面重新依場景切換挑選。** FFmpeg 拿掉了 `-vsync`，
+場景偵測每次都失敗、靜默退回固定位置取格；改用 `-fps_mode`（FFmpeg 5.1 起支援，arkiv 最低需求 6.0）。
+
+- **批次匯入結束多一行對帳。** `Done.` 之後印出 scanned／ingested／already-indexed／moved／failed，
+  任何一支沒乾淨進庫的檔都會列出檔名，不再需要自己拿磁碟清單跟資料庫比對（#393）。
+- **修復已在庫的音檔列：`python fix_audio_cover_metadata.py`。** #521 修好之前進庫的帶封面音檔，
+  `codec`／`fps`／寬高存的是封面的值（`mjpeg`、`90000`、`300×300`）。這支指令預設只列出受影響
+  列數與樣本、不寫入；加 `--apply` 才清成 NULL，寫入前自動把 DB 備份到同目錄的
+  `<db>.pre-521-<時間>.bak` 並核對列數，備份失敗就不寫。只動音訊副檔名的列；
+  看起來也帶封面的**影片**列只列出來，請用 `ingest.py --refresh` 重新探測，不用猜的。
+
+- **ingest 對帳不平時 exit 7，不再 exit 0。** 批次結束的 `Reconcile:` 那行若發現有檔案掃到了
+  卻沒落到任何分類、或計數說進庫了但 DB 沒有那一列，現在以 **exit 7** 結束（#393）。
+  原本 0 只代表「沒當掉」，不代表「每支都進庫」。7 是新號碼，0–6 的意義都不變；
+  同時符合時優先序 2 > 7 > 1。`watch.py` 遇到 7 跟其他失敗一樣：記錄、退避、重試，
+  監看不會停，且 log 會印出 exit code 與對帳行（原本只印 stderr，而對帳寫在 stdout，
+  所以只會看到一個沒有原因的「✗ 檔名:」）。
+
+- **帶封面的音檔不再被記成「300×300 的 mjpeg 影片、90000 fps」。** MP3／M4A／FLAC 內嵌的
+  專輯封面，ffprobe 會報成一條 video stream（只靠 `attached_pic` 標記區分），ingest 把它當成
+  畫面軌，codec／fps／寬高全部抄自封面。現在 ingest 跳過封面、音訊副檔名一律不讀畫面資訊；
+  `/api/stream` 對舊資料回填 codec 時也不會再把 `mjpeg` 寫進音檔列（#521）。
+  **已經在庫裡的錯誤值不會自己變回來**，需要另跑修復指令。
+
+- **健檢會發現「模型名稱沒變、算出來的向量變了」。** 升級 Ollama、重新 pull 同一個 tag、
+  或換了量化版本，都可能讓 `bge-m3` 這個名字底下的向量悄悄改變；原本的檢查只比對模型名稱，
+  抓不到。結果是新的查詢落在跟舊索引不同的空間裡，搜尋變差卻沒有任何錯誤。
+  `python health.py` 現在會拿幾段已存的內容重算一次，跟存著的向量比對，
+  差太多（cosine < 0.999）就 WARN 並提示 `python embed.py --rebuild`。
+  索引是空的或連不上時明確標「not measured」，不會算成通過。
+
+- **搜尋結果會告訴你是在第幾秒講到的，點進去直接停在那裡。** 命中逐字稿的結果，
+  摘要前多一個「▶ 01:23」；點開素材後播放器跳到那一秒（不自動播放）。
+  語意命中取「那段文字開始的地方」，關鍵字命中取「這個詞第一次出現的地方」。
+  索引本身沒有時間資訊，時間是查詢當下從逐字稿分段（segments）對回去的，
+  **不需要重建索引**，舊素材庫直接有。逐字稿經過標點修復、繁簡轉換或校正後，
+  文字跟分段不會逐字相同，所以用去掉標點的短片段比對；對不上就不顯示時間，
+  不會用猜的（標籤／畫面描述命中、沒有分段的素材也不顯示）。
+
+## v1.4.0 - 2026-10-11
+
+**你開著 arkiv 的時候，你瀏覽的任何一個網頁都可能替你按下刪除鍵。這一版把它關上。**
+
+arkiv 對從本機（127.0.0.1）來的請求一律信任 —— 那是「自己的電腦上不用輸 token」的由來。
+但一個惡意網頁可以把**它自己的網域**重新解析到 127.0.0.1（DNS rebinding）：
+瀏覽器認為那是同源，請求的來源又確實是本機，於是那個網頁拿到的是全部 12 種權限，
+包括批次刪除、清空回收桶、以及發一把 admin token 給自己。
+
+現在本機信任多看一件事：請求的 `Host`。只有 IP、`localhost`／`*.localhost`、
+以及你自己列在 `ARKIV_ALLOWED_HOSTS` 的名字才算本機；所有寫入路由（原本只有 13／52 支）
+都套上同站檢查。順帶修掉三個同一輪審計找到的 MED：轉送標頭不能再拿來繞過 token 的 IP 白名單、
+WebSocket 的 `?token=` 不再明文寫進 `backend.log`、`/api/logs/tail` 輸出前會再遮一次。
+
+### 升級前要知道
+
+- 🔴 **如果你用 `localhost` 或 IP 以外的名字開 arkiv**（例如 `mymac.local`、tailnet 的 MagicDNS 名稱、
+  反向代理的網域），升級後會拿到 401，訊息會直接指向這個設定：
+  `ARKIV_ALLOWED_HOSTS=mymac.local,arkiv.example.com`（逗號分隔，附加在內建清單之後）。
+- **放在反向代理後面的**：uvicorn 現在一律以 `--no-proxy-headers` 啟動，帶轉送標頭的請求
+  不能使用有 IP 白名單的 token。確定代理是你的，才設 `ARKIV_TRUST_PROXY_HEADERS=1`。
+- **Docker 的對外埠預設只綁本機**、**Pro 改為簽章授權檔**：見下面兩段。
+
+**Pro 授權改為簽章驗證 —— 手寫的授權檔不再解鎖。**
+以前 `~/.arkiv/pro-license.json` 只要寫了 `licensee` 和 `key` 兩個欄位就算 Pro，任何人自己寫一個就有。
+現在授權檔必須帶授權方的 Ed25519 簽章，由 arkiv 以內建公鑰**離線**驗證（`pro_licence.py`，純 Python，
+不需要額外套件）：不連網、不會過期、沒有啟用伺服器。
+
+- **1.1.0 前就在使用的安裝不受影響**：無限專案與跨專案聚合照舊，不需要任何授權檔（附加條款第 3 點）。
+- 授權檔在、但不算數時，`/api/entitlements` 的 `licence_problem` 會說原因（未簽章／簽章不符／未知金鑰／已撤銷）。
+- 名為 `arkiv_pro` 的模組不再「存在就算 Pro」，必須透過 `has_valid_license()` 回報。
+- 2026-10-08 之前沒有售出任何 Pro；當時發出的授權已改發簽章版。
+
+**授權：PolyForm Perimeter 1.0.1 加上「附加條款」—— 修改核心來繞過免費額度或開啟 Pro 功能，不被允許（自己用也一樣）。**
+原本的條款只禁止「提供他人競爭產品」，而 PolyForm 允許為任何允許的目的修改程式；
+免費額度又刻意不做技術鎖（`entitlements.py`：善意承諾，不是 DRM）。兩者疊起來，
+自己改掉上限自用在條款上很可能是允許的 —— 這次補上。PolyForm 原文一字不改，
+附加條款放在它前面；1.1.0 前就在使用的安裝永久保留無限專案與跨專案聚合（附加條款第 3 點）。法律本身允許的修改（如著作權法第 59 條）與 Fair Use 不受影響。只適用於含這段文字的版本。
+
+順帶：README 的「尚未開賣」改成實況（2026-10-03 起販售）。
+
+**新增：剪輯用 proxy —— 寫到原始檔旁邊的 `Proxy/<原檔名>.mov`，Resolve 可以直接連結。**
+Inspector 的 proxy 給不了剪輯軟體用：它叫 `{id}_{hash}.mp4`（Resolve 靠檔名配對 proxy）、
+沒有 timecode、只留一條雙聲道、720p H.264，而且只在瀏覽器播不了的編碼才會產生。
+這次**另外加一份選用輸出**，Inspector 的 proxy 一個字都沒動：
+
+- ProRes 422 Proxy、保留原始 timecode、**保留全部音軌**，最高 1080p 且不放大（`ARKIV_EDITOR_PROXY_HEIGHT`）
+- **絕不覆蓋**：`Proxy/` 裡已經有同名 `.mov`／`.mp4`／`.mxf`（剪輯師自己做的）就跳過；編碼途中有人放進來也是對方贏
+- 先寫隱藏暫存檔，成功才搬到定位；失敗會清掉暫存檔，以及這次才建立的空 `Proxy/` 資料夾
+- 用法：`python editor_proxy.py <media_id>…` 或 `--all`；API `POST /api/proxy/editor`（`{"ids": […]}`，`ingest_write`）、
+  `GET /api/proxy/editor/status`、`GET /api/proxy/editor/{media_id}`
+
+- Inspector 的 Reprocess 區多一顆「剪輯用 proxy」：按下去會等到做完，直接顯示寫到哪裡、已經有同名檔所以沒覆蓋、或失敗的原因
+
+⚠️ 它會**寫進你的素材資料夾**（這正是重點，剪輯軟體才找得到）。唯讀的素材碟會回 `failed`，不會改寫別處。
+
+**Docker：對外埠改成預設只綁本機（127.0.0.1）。**
+原本 `docker-compose.yml` 把 8501（API）、8502（MCP）、11434（Ollama）開在所有網卡上，
+同一個區網的人拿到 token 就能讀素材庫，Ollama 則是誰都能用。
+
+🔴 **如果你是從別台機器連 Docker 裡的 arkiv**（例如區網 MCP、另一台電腦開網頁），
+升級後要加一個環境變數才連得到：`ARKIV_BIND_HOST=0.0.0.0 docker compose up -d`。
+只在同一台電腦上用的人不受影響。
+
+### Fixed
+
+- **現場收音被 VAD 判成「沒人聲」，逐字稿是空的，而且沒有任何訊息。**
+  一場 200 支的現場素材（PA ＋ 人群）有 85 支逐字稿為空，繞過 VAD 重跑後 54 支解出人聲。
+  現在 VAD 說沒人聲時會改餵整段給 Whisper，再交給既有的幻覺防護判斷，並且印出
+  `[vad] no speech detected — decoding the full file anyway`。
+  ⚠️ **已經是空逐字稿的素材不會自己好**：在 Inspector 對它們按「重新轉錄」。
+- **轉錄的整批靜音判斷被幾段短配樂拖垮。** 三段 1 秒的 BGM 尾巴可以讓 30 秒清楚的人聲整份清空；
+  現在同時看段數平均與時長加權平均，取較不激進的那個。
+- **匯出：相機 timecode 換算錯。** 23.976 的相機起始 TC 01:00:00:00 被匯成 00:59:56:10，
+  EDL／FCPXML 的 source 落在素材第一格之前。DF／NDF 改看相機 TC 本身的分隔符，
+  單支 FCPXML 錨在相機 TC，`src` 會做 URL 編碼（空白／`#`／`%` 讓剪輯軟體找錯檔），
+  camera report 的 DF 標籤也修好了。**之前匯出的 EDL／FCPXML 請重新匯出。**
+- **Windows 上讀 Mac 寫的路徑（`/Volumes/…`）被當成相對路徑**，接在專案根目錄後面然後報錯。
+- **繁中 Windows 上，git／ffmpeg／ffprobe 的輸出被用 cp950 解碼**，失敗時 `returncode` 仍是 0、輸出卻是 `None`。
+- **1 秒以下的素材永遠沒有縮圖**（取格時間被推過檔尾）。
+- **相機的旋轉旗標錯了會毀掉整條下游**（寬高對調、縮圖直式、視覺模型看側躺畫面）。
+  ingest 現在會印出偵測到的旋轉；確定旗標是錯的那一批，用 `ARKIV_IGNORE_ROTATION=1` 匯入。
+- **播放失敗一律說成「編碼問題」。** 401、404、後端沒開也被叫去建 proxy；現在會說真正的原因。
+- **`/api/stream` 叫你去建 proxy、proxy builder 卻不建**的那幾種編碼（dnxhd／qtrle／mjpeg／cinepak），現在建得出來。
+- **字幕：gap pass 把原本合格的 cue 削短，merge pass 再把它併進下一句**，讓下一句的字最多提早 0.88 秒出現。
+- **刪除、評分、精選集複製會假裝成功。** 只刪了 metadata 不再顯示「已移至回收桶」；
+  評分不再順手清掉評分備註；複製失敗以錯誤提示呈現。
+- **Inspector 標完 IN／OUT 後 350 毫秒內切到下一支**，會清掉下一支已存的範圍。
+- **回收桶還原**在桌面 App 裡幾乎必定 500；「清空全部」改成要確認（列出件數與容量）；
+  未掛載的儲存不再被當成「檔案不見了」清掉。
+- **校正字典讀取失敗被當成空字典**，存檔時把整份覆蓋掉。現在會警告，存檔前留 `.bak`。
+- **Resolve 外掛**：不同卡的同名 `C0001.MP4` 勾第一列卻匯入最後一支；評分／標籤改依來源路徑比對；
+  LAN 版下載保留原檔名並串流寫入，不再整支讀進記憶體。
+- **過卡（offload）**：拷完到真正完成之間的兩趟雜湊沒有任何進度（實測 35 分鐘）；
+  一顆碟的 MHL 失敗會讓第二顆碟根本沒被拷，畫面還只顯示「exit 1」。
+- **匯入**：長素材在健康轉錄時被判超時、Windows 上 watchdog 留下 ffmpeg／whisper 孤兒行程、
+  跑完的匯入被回報成「已停止」、一個非 UTF-8 位元組讓匯入被誤殺、
+  打錯一個調校用環境變數會讓整個 API 起不來。
+- **Projects 頁沒說你現在開的是哪個庫**，註冊表看起來像切換器（它不是）。
+- **CLI 的 `--all-projects` 沒有套用跟 API 一樣的跨專案授權檢查。**
+
+### Added
+
+- **搜尋框的 `tag:`／`camera:`／`lang:`／`rating:`／`type:`／`shot:` 真的會篩了**，「所有專案」搜尋也一樣。
+  以前整串被當成文字丟進語意搜尋，`格爾木氧氣 camera:a7s3` 會回 0 支或回整個庫。
+- **匯入的時間上限拆成「靜默多久」與「總共多久」**，停下來時會說是哪一道；
+  原本寫死 30 分鐘（實測 200 支要 94 分鐘），而 UI 實際走的那條路根本沒有上限。
+  掃描時就顯示預估時間。
+- **瀏覽器版的匯入頁有常用來源捷徑**（瀏覽器沒有選資料夾的能力，以前每次都得手打路徑）。
+- **索引過期看得見**：`GET /api/embed/status`，匯入頁的「重建索引」底下顯示幾支待更新／尚未索引。
+- **剪輯欄位的修改紀錄**：評等、IN／OUT、camera、標籤每次真的改動，都會在
+  `.arkiv/audit/edits.jsonl` 記一行修改前後的值。
+- **健康檢查會抓「前端是舊的」**：`frontend/dist` 比最後一次前端原始碼的 commit 舊時回報失敗。
+
+### Changed
+
+- 官網改成多頁站（首頁、安裝、文件、FAQ、更新紀錄），首頁功能區改成會動的介面示意；購買 Pro 改成實心按鈕。
+- Pro 條款定稿：數位內容交付後不退款、管轄法院為臺灣臺北地方法院。
+- `PUBLIC-INTEREST.md`、README、FAQ 裡過期的說明更新為現況（專案上限 1.1.0 起已實施、環境變數預設路徑等）。
+
 ## v1.3.0 - 2026-09-05
 
 **如果你的素材庫裡有 JPEG，它們一直是半盲的。**

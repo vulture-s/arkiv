@@ -137,6 +137,26 @@ is to stop a route quietly migrating to the wrong module. A red one means your r
 somewhere the split did not expect — usually that is fine and the test just needs your pair,
 but it is worth a second look at whether the route belongs in that router.
 
+### Recurring bug classes (and the test that stops the next one)
+
+These classes each hit arkiv more than once (2026-10 audit round, PRs #497–#508). The
+structural guards in `tests/test_bug_class_guards.py` scan the **whole** app, not the one
+call site that was fixed; where main still has known violations they are baseline ratchets
+(the `KNOWN_*` sets may only shrink — a fixed entry also goes red until you delete it).
+
+| Class | Guard / regression test |
+| --- | --- |
+| Write route reachable cross-site or via DNS rebinding (no same-site / Host check) | `test_bug_class_guards.py` A — every POST/PUT/PATCH/DELETE must call `_assert_same_site` or sit behind the global `SameSiteWriteGuard` (#498, `tests/test_api_host_guard.py`) |
+| media id used as identity — SQLite **reuses** ids after a delete | `test_bug_class_guards.py` B — every `media_id` column cascades or is justified; behaviour: `tests/test_resolve_plugin_duplicate_names.py` (#505), `tests/test_media_identity_guards.py` + `tests/test_bins_delete_sync.py` (#507) |
+| Non-atomic write of a canonical file (truncate-then-write; crash leaves it empty) | `test_bug_class_guards.py` C — `open(..,"w")`/`write_text` must be paired with `os.replace` |
+| Read failure treated as "empty", then saved over the real data | `tests/test_corrections_load_guard.py`, `frontend/tests/vocabLoad.test.mjs` (#502) |
+| UI reports success when the request failed | `frontend/tests/deleteOutcome.test.mjs`, `setRating.test.mjs`, `binCopy.test.mjs` (#501) |
+| Timecode / drop-frame / fps conversion | `tests/test_export_timecode_correctness.py` (#503) |
+| Child processes outliving the app | `tests/test_orphan_guard.py` (#506) |
+
+New write route, new table holding a media id, new file writer: the guard tells you what
+to do in its failure message. Do not add to a `KNOWN_*` set without a one-line reason.
+
 `pytest -q` locally catches every one of these before CI does. If you cannot run the suite,
 say so in the PR — that is a perfectly good answer, and we will run it for you.
 
@@ -174,10 +194,37 @@ upstream changelog and a one-click rollback:
   reproducible rebuilds; dependabot's `docker` ecosystem refreshes those digests — merge the
   dependabot PR rather than hand-editing (or run `docker buildx imagetools inspect <image>`
   for a fresh digest if you must).
-- Python deps stay in `requirements.txt` (flat, no lockfile): the 3.9×3.12 matrix + platform
-  markers (`mlx-whisper`@Darwin / `faster-whisper`@Linux, `opencc`/`mcp` gated ≥3.10) mean a
-  single frozen lockfile can't honestly represent all environments. The `dependency-audit`
-  gate + deliberate bumps are the reproducibility contract instead.
+- **Python pins live in `constraints.txt`** (generated, committed). `requirements*.txt`
+  say what the code needs (floors, markers); `constraints.txt` says what gets installed.
+  Every install path — CI's test legs, the release venvs, Docker, the docs — runs
+  `pip install -r … -c constraints.txt`. It is ONE universal file: `uv pip compile
+  --universal` forks a pin per marker where the answer differs (numpy 2.0.2 on 3.9,
+  2.5.4 on 3.12; mlx-whisper only on Darwin), so the 3.9×3.12 matrix and the platform
+  markers no longer stand in the way of a lock.
+  - Change a requirement (or merge a dependabot floor bump) → run `scripts/lock.sh` and
+    commit `constraints.txt`. CI's `dependency-audit` job reruns the lock and fails on
+    any diff, so a forgotten relock is caught at review. Existing pins are kept unless
+    a requirement forces a change; `scripts/lock.sh --upgrade-package NAME` moves one.
+  - **A floor must be installable on every supported Python.** #234 raised fastapi /
+    uvicorn / pillow to versions that need 3.10, which made `requirements.txt`
+    unsatisfiable on 3.9 for two months — invisible because CI's 3.9 leg installed a
+    hand-copied list instead. Split such floors by `python_version` marker (see
+    `requirements.txt`); `scripts/lock.sh` refuses to resolve otherwise.
+
+## Toolchain
+
+One file per tool; `tests/test_toolchain_pins.py` fails if a workflow or the
+`Dockerfile` reads a version from anywhere else.
+
+| tool | pin | read by |
+|---|---|---|
+| Python | `.python-version` (3.12; 3.9 = NAS floor, also in the CI matrix) | setup-python, `Dockerfile` |
+| Node | `.nvmrc` | setup-node (CI, release, site), `Dockerfile` |
+| Rust | `rust-toolchain.toml` | rustup locally; `dtolnay/rust-toolchain` `toolchain:` inputs |
+| packages | `constraints.txt` (via `scripts/lock.sh`, needs [uv](https://docs.astral.sh/uv/)) | every `pip install -r` |
+
+`python3 scripts/doctor.py` reports how this machine differs from those pins;
+`--fix` creates or syncs `.venv` from `constraints.txt` with uv and runs `npm ci`.
 
 ## Releases
 

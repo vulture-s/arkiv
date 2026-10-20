@@ -16,7 +16,8 @@ Spec shape::
         {"field": "camera",     "op": "eq",       "value": "ILME-FX30"},
         {"field": "rating",     "op": "eq",       "value": "good"},   # 'unrated' = NULL
         {"field": "duration",   "op": "range",    "value": [10, 120]},  # seconds
-        {"field": "date",       "op": "range",    "value": ["2026-01-01", null]},
+        {"field": "date",       "op": "range",    "value": ["2026-01-01", null]},  # INGEST date
+        {"field": "shot",       "op": "range",    "value": ["2025-10-01", "2025-10-31"]},  # SHOOT day
         {"field": "media_type", "op": "eq",       "value": "video"},
         {"field": "semantic",   "op": "contains", "value": "海邊的日落"}
       ]
@@ -38,10 +39,13 @@ class QueryError(ValueError):
 #   numeric : range ([min,max], either bound may be null)
 #   enum    : eq, special NULL handling for rating='unrated'
 #   tag     : subquery against tags
+#   identity: subquery against identities (manual person annotations)
 #   bucket  : ext IN (video/audio buckets)
 #   semantic: not SQL — collected for the vector index
 _FIELDS: Dict[str, Tuple[Optional[str], set, str]] = {
     "tag": (None, {"contains", "eq"}, "tag"),
+    # A6: manual person annotations (identities table), never face recognition
+    "who": (None, {"contains"}, "identity"),
     "transcript": ("transcript", {"contains"}, "text"),
     "filename": ("filename", {"contains", "eq"}, "text"),
     "camera": ("camera_model", {"contains", "eq"}, "text"),
@@ -51,6 +55,9 @@ _FIELDS: Dict[str, Tuple[Optional[str], set, str]] = {
     "iso": ("iso", {"range"}, "numeric"),
     "duration": ("duration_s", {"range"}, "numeric"),
     "date": ("processed_at", {"range"}, "daterange"),
+    # The day the camera rolled (media.shot_date, YYYY-MM-DD), not when it was
+    # ingested — the two differ for almost every clip (see db.shot_window_clause).
+    "shot": ("shot_date", {"range"}, "dayrange"),
     "media_type": (None, {"eq"}, "bucket"),
     "semantic": (None, {"contains"}, "semantic"),
 }
@@ -95,6 +102,16 @@ def _one_condition(cond: Dict[str, Any]) -> Tuple[Optional[str], List[Any], Opti
             return "id IN (SELECT media_id FROM tags WHERE name = ?)", [v.lower()], None
         return "id IN (SELECT media_id FROM tags WHERE name LIKE ?)", ["%{0}%".format(v)], None
 
+    if kind == "identity":
+        import unicodedata
+        v = unicodedata.normalize("NFC", str(value or "")).strip()  # names stored NFC
+        if not v:
+            raise QueryError("who condition needs a non-empty value")
+        # LIKE wildcards in a name are literal: "who:a_b" must not match "axb".
+        esc = v.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return ("id IN (SELECT media_id FROM identities WHERE name LIKE ? ESCAPE '\\')",
+                ["%{0}%".format(esc)], None)
+
     if kind == "bucket":
         v = str(value or "").lower()
         if v == "video":
@@ -138,6 +155,21 @@ def _one_condition(cond: Dict[str, Any]) -> Tuple[Optional[str], List[Any], Opti
             # same day-ceiling). date() on the bound (not the column) keeps the
             # processed_at index usable.
             frags.append("{0} < date(?, '+1 day')".format(column))
+            params.append(hi)
+        if not frags:
+            raise QueryError("{0} range needs at least one bound".format(field))
+        return "(" + " AND ".join(frags) + ")", params, None
+
+    if kind == "dayrange":  # shot_date is a bare 'YYYY-MM-DD', so plain >=/<= is exact
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise QueryError("{0} range needs a [start, end] pair".format(field))
+        lo, hi = value
+        frags, params = [], []
+        if lo is not None:
+            frags.append("{0} >= ?".format(column))
+            params.append(lo)
+        if hi is not None:
+            frags.append("{0} <= ?".format(column))
             params.append(hi)
         if not frags:
             raise QueryError("{0} range needs at least one bound".format(field))

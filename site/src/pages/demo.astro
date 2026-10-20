@@ -1,0 +1,86 @@
+---
+import Ledger from '../layouts/Ledger.astro';
+import Row from '../components/Row.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+// Pin positions are % of the screenshot (1600×890). Keep them in step with
+// the rows below: the number is the only link between picture and text.
+const PINS = [
+  { n: 1, id: 'query', x: 13.8, y: 3 },
+  { n: 2, id: 'pools', x: 9, y: 25 },
+  { n: 3, id: 'date', x: 9, y: 47 },
+  { n: 4, id: 'grid', x: 61, y: 46 },
+  { n: 5, id: 'nospeech', x: 97, y: 6.5 },
+  { n: 6, id: 'scenes', x: 97, y: 22 },
+  { n: 7, id: 'reprocess', x: 98, y: 63 },
+  { n: 8, id: 'export', x: 98, y: 88.5 },
+];
+---
+<!-- 中文段落刻意寫成單行，理由見 index.astro hero 的註解。 -->
+<Ledger id="demo" title="實際畫面" checked="2026-10-04"
+  lede="示範影片還在拍。在那之前，先用一張真實的操作畫面，一區一區講它在做什麼。"
+  description="arkiv 操作畫面逐區導覽：搜尋列、Smart Pool、拍攝日下鑽、評等、場景時間軸、重新處理與匯出。">
+
+  <figure class="lg-fig" slot="before">
+    <div class="lg-fig-frame">
+      <img src={`${base}/img/arkiv-ui.webp`} width="1600" height="890" decoding="async"
+           alt="arkiv 操作畫面：左欄專案與篩選，中間 20 支素材的縮圖格，右欄場景時間軸與匯出按鈕">
+      {PINS.map((p) => (
+        <a class="pin" href={`#${p.id}`} data-pin={p.n} style={`left:${p.x}%;top:${p.y}%`} aria-label={`第 ${p.n} 區`}>{p.n}</a>
+      ))}
+    </div>
+    <figcaption>arkiv v1.2.0，一個 24 支素材的專案，已篩到拍攝日 08-17 的 20 支。點數字跳到說明。</figcaption>
+  </figure>
+
+  <Row shot={{ src: `${base}/img/demo/query.webp`, w: 440, h: 36, alt: '搜尋列放大：引號裡的語意查詢，後面接 camera、tag、lang 條件' }} id="query" pin={1} q="搜尋列：|語意和條件|寫在同一行">
+    <p>引號裡的字照意思找，後面的 <code>camera:</code>、<code>tag:</code>、<code>lang:</code> 是精確條件。兩種可以混著寫，不用切換模式。</p>
+  </Row>
+
+  <Row shot={{ src: `${base}/img/demo/pools.webp`, w: 220, h: 165, alt: 'Smart Pool 放大：All media 24、Needs review 1、Rated good 15、N·G 4、Unrated 4' }} id="pools" pin={2} q="Smart Pool：還沒看、可用、不用，自動分好">
+    <p>評過 GOOD 的、標 N·G 的、還沒評的，各自成一池，數字即時更新。挑毛片時只要一直清「待審」那池就好。</p>
+  </Row>
+
+  <Row shot={{ src: `${base}/img/demo/date.webp`, w: 220, h: 180, alt: '拍攝日與機型放大：2026 底下 08-19 與 08-17，機型 Sony A7 V' }} id="date" pin={3} q="拍攝日：|從年份|一路點到某一天">
+    <p>日期讀的是素材自己的拍攝時間，不是檔案修改時間。底下還有機型分組，多機拍攝時每台機器各自一組。</p>
+  </Row>
+
+  <Row shot={{ src: `${base}/img/demo/grid.webp`, w: 600, h: 172, alt: '縮圖格放大：GOOD、REV 標記，以及檔名被劃掉的 N·G 素材' }} id="grid" pin={4} q="縮圖格：|評等直接掛在素材上">
+    <p>每張卡片底下是 GOOD／REV／N·G 標記，N·G 的檔名會劃掉。評等存在素材庫裡，用外掛匯進 Resolve 時會變成 clip color。</p>
+  </Row>
+
+  <Row shot={{ src: `${base}/img/demo/nospeech.webp`, w: 340, h: 28, alt: '逐字稿欄放大：無語音 · no speech detected' }} id="nospeech" pin={5} q="「無語音」：沒聽到就說沒聽到">
+    <p>這批是沒有對白的空景，逐字稿欄位明寫 no speech detected，而不是留空或硬掰出一句字幕。</p>
+  </Row>
+
+  <Row shot={{ src: `${base}/img/demo/scenes.webp`, w: 340, h: 182, alt: '場景時間軸放大：時間碼、A-Roll 與景別標籤、一句中文描述' }} id="scenes" pin={6} q="場景時間軸：|視覺模型寫的描述"
+    ev="這張截圖當時用的是 qwen3-vl；目前預設是速度較快的 qwen2.5vl:7b。">
+    <p>每換一個場景一行：時間碼、A-Roll／B-Roll、景別、一句中文描述。你會在搜尋時打的那些字，大多是從這裡來的。</p>
+  </Row>
+
+  <Row shot={{ src: `${base}/img/demo/reprocess.webp`, w: 340, h: 128, alt: '重新處理按鈕放大：重轉錄、重試視覺、完整重建、建立 PROXY' }} id="reprocess" pin={7} q="重新處理：|只重跑需要的那一步">
+    <p>逐字稿不滿意就只重轉錄，換了視覺模型就只重跑視覺，不用整支重來。也可以在這裡替 HEVC、ProRes 這類瀏覽器播不了的檔產生 proxy。</p>
+  </Row>
+
+  <Row shot={{ src: `${base}/img/demo/export.webp`, w: 340, h: 112, alt: '評等與匯出放大：GOOD、REVIEW、N·G，以及 EDL、FCPXML、SRT、VTT、TXT' }} id="export" pin={8} q="匯出：交給剪輯軟體">
+    <p>EDL、FCPXML、SRT、VTT、TXT 一鍵輸出。用 Resolve 的話，外掛可以直接把搜尋結果匯進 Media Pool。</p>
+  </Row>
+</Ledger>
+
+<script is:inline>
+  // Row ↔ pin: pointing at either lights both. Pure enhancement; the pins are
+  // plain anchors and the rows plain sections without it.
+  (function () {
+    var rows = document.querySelectorAll('.lg-row[data-pin]');
+    var pins = document.querySelectorAll('.pin[data-pin]');
+    function light(n, on) {
+      rows.forEach(function (r) { if (r.dataset.pin === n) r.classList.toggle('on', on); });
+      pins.forEach(function (p) { if (p.dataset.pin === n) p.classList.toggle('on', on); });
+    }
+    [].slice.call(rows).concat([].slice.call(pins)).forEach(function (el) {
+      var n = el.dataset.pin;
+      el.addEventListener('mouseenter', function () { light(n, true); });
+      el.addEventListener('mouseleave', function () { light(n, false); });
+      el.addEventListener('focusin', function () { light(n, true); });
+      el.addEventListener('focusout', function () { light(n, false); });
+    });
+  })();
+</script>

@@ -33,6 +33,38 @@ class HealthStatus(str, Enum):
     CHROMA_MISSING = "chroma_missing"
     NAS_UNMOUNTED = "nas_unmounted"
     TIMEOUT = "timeout"
+    # The path exists as far as anyone can tell, but the OS refused to let us
+    # look: an SMB share Windows has not logged into yet (WinError 1326), access
+    # denied (5), a network name that is gone (53/67), a macOS TCC refusal.
+    # Distinct from PATH_NOT_FOUND because the fix is different — sign in, not
+    # re-point the project.
+    INACCESSIBLE = "inaccessible"
+
+
+def _file_manager_name() -> str:
+    s = platform.system().lower()
+    if s == "darwin":
+        return "Finder"
+    if s == "windows":
+        return "檔案總管"
+    return "檔案管理員"
+
+
+def path_access_message(exc: OSError, action: str = "加入") -> str:
+    """User-facing text for an OSError raised while merely LOOKING at a path the
+    user typed in (exists / is_dir / stat).
+
+    `Path.exists()` only swallows the not-found family; an authentication or
+    permission failure propagates, and left unhandled it reached the UI as a
+    bare "500". The system reason is kept (Windows gives it in the local
+    language, already decoded to str) because it is what tells the user which
+    of "wrong password" / "access denied" / "network name not found" they hit.
+    """
+    reason = (getattr(exc, "strerror", None) or str(exc) or exc.__class__.__name__).strip()
+    return (
+        "無法存取這個路徑（{reason}）。如果是網路磁碟，請先在{fm}開啟這個位置並登入，"
+        "再回來{action}。"
+    ).format(reason=reason, fm=_file_manager_name(), action=action)
 
 
 def check(name: str, ok: bool, detail: str = "", required: bool = True):
@@ -89,6 +121,34 @@ def _check_opencc():
     else:
         check("opencc", False, "(not installed — needed only for Chinese transcripts)",
               required=False)
+
+
+def _check_embedder_drift():
+    """The stamp check in vectordb only compares model NAMES. An Ollama upgrade or
+    a re-pulled tag can change the vectors under the same name, and search then
+    degrades with no error — so re-embed a few stored chunks and compare."""
+    name = "embedder ↔ index"
+    try:
+        import vectordb
+        result = vectordb.embedder_drift()
+    except Exception as e:  # noqa: BLE001 — no index yet / backend down: can't judge
+        check(name, False, f"(not measured: {type(e).__name__}: {str(e)[:120]})", required=False)
+        return
+    if result is None:
+        check(name, False, "(not measured: index is empty)", required=False)
+        return
+    if result["ok"]:
+        check(name, True, "(re-embedded {n} stored chunks, min cosine {c:.6f})".format(
+            n=result["n"], c=result["min_cos"]))
+        return
+    import config
+    warn(name, "vectors DRIFTED — {n} stored chunks re-embedded with {m} now score min "
+               "cosine {c:.6f} (< {f}). Same model name, different vectors (Ollama upgrade, "
+               "re-pulled tag or new quantization): queries no longer land in the space the "
+               "index was built in, so search quality drops with no error. "
+               "Fix: python embed.py --rebuild".format(
+                   n=result["n"], m=config.OLLAMA_EMBED_MODEL, c=result["min_cos"],
+                   f=vectordb.DRIFT_COS_FLOOR))
 
 
 def spa_freshness(root: Path):
@@ -167,6 +227,16 @@ def _check_mount(path):
 
 
 def project_health(project):
+    # One unreachable project must not take the whole probe down with it:
+    # /api/projects/health, federation and bins all call this per project, and
+    # an OSError escaping here turned the entire response into a 500.
+    try:
+        return _project_health(project)
+    except OSError:
+        return HealthStatus.INACCESSIBLE
+
+
+def _project_health(project):
     project_path = _project_path(project)
     if not project_path.exists():
         return HealthStatus.PATH_NOT_FOUND
@@ -330,6 +400,8 @@ def main():
         embed_model = config.OLLAMA_EMBED_MODEL.split(":")[0]
         has_embed = any(embed_model in m for m in models)
         check(config.OLLAMA_EMBED_MODEL, has_embed, "" if has_embed else f"(run: ollama pull {config.OLLAMA_EMBED_MODEL})")
+        if has_embed:
+            _check_embedder_drift()
 
         vision_model = config.VISION_MODEL.split(":")[0]
         has_vision = any(vision_model in m for m in models)

@@ -36,9 +36,11 @@ import config
 import db
 import ingest_budget
 import mediatypes
+import orphan_guard
 import settings as settings_store
 from auth import require_scopes
 from config import BASE_DIR
+from health import path_access_message
 from pathres import _display_path, _resolve_media_path
 from reqopts import _INGEST_LANGUAGES, _ingest_cmd_opts
 from state import _acquire_ingest_slot, _release_ingest_slot, ingest_ws
@@ -69,6 +71,20 @@ class IngestRequest(BaseModel):
 
 # _INGEST_LANGUAGES / _INGEST_LANGUAGE_CODES / _ingest_cmd_opts moved to
 # reqopts.py (R5-25 / #51), imported above.
+
+
+def _user_dir_or_400(raw: str, not_dir_msg: str) -> Path:
+    """Resolve a user-typed directory and confirm it is one — with an OSError
+    (SMB share not logged in, access denied, network name gone) answered as a
+    400 the user can act on instead of escaping as a 500."""
+    try:
+        target = Path(raw).expanduser().resolve()
+        is_dir = target.is_dir()
+    except OSError as exc:
+        raise HTTPException(400, path_access_message(exc, "匯入"))
+    if not is_dir:
+        raise HTTPException(400, not_dir_msg)
+    return target
 
 
 class ScanRequest(BaseModel):
@@ -228,9 +244,7 @@ def scan_media(
     _tok: dict = Depends(require_scopes("ingest_write")),
 ):
     """Quick scan — return file list without processing."""
-    target = Path(body.path).expanduser().resolve()
-    if not target.is_dir():
-        raise HTTPException(400, "路徑不是有效的目錄")
+    target = _user_dir_or_400(body.path, "路徑不是有效的目錄")
     _assert_ingest_path_safe(target)
     files = []
     unsupp: dict = {}  # ext -> count, for the MANIFEST "skipped" line
@@ -369,9 +383,7 @@ def ingest_media(
     scripted ones.
     """
     import subprocess, sys
-    target = Path(body.path).expanduser().resolve()
-    if not target.is_dir():
-        raise HTTPException(400, "路徑不是有效的目錄")
+    target = _user_dir_or_400(body.path, "路徑不是有效的目錄")
     _assert_ingest_path_safe(target)
     cmd = [sys.executable, str(BASE_DIR / "ingest.py"), "--dir", str(target)]
     if body.limit > 0:
@@ -630,17 +642,22 @@ def _ws_authorized(ws: WebSocket, scope: str) -> bool:
     # host/port, incl. remote + HTTPS reverse proxy) or in the static dev/Tauri
     # allowlist. A cross-site page (different authority) is rejected. Non-browser
     # clients (no Origin) fall through to token auth.
+    # Same rule as webguard.same_site_violation: Origin == Host only counts as
+    # same-origin when that Host can't be a DNS-rebinding name, or the handshake
+    # brings its own ?token= (audit 2026-10-09).
+    raw = (ws.query_params.get("token") or "").strip()
     origin = ws.headers.get("origin")
-    if origin is not None:
-        origin_authority = origin.split("://", 1)[-1]
+    if origin is not None and origin not in _ALLOWED_ORIGINS:
         host_header = ws.headers.get("host", "")
-        if origin_authority != host_header and origin not in _ALLOWED_ORIGINS:
+        if origin.split("://", 1)[-1] != host_header:
+            return False
+        if not raw and not auth._host_is_trusted(host_header):
             return False
     host = ws.client.host if ws.client is not None else ""
-    if auth._trust_loopback() and host in auth._LOOPBACK_HOSTS and not auth._looks_proxied(ws):
+    if auth.loopback_trusted(host, ws.headers):
         return True
     try:
-        tok = auth.resolve_raw_token((ws.query_params.get("token") or "").strip(), host)
+        tok = auth.resolve_raw_token(raw, host, forwarded=auth._looks_proxied(ws))
     except Exception:
         return False
     return scope in tok.get("scopes", ())
@@ -734,7 +751,8 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
         start_new_session=(os.name == "posix"),
         # brick 3: drive the structured per-stage progress protocol (own-line JSON
         # events) instead of parsing the compact inline `>probe` human markers.
-        env={**os.environ, "ARKIV_STAGE_EVENTS": "1"},
+        # ARKIV_PARENT_PID (orphan_guard): die with this server if it is SIGKILLed.
+        env=orphan_guard.child_env({**os.environ, "ARKIV_STAGE_EVENTS": "1"}),
         # audit M3: a single stdout line beyond the default 64KB reader limit
         # raises inside the read loop; give pathological log lines 1MB headroom.
         limit=2 ** 20,
@@ -913,9 +931,7 @@ async def ingest_media_ws(
     could drive the ingest pipeline over an arbitrary directory (Codex-class
     finding from the overnight audit).
     """
-    target = Path(body.path).expanduser().resolve()
-    if not target.is_dir():
-        raise HTTPException(400, f"路徑不是有效的目錄：{body.path}")
+    target = _user_dir_or_400(body.path, f"路徑不是有效的目錄：{body.path}")
     _assert_ingest_path_safe(target)
     if not _acquire_ingest_slot():  # audit H3 — shared single-flight with REST ingest/reingest
         raise HTTPException(409, "已有匯入進行中，請等待完成後再試")

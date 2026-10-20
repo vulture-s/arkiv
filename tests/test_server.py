@@ -1010,6 +1010,8 @@ def test_generate_proxy_falls_back_to_software_when_hwaccel_fails(tmp_path, monk
             self.returncode = rc
 
     def fake_run(cmd, **kw):
+        if cmd[0] == config.FFPROBE_PATH:  # duration probe for the timeout budget
+            raise OSError("no ffprobe in this test")
         calls.append(cmd)
         used_hw = "-hwaccel" in cmd
         if used_hw:
@@ -1133,7 +1135,8 @@ def test_ingest_scan_rejects_path_outside_allowed_roots(fastapi_client, monkeypa
     caller supplied, returning size + abs path of every media file under it —
     full filesystem inventory leak to anyone on the Tailscale net. Now the
     target must resolve under an allowlisted root (PROJECT_ROOT, ~/Desktop,
-    ~/Documents, ~/Movies, ~/Pictures, /Volumes/*, or ARKIV_INGEST_ROOTS)."""
+    ~/Documents, ~/Movies, ~/Videos, ~/Pictures, /Volumes/*, Windows network
+    drives, ingest.extra_roots, or ARKIV_INGEST_ROOTS)."""
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     monkeypatch.setenv("ARKIV_INGEST_ROOTS", str(sandbox))
@@ -1142,7 +1145,7 @@ def test_ingest_scan_rejects_path_outside_allowed_roots(fastapi_client, monkeypa
     out_of_bounds.mkdir()
     resp = fastapi_client.post("/api/ingest/scan", json={"path": str(out_of_bounds)})
     assert resp.status_code == 403
-    assert "ingest" in resp.text or "批准" in resp.text
+    assert "不在 arkiv 允許匯入的位置" in resp.json()["detail"]
 
 
 def test_ingest_scan_accepts_path_under_allowed_root(fastapi_client, monkeypatch, tmp_path):

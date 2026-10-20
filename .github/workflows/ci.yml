@@ -49,21 +49,14 @@ jobs:
           cache: pip
 
       - name: Install deps
-        # Lean set: the real (non-faked) deps the suite imports, plus numpy (for
-        # pytest.approx), mlx-whisper (so the install-closure walk resolves mlx)
-        # and mcp (gated to >=3.10 to mirror requirements.txt — on 3.9 the MCP
-        # tests importorskip cleanly). Heavy backends faked in tests/conftest.py
-        # are deliberately NOT installed.
+        # Lean set (requirements-ci.txt): the real (non-faked) deps the suite
+        # imports. Heavy backends faked in tests/conftest.py are deliberately NOT
+        # installed. Versions come from constraints.txt — the same pins every other
+        # install path uses; this used to be a hand-copied list that drifted (it
+        # hid that requirements.txt was uninstallable on 3.9).
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          pip install \
-            "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
-            "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
-            "psutil>=5.9" "whisper-guard>=0.3" numpy mlx-whisper \
-            "python-multipart>=0.0.9" \
-            "opencc; python_version >= '3.10'" \
-            "mcp>=1.2,<2; python_version >= '3.10'"
+          pip install -r requirements-dev.txt -r requirements-ci.txt -c constraints.txt
       - name: Run tests
         run: pytest -q
 
@@ -106,7 +99,7 @@ jobs:
       - name: Set up Python 3.12
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
           cache: pip
       - name: Install deps
         # Same lean set as `test`, MINUS mlx-whisper (no Windows wheel; faked by
@@ -116,11 +109,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          pip install \
-            "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
-            "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
-            "psutil>=5.9" "whisper-guard>=0.3" numpy "python-multipart>=0.0.9" "mcp<2"
+          pip install -r requirements-dev.txt -r requirements-ci.txt -c constraints.txt
       - name: Run Windows correctness tests (offload deny-policy + MCP stdio + settings scope)
         shell: bash
         # test_settings_g5.py joins this leg for the same reason the leg exists:
@@ -147,18 +136,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
           cache: pip
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          pip install \
-            "fastapi>=0.100.0" "uvicorn>=0.20.0" "pydantic>=2.0,<3" \
-            "pillow>=9.0" "requests>=2.28" "xxhash>=2.0.0" "nanoid>=2.0.0" \
-            "psutil>=5.9" "whisper-guard>=0.3" numpy mlx-whisper \
-            "python-multipart>=0.0.9" \
-            "opencc; python_version >= '3.10'" "mcp>=1.2,<2"
+          pip install -r requirements-dev.txt -r requirements-ci.txt -c constraints.txt
       - name: Coverage
         run: pytest -q -m "not subprocess_stdio" --cov=. --cov-config=pyproject.toml --cov-report=term:skip-covered --cov-fail-under=55
 
@@ -172,7 +155,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install + build
@@ -214,7 +197,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build frontend (generate_context! embeds frontend/dist)
@@ -222,7 +205,9 @@ jobs:
         run: |
           npm ci
           npm run build
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"  # = rust-toolchain.toml (tests/test_toolchain_pins.py)
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -245,7 +230,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build frontend (generate_context! embeds frontend/dist)
@@ -253,7 +238,9 @@ jobs:
         run: |
           npm ci
           npm run build
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"  # = rust-toolchain.toml (tests/test_toolchain_pins.py)
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -273,7 +260,16 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
+      - name: constraints.txt is current
+        # Rerunning the lock keeps every existing pin unless a requirement forces
+        # a change, so a clean diff means constraints.txt still satisfies all three
+        # requirements files. Red here = someone (often dependabot) moved a floor
+        # without relocking: run `scripts/lock.sh` and commit constraints.txt.
+        run: |
+          python -m pip install "uv==0.13.1"
+          scripts/lock.sh
+          git diff --exit-code -- constraints.txt
       - name: pip-audit
         run: |
           python -m pip install --upgrade pip pip-audit
@@ -357,7 +353,7 @@ jobs:
             --ignore-vuln CVE-2026-24747 --ignore-vuln GHSA-63cw-57p8-fm3p
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
       - name: npm audit
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high

@@ -76,7 +76,7 @@ git clone https://github.com/vulture-s/arkiv.git
 cd arkiv
 py -3.12 -m venv .venv
 .\.venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 python health.py        # confirm everything is READY (see step 3)
 python server.py        # then open http://localhost:8501
 ```
@@ -118,6 +118,28 @@ audio as garbled Chinese:
 ```powershell
 python ingest.py --dir "D:\path\to\your\clips" --language en   # zh / en / ja / ko
 ```
+
+### Ingesting from a NAS / network folder
+
+By default arkiv only reads from a few places: this library's folder, your
+Desktop, Documents, Videos and Pictures, and **network drives you have mapped**.
+That limit is deliberate — it stops someone else on your network from using
+arkiv to list every file on your PC. A NAS folder picked as a network path
+(`\\NAS\home\Photos`) is outside it, and the app answers *"這個資料夾不在 arkiv
+允許匯入的位置"*. Two ways in, pick either:
+
+1. **Map the NAS share as a network drive** (simplest). File Explorer → *This PC*
+   → *Map network drive* → pick a letter such as `Z:` and enter
+   `\\NAS\home`. Then choose `Z:\Photos\…` in arkiv. Every mapped network
+   drive is allowed automatically; your own `C:\` is not.
+2. **Add the folder in Settings.** arkiv → *Settings* → *Ingest · 匯入* →
+   *額外允許的資料夾*, one folder per line, e.g. `\\100.64.154.6\home\Photos`,
+   then *儲存*. It applies to this library only. A whole local disk (`C:\`) is
+   refused.
+
+(Advanced: the `ARKIV_INGEST_ROOTS` environment variable *replaces* the default
+list entirely — `;`-separated on Windows. Folders added in Settings are still
+added on top.)
 
 Then search in plain language (中文 or English) in the app. That's the moment
 arkiv is built for: type a phrase, and matching clips from years of footage

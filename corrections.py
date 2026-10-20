@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -83,32 +84,49 @@ def _clean_rule(raw: Dict) -> Optional[Dict]:
     scope = raw.get("scope", "global")
     if scope not in SCOPES:
         scope = "global"
-    return {
+    out = {
         "from": frm,
         "to": to,
         "scope": scope,
         "pre": bool(raw.get("pre", False)),
         "post": bool(raw.get("post", True)),
     }
+    # Optional: when :func:`learn` last touched this rule (UTC ISO-8601). Drives
+    # hotword priority (newest first) when the prompt budget can't fit them all.
+    learned_at = raw.get("learned_at")
+    if isinstance(learned_at, str) and learned_at:
+        out["learned_at"] = learned_at
+    return out
 
 
-def load_rules() -> List[Dict]:
-    """Read + validate rules from ``corrections.json``. Missing / corrupt → []
-    (non-fatal, matching ``vocabulary.txt`` tolerance)."""
+def load_rules_checked() -> Tuple[List[Dict], Optional[str]]:
+    """Like :func:`load_rules`, but also says WHY the list is empty when the file
+    exists and could not be used. A missing file is a genuinely empty dictionary
+    (error None); an unreadable / corrupt one is not, and an editor that shows it
+    as empty invites the user to save over it (audit 2026-10-09 K1)."""
     path = corrections_path()
+    if not path.exists():
+        return [], None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+    except (OSError, ValueError) as exc:
+        return [], "corrections.json 無法讀取（{0}: {1}）".format(type(exc).__name__, exc)
     raw_rules = data.get("rules") if isinstance(data, dict) else data
     if not isinstance(raw_rules, list):
-        return []
+        return [], "corrections.json 格式不符：找不到 rules 清單"
     out = []
     for raw in raw_rules:
         rule = _clean_rule(raw)
         if rule is not None:
             out.append(rule)
-    return out
+    return out, None
+
+
+def load_rules() -> List[Dict]:
+    """Read + validate rules from ``corrections.json``. Missing / corrupt → []
+    (non-fatal, matching ``vocabulary.txt`` tolerance — the ingest/hotword path
+    must not fail on a bad dictionary). Editors use :func:`load_rules_checked`."""
+    return load_rules_checked()[0]
 
 
 def save_rules(rules: Iterable[Dict]) -> List[Dict]:
@@ -117,6 +135,19 @@ def save_rules(rules: Iterable[Dict]) -> List[Dict]:
     cleaned = [r for r in (_clean_rule(x) for x in rules) if r is not None]
     path = corrections_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Keep the previous dictionary (byte-for-byte, even if corrupt) one save
+    # back: a PUT replaces the WHOLE file, so an editor that loaded the wrong
+    # thing would otherwise destroy curated rules with no way back.
+    if path.exists():
+        # `.bak` is one generation deep, so a file that does not parse (a hand
+        # edit with a stray comma — the case the editor warns about and still
+        # lets you save over) would be lost on the SECOND save. Park it under a
+        # name no later save overwrites (Claude review 1009 R1).
+        if load_rules_checked()[1] is not None:
+            from datetime import datetime
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            shutil.copy2(str(path), str(path.with_name(path.name + ".corrupt-" + stamp)))
+        shutil.copy2(str(path), str(path.with_name(path.name + ".bak")))
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps({"version": 1, "rules": cleaned}, ensure_ascii=False, indent=2),
@@ -126,16 +157,85 @@ def save_rules(rules: Iterable[Dict]) -> List[Dict]:
     return cleaned
 
 
+# A hotword must be a proper noun / term, never a sentence: Whisper treats the
+# initial_prompt as "the text that came before", so a sentence there is the kind
+# of thing it will happily re-emit (prompt hallucination). Anything with sentence
+# punctuation, a line break, more than a few space-separated words, or longer
+# than this many characters is kept as a post (recorrect) rule only.
+MAX_HOTWORD_CHARS = 16
+_SENTENCE_PUNCT = set("。，、！？；：…「」『』,.!?;:\"\n\r\t")
+
+
+def is_hotword_term(term: str) -> bool:
+    """True if ``term`` is short and term-shaped enough to feed Whisper as a hotword."""
+    if not isinstance(term, str):
+        return False
+    term = term.strip()
+    if not term or len(term) > MAX_HOTWORD_CHARS:
+        return False
+    if any(ch in _SENTENCE_PUNCT for ch in term):
+        return False
+    return len(term.split()) <= 3
+
+
 def hotword_terms() -> List[str]:
     """The ``to`` terms of rules with ``pre=True`` — merged into the Whisper
-    hotword list by ``transcribe._custom_terms()``. De-duplicated, order kept."""
+    hotword list by ``transcribe._custom_terms()``. De-duplicated.
+
+    Order = priority when the prompt budget is short (``transcribe`` drops from
+    the tail): rules carrying ``learned_at`` come first, newest first; rules
+    without it (hand-written, older) follow in file order. Sentence-shaped
+    ``to`` values are skipped even if flagged ``pre`` (see :func:`is_hotword_term`)."""
+    rules = [r for r in load_rules() if r.get("pre") and is_hotword_term(r["to"])]
+    stamped = sorted((r for r in rules if r.get("learned_at")),
+                     key=lambda r: r["learned_at"], reverse=True)
+    unstamped = [r for r in rules if not r.get("learned_at")]
     seen = set()
     out = []
-    for r in load_rules():
-        if r.get("pre") and r["to"] and r["to"] not in seen:
-            seen.add(r["to"])
-            out.append(r["to"])
+    for r in stamped + unstamped:
+        term = r["to"].strip()
+        if term not in seen:
+            seen.add(term)
+            out.append(term)
     return out
+
+
+def learn(frm: str, to: str, scope: str = "global") -> Dict:
+    """"Fix it once, remember it": record one correction the user just made.
+
+    Upserts the rule keyed on ``from`` (an existing rule for the same mis-hearing
+    is updated, not duplicated), turns ``post`` on so the fix can be applied to the
+    rest of the project, turns ``pre`` on when ``to`` is term-shaped so the NEXT
+    transcription is prompted with it, and stamps ``learned_at`` (hotword
+    priority). Returns ``{"rule", "created", "hotword"}``; raises ``ValueError``
+    on an unusable rule."""
+    from datetime import datetime, timezone
+    frm = (frm or "").strip() if isinstance(frm, str) else ""
+    to = to.strip() if isinstance(to, str) else None
+    if not frm or to is None:
+        raise ValueError("from 不可為空，to 必須是字串")
+    if frm == to:
+        raise ValueError("from 與 to 相同")
+    rules, load_error = load_rules_checked()
+    if load_error is not None:
+        # Same rule as the editor: never build a new dictionary on top of a file
+        # we couldn't read — the save would silently drop every curated rule.
+        raise ValueError(load_error)
+    hotword = is_hotword_term(to)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    rule = {"from": frm, "to": to, "scope": scope if scope in SCOPES else "global",
+            "pre": hotword, "post": True, "learned_at": stamp}
+    created = True
+    for i, r in enumerate(rules):
+        if r["from"] == frm:
+            rules[i] = rule  # same mis-hearing → update in place, no duplicate
+            created = False
+            break
+    else:
+        rules.append(rule)
+    saved = save_rules(rules)
+    persisted = next(r for r in saved if r["from"] == frm)
+    return {"rule": persisted, "created": created, "hotword": hotword}
 
 
 # ── correction application (pure, testable) ──────────────────────────────────
@@ -282,8 +382,13 @@ def scan(rules: Optional[List[Dict]] = None) -> Dict:
 
 
 def _write_backup(rows: List[Dict], rules: List[Dict]) -> str:
-    """Persist pre-correction state of the affected rows. Returns backup name."""
+    """Persist pre-correction state of the affected rows. Returns backup name.
+
+    Each row also records the clip's stored `path`. `media.id` has no
+    AUTOINCREMENT, so a deleted clip's id is handed to the next ingest; without
+    the path, `revert` would write this clip's transcript onto that newcomer."""
     import time
+    rows = _with_paths(rows)
     name = "recorrect-{0}.json".format(time.strftime("%Y%m%dT%H%M%S", time.gmtime()))
     bdir = _backups_dir()
     bdir.mkdir(parents=True, exist_ok=True)
@@ -300,6 +405,29 @@ def _write_backup(rows: List[Dict], rules: List[Dict]) -> str:
         n += 1
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path.name
+
+
+def _with_paths(rows: List[Dict]) -> List[Dict]:
+    """Fill in `path` for rows that lack it (retranscribe-all passes id-only rows)."""
+    missing = [r["id"] for r in rows if isinstance(r, dict) and "id" in r and not r.get("path")]
+    if not missing:
+        return rows
+    import db
+    with db.get_conn() as conn:
+        found = {}
+        for i in range(0, len(missing), 500):
+            chunk = missing[i:i + 500]
+            for r in conn.execute(
+                "SELECT id, path FROM media WHERE id IN ({0})".format(",".join("?" * len(chunk))),
+                chunk,
+            ).fetchall():
+                found[r[0]] = r[1]
+    out = []
+    for r in rows:
+        if isinstance(r, dict) and "id" in r and not r.get("path") and found.get(r["id"]):
+            r = dict(r, path=found[r["id"]])
+        out.append(r)
+    return out
 
 
 def apply(rules: Optional[List[Dict]] = None) -> Dict:
@@ -376,15 +504,33 @@ def revert(backup_name: Optional[str] = None) -> Dict:
     # none, instead of nulling/guessing it (codex footgun). retranscribe-all backups
     # now carry lang; correction-apply backups don't (apply never changes lang), so
     # COALESCE leaves lang untouched there — correct in both cases.
-    rows = [
-        (m.get("transcript"), m.get("segments_json"), m.get("words_json"), m.get("lang"), m["id"])
-        for m in media if isinstance(m, dict) and "id" in m
-    ]
-    if rows:
-        with db.get_conn() as conn:
+    entries = [m for m in media if isinstance(m, dict) and "id" in m]
+    rows = []
+    skipped = []
+    with db.get_conn() as conn:
+        current = {}
+        ids = [m["id"] for m in entries]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for r in conn.execute(
+                "SELECT id, path FROM media WHERE id IN ({0})".format(",".join("?" * len(chunk))),
+                chunk,
+            ).fetchall():
+                current[r[0]] = r[1]
+        for m in entries:
+            # A backup that recorded the clip's path only restores onto that same
+            # clip: the id alone may now belong to a different one (no AUTOINCREMENT).
+            # Backups from before paths were recorded can't be checked and keep the
+            # old id-only behaviour rather than becoming un-revertable.
+            if m.get("path") and current.get(m["id"]) != m["path"]:
+                skipped.append(m["id"])
+                continue
+            rows.append((m.get("transcript"), m.get("segments_json"), m.get("words_json"),
+                         m.get("lang"), m["id"]))
+        if rows:
             conn.executemany(
                 "UPDATE media SET transcript=?, segments_json=?, words_json=?, "
                 "lang=COALESCE(?, lang) WHERE id=?",
                 rows,
             )
-    return {"restored": len(rows), "backup": name}
+    return {"restored": len(rows), "backup": name, "skipped": skipped}

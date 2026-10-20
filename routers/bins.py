@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 import bins as bins_store
+import orphan_guard
 import projects as project_registry
 from auth import require_scopes
 from config import BASE_DIR
@@ -326,12 +327,16 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
                     # relative. cwd points at the dest .arkiv so ingest's
                     # bench_ingest.json / state don't dirty the install dir (mirrors
                     # /api/offload's state_cwd).
-                    ingest_env = dict(os.environ)
+                    ingest_env = orphan_guard.child_env()  # die with the server (audit N1)
                     ingest_env["ARKIV_PROJECT_ROOT"] = str(dest_root)
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                             text=True, encoding="utf-8", errors="replace",
                                             bufsize=1, env=ingest_env,
-                                            cwd=str(dest_root / ".arkiv"))
+                                            cwd=str(dest_root / ".arkiv"),
+                                            # own process group (as /api/ingest), so
+                                            # orphan_guard's killpg reaches ffmpeg /
+                                            # whisper children too (Claude review)
+                                            start_new_session=(os.name == "posix"))
                     try:
                         for line in proc.stdout:
                             yield _json.dumps({"type": "log", "line": line.rstrip("\n")}, ensure_ascii=False) + "\n"

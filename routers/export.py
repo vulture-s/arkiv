@@ -5,7 +5,8 @@ export_media directly (an internal call, not an HTTP round-trip):
   * /api/export/metadata-csv (GET) + /api/export/metadata-csv-to (POST) —
     DaVinci Resolve metadata CSV (browser blob vs Tauri server-write);
   * /api/media/{id}/export/{fmt} (GET) — single-clip txt/srt/vtt/edl/edl-markers/
-    fcpxml with an optional trim window;
+    fcpxml with an optional trim window; `?markers=transcript` makes the
+    edl-markers / fcpxml markers come from transcript segments, not scene frames;
   * /api/media/{id}/export-to (POST) — same, written to a caller-picked path;
   * /api/export/batch (POST) — zip of many single-clip exports;
   * /api/export/timeline/{fmt} (GET) — several clips laid end-to-end on ONE
@@ -25,26 +26,52 @@ from pydantic import BaseModel
 
 import db
 import settings as settings_store
+import transcript_time
 from auth import require_scopes
+from health import path_access_message
 from export_builders import (
     _build_metadata_csv,
     _edl_comment,
     _edl_fps_warning,
+    _edl_high_fps_warning,
     _edl_reel,
+    _edl_span,
     _edl_timecode,
     _fcpxml_rational,
     _media_streams,
+    _record_base_seconds,
     _start_tc_seconds,
     _subtitle_text,
+    _tc_is_drop,
     _subtitle_ts,
     render_subtitle_cues,
     transcript_fallback_segments,
+    transcript_marker_cues,
+    truncate_marker_name,
 )
 from pathres import _resolve_media_path
 from reqopts import _parse_ids_query
 from webguard import _assert_export_dest_safe
 
 router = APIRouter()
+
+# Formats that carry markers, and where those markers can come from.
+MARKER_FMTS = ("edl-markers", "fcpxml")
+MARKER_SOURCES = ("frames", "transcript")
+
+
+def _file_url(path: str) -> str:
+    """Absolute media path → a valid, percent-encoded file:/// URL for FCPXML.
+
+    FCPXML `src` is a URL, so a space (`/Volumes/My Passport`) makes it invalid
+    and a `#` or `%` in a filename is read as a fragment / an escape — the NLE
+    then looks for a different file (audit N1). Windows paths keep their drive
+    letter (`C:` stays unescaped) and use forward slashes."""
+    from urllib.parse import quote
+    posix = (path or "").replace("\\", "/")
+    if not posix.startswith("/"):
+        posix = "/" + posix
+    return "file://" + quote(posix, safe="/:")
 
 
 @router.get("/api/export/metadata-csv")
@@ -100,8 +127,12 @@ def export_metadata_csv_to(
         if not default_dir:
             raise HTTPException(400, "no dest provided and export.default_dir is unset")
         raw_dest = str(Path(default_dir) / "arkiv-metadata.csv")
-    dest = Path(raw_dest).expanduser().resolve()
-    if dest.is_dir() or raw_dest.endswith(("/", "\\")):
+    try:
+        dest = Path(raw_dest).expanduser().resolve()
+        dest_is_dir = dest.is_dir()
+    except OSError as exc:
+        raise HTTPException(400, path_access_message(exc, "匯出"))
+    if dest_is_dir or raw_dest.endswith(("/", "\\")):
         dest = dest / "arkiv-metadata.csv"
     _assert_export_dest_safe(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -147,8 +178,16 @@ def export_media(
     fmt: str,
     in_s: Optional[float] = None,
     out_s: Optional[float] = None,
+    markers: str = "frames",
     _tok: dict = Depends(require_scopes("media_read")),
 ):
+    # markers = where edl-markers / fcpxml markers come from: analysed scene
+    # frames (the default, unchanged) or the transcript's segments (8.2i).
+    markers = (markers or "frames").lower()
+    if markers not in MARKER_SOURCES:
+        raise HTTPException(422, "markers 必須是 {0}".format("/".join(MARKER_SOURCES)))
+    if markers != "frames" and fmt not in MARKER_FMTS:
+        raise HTTPException(422, "markers={0} 只適用於 {1}".format(markers, "/".join(MARKER_FMTS)))
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
@@ -158,11 +197,7 @@ def export_media(
     full_duration = rec.get("duration_s", 0) or 0
 
     # Normalize trim window: [trim_in, trim_out] in seconds, duration = trim_out - trim_in
-    trim_in = max(0.0, float(in_s)) if in_s is not None else 0.0
-    trim_out = min(full_duration, float(out_s)) if out_s is not None else full_duration
-    if trim_out <= trim_in:
-        trim_in, trim_out = 0.0, full_duration
-    has_trim = trim_in > 0.05 or trim_out < full_duration - 0.05
+    trim_in, trim_out, has_trim = transcript_time.trim_window(in_s, out_s, full_duration)
     duration = trim_out - trim_in
 
     # TC helpers are module-level (shared with the batch-timeline endpoint).
@@ -182,20 +217,7 @@ def export_media(
     # When trimmed, keep only segments that overlap [trim_in, trim_out] and
     # rebase their timestamps so the output starts at 0.
     if has_trim and _segments:
-        trimmed = []
-        for seg in _segments:
-            # `or 0`: an explicit null in segments_json (legacy rows have them)
-            # would make these comparisons raise TypeError → 500. Every other
-            # read of these fields already guards this way; this one did not.
-            s, e = seg.get("start", 0) or 0, seg.get("end", 0) or 0
-            if e <= trim_in or s >= trim_out:
-                continue
-            trimmed.append({
-                **seg,
-                "start": max(0.0, s - trim_in),
-                "end": min(duration, e - trim_in),
-            })
-        _segments = trimmed
+        _segments = transcript_time.trim_rebase(_segments, trim_in, trim_out)
 
     if fmt == "txt":
         if has_trim:
@@ -224,32 +246,28 @@ def export_media(
     if fmt in ("edl", "edl-markers"):
         # CMX3600 EDL — full clip + optional frame markers
         clip_fps = rec.get("fps") or 30.0
-        # 29.97/59.94 are drop-frame by convention
-        is_df = round(clip_fps, 2) in (29.97, 59.94)
+        # DF/NDF follows the camera's own TC (`;` vs `:`); the "29.97/59.94 are
+        # DF" convention is only the fallback when there is no camera TC.
+        is_df = _tc_is_drop(rec, clip_fps)
         fcm = "DROP FRAME" if is_df else "NON-DROP FRAME"
 
-        # Camera body start timecode (may not be 00:00:00:00)
+        # Camera body start timecode (may not be 00:00:00:00) — parsed as a frame
+        # count at the nominal rate, not as wall seconds (audit N1: 23.976).
         start_tc_str = rec.get("start_tc") or ""
-        start_tc_offset = 0.0
-        if start_tc_str:
-            # Parse HH:MM:SS:FF or HH:MM:SS;FF into seconds
-            _tc = start_tc_str.replace(";", ":").split(":")
-            if len(_tc) == 4:
-                try:
-                    _h, _m, _s, _f = int(_tc[0]), int(_tc[1]), int(_tc[2]), int(_tc[3])
-                    start_tc_offset = _h * 3600 + _m * 60 + _s + _f / clip_fps
-                except (ValueError, ZeroDivisionError):
-                    start_tc_offset = 0.0
+        start_tc_offset = _start_tc_seconds(rec, clip_fps)
 
         # Source TC = camera start TC + offset into clip (shifted by trim_in when trimmed)
-        src_start = _edl_tc(start_tc_offset + trim_in, clip_fps, is_df)
-        src_end = _edl_tc(start_tc_offset + trim_in + duration, clip_fps, is_df)
-        # Record TC = timeline position (starts at 01:00:00:00 by convention)
-        rec_base = 3600.0  # 01:00:00:00
-        rec_start = _edl_tc(rec_base, clip_fps, is_df)
-        rec_end = _edl_tc(rec_base + duration, clip_fps, is_df)
+        src_start, src_end = _edl_span(start_tc_offset + trim_in, duration, clip_fps, is_df)
+        # Record TC = timeline position (starts at 01:00:00:00 by convention —
+        # in label terms, so 23.976 does not start at 00:59:56:10)
+        rec_base = _record_base_seconds(clip_fps, is_df)
+        rec_start, rec_end = _edl_span(rec_base, duration, clip_fps, is_df)
 
-        edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n\n"
+        edl = f"TITLE: {_edl_comment(stem)}\nFCM: {fcm}\n"
+        hi_warn = _edl_high_fps_warning(clip_fps)  # B13: high-fps spec limit
+        if hi_warn:
+            edl += hi_warn + "\n"
+        edl += "\n"
         reel = _edl_reel(rec, stem)
         edl += f"001  {reel} V     C        {src_start} {src_end} {rec_start} {rec_end}\n"
         edl += f"* FROM CLIP NAME: {_edl_comment(filename)}\n"
@@ -257,7 +275,15 @@ def export_media(
             edl += f"* SOURCE START TC: {_edl_comment(start_tc_str)}\n"
         edl += "\n"
 
-        if fmt == "edl-markers":
+        if fmt == "edl-markers" and markers == "transcript":
+            # One LOC per transcript cue at its start (LOC has no duration).
+            # Same ASCII rule as the scene markers below, so a CJK transcript
+            # comes out as "?" here — FCPXML is the path that keeps UTF-8.
+            for cue in transcript_marker_cues(_segments):
+                rtc = _edl_tc(rec_base + cue["start"], clip_fps, is_df)
+                name = cue["text"].encode("ascii", "replace").decode("ascii")
+                edl += f"* LOC: {rtc} YELLOW {truncate_marker_name(name, ellipsis='...')}\n"
+        elif fmt == "edl-markers":
             # LOC comments — DaVinci reads these via "Import > Timeline Markers from EDL"
             colors = ["RED", "BLUE", "GREEN", "CYAN", "MAGENTA", "YELLOW", "WHITE"]
             frames = db.get_frames(media_id)
@@ -295,42 +321,44 @@ def export_media(
         else:
             _num, _den = "1", str(round(clip_fps))
 
-        # Drop frame for NTSC rates
-        is_df = rounded_fps in (29.97, 59.94)
+        # DF/NDF from the camera's own TC (fallback: NTSC rate convention)
+        is_df = _tc_is_drop(rec, clip_fps)
         tc_fmt = "DF" if is_df else "NDF"
 
         # Asset references the full file on disk; the timeline clip uses the trim window.
         asset_dur_frames = round(full_duration * clip_fps)
         clip_dur_frames = round(duration * clip_fps)
 
-        # Camera body start timecode
-        start_tc_str = rec.get("start_tc") or "00:00:00:00"
-        start_tc_offset = 0.0
-        _tc = start_tc_str.replace(";", ":").split(":")
-        if len(_tc) == 4:
-            try:
-                _h, _m, _s, _f = int(_tc[0]), int(_tc[1]), int(_tc[2]), int(_tc[3])
-                start_tc_offset = _h * 3600 + _m * 60 + _s + _f / clip_fps
-            except (ValueError, ZeroDivisionError):
-                pass
+        # Camera body start timecode, as media seconds (frame-exact, audit N1)
+        start_tc_offset = _start_tc_seconds(rec, clip_fps)
+        # The asset is anchored AT the camera TC so the asset-clip's start (camera
+        # TC + trim_in) falls inside [asset.start, asset.start + duration]. It was
+        # anchored at 0s, which put the clip start an hour past the end of the
+        # asset for any camera with TC 01:00:00:00 — the same bug the timeline
+        # export already fixed (Codex P2), left behind here.
+        asset_start_frames = round(start_tc_offset * clip_fps)
 
         from xml.sax.saxutils import escape as xml_esc
-        import pathlib
         # Attribute escaping must also cover the double quote (xml_esc leaves it
         # alone by default), or a filename like `cam "A".mp4` breaks name="..." /
         # src="..." — same protection the batch timeline path uses.
         _attr = lambda s: xml_esc(s, {'"': "&quot;"})
 
-        # Build file URI with proper file:/// prefix
-        raw_path = _resolve_media_path(rec.get("path", ""))
-        file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
-        if not str(file_uri).startswith("/"):
-            file_uri = pathlib.PurePosixPath("/" + str(file_uri))
-        file_uri_str = _attr(f"file://{file_uri}")
+        # Build a percent-encoded file:/// URL (spaces, `#`, `%` in paths)
+        file_uri_str = _attr(_file_url(_resolve_media_path(rec.get("path", ""))))
 
         # Build marker elements from frame analysis (filter to trim window, rebase to clip start)
         markers_xml = ""
-        frames = db.get_frames(media_id)
+        frames = db.get_frames(media_id) if markers == "frames" else []
+        for cue in (transcript_marker_cues(_segments) if markers == "transcript" else []):
+            # Resolve maps value → marker name, note → marker notes. Start and
+            # duration snap to whole frames; a marker is at least one frame long.
+            off_f = round(cue["start"] * clip_fps)
+            dur_f = max(1, round((cue["end"] - cue["start"]) * clip_fps))
+            name = _attr(truncate_marker_name(cue["text"]))
+            note = _attr(cue["text"])
+            markers_xml += (f'                <marker start="{off_f * int(_num)}/{_den}s" '
+                            f'duration="{dur_f * int(_num)}/{_den}s" value="{name}" note="{note}" />\n')
         colors = ["Blue", "Red", "Green", "Cyan", "Magenta", "Yellow", "White"]
         kept = 0
         for fr in frames:
@@ -352,7 +380,7 @@ def export_media(
 <fcpxml version="1.8">
     <resources>
         <format id="r1" frameDuration="{_num}/{_den}s" width="{rec.get('width') or 1920}" height="{rec.get('height') or 1080}" />
-        <asset id="r2" name="{_attr(stem)}" src="{file_uri_str}" start="0s" duration="{asset_dur_frames * int(_num)}/{_den}s" format="r1" hasAudio="1" hasVideo="1" />
+        <asset id="r2" name="{_attr(stem)}" src="{file_uri_str}" start="{asset_start_frames * int(_num)}/{_den}s" duration="{asset_dur_frames * int(_num)}/{_den}s" format="r1" hasAudio="1" hasVideo="1" />
     </resources>
     <library>
         <event name="arkiv Export">
@@ -382,6 +410,7 @@ class ExportToRequest(BaseModel):
     dest: str
     in_s: Optional[float] = None
     out_s: Optional[float] = None
+    markers: str = "frames"
 
 
 @router.post("/api/media/{media_id}/export-to")
@@ -397,7 +426,8 @@ def export_to_file(
     ~/.ssh / ~/Library/LaunchAgents 等敏感位置），改走 _assert_export_dest_safe
     共用 helper（allowlist of approved user export roots + 副檔名白名單）。
     """
-    resp = export_media(media_id, body.fmt, in_s=body.in_s, out_s=body.out_s)
+    resp = export_media(media_id, body.fmt, in_s=body.in_s, out_s=body.out_s,
+                        markers=body.markers)
     content = resp.body.decode("utf-8")
     dest = Path(body.dest).expanduser().resolve()
     _assert_export_dest_safe(dest)
@@ -412,6 +442,7 @@ class BatchExportRequest(BaseModel):
     # file each). For a single stitched timeline use /api/export/timeline.
     ids: List[int]
     fmt: str = "srt"
+    markers: str = "frames"
 
 
 @router.post("/api/export/batch")
@@ -441,7 +472,7 @@ def export_batch(
             rec = db.get_record_by_id(mid)
             if not rec:
                 continue
-            resp = export_media(media_id=mid, fmt=fmt, _tok=_tok)  # _tok is gate-only
+            resp = export_media(media_id=mid, fmt=fmt, markers=body.markers, _tok=_tok)  # _tok is gate-only
             content = resp.body if isinstance(resp.body, (bytes, bytearray)) else str(resp.body).encode("utf-8")
             stem = (rec.get("filename") or "media_{0}".format(mid)).rsplit(".", 1)[0]
             arcname = "{0}.{1}".format(stem, ext)
@@ -536,7 +567,7 @@ def export_timeline(
         raise HTTPException(404, f"找不到素材：{','.join(str(m) for m in missing)}")
 
     tl_fps = recs[0].get("fps") or 30.0
-    tl_is_df = round(tl_fps, 2) in (29.97, 59.94)
+    tl_is_df = _tc_is_drop(recs[0], tl_fps)
 
     if fmt == "edl":
         fcm = "DROP FRAME" if tl_is_df else "NON-DROP FRAME"
@@ -544,21 +575,27 @@ def export_timeline(
         fps_warn = _edl_fps_warning(recs, tl_fps)  # B13
         if fps_warn:
             edl += fps_warn + "\n"
+        # B13 high-fps: one line per distinct off-spec rate, not per clip.
+        for r in sorted({round(float(x.get("fps") or tl_fps), 3) for x in recs}):
+            hi_warn = _edl_high_fps_warning(r)
+            if hi_warn:
+                edl += hi_warn + "\n"
         edl += "\n"
-        rec_pos = 3600.0  # timeline starts at 01:00:00:00 by convention
+        rec_pos = _record_base_seconds(tl_fps, tl_is_df)  # 01:00:00:00 by convention
         for i, rec in enumerate(recs, 1):
             filename = rec.get("filename", f"media_{rec.get('id')}")
             stem = filename.rsplit(".", 1)[0]
             win_in, dur = _clip_window(rec)  # D2: honor the clip's IN/OUT marks
             clip_fps = rec.get("fps") or tl_fps
-            clip_is_df = round(clip_fps, 2) in (29.97, 59.94)
+            clip_is_df = _tc_is_drop(rec, clip_fps)
             # Source TC starts at the clip's camera TC PLUS its IN point, so the EDL
             # cuts from the marked in-point rather than the head of the file.
             src_off = _start_tc_seconds(rec, clip_fps) + win_in
-            src_start = _edl_timecode(src_off, clip_fps, clip_is_df)
-            src_end = _edl_timecode(src_off + dur, clip_fps, clip_is_df)
-            rec_start = _edl_timecode(rec_pos, tl_fps, tl_is_df)
-            rec_end = _edl_timecode(rec_pos + dur, tl_fps, tl_is_df)
+            # Each side's length is counted once (round(dur*fps)) so source and
+            # record spans agree; the record head advances by whole frames so
+            # rounding never accumulates along the timeline.
+            src_start, src_end = _edl_span(src_off, dur, clip_fps, clip_is_df)
+            rec_start, rec_end = _edl_span(rec_pos, dur, tl_fps, tl_is_df)
             reel = _edl_reel(rec, stem)
             has_vid, _ = _media_streams(rec)
             chan = "V" if has_vid else "A"  # audio-only clip → audio channel
@@ -567,7 +604,7 @@ def export_timeline(
             if rec.get("start_tc"):
                 edl += f"* SOURCE START TC: {_edl_comment(rec['start_tc'])}\n"
             edl += "\n"
-            rec_pos += dur
+            rec_pos = (round(rec_pos * tl_fps) + round(dur * tl_fps)) / tl_fps
         return HTMLResponse(
             content=edl,
             media_type="text/plain; charset=utf-8",
@@ -625,7 +662,6 @@ def export_timeline(
 
     # fmt == "fcpxml"
     from xml.sax.saxutils import escape as xml_esc
-    import pathlib
     # Attribute escaping must also cover the double quote, or a filename like
     # `cam "A".mp4` breaks the name="..." attribute → malformed XML (Codex P2).
     _attr = lambda s: xml_esc(s, {'"': "&quot;"})
@@ -655,11 +691,7 @@ def export_timeline(
         # reads from the in-point; asset spans exactly the marked window.
         src_off_frames = round((_start_tc_seconds(rec, clip_fps) + win_in) * tl_fps)
 
-        raw_path = _resolve_media_path(rec.get("path", ""))
-        file_uri = pathlib.PurePosixPath(raw_path.replace("\\", "/"))
-        if not str(file_uri).startswith("/"):
-            file_uri = pathlib.PurePosixPath("/" + str(file_uri))
-        file_uri_str = _attr(f"file://{file_uri}")
+        file_uri_str = _attr(_file_url(_resolve_media_path(rec.get("path", ""))))
 
         # asset.start = the media's own start timecode (camera TC). The asset
         # therefore spans [src_off, src_off + duration], so the asset-clip's

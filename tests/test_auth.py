@@ -472,7 +472,9 @@ def test_loopback_trusted_only_when_not_proxied(auth_app):
     NOT when a forwarding header is present — a reverse proxy / tailscale-serve
     forwards from 127.0.0.1 and would otherwise be handed full admin."""
     app, _ = auth_app
-    local = TestClient(app, client=("127.0.0.1", 12345))
+    # Host must be a non-rebindable name too (audit 2026-10-09); TestClient's
+    # default "testserver" Host is exactly the kind of DNS name that is not.
+    local = TestClient(app, client=("127.0.0.1", 12345), base_url="http://127.0.0.1:8501")
     # genuine local request, no proxy header → trusted, no token needed
     assert local.get("/test/read").status_code == 200
     # same loopback peer but a forwarding header → NOT trusted → 401 (no token)
@@ -548,5 +550,7 @@ def test_ws_ingest_loopback_trusted_without_token(server_module):
     """A genuine loopback handshake (no forwarding header) connects token-free,
     matching the HTTP loopback rule."""
     client = TestClient(server_module.app, client=("127.0.0.1", 5555))
-    with client.websocket_connect("/ws/ingest") as ws:
+    # TestClient's ws Host defaults to "testserver" (a rebindable DNS name since
+    # audit 2026-10-09) — a real local browser sends 127.0.0.1:<port>.
+    with client.websocket_connect("/ws/ingest", headers={"host": "127.0.0.1:8501"}) as ws:
         assert ws is not None
