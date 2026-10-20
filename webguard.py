@@ -323,9 +323,16 @@ def _extra_ingest_roots() -> list:
     for entry in _split_extra_roots(raw):
         if _extra_root_problem(entry):
             continue
+        p = Path(entry).expanduser()
         try:
-            roots.append(Path(entry).expanduser().resolve())
-        except (OSError, ValueError):
+            roots.append(p.resolve())
+        except OSError:
+            # Windows realpath() raises on some UNC failures it does not treat as
+            # "missing" — measured on real Windows: WinError 1326 (bad
+            # credentials) for \\nas\home. Keep the literal absolute form; it is
+            # what the target will be compared in when it resolves the same way.
+            roots.append(Path(os.path.abspath(str(p))))
+        except ValueError:
             continue
     return roots
 
