@@ -50,7 +50,7 @@ def _run(tmp_path, args, stub_body=None, stdin=None):
 
     return subprocess.run(
         ["bash", str(SCRIPT)] + args,
-        capture_output=True, text=True, env=env,
+        capture_output=True, text=True, encoding="utf-8", env=env,
         cwd=str(tmp_path), input=stdin, timeout=60,
     )
 
@@ -154,7 +154,7 @@ def test_stub_helper_leaves_no_temp_file_behind(tmp_path):
     env["PATH"] = "{0}:/usr/bin:/bin".format(bindir)
     env["TMPDIR"] = str(tmpdir)
     r = subprocess.run(["bash", str(SCRIPT), "hello"], capture_output=True,
-                       text=True, env=env, cwd=str(tmp_path), timeout=60)
+                       text=True, encoding="utf-8", env=env, cwd=str(tmp_path), timeout=60)
     assert r.returncode == 0, r.stderr
     assert set(tmpdir.iterdir()) == env_before, "scratch file leaked"
 

@@ -82,6 +82,12 @@ retranscribe.reset_progress(
 # mid-build playback streamed truncated proxies.
 proxy_build = SingleFlight("proxy_build")
 
+# Editing proxies (editor_proxy.py): ProRes written beside the source. Its own slot,
+# not proxy_build's — the two outputs are independent, and a long ProRes batch must
+# not make the browser-proxy button answer "already running".
+editor_proxy_build = SingleFlight("editor_proxy_build")
+editor_proxy_build.reset_progress(running=False, total=0, done=0, created=0, exists=0, failed=0, current=None, results=[])
+
 # First-run: /api/sample/seed loads the bundled CC-BY sample clips (single-flight +
 # progress poll). Seed the poll shape so GET /api/sample/seed/status returns the
 # full dict even before the first run.

@@ -23,6 +23,7 @@ import db
 import entitlements
 import federation
 import projects as project_registry
+import search_syntax
 from auth import require_scopes
 from mediarecords import _get_light_records_by_ids, _get_tags_bulk
 from pathres import _basename_safe, _display_path, _resolve_record
@@ -80,6 +81,8 @@ def search_all(
         )
     except project_registry.RegistryError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+    except search_syntax.QueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
     # Phase 16.2: federation results carry absolute media + project paths; strip
     # them at the API boundary so a videos_read client can't map the operator's

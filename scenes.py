@@ -14,7 +14,9 @@ of the path-leak guard for exactly this reason (there was nowhere to share from)
 and the copy silently missed a fix to the original for 38 days (#182). Same
 trap, so: one derivation, two callers.
 
-Depends only on `pathres` (itself db+stdlib) and stdlib — no server state, no
+Depends only on `pathres` (itself db+stdlib), `camera_motion` (stdlib at import;
+numpy only inside its measuring functions, never on this read path) and stdlib —
+no server state, no
 fastapi, no db — so it sits at the bottom of the import graph and is safe for
 the stdio MCP server to import. Callers fetch their own rows and own their own
 error surface: this module returns data and never raises HTTPException; the 404
@@ -23,6 +25,7 @@ stays in routers/media.py.
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import camera_motion
 from pathres import _display_path, _resolve_media_path
 
 
@@ -119,8 +122,58 @@ def _scenes_core(media_id: int, rec: Dict[str, Any],
 # true when both are visible in one screenful. Everything above the fold —
 # envelope, boundaries, vision fields — is shared by construction.
 
+def _append_camera_motion(scene: Dict[str, Any], frame: Dict[str, Any]) -> None:
+    """Shared by both surfaces, appended AFTER the keyframe key and only when the
+    scene was measured — the same conditional-append convention as keyframe_url,
+    so every pre-existing body (no measurement) stays byte-identical. Unlike the
+    vision fields, absence here is meaningful: "not measured" (the pass is opt-in)
+    must not read as "measured, static"."""
+    cm = camera_motion.from_db(frame.get("camera_motion"))
+    if cm is not None:
+        scene["camera_motion"] = cm
+
+
+def scene_people(start_s: float, end_s: float,
+                 identities: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Names annotated (db.identities rows) on any part of [start_s, end_s).
+
+    A whole-clip row (start_s and end_s both NULL) applies to every scene. A
+    ranged row applies when it overlaps the scene by more than a point — a range
+    ending exactly where a scene starts does not leak into it. A zero-length
+    scene (only possible as the last one of a clip with duration 0 / clamped
+    boundaries) takes the rows that contain its instant. Sorted, de-duplicated.
+    """
+    names = set()
+    for ident in identities or ():
+        i_start, i_end = ident.get("start_s"), ident.get("end_s")
+        if i_start is None and i_end is None:
+            names.add(ident["name"])
+            continue
+        if i_start is None or i_end is None:
+            continue  # half-open rows are rejected at write time; never guess
+        if end_s > start_s:
+            hit = i_start < end_s and i_end > start_s
+        else:
+            hit = i_start <= start_s <= i_end
+        if hit:
+            names.add(ident["name"])
+    return sorted(names)
+
+
+def _append_people(scene: Dict[str, Any],
+                   identities: Optional[List[Dict[str, Any]]]) -> None:
+    """Shared by both surfaces, appended LAST (after keyframe_* and
+    camera_motion) and only when the clip carries at least one person
+    annotation — so every un-annotated clip's body stays byte-identical. On an
+    annotated clip every scene gets the key, [] meaning "annotated clip, nobody
+    marked in this range" (vs absent = nobody annotated this clip at all)."""
+    if identities:
+        scene["people"] = scene_people(scene["start_s"], scene["end_s"], identities)
+
+
 def _scenes_payload(media_id: int, rec: Dict[str, Any],
-                    frames: List[Dict[str, Any]]) -> Dict[str, Any]:
+                    frames: List[Dict[str, Any]],
+                    identities: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """The exact HTTP response body. Byte-frozen by tests/test_scenes_contract.py."""
     payload = _scenes_core(media_id, rec, frames)
     for scene, frame in zip(payload["scenes"], frames):
@@ -128,15 +181,20 @@ def _scenes_payload(media_id: int, rec: Dict[str, Any],
             # Appended LAST, and conditionally: key order is contract, and a
             # scene with no thumbnail omits the key rather than carrying null.
             scene["keyframe_url"] = _keyframe_url(frame["thumbnail_path"])
+        _append_camera_motion(scene, frame)
+        _append_people(scene, identities)
     return payload
 
 
 def _scenes_for_mcp(media_id: int, rec: Dict[str, Any],
-                    frames: List[Dict[str, Any]]) -> Dict[str, Any]:
+                    frames: List[Dict[str, Any]],
+                    identities: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """The MCP tool body. Identical to the HTTP one except keyframe_path replaces
     keyframe_url — same position (last), same conditionality."""
     payload = _scenes_core(media_id, rec, frames)
     for scene, frame in zip(payload["scenes"], frames):
         if frame.get("thumbnail_path"):
             scene["keyframe_path"] = _keyframe_path(frame["thumbnail_path"])
+        _append_camera_motion(scene, frame)
+        _append_people(scene, identities)
     return payload

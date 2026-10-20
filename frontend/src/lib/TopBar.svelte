@@ -41,7 +41,7 @@
     <Mono dim style="font-size:11px;">⌕</Mono>
     <input
       class="ak-input searchinput"
-      placeholder={'搜尋媒體… "格爾木氧氣"、camera:a7s3、tag:cycling、lang:zh'}
+      placeholder={'搜尋媒體… "格爾木氧氣"、camera:a7s3、tag:cycling、who:小明、lang:zh'}
       bind:this={searchEl}
       bind:value={query}
       on:keydown={(e) => e.key === 'Enter' && runSearch()}

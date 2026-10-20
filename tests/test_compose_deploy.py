@@ -170,6 +170,74 @@ def test_the_two_files_differ_only_in_the_ollama_url():
     )
 
 
+# ── the LAN MCP service (#417) ───────────────────────────────────────────────
+def _mcp(path):
+    return _load(path)["services"]["arkiv-mcp"]
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_mcp_service_exists_and_runs_the_http_server(compose):
+    svc = _mcp(compose)
+    assert svc["command"] == ["python", "mcp_http_server.py"]
+    assert "${ARKIV_BIND_HOST:-127.0.0.1}:8502:8502" in svc["ports"]
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_mcp_mounts_are_read_only_except_the_one_that_cannot_be(compose):
+    """`:ro` was meant as a second lock behind a tool surface that only reads.
+
+    🔴 On `chroma_db` it is not a lock, it is a break. chromadb 1.5.5 cannot open
+    a read-only persist dir (`attempt to write a readonly database`), and
+    `mcp_server`'s search swallows that in a blanket `except Exception` and
+    degrades to a SQL LIKE scan — with no `search_degraded` flag, because only a
+    dimension mismatch sets one. Semantic search over MCP would be dead and look
+    healthy. Measured 2026-09-05.
+
+    The read-only guarantee has to come from the tools, which is where it
+    actually lives; the mount was belt-and-braces that strangled the wearer.
+    """
+    writable = [v for v in _mcp(compose)["volumes"] if not v.endswith(":ro")]
+    assert writable == ["./chroma_db:/app/chroma_db"], (
+        "only chroma_db may be writable on the MCP service, got: {0}".format(writable)
+    )
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_chroma_is_not_mounted_read_only(compose):
+    """Stated on its own so a future tidy-up that "fixes the inconsistency" by
+    adding `:ro` back fails here instead of silently killing semantic search."""
+    for entry in _mcp(compose)["volumes"]:
+        if "/app/chroma_db" in entry:
+            assert not entry.endswith(":ro"), (
+                "chromadb cannot open a read-only dir; see the compose comment"
+            )
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_mcp_allowed_hosts_is_wired_through(compose):
+    """🔴 Without this the transport exists and every LAN client still gets 421:
+    the MCP SDK's rebinding allow-list is loopback-only. Measured on mcp 1.28.0,
+    `Host: 192.168.1.50:8502` is refused while `127.0.0.1:8502` passes."""
+    env = _env(_mcp(compose))
+    assert "ARKIV_MCP_ALLOWED_HOSTS" in env
+    assert "ARKIV_MCP_ALLOWED_HOSTS" in env["ARKIV_MCP_ALLOWED_HOSTS"], (
+        "must be overridable from the environment, not baked in"
+    )
+
+
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_mcp_binds_wide_only_inside_the_container(compose):
+    """0.0.0.0 here is fenced by the port mapping, exactly like ARKIV_HOST on the
+    arkiv service. The module default is 127.0.0.1 so a bare `python
+    mcp_http_server.py` never publishes to the network by surprise."""
+    assert _env(_mcp(compose))["ARKIV_MCP_BIND"] == "0.0.0.0"
+
+
+def test_mcp_service_is_absent_from_neither_file():
+    for compose in (SINGLE_HOST, SPLIT_HOST):
+        assert "arkiv-mcp" in _load(compose)["services"], compose.name
+
+
 def test_model_pins_agree_across_both_files():
     """These already drifted from config.py once ('it did, for months' — the
     comment in docker-compose.yml). Two files means two chances to drift."""
@@ -198,3 +266,18 @@ def test_upload_tunables_match_the_code_defaults():
                     env_key, compose.name, shown, code_default
                 )
             )
+
+
+# ── host port publishing is loopback by default ─────────────────────────────
+@pytest.mark.parametrize("compose", [SINGLE_HOST, SPLIT_HOST], ids=["single", "split"])
+def test_every_published_port_binds_loopback_unless_opted_in(compose):
+    """A bare "8501:8501" publishes on 0.0.0.0, and Docker's iptables rules
+    route around the host firewall — the library API (and, on the single-host
+    file, an unauthenticated Ollama) becomes reachable from the whole LAN. Every
+    published port must carry the ARKIV_BIND_HOST prefix whose default is
+    127.0.0.1; LAN serving stays possible, but only as an explicit choice."""
+    services = _load(compose)["services"]
+    published = [(name, p) for name, svc in services.items() for p in svc.get("ports", [])]
+    assert published, "expected at least one published port"
+    for name, p in published:
+        assert str(p).startswith("${ARKIV_BIND_HOST:-127.0.0.1}:"), f"{name}: {p}"

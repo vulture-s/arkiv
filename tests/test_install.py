@@ -144,4 +144,10 @@ def test_no_unresolved_import_in_install_closure():
                 stack.append(name)  # recurse into first-party modules/packages
             elif not _resolvable(name):
                 missing.append((mod, name))
-    assert not missing, f"unresolved imports a fresh install would crash on: {missing}"
+    assert not missing, (
+        f"unresolved imports a fresh install would crash on: {missing}\n"
+        "Fix: if it is an optional dependency (not in base requirements.txt), wrap the import in "
+        "`try: ... except ImportError:` and raise a message with the pip install command. "
+        "Moving the import into a function does NOT help - this check walks the whole AST and only "
+        "skips imports inside a `try` body. If it is a required dependency, add it to requirements.txt."
+    )

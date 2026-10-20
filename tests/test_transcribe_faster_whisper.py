@@ -150,13 +150,35 @@ def test_dispatcher_routes_to_faster_whisper_on_non_mac(monkeypatch, hermetic):
     assert len(segments) == 1 and len(words) == 1
 
 
-def test_dispatcher_no_speech_returns_empty(monkeypatch, hermetic):
-    """VAD finding no speech short-circuits to the empty contract."""
+def test_dispatcher_no_speech_decodes_anyway(monkeypatch, hermetic):
+    """VAD finding no speech is NOT the end of the road any more.
+
+    ⚠️ This test used to be `test_dispatcher_no_speech_returns_empty` and asserted
+    the opposite — that `(None, None)` short-circuited to `("", "", [], [])`.
+    That contract was the defect, not a feature: on a 200-clip location shoot
+    (2026-09-07) Silero called "no speech" on 85 clips and **54 of them had
+    speech** — and the empty tuple it returned was byte-identical to the one a
+    genuinely silent clip produces, so nothing downstream could tell them apart.
+
+    The dispatcher now falls back to decoding the full file and lets hallucination
+    guards 1-4 rule on it. See `transcribe._vad_or_full` for the measurements,
+    including why lowering the VAD threshold and why the normalisation path both
+    fail to fix it.
+
+    Truly-empty output is still reachable — it just has to come from the decode
+    plus the guards, not from VAD's opinion alone."""
     monkeypatch.setattr(transcribe, "_USE_MLX", False)
     monkeypatch.setattr(transcribe, "_to_wav", lambda p: "/fake_to.wav")
     monkeypatch.setattr(transcribe, "_vad_filter", lambda w: (None, None))  # no speech
+    segs = [FakeSegment("其實有人聲", 0.0, 1.0,
+                        words=[FakeWord("其實有人聲", 0.0, 1.0, 0.8)])]
+    monkeypatch.setattr(transcribe, "_fw_model", FakeModel(segs, FakeInfo("zh")))
 
-    assert transcribe.transcribe("/clip.mp4", language="zh") == ("", "", [], [])
+    text, lang, segments, words = transcribe.transcribe("/clip.mp4", language="zh")
+
+    assert "其實有人聲" in text, "VAD 說沒人聲就放棄 ⇒ 又回到靜默漏字"
+    assert lang == "zh"
+    assert len(segments) == 1 and len(words) == 1
 
 
 # ── custom vocabulary: env + file merge (FatSub-style hotword wordlist) ───────
@@ -197,3 +219,43 @@ def test_custom_terms_empty(monkeypatch):
     monkeypatch.setattr(transcribe, "VOCABULARY_FILE", "")
     assert transcribe._custom_terms() == []
     assert transcribe._build_initial_prompt() == ""
+
+
+# ── hotword prompt budget + correction-dictionary feed ───────────────────────
+
+def test_prompt_budget_keeps_priority_terms_and_drops_tail(monkeypatch):
+    """Whisper keeps only the LAST ~223 prompt tokens, so an over-long list would
+    silently lose its FRONT (the env / vocabulary.txt terms). The budget is
+    enforced here instead: priority terms survive, the tail is dropped."""
+    many = ",".join("詞{0:03d}".format(i) for i in range(200))
+    monkeypatch.setattr(transcribe, "CUSTOM_VOCABULARY", "李多慧," + many)
+    monkeypatch.setattr(transcribe, "VOCABULARY_FILE", "")
+    prompt = transcribe._build_initial_prompt()
+    assert prompt.startswith("李多慧、")
+    assert transcribe._estimate_prompt_tokens(prompt) <= transcribe.PROMPT_TOKEN_BUDGET
+    assert "詞199" not in prompt
+
+
+def test_prompt_budget_long_term_does_not_block_shorter(monkeypatch):
+    kept, dropped = transcribe._select_prompt_terms(["甲", "乙" * 50, "丙"], budget=10)
+    assert kept == ["甲", "丙"] and dropped == ["乙" * 50]
+
+
+def test_estimate_prompt_tokens_is_conservative_for_cjk():
+    assert transcribe._estimate_prompt_tokens("李多慧") == 6
+    assert transcribe._estimate_prompt_tokens("Furutech") == 3
+    assert transcribe._estimate_prompt_tokens("") == 0
+
+
+def test_learned_correction_reaches_whisper_call(monkeypatch, hermetic, tmp_path):
+    """The loop end to end: one learned fix in the active project's dictionary
+    is passed as initial_prompt to the NEXT faster-whisper call."""
+    import config
+    import corrections
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(transcribe, "VOCABULARY_FILE", "")
+    corrections.learn("李東煙", "李多慧")
+    fake = FakeModel([FakeSegment("x", 0.0, 0.5, words=[])], FakeInfo("zh"))
+    monkeypatch.setattr(transcribe, "_fw_model", fake)
+    transcribe._transcribe_faster_whisper("/tmp/fake.wav", "zh")
+    assert fake.last_opts["initial_prompt"] == "李多慧"

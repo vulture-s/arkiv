@@ -10,7 +10,7 @@ copy. Imports auth + corrections + webguard + state — no server import, no cyc
 """
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 import corrections
@@ -26,14 +26,24 @@ class CorrectionsBody(BaseModel):
     rules: List[dict] = []
 
 
+class LearnBody(BaseModel):
+    # `from` is a Python keyword → raw dict, validated by corrections.learn.
+    rule: dict = {}
+    apply: bool = False
+
+
 class RevertBody(BaseModel):
     backup: Optional[str] = None
 
 
 @router.get("/api/corrections")
 def get_corrections(_tok: dict = Depends(require_scopes("projects_read"))):
-    """The active project's correction dictionary (.arkiv/corrections.json)."""
-    return {"rules": corrections.load_rules()}
+    """The active project's correction dictionary (.arkiv/corrections.json).
+
+    `load_error` is non-null when the file exists but could not be read — the
+    editor must not present that as an empty dictionary (audit 2026-10-09 K1)."""
+    rules, load_error = corrections.load_rules_checked()
+    return {"rules": rules, "load_error": load_error}
 
 
 @router.put("/api/corrections")
@@ -46,6 +56,35 @@ def put_corrections(
     _assert_same_site(request)
     saved = corrections.save_rules(body.rules)
     return {"ok": True, "rules": saved, "count": len(saved)}
+
+
+@router.post("/api/corrections/learn")
+def learn_correction(
+    body: LearnBody,
+    request: Request,
+    _tok: dict = Depends(require_scopes("projects_write")),
+):
+    """"Fix it once, remember it." Record one correction (``rule: {from, to,
+    scope?}``) in the active project's dictionary: upserted on ``from``, ``post``
+    on, ``pre`` on when ``to`` is term-shaped (so the NEXT transcription is
+    prompted with it — sentences are never fed as hotwords).
+
+    ``apply: true`` also rewrites the project's stored transcripts with THIS rule
+    only (backup first, revertable via /api/recorrect/revert) — the other rules in
+    the dictionary are not re-run as a side effect."""
+    _assert_same_site(request)
+    if body.apply and "ingest_write" not in _tok.get("scopes", ()):
+        # rewriting transcripts is what /api/recorrect gates on ingest_write
+        raise HTTPException(403, "apply 需要 ingest_write scope")
+    raw = body.rule or {}
+    try:
+        learned = corrections.learn(raw.get("from"), raw.get("to"), raw.get("scope", "global"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    out = {"ok": True, **learned}
+    if body.apply:
+        out["applied"] = corrections.apply([learned["rule"]])
+    return out
 
 
 @router.post("/api/recorrect")
