@@ -117,6 +117,12 @@ FFmpeg 轉成 H.264 MP4，存 `PROXIES_DIR/{media_id}_{sha1[:10]}.mp4`。
 
 H.264 MP4（譬如 Sony A7M4 預設）瀏覽器可播，skip。
 
+**關掉 Phase 3**（issue #558）：`ingest.py --skip-proxies`（＝`--proxies never`）這次不轉；
+`ARKIV_PROXIES=never` 或庫設定 `ingest.proxies = never`（`PUT /api/settings`）設成這個庫的預設。
+優先序：CLI 旗標 ＞ 庫設定 ＞ `ARKIV_PROXIES` ＞ `auto`。適合只用能直接播原檔的播放器（macOS App／Safari 可播 HEVC）的庫
+—— 871 支手機短片實測 Phase 3 約 5 小時、9 GB。embedding 照跑。這種庫的 `/api/stream` 會回 409 帶
+`code: "proxies_disabled"` 與指向 `--regenerate-proxies` 的說明，之後可用它補建。
+
 ---
 
 ## Stage 4: Embedding（`embed.py`）
@@ -143,6 +149,16 @@ python embed.py --search "drone footage aerial"   # CLI 快速測試
 | 2 | 全 fail — 每個檔 Phase 1 都失敗（通常上游問題）|
 | 3 | `frames.py` 最後防線：dangling thumbnails symlink（preflight 應該已抓到）|
 | 4 | Preflight fail — 儲存路徑壞掉；修了再重跑 |
+| 5 | `--migrate-storage`：備份失敗 |
+| 6 | `--migrate-storage`：目標 `.arkiv` 已存在（挪開，不要刪） |
+| 7 | 對帳不平（#393）—— 掃到的檔沒落到任何分類，或計數說在庫但 DB 沒有那一列。`Reconcile:` 那行會列出檔名 |
+
+同時符合多個時的優先序：**2 > 7 > 1**。部分失敗在輸出裡已經有計數和檔名；對帳不平是
+原本完全不留痕跡的那一種。結束時讀 DB 本身失敗的話，對帳行會寫 `unavailable`，
+exit code 交給其他訊號決定（量不到 ≠ 對帳不平）。
+
+`watch.py` 對所有非 0 一視同仁：記下檔名與 code、退避後重試、連續 3 次就隔離——
+監看本身不會停。
 
 v0.3.1 之前，`ingest.py` 不管 fail 多少都 exit 0。runner / launchd /
 cron 現在能看到實際結果。
@@ -157,7 +173,7 @@ cron 現在能看到實際結果。
 |------|--------|
 | `--migrate-storage` | 升 v0.3.1 後第一次跑（見下方 Upgrade section） |
 | `--migrate-relative` | 升 v0.2.x 後第一次跑（abs path → relative） |
-| `--regenerate-proxies` | 改 codec 設定後 — 砍掉所有 H.264 proxy 重生 |
+| `--regenerate-proxies` | 改 codec 設定後 — 重建所有既有 H.264 proxy，再補建還沒有的（`--skip-proxies` 進庫的也適用） |
 | `--vision-only` | Phase 2 halt 後 resume — 找 `description` 空的 frame 只處理那些 |
 
 ---

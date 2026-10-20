@@ -104,9 +104,10 @@ def ingest_file(path: Path, timeout: float = 600.0) -> bool:
     """Ingest one file via a subprocess `ingest.py --dir <file>`.
 
     Subprocess (not in-process) so a crash/timeout in ffmpeg/whisper can't take
-    the long-lived watcher down with it. In-process dispatch (microtask B8, to
-    avoid model reheat between files) needs the per-file orchestration extracted
-    from ingest.main — left as a follow-up; correctness first.
+    the long-lived watcher down with it. Several files that become ready together
+    go through `ingest_batch` instead (one subprocess, one model warm-up); this
+    single-file path is what a batch falls back to when it has to attribute a
+    failure to one file.
     """
     script = Path(__file__).parent / "ingest.py"
     try:
@@ -117,8 +118,105 @@ def ingest_file(path: Path, timeout: float = 600.0) -> bool:
     if result.returncode == 0:
         print(f"  ✓ {path.name}")
         return True
-    print(f"  ✗ {path.name}: {(result.stderr or '')[:200]}")
+    # Every non-zero code is "not cleanly in the library" and goes through the
+    # same back-off / quarantine path in Watcher.tick — the watcher itself never
+    # stops on it. What differs is only what we can say about it: exit 7
+    # (ingest.EXIT_RECONCILE_MISMATCH, issue #393) is reported on STDOUT by the
+    # `Reconcile:` block with an empty stderr, so printing stderr alone would log
+    # a bare "✗ name:" with no reason at all.
+    print(f"  ✗ {path.name}: exit {result.returncode}"
+          f"{' (reconcile mismatch — not in the library)' if result.returncode == 7 else ''}")
+    detail = _failure_detail(result)
+    if detail:
+        print(f"      {detail}")
     return False
+
+
+def _path_in_library(path: Path) -> bool:
+    import db
+    return db.path_is_indexed(str(path))
+
+
+def ingest_batch(
+    paths: Sequence[Path],
+    timeout: float = 600.0,
+    single: Optional[Callable[[Path], bool]] = None,
+    in_library: Optional[Callable[[Path], bool]] = None,
+) -> Dict[str, bool]:
+    """Ingest several files in ONE subprocess (`ingest.py --files a b c`) so the
+    whisper / embedding models are loaded once for the batch instead of once per
+    file (roadmap B8). Returns {str(path): ok}.
+
+    Still a subprocess, deliberately: the timeout + process-group kill, the
+    memory hand-back at exit and the "a crash cannot take the watcher down"
+    guarantee all stay. The budget is `timeout` per file, summed.
+
+    Exit 0 is ingest's promise that every queued file is in the library (#393),
+    so it is trusted as-is. Anything else — partial failure, reconcile mismatch,
+    a crash, a timeout — is attributed per file: whatever is in the library now
+    counts as done, and ONLY the rest is retried one by one through `single`
+    (the old per-file path). That retry is the point: a batch that died on one
+    poison file must not charge its batch-mates a failure, or a single corrupt
+    clip would push healthy ones into back-off / quarantine with it.
+    """
+    if single is None:
+        single = ingest_file
+    if in_library is None:
+        in_library = _path_in_library
+    paths = list(paths)
+    if len(paths) == 1:
+        return {str(paths[0]): single(paths[0])}
+    script = Path(__file__).parent / "ingest.py"
+    cmd = [sys.executable, str(script), "--files"] + [str(p) for p in paths]
+    budget = timeout * len(paths)
+    print(f"  ⇢ batch of {len(paths)} file(s) in one ingest run")
+    rc: Optional[int]
+    try:
+        result = run_tree(cmd, timeout=budget)
+        rc = result.returncode
+    except subprocess.TimeoutExpired:
+        result, rc = None, None
+    if rc == 0:
+        for p in paths:
+            print(f"  ✓ {p.name}")
+        return {str(p): True for p in paths}
+
+    why = f"timeout (>{int(budget)}s)" if rc is None else f"exit {rc}"
+    out: Dict[str, bool] = {}
+    leftover: List[Path] = []
+    for p in paths:
+        try:
+            done = in_library(p)
+        except Exception as e:  # noqa: BLE001 — can't tell → retry it alone
+            print(f"  WARN: could not check {p.name} in DB ({e.__class__.__name__}: {e})")
+            done = False
+        if done:
+            out[str(p)] = True
+            print(f"  ✓ {p.name}")
+        else:
+            leftover.append(p)
+    print(f"  ✗ batch {why}: {len(leftover)} of {len(paths)} not in the library"
+          f"{' — retrying each on its own' if leftover else ''}")
+    if result is not None:
+        detail = _failure_detail(result)
+        if detail:
+            print(f"      {detail}")
+    for p in leftover:
+        out[str(p)] = single(p)
+    return out
+
+
+def _failure_detail(result) -> str:
+    """One line of why: stderr tail if there is one, else the `Reconcile:` lines
+    from stdout (where #393's mismatch report goes). Pure — testable."""
+    err = (result.stderr or "").strip()
+    if err:
+        return err[-200:]
+    out = (result.stdout or "").splitlines()
+    for i, line in enumerate(out):
+        if line.startswith("Reconcile:"):
+            return " | ".join(l.strip() for l in out[i:i + 4] if l.strip())[:300]
+    return ""
 
 
 # ── watcher core (testable) ──────────────────────────────────────────────────
@@ -141,11 +239,27 @@ class Watcher:
         debounce_s: float = 5.0,
         dispatch: Callable[[Path], bool] = ingest_file,
         clock: Callable[[], float] = time.time,
+        dispatch_batch: Optional[Callable[[List[Path]], Dict[str, bool]]] = None,
+        max_batch: int = 8,
+        batch_hold_s: float = 30.0,
     ):
         self.roots = [Path(r) for r in roots]
         self.tracker = StabilityTracker(debounce_s)
         self.dispatch = dispatch
         self.clock = clock
+        # B8: files that are ready in the same tick go to ONE ingest run. Only on
+        # by default with the real per-file dispatch — a caller injecting its own
+        # `dispatch` (tests, embedders) keeps exact one-call-per-file behaviour
+        # unless it passes a batch callable too.
+        if dispatch_batch is None and dispatch is ingest_file:
+            dispatch_batch = ingest_batch
+        self.dispatch_batch = dispatch_batch
+        self.max_batch = max(1, int(max_batch))
+        # While other files are still being copied in, hold ready files (up to
+        # batch_hold_s) so a card dump lands as a few batches rather than N runs
+        # of one. 0 = never hold. Nothing pending → no hold, no added latency.
+        self.batch_hold_s = batch_hold_s
+        self._ready_since: Dict[str, float] = {}
         self.known: Set[str] = set()         # already-ingested resolved paths
         self._candidates: Set[str] = set()    # paths flagged by watchdog events
         # path -> (fail_count, next_retry_at, signature_at_failure)
@@ -194,18 +308,21 @@ class Watcher:
         else:
             paths = [Path(p) for p in candidates]
 
-        dispatched: List[Path] = []
+        ready: List[Tuple[Path, Signature]] = []
         for p in paths:
             key = str(p)
             if key in self.known:
                 self.tracker.forget(key)
+                self._ready_since.pop(key, None)
                 continue
             sig = file_signature(p)
             if not self.tracker.observe(key, sig, now):
+                self._ready_since.pop(key, None)
                 continue
             # Stable → ingest. Re-check it still exists (unmount race).
             if not p.exists():
                 self.tracker.forget(key)
+                self._ready_since.pop(key, None)
                 continue
             # Back-off / quarantine gate (round-5 #5): a file that keeps failing
             # dispatch must not be retried every tick. A signature change means the
@@ -220,18 +337,56 @@ class Watcher:
                         continue  # still inside the back-off window
                 else:
                     self._failures.pop(key, None)
-            ok = self.dispatch(p)
-            self.tracker.forget(key)
-            if ok:
-                self.known.add(key)
-                self._failures.pop(key, None)
-                dispatched.append(p)
+            self._ready_since.setdefault(key, now)
+            ready.append((p, sig))
+
+        if not ready or self._should_hold(ready, now):
+            return []
+
+        dispatched: List[Path] = []
+        for i in range(0, len(ready), self.max_batch):
+            chunk = ready[i:i + self.max_batch]
+            if self.dispatch_batch is not None and len(chunk) > 1:
+                results = self.dispatch_batch([p for p, _ in chunk])
             else:
-                prev = self._failures.get(key)
-                fcount = prev[0] + 1 if (prev and prev[2] == sig) else 1
-                backoff = min(self.MAX_BACKOFF_S, self.BASE_BACKOFF_S * (2 ** (fcount - 1)))
-                self._failures[key] = (fcount, now + backoff, sig)
+                results = {str(p): self.dispatch(p) for p, _ in chunk}
+            for p, sig in chunk:
+                key = str(p)
+                self.tracker.forget(key)
+                self._ready_since.pop(key, None)
+                if results.get(key, False):
+                    self.known.add(key)
+                    self._failures.pop(key, None)
+                    dispatched.append(p)
+                else:
+                    prev = self._failures.get(key)
+                    fcount = prev[0] + 1 if (prev and prev[2] == sig) else 1
+                    backoff = min(self.MAX_BACKOFF_S, self.BASE_BACKOFF_S * (2 ** (fcount - 1)))
+                    self._failures[key] = (fcount, now + backoff, sig)
         return dispatched
+
+    def _should_hold(self, ready: List[Tuple[Path, Signature]], now: float) -> bool:
+        """Defer dispatch while more files are still arriving, so they share one
+        ingest run. Never holds when batching is off, when a full batch is
+        already waiting, or once the oldest ready file has waited batch_hold_s."""
+        if self.dispatch_batch is None or self.batch_hold_s <= 0 or self.max_batch <= 1:
+            return False
+        if len(ready) >= self.max_batch:
+            return False
+        oldest = min(self._ready_since[str(p)] for p, _ in ready)
+        if now - oldest >= self.batch_hold_s:
+            return False
+        ready_keys = {str(p) for p, _ in ready}
+        # A file in back-off / quarantine is not "arriving" (it would hold every
+        # batch for the full window), and neither is a tracked path that no
+        # longer exists — the scan never re-observes a deleted file, so the
+        # tracker would otherwise keep it forever.
+        for k in self.tracker.pending():
+            if k in ready_keys or k in self.known or k in self._failures:
+                continue
+            if Path(k).exists():
+                return True
+        return False
 
     # --- run loop (I/O shell; verified on-device, not in unit tests) ---
 
@@ -296,6 +451,10 @@ def main():
     parser.add_argument("--no-watchdog", action="store_true",
                         help="Force the polling fallback even if watchdog is installed")
     parser.add_argument("--once", action="store_true", help="One tick then exit (no loop)")
+    parser.add_argument("--max-batch", type=int, default=8,
+                        help="Max files per ingest run; files ready together share one model warm-up (default: 8, 1 = one run per file)")
+    parser.add_argument("--batch-hold", type=float, default=30.0,
+                        help="Seconds to hold ready files while others are still copying in, so they batch (default: 30, 0 = never hold)")
     args = parser.parse_args()
 
     roots = [Path(r).expanduser().resolve() for r in args.roots]
@@ -304,7 +463,9 @@ def main():
         print("Error: not a directory: " + ", ".join(str(m) for m in missing))
         sys.exit(1)
 
-    w = Watcher(roots, debounce_s=args.debounce)
+    w = Watcher(roots, debounce_s=args.debounce, max_batch=args.max_batch,
+                # --once has no next tick to release a held file into.
+                batch_hold_s=0.0 if args.once else args.batch_hold)
     w.load_known()
     if args.once:
         dispatched = w.tick()

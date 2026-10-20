@@ -416,6 +416,8 @@ def test_describe_frames_representative_strategy(monkeypatch):
     monkeypatch.setattr(vis, "_describe_one", mock_full)
     monkeypatch.setattr(vis, "_describe_one_light", mock_light)
     monkeypatch.setattr(vis, "_is_usable_frame", lambda p: True)
+    # Asserts the serial call order — pin it (concurrency >1 interleaves calls).
+    monkeypatch.setattr(vis.config, "VISION_CONCURRENCY", 1, raising=False)
     results = vis.describe_frames(["/a.jpg", "/b.jpg", "/c.jpg"])
     assert len(results) == 3
     # Middle (idx 1) = full, others = light

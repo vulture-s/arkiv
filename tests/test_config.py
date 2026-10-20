@@ -24,12 +24,16 @@ def _check_config_loads(env_overrides):
     """Spawn a subprocess that imports config with given env. Returns (code, stderr)."""
     env = os.environ.copy()
     env.update(env_overrides)
+    # The parent decodes utf-8 below, so the child has to write it: a Python
+    # child defaults to the locale encoding (cp950 on a zh-TW Windows), and
+    # naming only one side of that turns `stderr` into None.
+    env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         [sys.executable, "-c", "import config; print(config.PROXIES_DIR, config.OLLAMA_URL)"],
         cwd=str(ARKIV_ROOT),
         env=env,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=15,
     )
     return result.returncode, result.stderr

@@ -57,6 +57,33 @@ STATUS_PROJECT_UNREGISTERED = "project_unregistered"  # project_name no longer i
 STATUS_ROW_MISSING = "row_missing"                    # clip deleted from the source project.db
 STATUS_FILE_MISSING = "file_missing"                  # source file gone from disk
 STATUS_ERROR = "error"                                # unexpected failure probing the source
+# 🔴 The id now belongs to a DIFFERENT clip than the one that was added.
+#
+# `media.id` is `INTEGER PRIMARY KEY` with no AUTOINCREMENT, so SQLite hands a
+# deleted row's rowid to the next insert. Delete clip 7, ingest something else,
+# and the new clip is clip 7. Any bin entry still pointing at 7 then resolves —
+# cleanly, with status ok — to footage the user never put in that bin.
+#
+# `remove_media_everywhere` closes the window for deletes from here on, but it
+# cannot help two populations: entries added before it existed (every install
+# today), and entries whose cleanup failed. For those the only defence is to
+# notice the swap, which is what the filename check is for.
+STATUS_ID_REUSED = "id_reused"
+
+
+def _identity_mismatch(item_filename: Any, row_filename: Any) -> bool:
+    """Does the row under this id look like a different clip than we stored?
+
+    Compares the filename captured when the item was added against the one the
+    row carries now. Deliberately conservative — an item saved without a
+    filename (older entries, or an API caller that omitted it) cannot be checked
+    and is trusted, because reporting a false swap would be worse than missing a
+    real one.
+    """
+    stored = str(item_filename or "").strip()
+    if not stored:
+        return False
+    return stored != str(row_filename or "").strip()
 
 
 def _now_iso() -> str:
@@ -339,12 +366,54 @@ def remove_item(bin_id: str, project_name: str, media_id: Any) -> Bin:
         return target
 
 
-def bin_item_status(project_name: str, media_id: Any) -> str:
+def remove_media_everywhere(project_name: str, media_id: Any) -> int:
+    """Drop one clip from EVERY bin. Returns how many bins were touched.
+
+    Deleting a clip used to leave its reference behind in every 精選集 that held
+    it, and that reference can never come good again: `delete_media_full` removes
+    the row, so the id is gone, and restoring from the recycle bin re-ingests the
+    file — which mints a NEW id. The old entry counts toward the
+    bin's size forever, and — because `media.id` is `INTEGER PRIMARY KEY` with
+    no AUTOINCREMENT — only *until* the next ingest, which SQLite hands that
+    very id. From then on the entry is not broken, it is wrong: it resolves
+    clean, status `ok`, to a clip the user never put in that bin, and 精選集
+    is what the cross-project copy reads.
+
+    (An earlier version of this docstring called that a papercut rather than data
+    loss, reasoning that the reference-integrity gate would show it as broken. It
+    does not. The gate had nothing that could tell one clip from another under
+    the same id — which is what `STATUS_ID_REUSED` is now for.)
+
+    One pass over the whole file under a single lock, rather than calling
+    `remove_item` per bin: that would re-read, re-write and re-lock once per bin
+    holding the clip, and a delete is not a good moment to be doing N writes.
+    """
+    drop = _item_key(project_name, media_id)
+    with _BINS_LOCK:
+        bins = _load_bin_objects()
+        touched = 0
+        for b in bins:
+            kept = [item for item in b.items if item.key() != drop]
+            if len(kept) != len(b.items):
+                b.items = kept
+                b.updated_at = _now_iso()
+                touched += 1
+        if touched:
+            _persist(bins)
+        return touched
+
+
+def bin_item_status(project_name: str, media_id: Any, expect_filename: Any = "") -> str:
     """Reference-integrity gate for one bin item. Composes the primitives that
     already exist but that nothing wires together for a cross-project item:
-    registry lookup → library health → row-in-db → file-on-disk. Returns a status
-    string (STATUS_* / a HealthStatus value). The resolved absolute path is used
-    ONLY here (server-side); it is never returned to the client (Phase 16.2)."""
+    registry lookup → library health → row-in-db → file-on-disk → is-it-still-the
+    -same-clip. Returns a status string (STATUS_* / a HealthStatus value). The
+    resolved absolute path is used ONLY here (server-side); it is never returned
+    to the client (Phase 16.2).
+
+    `expect_filename` is the filename captured when the item was added. Pass it
+    whenever the caller has it: without it a reused id (see STATUS_ID_REUSED)
+    reports `ok` and the slot silently resolves to different footage."""
     # federation drags chromadb at import; keep it lazy so pure-CRUD callers and
     # tests don't pay for it.
     from projects import discover_projects
@@ -369,6 +438,8 @@ def bin_item_status(project_name: str, media_id: Any) -> str:
         row = _fetch_media_row(conn, media_id)
         if row is None:
             return STATUS_ROW_MISSING
+        if _identity_mismatch(expect_filename, row.get("filename")):
+            return STATUS_ID_REUSED
         _relative, absolute = _resolve_paths(project, row.get("path") or "")
         if not absolute or not os.path.exists(absolute):
             return STATUS_FILE_MISSING
@@ -394,10 +465,15 @@ def bin_item_statuses(items) -> Dict[Any, str]:
     from federation import _connect_project_db, _resolve_paths
 
     by_project: Dict[str, list] = {}
+    # (project, media_id) → the filename captured when the item was added. Tuple
+    # callers have none, and an item may predate the field; both land as "" and
+    # _identity_mismatch treats that as "cannot check".
+    expect: Dict[Any, str] = {}
     for it in items:
         pn = it.project_name if hasattr(it, "project_name") else it[0]
         mid = it.media_id if hasattr(it, "media_id") else it[1]
         by_project.setdefault(pn, []).append(str(mid))
+        expect[(pn, str(mid))] = getattr(it, "filename", "") or ""
 
     result: Dict[Any, str] = {}
     projects_by_name = {p.name: p for p in discover_projects()}  # ONE registry read
@@ -421,7 +497,7 @@ def bin_item_statuses(items) -> Dict[Any, str]:
             rows = {
                 str(r["id"]): r
                 for r in conn.execute(
-                    "SELECT id, path FROM media WHERE id IN ({0})".format(placeholders),
+                    "SELECT id, path, filename FROM media WHERE id IN ({0})".format(placeholders),
                     mids,
                 ).fetchall()
             }
@@ -429,6 +505,9 @@ def bin_item_statuses(items) -> Dict[Any, str]:
                 row = rows.get(mid)
                 if row is None:
                     result[(pn, mid)] = STATUS_ROW_MISSING
+                    continue
+                if _identity_mismatch(expect.get((pn, mid)), row["filename"]):
+                    result[(pn, mid)] = STATUS_ID_REUSED
                     continue
                 _relative, absolute = _resolve_paths(project, row["path"] or "")
                 if not absolute or not os.path.exists(absolute):
@@ -444,10 +523,16 @@ def bin_item_statuses(items) -> Dict[Any, str]:
     return result
 
 
-def resolve_source(project_name: str, media_id: Any) -> Optional[Dict[str, Any]]:
+def resolve_source(project_name: str, media_id: Any,
+                   expect_filename: Any = "") -> Optional[Dict[str, Any]]:
     """Server-side ONLY: (project_name, media_id) → {absolute_path, filename,
     status}. The absolute path is for the copy orchestrator (server.py); never
-    hand it to a client. Returns None only if the project is unregistered."""
+    hand it to a client. Returns None only if the project is unregistered.
+
+    Pass `expect_filename` from the bin item. This is the call that feeds the
+    cross-project copy, so a reused id that slips through here does not merely
+    show the wrong thumbnail — it copies the wrong footage into another
+    project."""
     from projects import discover_projects
     from federation import _connect_project_db, _fetch_media_row, _resolve_paths
 
@@ -459,7 +544,7 @@ def resolve_source(project_name: str, media_id: Any) -> Optional[Dict[str, Any]]
     if project is None:
         return None
 
-    status = bin_item_status(project_name, media_id)
+    status = bin_item_status(project_name, media_id, expect_filename)
     absolute = ""
     filename = ""
     if status == STATUS_OK:

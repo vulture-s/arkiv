@@ -28,6 +28,11 @@
   // brick 4 — real transcription pickers, options from /api/ingest/engines.
   // '' = use the backend default (no flag sent), so unchanged callers stay default.
   let engines = null
+  // Source shortcuts: [{label, path}]. The browser build has no folder picker
+  // (canPickFolder() needs window.__TAURI__), so without these the only way to
+  // reach a long NAS path on the web UI is to retype it every single time.
+  let presets = []
+  let presetNote = ''
   let whisperGuard = '' // '' = default preset; else mode int as string
   let language = ''     // '' = auto-detect; else whisper code
   // brick 4b — vision model picker. Unlike the per-run whisper preset above,
@@ -38,9 +43,18 @@
 
   let manifest = null      // {video,audio,unsupported,total_size_mb}
   let total = 0, fresh = 0
+  // From /api/ingest/scan: {seconds, budget_s, stall_s, probed, of}.
+  // `seconds` is advisory — nothing is killed on it. What actually bounds
+  // the run is budget_s plus a stall watchdog the UI cannot see.
+  let estimate = null
   let scanning = false, starting = false, err = '', notice = ''
 
   $: gb = manifest ? (manifest.total_size_mb / 1024).toFixed(1) : null
+  const hhmm = (s) => {
+    if (!s || s < 60) return `${Math.max(1, Math.round(s || 0))} 秒`
+    const m = Math.round(s / 60)
+    return m < 60 ? `${m} 分` : `${Math.floor(m / 60)} 小時 ${m % 60} 分`
+  }
 
   // The header button has read "ESC · CANCEL" since this screen shipped, but the
   // key was never wired. Same fix as Offload's, minus its running-copy guard:
@@ -78,10 +92,10 @@
       pushToast('請先填來源資料夾路徑（Source · folder）', 'error')
       return
     }
-    err = ''; notice = ''; scanning = true; manifest = null
+    err = ''; notice = ''; scanning = true; manifest = null; estimate = null
     try {
       const d = await api.scanMedia(path.trim())
-      manifest = d.manifest; total = d.total; fresh = d.new
+      manifest = d.manifest; total = d.total; fresh = d.new; estimate = d.estimate || null
       if (total === 0) notice = '這個資料夾沒有可匯入的媒體檔。'
     } catch (e) { err = e.message } finally { scanning = false }
   }
@@ -114,6 +128,42 @@
   // Persist the chosen vision model as the library default (vision.model), the
   // same setting SettingsLive writes. The next ingest picks it up via
   // settings.vision_model(). No per-run flag exists for vision (by design).
+  // Adding the shortcut from here rather than only in Settings: the moment you
+  // know a path is worth keeping is right after you typed it, not later in
+  // another screen.
+  // `ingest.source_presets` is one flat string: entries split on ';', label and
+  // path split on the first '|'. Neither character is escaped, and both are legal
+  // in a macOS folder name — so a path containing one does not merely lose its
+  // own shortcut. This writer re-serialises the WHOLE list from `presets`, and
+  // `presets` came back through that same lossy parser, so adding any shortcut
+  // rewrites every previously-mangled entry into its mangled form permanently.
+  // The settings docstring's promise that "losing one shortcut is recoverable"
+  // stops being true at exactly that point. Refuse the unrepresentable path
+  // instead, and say which character is the problem.
+  const PRESET_UNSAFE = /[;|]/
+  async function savePreset() {
+    const val = path.trim()
+    if (!val) { presetNote = '先填路徑'; return }
+    if (presets.some((p) => p.path === val)) { presetNote = '這個路徑已在捷徑裡'; return }
+    const bad = val.match(PRESET_UNSAFE)
+    if (bad) { presetNote = `路徑含有「${bad[0]}」，捷徑格式存不了這個字元`; return }
+    if (presets.some((p) => PRESET_UNSAFE.test(p.path) || PRESET_UNSAFE.test(p.label))) {
+      // Writing now would persist the damage to the existing entries too.
+      presetNote = '既有捷徑裡有「;」或「|」，請先到 Settings 修好再新增'
+      return
+    }
+    const label = (val.replace(/\/+$/, '').split('/').pop() || val).slice(0, 24)
+    const next = [...presets, { label, path: val }]
+    presetNote = '儲存中…'
+    try {
+      await api.putSettings({
+        'ingest.source_presets': next.map((p) => `${p.label}|${p.path}`).join('; '),
+      })
+      presets = next
+      presetNote = `已加入捷徑「${label}」`
+    } catch (e) { presetNote = '儲存失敗' }
+  }
+
   async function saveVisionModel() {
     visionNote = '儲存中…'
     try { await api.putSettings({ 'vision.model': visionModel }); visionNote = '已設為全庫預設 ✓' }
@@ -130,6 +180,7 @@
       if (engines && engines.default_language) language = engines.default_language
       if (engines && typeof engines.default_recursive === 'boolean') opts.recursive = engines.default_recursive
       if (engines && engines.vision_model) visionModel = engines.vision_model
+      presets = engines?.source_presets ?? []
     } catch (e) { /* picker falls back to default-only */ }
     const h = window.location.hash
     const qi = h.indexOf('?')
@@ -175,6 +226,16 @@
               <button class="seg" on:click={browsePath} disabled={scanning} title="選擇資料夾">⋯</button>
             {/if}
             <button class="ak-btn" on:click={scan} disabled={scanning}>{scanning ? 'scanning…' : 'Scan'}</button>
+          </div>
+          <div class="presetrow">
+            {#each presets as p (p.path)}
+              <button class="seg preset" class:on={path.trim() === p.path}
+                      title={p.path} on:click={() => { path = p.path; scan() }}>{p.label}</button>
+            {/each}
+            <button class="seg preset add" on:click={savePreset}
+                    title="把目前路徑存成捷徑（存在 Settings 的 ingest.source_presets）">＋</button>
+            {#if presetNote}<Mono dim style="font-size:9.5px;">{presetNote}</Mono>
+            {:else if !presets.length}<Mono dim style="font-size:9.5px;">按 ＋ 把常用路徑存成捷徑</Mono>{/if}
           </div>
         </div>
 
@@ -250,7 +311,21 @@
           {#if manifest.unsupported.count}
             <div class="mrow skip"><span>Unsupp.</span><Mono dim>{manifest.unsupported.count}</Mono><Mono dim>skipped</Mono></div>
           {/if}
-          <div class="estimated"><Eyebrow>Estimated</Eyebrow><span class="pend">timing pending · brick 4</span></div>
+          <div class="estimated">
+            <Eyebrow>Estimated</Eyebrow>
+            {#if estimate}
+              <div class="estrow"><span>約需</span><Mono>{hhmm(estimate.seconds)}</Mono></div>
+              <div class="estrow dim"><span>上限</span><Mono dim>{hhmm(estimate.budget_s)}</Mono></div>
+              <Mono dim style="font-size:9.5px;line-height:1.5;display:block;margin-top:4px;">
+                依 {estimate.probed}/{estimate.of} 支的實際時長推算（成本由視覺分析的
+                幀數決定，不是由檔案數）。超過上限或連續
+                {hhmm(estimate.stall_s)}沒有進度會停止並告知原因；
+                已完成的素材都會留在庫裡，重跑接續。
+              </Mono>
+            {:else}
+              <span class="pend">掃描後顯示</span>
+            {/if}
+          </div>
         {/if}
         <div class="noticebox">
           <Mono dim style="font-size:10px;">◇ Notice<br/>Files are processed locally. Nothing leaves this machine. Offload never deletes the source.</Mono>
@@ -295,6 +370,9 @@
   .sel:focus { outline: none; border-color: var(--ink); }
 
   .optrow { display: flex; align-items: center; gap: 14px; }
+  .presetrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
+  .preset { font-size: 10px; padding: 2px 8px; }
+  .preset.add { font-weight: 600; }
   .optlabel { display: flex; flex-direction: column; gap: 1px; font-size: 12px; }
   .seg { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.08em; width: 46px; flex: 0 0 46px; padding: 5px 0; border: 1px solid var(--rule-hi); background: transparent; color: var(--quiet); cursor: pointer; }
   .seg.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); font-weight: 700; }
@@ -306,6 +384,9 @@
   .mtotal { padding-bottom: 8px; border-bottom: 1px solid var(--rule); margin-bottom: 4px; }
   .mrow { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; padding: 5px 0; font-size: 12px; align-items: baseline; }
   .mrow.skip { color: var(--quiet); }
+  .estrow { display: flex; justify-content: space-between; align-items: baseline;
+            gap: 8px; font-size: 11px; margin-top: 2px; }
+  .estrow.dim { opacity: .65; }
   .estimated { margin-top: 10px; }
   .noticebox { margin-top: auto; border: 1px dashed var(--rule-hi); padding: 12px; line-height: 1.5; }
 

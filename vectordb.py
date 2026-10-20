@@ -270,15 +270,47 @@ def _check_chroma_staleness() -> None:
     stays stale until the process restarts.
     """
     global _CHROMA_DB_MTIME
-    try:
-        current = (CHROMA_PATH / "chroma.sqlite3").stat().st_mtime
-    except OSError:
+    current = _chroma_db_mtime()
+    if current is None:
         # No DB on disk yet (fresh install, or a pg backend that never writes
         # one). Nothing to be stale against.
         return
     if current == _CHROMA_DB_MTIME:
         return
     if _drop_chroma_system_cache():
+        _CHROMA_DB_MTIME = current
+
+
+def _chroma_db_mtime():
+    """`chroma.sqlite3`'s mtime, or None when it is not there yet."""
+    try:
+        return (CHROMA_PATH / "chroma.sqlite3").stat().st_mtime
+    except OSError:
+        return None
+
+
+def _record_chroma_mtime() -> None:
+    """Re-read the mtime AFTER the client has been rebuilt, and treat that as the
+    high-water mark.
+
+    🔴 Without this the staleness check feeds itself. Dropping the System cache
+    forces the next `PersistentClient(path)` to rebuild from disk, and that
+    rebuild WRITES to chroma.sqlite3 — after `_check_chroma_staleness` recorded
+    the old mtime. So the next call sees a newer file, drops again, rebuilds
+    again, writes again. Measured: six `get_collection()` calls with no external
+    write at all produced six cache drops, each one reloading the whole HNSW
+    index; with this, six calls produce one.
+
+    The check was written to catch someone ELSE's write. It could not tell that
+    write apart from the one it had just caused.
+
+    A genuine external write landing between the check and this re-read is
+    recorded here as already-seen — a one-call window, closed by that writer's
+    next write. That is the trade for not thrashing on every single search.
+    """
+    global _CHROMA_DB_MTIME
+    current = _chroma_db_mtime()
+    if current is not None:
         _CHROMA_DB_MTIME = current
 
 
@@ -311,6 +343,10 @@ def get_collection(reset: bool = False):
             # on 1.5.x), so the stamp only lands when the collection is created/reset.
             metadata={"hnsw:space": "cosine", "embed_model": EMBED_MODEL, "embed_dim": EMBED_DIM},
         )
+        # Still inside the lock: the rebuild above may have written to
+        # chroma.sqlite3, and if that write is not folded into the high-water
+        # mark now, the next call reads it as somebody else's change.
+        _record_chroma_mtime()
     _assert_collection_compatible(col)
     return col
 
@@ -578,3 +614,48 @@ def find_similar(
         n_results,
         skip_media_ids=set([media_id_str]),
     )
+
+
+# ── Embedder drift (index ↔ current embedder) ─────────────────────────────────
+# _assert_collection_compatible catches a renamed model. It cannot catch the same
+# model NAME now producing different vectors — an Ollama upgrade, a re-pulled tag
+# whose weights changed, a different quantization. Queries are then embedded in a
+# slightly different space from the stored chunks and ranking degrades with no
+# error anywhere. Re-embedding a few stored chunks and comparing them against
+# their stored vectors measures exactly that.
+#
+# Floor: measured 2026-10-14 on bge-m3 — same machine 1.000000; vectors stored on
+# an M2 Max (Metal) re-embedded on an RTX 4070 (CUDA) min 0.999986. 0.999 leaves
+# two orders of magnitude for cross-machine noise.
+DRIFT_COS_FLOOR = 0.999
+
+
+def _cosine(a, b) -> float:
+    a, b = list(a), list(b)
+    if len(a) != len(b) or not a:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def embedder_drift(col=None, sample: int = 5) -> Optional[Dict[str, Any]]:
+    """Re-embed up to ``sample`` stored chunks with the active embedder and compare
+    them with the vectors stored in the index.
+
+    Returns ``{"min_cos", "n", "ok"}``, or ``None`` when nothing can be measured
+    (empty index, or a backend that returns no stored text) — the caller must
+    report that as unmeasured, never as a pass."""
+    col = col if col is not None else get_collection()
+    got = col.get(include=["documents", "embeddings"], limit=sample) or {}
+    docs = got.get("documents") or []
+    embs = got.get("embeddings")
+    embs = list(embs) if embs is not None else []
+    pairs = [(d, e) for d, e in zip(docs, embs) if d and e is not None and len(e)]
+    if not pairs:
+        return None
+    fresh = embed_batch([d for d, _ in pairs])
+    cos = [_cosine(f, s) for f, (_, s) in zip(fresh, pairs)]
+    worst = min(cos)
+    return {"min_cos": worst, "n": len(cos), "ok": worst >= DRIFT_COS_FLOOR}

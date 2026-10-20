@@ -46,9 +46,18 @@ def _stub_ingest(monkeypatch):
 
 
 def _stub_resolve(monkeypatch, mapping):
-    """mapping: (project_name, media_id) -> {status, absolute_path, filename}."""
+    """mapping: (project_name, media_id) -> {status, absolute_path, filename}.
+
+    The third argument is asserted, not ignored. It is the filename the item was
+    added under, and passing it is what lets `resolve_source` notice that a
+    reused id now points at different footage. Drop it at this call site and the
+    copy silently pulls the wrong file (tests/test_bins_id_reuse.py), so a stub
+    that accepted anything would let that regression through unseen.
+    """
     import bins as bins_mod
-    def fake(project_name, media_id):
+    def fake(project_name, media_id, expect_filename=None):
+        assert expect_filename is not None, \
+            "the copy gate must pass the bin item's filename through"
         return mapping.get((project_name, str(media_id)))
     monkeypatch.setattr(bins_mod, "resolve_source", fake)
 

@@ -97,6 +97,8 @@ def _probe_nvidia(timeout: float = 3.0) -> Tuple[float, float]:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         check=True,
     ).stdout.strip()

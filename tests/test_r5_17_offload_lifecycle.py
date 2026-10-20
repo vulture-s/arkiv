@@ -10,7 +10,6 @@
 The AbortController / Stop-button half (#45 UI) is frontend-only — verified via
 `vite build` (the CI frontend-build gate), the repo has no JS unit harness.
 """
-import hashlib
 import importlib
 import json
 import os
@@ -28,8 +27,11 @@ def _state_dir(monkeypatch, tmp_path):
 
 
 def _expected_state_path(state_cwd, src):
-    h = hashlib.sha1(str(Path(src).expanduser().resolve()).encode("utf-8")).hexdigest()[:16]
-    return state_cwd / "offload-state-{0}.json".format(h)
+    # Keyed on mount path + card-content fingerprint since the 2026-10-09 audit
+    # fix (a second card at the same mount must not reuse the first card's state);
+    # see tests/test_offload_card_identity.py for the behavioural pin.
+    import routers.offload as _ro
+    return _ro._offload_state_path(state_cwd, Path(src).expanduser().resolve())
 
 
 def test_endpoint_writes_per_source_resumable_state(fastapi_client, tmp_path, monkeypatch):

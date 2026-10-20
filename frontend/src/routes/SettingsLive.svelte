@@ -13,6 +13,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
+  import { vocabLoadState } from '../lib/vocabLoad.js'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
@@ -209,15 +210,25 @@
   let applyResult = null // {media_updated,total_hits,backup,embed_rebuild_started}
   let backups = []
   let doRebuild = false
-  const normRule = (r) => ({ from: r.from || '', to: r.to || '', scope: r.scope || 'global', pre: !!r.pre, post: r.post !== false })
+  // learned_at (set by POST /api/corrections/learn) is carried through untouched:
+  // it orders hotword priority, and a Save from here must not erase it.
+  const normRule = (r) => ({ from: r.from || '', to: r.to || '', scope: r.scope || 'global', pre: !!r.pre, post: r.post !== false, ...(r.learned_at ? { learned_at: r.learned_at } : {}) })
+  // vocabLoadState: a failed load is NOT an empty dictionary — block Save so the
+  // on-screen list can't be PUT over the real one (audit 2026-10-09 K1).
+  let vocabCanSave = true
   async function loadVocab() {
-    try { rules = ((await api.getCorrections()).rules || []).map(normRule) } catch { rules = [] }
+    let res = null, loadErr = null
+    try { res = await api.getCorrections() } catch (e) { loadErr = e }
+    const st = vocabLoadState(res, loadErr)
+    rules = st.rules.map(normRule); vocabCanSave = st.canSave
+    if (st.msg) vocabMsg = st.msg
     try { backups = (await api.getRecorrectBackups()).backups || [] } catch { backups = [] }
   }
   function addRule() { rules = [...rules, { from: '', to: '', scope: 'global', pre: false, post: true }]; preview = null }
   function removeRule(i) { rules = rules.filter((_, j) => j !== i); preview = null }
   async function saveVocab() {
     if (vocabBusy) return
+    if (!vocabCanSave) { vocabMsg = '字典尚未成功讀取，暫停儲存 — 重新整理後再試'; return }
     vocabBusy = true; vocabMsg = ''
     try {
       const res = await api.putCorrections(rules.filter((r) => (r.from || '').trim()))
@@ -392,7 +403,7 @@
 
             <div class="vctl">
               <button class="ak-btn" on:click={addRule}>+ 新增規則</button>
-              <button class="ak-btn" on:click={saveVocab} disabled={vocabBusy}>儲存字典</button>
+              <button class="ak-btn" on:click={saveVocab} disabled={vocabBusy || !vocabCanSave}>儲存字典</button>
             </div>
 
             <div class="vdiv"></div>
@@ -569,14 +580,21 @@
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">PROJECT REGISTRY · 專案註冊表</Eyebrow>
               <div class="ak-display fstitle">Projects</div>
-              <div class="fsdesc">跨庫專案登記——加入 / 移除 / 同步索引時間。寫入 <code>~/.arkiv-projects.json</code>。健康狀態來自 <code>/api/projects/health</code>。</div>
+              <div class="fsdesc">跨庫專案登記——加入 / 移除 / 同步索引時間。寫入 <code>~/.arkiv-projects.json</code>。健康狀態來自 <code>/api/projects/health</code>。<br />註冊表的用途是讓跨庫精選集能以名稱指認片段，<strong>不是素材庫的切換器</strong>——一個伺服器行程只服務一個素材庫。</div>
             </div>
+
+            <div class="pactive">
+              <span class="pactlabel">目前開啟</span>
+              <span class="pactname">{stats?.project_registered_name || stats?.project || '—'}</span>
+              {#if stats && !stats.project_registered_name}<span class="pactwarn">未註冊</span>{/if}
+            </div>
+            <div class="pacthint">要看別的素材庫，得用該路徑重新啟動後端（<code>ARKIV_PROJECT_ROOT</code>）；在這張表上新增或移除不會改變上面這一行。</div>
 
             <div class="ptable">
               <div class="phead"><span>NAME</span><span>PATH</span><span>INDEXED</span><span>HEALTH</span><span></span></div>
               {#each projects as p}
-                <div class="prow">
-                  <span class="pname">{p.name}</span>
+                <div class="prow" class:pcurrent={!!stats?.project_registered_name && p.name === stats.project_registered_name}>
+                  <span class="pname">{p.name}{#if !!stats?.project_registered_name && p.name === stats.project_registered_name}<span class="pdot" title="目前開啟中">●</span>{/if}</span>
                   <span class="ppath" title={p.path}>{p.path}</span>
                   <Mono dim style="font-size:10.5px;">{shortDate(p.last_indexed_at)}</Mono>
                   <span class="phealth" class:ok={projHealth[p.name] === 'ok'}>{projHealth[p.name] || '—'}</span>
@@ -715,4 +733,11 @@
   .phealth { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--quiet-2); }
   .phealth.ok { color: var(--cyan); }
   .paddrow { display: grid; grid-template-columns: 1.2fr 2fr 1.4fr; gap: 8px; margin-bottom: 12px; }
+  .pactive { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .pactlabel { font-family: var(--ak-mono); font-size: 9px; letter-spacing: 0.08em; color: var(--quiet-2); text-transform: uppercase; }
+  .pactname { font-size: 13px; color: var(--ink); }
+  .pactwarn { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--quiet-2); text-transform: uppercase; }
+  .pacthint { font-size: 11px; color: var(--quiet); margin-bottom: 10px; line-height: 1.5; }
+  .prow.pcurrent .pname { color: var(--cyan); }
+  .pdot { color: var(--cyan); font-size: 9px; margin-left: 5px; vertical-align: middle; }
 </style>
