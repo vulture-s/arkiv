@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v1.6.1 - 2026-10-20
+
+**Windows 第一次使用就能從 NAS 匯入；只在 Mac 上看片可以不建 proxy。**
+這一版的修正來自一次 Windows 首次使用模擬：連不到的網路路徑不再只丟「API 500」、
+Windows 的網路磁碟機與「影片」資料夾可以匯入、Projects 頁不再被誤當「開新專案」。
+
+- 依賴升級：fastapi／uvicorn 系列、pydantic、requests、chromadb、pytest-asyncio（3.9 維持可安裝）、
+  vite／svelte／three 等前端套件、`actions/upload-artifact` v7、serde_json。
+
 ### 新增
 - **ingest 可以不建 proxy**（#558）：`ingest.py --skip-proxies`（＝`--proxies never`）跳過 Phase 3；
   `ARKIV_PROXIES=never` 或庫設定 `ingest.proxies` 設成這個庫的預設（優先序：旗標 ＞ 庫設定 ＞ 環境變數 ＞ `auto`）。
