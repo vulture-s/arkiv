@@ -14,6 +14,7 @@
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import { vocabLoadState } from '../lib/vocabLoad.js'
+  import { needsIngestHint, healthLabel, addedMessage, addErrorMessage } from '../lib/projectsFirstRun.js'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
@@ -82,6 +83,13 @@
   let projMsg = ''
   let projBusy = false
   let newName = '', newPath = '', newTags = ''
+  // First-run: an empty open library → point at + INGEST, not at this form.
+  // sample status lets us discount the auto-seeded demo clips (see projectsFirstRun.js).
+  let sample = null
+  async function loadSampleStatus() {
+    try { sample = await api.sampleStatus() } catch { sample = null }
+  }
+  $: showIngestHint = needsIngestHint(stats, sample)
   async function loadProjects() {
     try { projects = (await api.getProjects()).projects || [] } catch { projects = [] }
     try {
@@ -98,8 +106,8 @@
       await api.addProject({ name, path, tags: newTags.split(',').map((t) => t.trim()).filter(Boolean) })
       newName = ''; newPath = ''; newTags = ''
       await loadProjects()
-      projMsg = `已加入 ${name}`
-    } catch (e) { projMsg = e.status === 409 ? `已存在同名專案：${name}` : `失敗: ${e.message}` }
+      projMsg = addedMessage(name, projHealth[name])
+    } catch (e) { projMsg = addErrorMessage(e, name) }
     finally { projBusy = false }
   }
   async function delProj(name) {
@@ -296,7 +304,7 @@
   }
   onDestroy(() => { if (retrTimer) clearTimeout(retrTimer) })
 
-  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab(); loadEngines(); loadProjects(); loadSettings() })
+  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab(); loadEngines(); loadProjects(); loadSettings(); loadSampleStatus() })
 
   const shortDate = (s) => (s ? String(s).slice(0, 10) : '—')
 
@@ -606,18 +614,31 @@
           </section>
         {:else if section === 'projects'}
           <section>
+            {#if showIngestHint}
+              <div class="pstart" data-testid="projects-ingest-hint">
+                <div class="pstarttxt">
+                  <div class="pstarttitle">要開始使用 arkiv，請按右上角 ＋ INGEST</div>
+                  <div class="pstartsub">選擇你的素材資料夾，arkiv 會替它建立索引——素材不會被搬動。這一頁不是開始的地方。</div>
+                </div>
+                <button class="ak-btn ak-btn--primary" on:click={() => push('/ingest-setup')}>＋ Ingest</button>
+              </div>
+            {/if}
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">PROJECT REGISTRY · 專案註冊表</Eyebrow>
               <div class="ak-display fstitle">Projects</div>
-              <div class="fsdesc">跨庫專案登記——加入 / 移除 / 同步索引時間。寫入 <code>~/.arkiv-projects.json</code>。健康狀態來自 <code>/api/projects/health</code>。<br />註冊表的用途是讓跨庫精選集能以名稱指認片段，<strong>不是素材庫的切換器</strong>——一個伺服器行程只服務一個素材庫。</div>
+              <div class="fsdesc">如果你在別處已經建好其他 arkiv 素材庫（例如另一顆硬碟或 NAS 上的庫），可以把它們登記在這裡，搜尋時就能一起找。<br /><strong>這裡不會建立新的素材庫，也不會匯入素材</strong>——要加入素材請用右上角 ＋ INGEST。</div>
+              <details class="pdetails">
+                <summary>技術細節</summary>
+                <div>登記寫入 <code>~/.arkiv-projects.json</code>；健康狀態來自 <code>/api/projects/health</code>。註冊表讓跨庫搜尋與精選集能以名稱指認片段，不是素材庫的切換器——一個伺服器行程只服務一個素材庫；要改開別的庫，得用該路徑重新啟動後端（<code>ARKIV_PROJECT_ROOT</code>）。</div>
+              </details>
             </div>
 
             <div class="pactive">
               <span class="pactlabel">目前開啟</span>
               <span class="pactname">{stats?.project_registered_name || stats?.project || '—'}</span>
-              {#if stats && !stats.project_registered_name}<span class="pactwarn">未註冊</span>{/if}
+              {#if stats && !stats.project_registered_name}<span class="pactwarn" title="目前開啟的這個庫還沒登記在下表；不影響使用">未登記</span>{/if}
             </div>
-            <div class="pacthint">要看別的素材庫，得用該路徑重新啟動後端（<code>ARKIV_PROJECT_ROOT</code>）；在這張表上新增或移除不會改變上面這一行。</div>
+            <div class="pacthint">這是 arkiv 目前在用的素材庫。在下表新增或移除，不會改變這一行。</div>
 
             <div class="ptable">
               <div class="phead"><span>NAME</span><span>PATH</span><span>INDEXED</span><span>HEALTH</span><span></span></div>
@@ -626,27 +647,28 @@
                   <span class="pname">{p.name}{#if !!stats?.project_registered_name && p.name === stats.project_registered_name}<span class="pdot" title="目前開啟中">●</span>{/if}</span>
                   <span class="ppath" title={p.path}>{p.path}</span>
                   <Mono dim style="font-size:10.5px;">{shortDate(p.last_indexed_at)}</Mono>
-                  <span class="phealth" class:ok={projHealth[p.name] === 'ok'}>{projHealth[p.name] || '—'}</span>
+                  <span class="phealth" class:ok={projHealth[p.name] === 'ok'} title={projHealth[p.name] || ''}>{healthLabel(projHealth[p.name])}</span>
                   <button class="vx" on:click={() => delProj(p.name)} disabled={projBusy} title="移除">✕</button>
                 </div>
               {/each}
-              {#if !projects.length}<div class="vempty">尚無註冊專案 — 下方加入第一個。</div>{/if}
+              {#if !projects.length}<div class="vempty">還沒有登記其他素材庫。只用一個庫的話，這裡保持空白就好。</div>{/if}
             </div>
 
             <div class="vdiv"></div>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">ADD PROJECT · 加入</Eyebrow>
+              <Eyebrow style="margin-bottom:4px;">ADD PROJECT · 登記既有素材庫</Eyebrow>
             </div>
             <div class="paddrow">
               <input class="vin" bind:value={newName} placeholder="專案名稱" />
-              <input class="vin" bind:value={newPath} placeholder="/Volumes/… 路徑" />
+              <input class="vin" bind:value={newPath} placeholder="素材庫資料夾路徑（內含 .arkiv/）" />
               <input class="vin" bind:value={newTags} placeholder="tags（逗號分隔，可空）" />
             </div>
             <div class="vctl">
-              <button class="ak-btn" on:click={addProj} disabled={projBusy}>+ 加入專案</button>
+              <button class="ak-btn" on:click={addProj} disabled={projBusy}>+ 登記素材庫</button>
               <button class="ak-btn" on:click={syncProj} disabled={projBusy}>同步索引時間</button>
               {#if projMsg}<Mono dim style="font-size:11px;">{projMsg}</Mono>{/if}
             </div>
+            <div class="paddnote">登記一個已經存在的 arkiv 素材庫資料夾（裡面要有 <code>.arkiv/</code>）。一般的素材資料夾請用 ＋ INGEST 匯入。</div>
           </section>
         {:else}
           <section>
@@ -752,6 +774,14 @@
   .chip { font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--ink-2); border: 1px solid var(--rule); padding: 3px 8px; line-height: 1.2; }
   .chip.chipon { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
 
+  /* Projects first-run guidance (empty library → + INGEST) */
+  .pstart { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; margin-bottom: 18px; border: 1px solid var(--invert); background: var(--bg); }
+  .pstarttitle { font-size: 14px; font-weight: 600; color: var(--ink); line-height: 1.3; }
+  .pstartsub { font-size: 11.5px; color: var(--ink-2); margin-top: 4px; line-height: 1.5; }
+  .pdetails { margin-top: 6px; max-width: 460px; font-size: 11px; color: var(--quiet); line-height: 1.5; }
+  .pdetails summary { cursor: pointer; font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--quiet-2); }
+  .pdetails div { margin-top: 4px; }
+  .paddnote { font-size: 11px; color: var(--quiet); margin-top: 8px; line-height: 1.5; max-width: 520px; }
   /* G5 project registry table */
   .ptable { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
   .phead, .prow { display: grid; grid-template-columns: 1.2fr 2fr 78px 64px 28px; align-items: center; gap: 10px; }
