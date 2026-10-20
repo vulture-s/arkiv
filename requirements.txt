@@ -19,7 +19,9 @@ chromadb>=1.0,<2
 # without mcp present. Do NOT let it ride on mcp's transitive pull: on 3.9 the
 # MCP marker is excluded, so python-multipart silently disappears.
 python-multipart>=0.0.9
-requests>=2.34.2
+# 2.33.0+ requires Python >=3.10 — same 3.9 marker split as fastapi/uvicorn above.
+requests>=2.34.2; python_version >= "3.10"
+requests>=2.32.5; python_version < "3.10"
 xxhash>=3.8.1
 nanoid>=2.0.0
 # (pandas removed — it was an unused ~70 MB dependency, imported nowhere.)
