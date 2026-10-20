@@ -268,3 +268,45 @@ def test_mean_no_speech_string_timestamps_fall_back_to_plain_mean(monkeypatch):
     segs += [dict(seg, text="音樂", no_speech_prob=0.95, start=30.0 + i, end=31.0 + i) for i in range(3)]
     assert abs(transcribe._mean_no_speech(segs) - 0.725) < 1e-9
     assert transcribe._postprocess("原始文字", "zh", segs, "zh")[0] == ""
+
+
+def _speech(n, offset=0):
+    return "".join(chr(0x4E00 + offset + i) for i in range(n))
+
+
+def test_postprocess_keeps_dense_confident_window_despite_high_no_speech(monkeypatch):
+    # Real faster-whisper shape (OkCSnbiszNs 69.9-88.9 s): one decoding window
+    # split into ~1 s segments that all carry no_speech 0.90 / avg_logprob -0.07.
+    transcribe = importlib.import_module("transcribe")
+    monkeypatch.setattr(transcribe, "LLM_POLISH", False)
+    segs, t = [{"text": _speech(60, 900), "no_speech_prob": 0.05, "avg_logprob": -0.1,
+                "compression_ratio": 1.2, "start": 0.0, "end": 8.0}], 8.0
+    for k in range(20):
+        segs.append({"text": _speech(9, 30 * k), "no_speech_prob": 0.9, "avg_logprob": -0.07,
+                     "compression_ratio": 1.3, "start": t, "end": t + 0.95})
+        t += 0.95
+    _, _, timed, _ = transcribe._postprocess("x", "zh", segs, "zh")
+    # _split_long_segments re-cuts long lines, so compare content, not count.
+    assert "".join(t["text"] for t in timed) == "".join(s["text"] for s in segs)
+
+
+def test_postprocess_short_reel_over_bgm_not_wiped(monkeypatch):
+    transcribe = importlib.import_module("transcribe")
+    monkeypatch.setattr(transcribe, "LLM_POLISH", False)
+    segs = [{"text": _speech(210), "no_speech_prob": 0.96, "avg_logprob": -0.05,
+             "compression_ratio": 1.4, "start": 0.0, "end": 30.0},
+            {"text": _speech(205, 400), "no_speech_prob": 1.0, "avg_logprob": -0.02,
+             "compression_ratio": 1.4, "start": 30.0, "end": 60.0}]
+    cleaned, _, timed, _ = transcribe._postprocess("x", "zh", segs, "zh")
+    assert "".join(t["text"] for t in timed) == _speech(210) + _speech(205, 400)
+
+
+def test_postprocess_still_drops_sparse_silence_hallucination(monkeypatch):
+    transcribe = importlib.import_module("transcribe")
+    monkeypatch.setattr(transcribe, "LLM_POLISH", False)
+    segs = [{"text": _speech(40), "no_speech_prob": 0.05, "avg_logprob": -0.1,
+             "compression_ratio": 1.2, "start": 0.0, "end": 6.0},
+            {"text": "由 Amara.org 社群提供的字幕", "no_speech_prob": 0.85, "avg_logprob": -0.24,
+             "compression_ratio": 0.8, "start": 6.0, "end": 36.0}]
+    _, _, timed, _ = transcribe._postprocess("x", "zh", segs, "zh")
+    assert "".join(t["text"] for t in timed) == _speech(40)

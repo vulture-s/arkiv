@@ -832,17 +832,24 @@ def _postprocess(text: str, lang: str, segments: list, language: str,
 
     # Guard 1: the batch is mostly silence by BOTH segment count and duration
     # → no speech. See _mean_no_speech for why count-weighting was wrong.
-    if _mean_no_speech(segments) > NO_SPEECH_THRESHOLD:
+    # Dense, confident decoding windows are speech whatever no_speech says:
+    # over music/noise faster-whisper reports no_speech 0.9–1.0 on real speech
+    # (avg_logprob −0.07, ~9 chars/s) and Guards 1/2 silently dropped it.
+    # The rule lives in whisper-guard>=0.3.2 (vulture-s/whisper-guard#4);
+    # reused here rather than copied so the two cannot drift.
+    rescued = _wg._rescue_flags(segments)
+    l1_view = [dict(s, no_speech_prob=0.0) if r else s for s, r in zip(segments, rescued)]
+    if _mean_no_speech(l1_view) > NO_SPEECH_THRESHOLD:
         return "", lang, [], []
 
     # Guard 2: Per-segment filtering
     good_segments = []
     timed_segments = []
-    for s in segments:
+    for s, is_rescued in zip(segments, rescued):
         seg_text = s.get("text", "").strip()
         if not seg_text:
             continue
-        if s.get("no_speech_prob", 0) > 0.8:
+        if s.get("no_speech_prob", 0) > 0.8 and not is_rescued:
             continue
         # Dynamic logprob threshold: short segments (<1.6s) are more likely hallucinations
         duration = s.get("end", 0) - s.get("start", 0) if "start" in s and "end" in s else None
