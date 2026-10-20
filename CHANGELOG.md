@@ -11,6 +11,12 @@
 - **`--regenerate-proxies` 會補建還沒有的 proxy**，不再只重建已存在的——對從沒建過 proxy 的庫原本什麼都不做。
 
 ### 修正
+- **設定 → Projects 頁不再被誤當成「開新專案」**：2026-10-20 Windows 首次使用實測，新使用者把跨庫註冊表的
+  「加入專案」當成開始使用 arkiv 的地方，登記了一個 NAS 素材資料夾。頁首改用一般語言說明這頁只登記**其他已建好的
+  arkiv 素材庫**供跨庫搜尋、不會建庫也不會匯入；`ARKIV_PROJECT_ROOT`／`~/.arkiv-projects.json` 收進「技術細節」。
+  目前開啟的庫沒有自己的素材時（扣掉自動載入的範例片），頁頂顯示「請按右上角 ＋ INGEST」引導並附按鈕直達匯入。
+  登記後若該資料夾沒有 `.arkiv/`（health `db_missing`）會明講「不是 arkiv 素材庫，請改用 ＋ INGEST」；
+  加入失敗訊息改成人話，健康狀態欄顯示中文標籤。邏輯在 `frontend/src/lib/projectsFirstRun.js`（附 node 測試）。
 - **配樂／噪音底下的真講話不再被當靜音丟掉**：faster-whisper 在這種情況會對整段真講話回 `no_speech_prob` 0.9–1.0
   （信心 −0.07、每秒約 9 字），Guard 2 只看 no_speech > 0.8 就整段丟、不留紀錄；只有這種段落的短片會在 Guard 1 被整份清空。
   實測一支 177 秒的解說片少了 20 段。現在同一解碼視窗 ≥5 秒、每秒 ≥2 字、信心 > −0.5 就保留；規則沿用 whisper-guard 0.3.2（不另抄一份）。
