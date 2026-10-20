@@ -28,6 +28,7 @@ import db
 import settings as settings_store
 import transcript_time
 from auth import require_scopes
+from health import path_access_message
 from export_builders import (
     _build_metadata_csv,
     _edl_comment,
@@ -126,8 +127,12 @@ def export_metadata_csv_to(
         if not default_dir:
             raise HTTPException(400, "no dest provided and export.default_dir is unset")
         raw_dest = str(Path(default_dir) / "arkiv-metadata.csv")
-    dest = Path(raw_dest).expanduser().resolve()
-    if dest.is_dir() or raw_dest.endswith(("/", "\\")):
+    try:
+        dest = Path(raw_dest).expanduser().resolve()
+        dest_is_dir = dest.is_dir()
+    except OSError as exc:
+        raise HTTPException(400, path_access_message(exc, "匯出"))
+    if dest_is_dir or raw_dest.endswith(("/", "\\")):
         dest = dest / "arkiv-metadata.csv"
     _assert_export_dest_safe(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
