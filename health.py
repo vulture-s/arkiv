@@ -33,6 +33,38 @@ class HealthStatus(str, Enum):
     CHROMA_MISSING = "chroma_missing"
     NAS_UNMOUNTED = "nas_unmounted"
     TIMEOUT = "timeout"
+    # The path exists as far as anyone can tell, but the OS refused to let us
+    # look: an SMB share Windows has not logged into yet (WinError 1326), access
+    # denied (5), a network name that is gone (53/67), a macOS TCC refusal.
+    # Distinct from PATH_NOT_FOUND because the fix is different — sign in, not
+    # re-point the project.
+    INACCESSIBLE = "inaccessible"
+
+
+def _file_manager_name() -> str:
+    s = platform.system().lower()
+    if s == "darwin":
+        return "Finder"
+    if s == "windows":
+        return "檔案總管"
+    return "檔案管理員"
+
+
+def path_access_message(exc: OSError, action: str = "加入") -> str:
+    """User-facing text for an OSError raised while merely LOOKING at a path the
+    user typed in (exists / is_dir / stat).
+
+    `Path.exists()` only swallows the not-found family; an authentication or
+    permission failure propagates, and left unhandled it reached the UI as a
+    bare "500". The system reason is kept (Windows gives it in the local
+    language, already decoded to str) because it is what tells the user which
+    of "wrong password" / "access denied" / "network name not found" they hit.
+    """
+    reason = (getattr(exc, "strerror", None) or str(exc) or exc.__class__.__name__).strip()
+    return (
+        "無法存取這個路徑（{reason}）。如果是網路磁碟，請先在{fm}開啟這個位置並登入，"
+        "再回來{action}。"
+    ).format(reason=reason, fm=_file_manager_name(), action=action)
 
 
 def check(name: str, ok: bool, detail: str = "", required: bool = True):
@@ -195,6 +227,16 @@ def _check_mount(path):
 
 
 def project_health(project):
+    # One unreachable project must not take the whole probe down with it:
+    # /api/projects/health, federation and bins all call this per project, and
+    # an OSError escaping here turned the entire response into a 500.
+    try:
+        return _project_health(project)
+    except OSError:
+        return HealthStatus.INACCESSIBLE
+
+
+def _project_health(project):
     project_path = _project_path(project)
     if not project_path.exists():
         return HealthStatus.PATH_NOT_FOUND
