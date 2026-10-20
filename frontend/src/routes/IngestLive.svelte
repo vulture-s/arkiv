@@ -39,11 +39,19 @@
   let files = {} // index → {filename, status, stage}
   let stageCounts = {} // aggregate per-stage tally from the backend (counts dict)
   let complete = null // {ok, skipped, failed}
+  // Set when the server's watchdog stopped the run. Two kinds, and they need
+  // different words: 'stall' = no output for the threshold, probably wedged;
+  // 'budget' = still talking but past the estimated cap, probably just slow.
+  let halted = null // {reason, idle_s, elapsed_s, stall_s, budget_s}
   let log = [] // [{t, stage, text}]
   let busy = false
   let rebuilding = false
+  // Index freshness for the line under 重建索引. null = not loaded / failed —
+  // the line is simply absent then; it is a hint, not a gate.
+  let embedStatus = null
   let err = ''
   let startedAt = 0 // ms — set when the run's 'start' event arrives (for elapsed)
+  let joinedLate = false // true when startedAt was seeded by a mid-run join, not 'start'
   let now = Date.now() // kept fresh by the 1s tick; seeded so countdowns never read 0
   let tick = null
   // edge-state C1 (redesign essay 08) — auto-reconnect with backoff when the ws
@@ -85,6 +93,25 @@
     return api.appendToken(base)
   }
 
+  // A client that connects mid-run never saw 'start', and the server sends no
+  // snapshot on connect. Everything the header shows is seeded there, so a
+  // late join (a reload, the auto-reconnect below, a second tab) rendered
+  // 0 files / 0% / blank elapsed over a live import — and `remaining` went to
+  // 0 because it is total minus the rows we happen to have seen. Every per-file
+  // and per-stage event already carries `total`, so adopt it from the first one
+  // that arrives instead of adding a protocol round-trip. The 'complete'
+  // handler already does this for `halted` — same gap, one field wide.
+  function adoptRunHeader(msg) {
+    if (!total && msg.total) total = msg.total
+    if (!startedAt) {
+      // We do not know when the run began, only when we joined. Showing that
+      // number as ELAPSED would be a wrong figure where there is currently a
+      // blank one, so it is flagged and labelled "+MM:SS (since joined)".
+      startedAt = Date.now()
+      joinedLate = true
+    }
+  }
+
   function pushLog(text, stage = '') {
     const t = new Date().toLocaleTimeString()
     log = [{ t, stage, text }, ...log].slice(0, 60)
@@ -110,8 +137,10 @@
         stageCounts = {}
         complete = null
         startedAt = Date.now()
+        joinedLate = false
         pushLog(`start · ${total} files`)
       } else if (msg.type === 'file') {
+        adoptRunHeader(msg)
         // Preserve any stage already recorded for this file (e.g. a vision event
         // can land after the "done" file event in phase 2 — don't clobber it).
         const prev = files[msg.index] || {}
@@ -119,6 +148,7 @@
         files = files // trigger reactivity
         pushLog(`[${msg.index}/${msg.total}] ${msg.filename} · ${msg.status}`)
       } else if (msg.type === 'stage') {
+        adoptRunHeader(msg)
         // Per-stage event (S1a brick 3): attribute to the in-flight file by index
         // and refresh the aggregate tally the backend keeps for us.
         const prev = files[msg.index] || { filename: msg.filename, status: 'transcribing' }
@@ -126,10 +156,19 @@
         files = files // trigger reactivity
         if (msg.counts) stageCounts = msg.counts
         pushLog(`${msg.filename}`, msg.stage)
+      } else if (msg.type === 'halted') {
+        halted = msg
+        pushLog(msg.reason === 'stall'
+          ? `HALTED · 已 ${Math.round(msg.idle_s / 60)} 分鐘沒有進度（門檻 ${Math.round(msg.stall_s / 60)} 分）`
+          : `HALTED · 已跑 ${Math.round(msg.elapsed_s / 60)} 分，超過上限 ${Math.round(msg.budget_s / 60)} 分`)
       } else if (msg.type === 'complete') {
         complete = { ok: msg.ok, skipped: msg.skipped, failed: msg.failed }
         busy = false
+        // A late-joining client never saw the 'halted' event; without this it
+        // would read a cut-short run as a finished one.
+        if (msg.halted && !halted) halted = { reason: msg.halted }
         pushLog(`complete · ok=${msg.ok} skipped=${msg.skipped} failed=${msg.failed}`)
+        loadEmbedStatus()
       }
     }
   }
@@ -140,6 +179,7 @@
     busy = true
     files = {}
     stageCounts = {}
+    halted = null
     complete = null
     try {
       // Through the authenticated API layer (adds the Bearer token when set) —
@@ -169,6 +209,14 @@
     }
   }
 
+  async function loadEmbedStatus() {
+    try {
+      embedStatus = await api.getEmbedStatus()
+    } catch (e) {
+      embedStatus = null
+    }
+  }
+
   // Manual "Reconnect now" — also used by the auto-retry tick.
   function reconnectNow() {
     reconnectAt = 0
@@ -178,6 +226,7 @@
 
   onMount(() => {
     connect()
+    loadEmbedStatus()
     tick = setInterval(() => {
       now = Date.now()
       if (reconnectAt && now >= reconnectAt && conn === 'closed' && !closedByUs) reconnectNow()
@@ -202,7 +251,7 @@
     ['TRANSCRIBED', stageCounts.transcribe || 0],
     ['TAGGED', stageCounts.vision || 0],
   ]
-  $: elapsed = startedAt && now ? fmtDur(now - startedAt) : ''
+  $: elapsed = startedAt && now ? (joinedLate ? '+' : '') + fmtDur(now - startedAt) : ''
 
   function fmtDur(ms) {
     const s = Math.floor(ms / 1000)
@@ -270,7 +319,7 @@
       <div class="hero">
         <div class="herohead">
           <Eyebrow>Ingest · live websocket</Eyebrow>
-          <Mono dim style="font-size:10.5px;">{#if startedAt}{elapsed} elapsed · real /ws/ingest{:else}real /ws/ingest stream{/if}</Mono>
+          <Mono dim style="font-size:10.5px;">{#if startedAt}{elapsed} {joinedLate ? 'since joined' : 'elapsed'} · real /ws/ingest{:else}real /ws/ingest stream{/if}</Mono>
         </div>
 
         {#if active}
@@ -296,10 +345,40 @@
                 <button class="ak-btn ak-btn--primary" on:click={trigger} disabled={busy || conn !== 'open'}>{busy ? 'running…' : 'Start ingest →'}</button>
                 <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title="重建 ChromaDB 向量索引（背景執行）">{rebuilding ? '排入中…' : '重建索引'}</button>
               </div>
+              {#if embedStatus && (embedStatus.stale_media || embedStatus.unindexed_media)}
+                <!-- Stale = text/tags changed after embedding; search on those clips is
+                     out of date until the next ingest or a rebuild. -->
+                <Mono style="font-size:11px;color:var(--quiet);margin-top:6px;display:block;">索引：{embedStatus.stale_media} 支內容已變更待更新 · {embedStatus.unindexed_media} 支尚未索引</Mono>
+              {/if}
             </div>
           </div>
         {/if}
         {#if err}<Mono style="font-size:11px;color:var(--cyan);margin-top:8px;display:block;">{err}</Mono>{/if}
+
+        {#if halted}
+          <!-- The run was stopped by the server-side watchdog. This has to be
+               loud: the previous behaviour was that a wedged import simply sat
+               there, and "still working" looked exactly like "dead". -->
+          <div class="haltbox" role="alert">
+            <div class="halthead">
+              <Mono style="font-size:11px;font-weight:600;">
+                {halted.reason === 'stall' ? '匯入已停止 · 研判卡住' : '匯入已停止 · 超過預估上限'}
+              </Mono>
+            </div>
+            <Mono dim style="font-size:10.5px;line-height:1.65;display:block;">
+              {#if halted.reason === 'stall'}
+                已 {Math.round((halted.idle_s || 0) / 60)} 分鐘沒有任何進度輸出（門檻
+                {Math.round((halted.stall_s || 0) / 60)} 分鐘），整個處理程序已被停止。
+                可能是 ffmpeg 或視覺模型沒有回應 —— 先確認 ollama 還活著再重跑。
+              {:else}
+                已跑 {Math.round((halted.elapsed_s || 0) / 60)} 分鐘，超過本次的上限
+                {Math.round((halted.budget_s || 0) / 60)} 分鐘。它當時仍在輸出進度，
+                所以多半只是估值偏低而不是卡住。
+              {/if}
+              <br/><b>已完成的素材都已寫進素材庫，重跑會從中斷處接續。</b>
+            </Mono>
+          </div>
+        {/if}
 
         <div class="aggwrap">
           <div class="aggrow"><Mono dim style="font-size:10px;">AGGREGATE</Mono><Mono style="font-size:11px;font-weight:600;color:var(--cyan);">{pct}%</Mono></div>
@@ -384,6 +463,9 @@
   .pathinput { font-size: 12px; }
   .triggerrow { display: flex; gap: 8px; align-items: center; }
   .limitinput { width: 70px; font-size: 12px; }
+  .haltbox { margin-top: 10px; padding: 10px 12px; border-radius: 6px;
+             border: 1px solid var(--cyan); background: color-mix(in srgb, var(--cyan) 8%, transparent); }
+  .halthead { margin-bottom: 4px; }
   .aggwrap { margin-top: 22px; }
   .aggrow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
   .aggbar { height: 4px; background: var(--surface-3); position: relative; }

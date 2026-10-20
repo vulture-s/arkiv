@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import json
+import math
 import os
 import subprocess
 import tempfile
@@ -333,13 +334,55 @@ def warm_up():
         print("  [whisper model loaded]", flush=True)
 
 
+def _vad_or_full(wav_path: str):
+    """`_vad_filter`, but "no speech" is never the terminal answer.
+
+    🔴 Silero's no-speech verdict is wrong most of the time on location audio.
+    Measured 2026-09-07 on a 200-clip shoot (PA system + crowd): 85 clips came
+    back with an empty transcript, and re-running them with VAD bypassed
+    recovered speech in **54 of them** — a 64% false-negative rate. One 50s clip
+    yielded 180 characters of continuous presenter dialogue.
+
+    It is not a sensitivity problem, so don't "fix" it by lowering the threshold:
+    a sweep at 0.5 / 0.35 / 0.2 / 0.1 kept 0% / 0% / 3% / 8% of the failing
+    files. Nor is it low level — that audio is hot (RMS 0.133, mean -17.5 dBFS),
+    which is why the PR #376→#394 normalisation path does nothing for it (13
+    clips tested, 0 improved; that path ships disabled). The working hypothesis
+    is simply that a live PA plus crowd noise sits outside Silero's training
+    distribution.
+
+    The old behaviour returned `("", "", [], [])` right here — **the same value a
+    genuinely silent file produces**. A wrong verdict and a right one were
+    byte-identical downstream, so nobody could ever tell which clips had been
+    dropped. That indistinguishability is the actual defect; the false-negative
+    rate only sets its size.
+
+    So: fall back to decoding the whole file and let hallucination guards 1-4
+    make the call. They already exist to reject "whisper invented text from
+    silence", which is exactly the risk this reintroduces. Cost is one extra
+    decode on files that really are silent (~4s each, measured); the thing it
+    buys is that no clip is ever silently skipped.
+    """
+    vad_wav, offset_map = _vad_filter(wav_path)
+    if vad_wav is not None:
+        return vad_wav, offset_map
+    # Loud on purpose: the old failure was invisible, so the fallback must not be.
+    print("  [vad] no speech detected — decoding the full file anyway "
+          "(Silero false-negatives on location audio; guards 1-4 decide)",
+          flush=True)
+    return wav_path, None
+
+
 def transcribe(media_path: str, language=None) -> tuple:
     """
     Transcribe audio from a media file.
     Returns (transcript_text, language, segments_list, words_list).
     segments_list: [{"start": float, "end": float, "text": str}, ...]
     words_list: [{"word": str, "start": float, "end": float, "score": float}, ...]
-    Returns ("", "", [], []) if no speech detected.
+    Returns ("", "", [], []) when nothing survives — either the wav could not
+    be extracted, or the decode produced no text that the hallucination guards
+    accepted. VAD reporting "no speech" is NOT one of those cases; see
+    `_vad_or_full` for why that verdict is not trusted on its own.
     """
     if language is None:
         language = WHISPER_LANGUAGE_HINT or DEFAULT_LANGUAGE
@@ -357,9 +400,7 @@ def transcribe(media_path: str, language=None) -> tuple:
     try:
         if _USE_MLX:
             progress.report(stage="vad")
-            vad_wav, offset_map = _vad_filter(wav)
-            if vad_wav is None:
-                return "", "", [], []
+            vad_wav, offset_map = _vad_or_full(wav)
             try:
                 progress.report(stage="decoding")
                 result = _transcribe_mlx(vad_wav, language)
@@ -371,9 +412,7 @@ def transcribe(media_path: str, language=None) -> tuple:
             result = _transcribe_whisperx(wav, language)
         else:
             progress.report(stage="vad")
-            vad_wav, offset_map = _vad_filter(wav)
-            if vad_wav is None:
-                return "", "", [], []
+            vad_wav, offset_map = _vad_or_full(wav)
             try:
                 progress.report(stage="decoding")
                 result = _transcribe_faster_whisper(vad_wav, language)
@@ -422,10 +461,69 @@ def _custom_terms() -> list:
     return out
 
 
+# Whisper's decoder keeps at most n_text_ctx // 2 - 1 = 223 prompt tokens and,
+# when the prompt is longer, keeps the LAST ones — i.e. it silently drops the
+# FRONT of the list, which is exactly where the env / vocabulary.txt terms sit.
+# So the budget is enforced here, by priority, instead of letting the decoder cut.
+# 200 (not 223) leaves headroom for the token-count estimate below being low.
+PROMPT_TOKEN_BUDGET = 200
+_PROMPT_SEP = "、"
+
+
+def _estimate_prompt_tokens(text: str) -> int:
+    """Conservative token estimate without loading a tokenizer.
+
+    Whisper's multilingual BPE is byte-level: a common CJK ideograph is 1 token,
+    a rarer one 2-3 (3 UTF-8 bytes). Count every non-ASCII char as 2, and each
+    ASCII alphanumeric run as ceil(len/3) (English subwords average ~4 chars),
+    other ASCII (space, punctuation) as 1. Over-estimating only means a term is
+    dropped a little early; under-estimating means the decoder cuts the front."""
+    n = 0
+    run = 0
+    for ch in text:
+        if ch.isascii() and ch.isalnum():
+            run += 1
+            continue
+        if run:
+            n += -(-run // 3)
+            run = 0
+        n += 1 if ch.isascii() else 2
+    if run:
+        n += -(-run // 3)
+    return n
+
+
+def _select_prompt_terms(terms, budget=None):
+    """Greedy, in priority order (``_custom_terms`` order: env, vocabulary.txt,
+    then the correction dictionary newest-learned first): keep each term whose
+    cost (+ separator) still fits the budget, skip the ones that don't (a long
+    term never blocks shorter, lower-priority ones). Returns ``(kept, dropped)``."""
+    budget = PROMPT_TOKEN_BUDGET if budget is None else budget
+    sep_cost = _estimate_prompt_tokens(_PROMPT_SEP)
+    used = 0
+    kept, dropped = [], []
+    for t in terms:
+        cost = _estimate_prompt_tokens(t) + (sep_cost if kept else 0)
+        if used + cost <= budget:
+            kept.append(t)
+            used += cost
+        else:
+            dropped.append(t)
+    return kept, dropped
+
+
 def _build_initial_prompt() -> str:
-    """Build whisper initial_prompt from the merged custom vocabulary (env + file)."""
+    """Build whisper initial_prompt from the merged custom vocabulary (env + file
+    + correction dictionary), capped to :data:`PROMPT_TOKEN_BUDGET`."""
     terms = _custom_terms()
-    return "、".join(terms) if terms else ""
+    if not terms:
+        return ""
+    kept, dropped = _select_prompt_terms(terms)
+    if dropped:
+        print("  [hotwords] initial_prompt over budget: kept %d, dropped %d (%s%s)"
+              % (len(kept), len(dropped), _PROMPT_SEP.join(dropped[:5]),
+                 "…" if len(dropped) > 5 else ""), flush=True)
+    return _PROMPT_SEP.join(kept)
 
 
 def _transcribe_mlx(wav: str, language: str) -> tuple:
@@ -681,6 +779,48 @@ def _split_long_segments(timed_segments: list, max_units: float = _MAX_SEGMENT_U
     return out
 
 
+def _mean_no_speech(segments: list) -> float:
+    """Batch no_speech score for Guard 1 = min(count mean, duration mean).
+
+    Guard 1 wipes the WHOLE transcript, so it must fire only when the batch is
+    silent by both measures. By segment *count* alone, three 1 s BGM tails
+    outvoted 30 s of clear speech (0.725 > 0.6). By *duration* alone, 40 s of
+    interview followed by 80 s of ambience that Whisper fills with three long
+    hallucinated segments scored 0.62 and the interview was wiped (dual-track
+    audit). min() keeps the BGM-tail fix and never rejects a batch the old
+    count gate passed; long silent segments are still dropped one by one by
+    Guard 2. Without usable timing (any segment lacking a positive start/end)
+    it is the plain mean. Mirrors
+    whisper-guard's ``WhisperGuard._mean_no_speech`` (vulture-s/whisper-guard#1);
+    arkiv keeps its own copy because ``_postprocess`` does not route through
+    ``WhisperGuard.process``.
+    """
+    durations = []
+    for seg in segments:
+        if "start" not in seg or "end" not in seg:
+            durations = None
+            break
+        start, end = seg["start"], seg["end"]
+        # Only finite real numbers: numeric *strings* were float()-ed here, passed
+        # Guard 1, then crashed Guard 2 (`"30" - "0"`) — the plain mean had
+        # rejected that batch first (Codex audit of whisper-guard#1).
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                   and math.isfinite(v) for v in (start, end)):
+            durations = None
+            break
+        duration = float(end) - float(start)
+        if duration <= 0:
+            durations = None
+            break
+        durations.append(duration)
+
+    probs = [s.get("no_speech_prob", 0) for s in segments]
+    plain = sum(probs) / len(probs)
+    if durations:
+        return min(plain, sum(p * d for p, d in zip(probs, durations)) / sum(durations))
+    return plain
+
+
 def _postprocess(text: str, lang: str, segments: list, language: str,
                  words: list = None, wav_path: str = None) -> tuple:
     """Shared post-processing: anti-hallucination + LLM polish (+ optional A4
@@ -690,19 +830,26 @@ def _postprocess(text: str, lang: str, segments: list, language: str,
     if not segments:
         return text, lang, [], words or []
 
-    # Guard 1: ALL segments are silence → no speech
-    avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
-    if avg_no_speech > NO_SPEECH_THRESHOLD:
+    # Guard 1: the batch is mostly silence by BOTH segment count and duration
+    # → no speech. See _mean_no_speech for why count-weighting was wrong.
+    # Dense, confident decoding windows are speech whatever no_speech says:
+    # over music/noise faster-whisper reports no_speech 0.9–1.0 on real speech
+    # (avg_logprob −0.07, ~9 chars/s) and Guards 1/2 silently dropped it.
+    # The rule lives in whisper-guard>=0.3.2 (vulture-s/whisper-guard#4);
+    # reused here rather than copied so the two cannot drift.
+    rescued = _wg._rescue_flags(segments)
+    l1_view = [dict(s, no_speech_prob=0.0) if r else s for s, r in zip(segments, rescued)]
+    if _mean_no_speech(l1_view) > NO_SPEECH_THRESHOLD:
         return "", lang, [], []
 
     # Guard 2: Per-segment filtering
     good_segments = []
     timed_segments = []
-    for s in segments:
+    for s, is_rescued in zip(segments, rescued):
         seg_text = s.get("text", "").strip()
         if not seg_text:
             continue
-        if s.get("no_speech_prob", 0) > 0.8:
+        if s.get("no_speech_prob", 0) > 0.8 and not is_rescued:
             continue
         # Dynamic logprob threshold: short segments (<1.6s) are more likely hallucinations
         duration = s.get("end", 0) - s.get("start", 0) if "start" in s and "end" in s else None

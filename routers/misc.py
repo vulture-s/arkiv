@@ -60,6 +60,47 @@ class ClientLogRequest(BaseModel):
     msg: Any = ""
 
 
+# Issue #558: the words a `never` library's 409 carries. Kept as constants so the
+# tests and the frontend agree on the code without either re-typing the prose.
+PROXIES_DISABLED_CODE = "proxies_disabled"
+PROXIES_DISABLED_MESSAGE = (
+    "這個庫關閉了 proxy（ingest.proxies = never），所以這支沒有可在瀏覽器播的版本。"
+    "請用能直接播放原檔的播放器（macOS App／Safari），"
+    "或只為這一支建立 proxy，或執行 `ingest.py --regenerate-proxies` 補齊整庫。"
+)
+
+
+def _need_proxy_response(media_id: int, rec: dict, reason: str) -> JSONResponse:
+    """The 409 half of the build_proxies() ↔ /api/stream pair.
+
+    In an `auto` library the body is byte-for-byte what it always was: the next
+    ingest's Phase 3 will build this proxy, so "build a proxy" is the whole story.
+    In a `never` library that story is false — Phase 3 will skip this clip on
+    every run — so the body says so (`code`, `message`, a hint naming the command
+    that does build it). `need_proxy` stays true: the file does need one, and the
+    per-clip build endpoint still builds it on an explicit click."""
+    content = {
+        "need_proxy": True,
+        "media_id": media_id,
+        "filename": rec.get("filename"),
+        "reason": reason,
+        "hint": "POST /api/proxy/build to queue proxy generation",
+    }
+    try:
+        import settings
+        mode = settings.ingest_proxies()
+    except Exception:  # noqa: BLE001 — a settings read must not turn a 409 into a 500
+        mode = config.PROXIES_MODE
+    if mode == "never":
+        content["code"] = PROXIES_DISABLED_CODE
+        content["proxies"] = "never"
+        content["message"] = PROXIES_DISABLED_MESSAGE
+        content["hint"] = ("proxies are disabled for this library: play the original in a "
+                           "player that decodes it, POST /api/proxy/build/{id} for this clip, "
+                           "or run `ingest.py --regenerate-proxies`")
+    return JSONResponse(status_code=409, content=content)
+
+
 @router.get("/api/stream/{media_id}")
 def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read"))):
     """Stream a media file with range request support for seeking.
@@ -115,16 +156,10 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
     # cannot demux. That is a black player with no error rather than a 409 the UI
     # can turn into "build a proxy".
     if codec.container_needs_remux(str(file_path)):
-        return JSONResponse(
-            status_code=409,
-            content={
-                "need_proxy": True,
-                "media_id": media_id,
-                "filename": rec.get("filename"),
-                "reason": "container cannot be demuxed in a browser ({0}); proxy required".format(
-                    file_path.suffix.lower()),
-                "hint": "POST /api/proxy/build to queue proxy generation",
-            },
+        return _need_proxy_response(
+            media_id, rec,
+            "container cannot be demuxed in a browser ({0}); proxy required".format(
+                file_path.suffix.lower()),
         )
 
     if serving_editor_proxy:
@@ -136,7 +171,10 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
         stored_codec = codec.probe_codec(str(file_path))
     else:
         stored_codec = (rec.get("codec") or "").strip().lower() or None
-        if stored_codec is None:
+        # Issue #521: an audio file has no video codec to backfill. Probing it
+        # used to answer with its cover art (`mjpeg`) and write that into
+        # `media.codec`; the codec gate below never applies to audio anyway.
+        if stored_codec is None and file_path.suffix.lower() not in mediatypes.AUDIO_EXT:
             stored_codec = codec.probe_codec(str(file_path))
             if stored_codec:
                 try:
@@ -144,17 +182,27 @@ def stream_media(media_id: int, _tok: dict = Depends(require_scopes("videos_read
                         conn.execute("UPDATE media SET codec=? WHERE id=?", (stored_codec, media_id))
                 except Exception:
                     pass  # backfill is best-effort; playback must not fail on it
-    if stored_codec and stored_codec in codec.PROXY_CODECS:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "need_proxy": True,
-                "media_id": media_id,
-                "filename": rec.get("filename"),
-                "reason": "browser-incompatible codec (HEVC/ProRes); proxy required for playback",
-                "hint": "POST /api/proxy/build to queue proxy generation",
-            },
-        )
+    # 🔴 Only video files get the codec gate (issue #420). The question "can a
+    # browser play this codec" is meaningless for the other two kinds and
+    # actively harmful to ask:
+    #   a JPEG still probes as `mjpeg`  → a 409 would break every image preview
+    #   an MP3 probes as `mp3`          → a 409 would break every audio preview
+    # Gating on VIDEO_EXT rather than on "not an image" covers both; the audio
+    # half is easy to miss because images are the case people remember.
+    if file_path.suffix.lower() in mediatypes.VIDEO_EXT and stored_codec:
+        playable = codec.is_browser_playable_video(stored_codec)
+        # None = ffprobe could not tell us. Fall through and let the browser try,
+        # exactly as before — a 409 there would blame the codec for a probe that
+        # never ran.
+        if playable is False:
+            in_proxy_set = stored_codec in codec.PROXY_CODECS
+            return _need_proxy_response(
+                media_id, rec,
+                "browser-incompatible codec (HEVC/ProRes); proxy required for playback"
+                if in_proxy_set else
+                "browser cannot decode this codec ({0}); proxy required for playback".format(
+                    stored_codec),
+            )
 
     mime, _ = mimetypes.guess_type(str(file_path))
     if not mime:
@@ -179,6 +227,39 @@ def embed_rebuild(request: Request, background_tasks: BackgroundTasks, _tok: dic
         raise HTTPException(409, "向量索引重建已在進行中，請稍候")
     background_tasks.add_task(_rebuild_embeddings)
     return {"message": f"開始重建向量索引（{total} 筆素材，背景執行）", "queued": total}
+
+
+@router.get("/api/embed/status")
+def embed_status(_tok: dict = Depends(require_scopes("videos_read"))):
+    """How many clips the semantic index has gone stale on.
+
+    /api/health's `embeddings.coverage` counts rows with an embed_hash, so a clip
+    whose tags or description changed after it was embedded still counts as
+    indexed — e.g. a tag edit whose reindex failed. This compares each row's
+    stored embed_hash with the hash of its CURRENT source text (the same check
+    embed.run_embed uses to pick what to re-embed), so `stale_media` is what the
+    next incremental embed would actually fix.
+
+    Kept off /api/health on purpose: that route is unauthenticated and polled at
+    startup, and this one hashes every row's text.
+    """
+    import embed
+
+    stale = unindexed = 0
+    signatures = embed.get_content_signatures()
+    for stored, current in signatures.values():
+        if stored is None:
+            unindexed += 1
+        elif stored != current:
+            stale += 1
+    total = len(signatures)
+    return {
+        "total_media": total,
+        "fresh_media": total - stale - unindexed,
+        "stale_media": stale,
+        "unindexed_media": unindexed,
+        "rebuild_running": _embed_guard.active,
+    }
 
 
 @router.post("/api/open-file")
@@ -366,7 +447,13 @@ def logs_tail(n: int = 200, _tok: dict = Depends(require_scopes("projects_read")
             if size > 262144:
                 fh.seek(-262144, 2)
             raw = fh.read()
-        lines = [_log_safe(ln, 2000) for ln in raw.decode("utf-8", "replace").splitlines()[-n:]]
+        # Redact ?token= on the way out too (audit 2026-10-09): lines written before
+        # the uvicorn.error filter existed — or by any other writer — must not hand
+        # a raw token to whoever can call this endpoint.
+        import re as _re
+        _tok_re = _re.compile(r"(token=)[^&\s\"']+")
+        lines = [_tok_re.sub(r"\1REDACTED", _log_safe(ln, 2000))
+                 for ln in raw.decode("utf-8", "replace").splitlines()[-n:]]
         return {"lines": lines, "available": True}
     except Exception as e:  # noqa: BLE001
         return {"lines": [], "available": False, "detail": "log read error: {0}".format(type(e).__name__)}

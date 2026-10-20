@@ -33,6 +33,7 @@ arkiv 是影片素材管理工具（Tauri + Python backend），功能包含：
 - 改之前：先確認測試覆蓋變更範圍
 - 改之後：跑 `python health.py` + 相關 smoke test，全綠才能 commit
 - UI 變更：驗證 HTML tag 配對、CSS 在 WKWebView 生效
+- 反覆出現的 bug 類型（寫入路由缺 same-site 守門、media id 被重用當身分鍵、非原子寫檔、讀失敗當空清單後覆寫、UI 假成功、時碼換算、孤兒子程序）與對應測試 → `CONTRIBUTING.md` §「Recurring bug classes」；結構性守門在 `tests/test_bug_class_guards.py`，`KNOWN_*` 只准減不准加
 
 ## Git 規範
 - commit message 寫「為什麼」不只是「什麼」

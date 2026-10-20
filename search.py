@@ -44,6 +44,11 @@ def _json_payload(payload: Dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+# Exit status when the install is not entitled to cross-project search. 1-4 are
+# taken by _all_projects_exit_code and 3 by registry errors.
+ENTITLEMENT_EXIT = 5
+
+
 def _all_projects_exit_code(payload: Dict[str, Any]) -> int:
     if payload.get("errors"):
         stages = {error.get("stage") for error in payload["errors"] if isinstance(error, dict)}
@@ -89,6 +94,18 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     project_names = _split_csv(args.projects)
     if args.all_projects or project_names or args.tag:
+        # Same gate as GET /api/search/all (routers/search.py), checked before the
+        # fan-out. Without it the CLI was a second, ungated door to the same Pro
+        # feature: the HTTP route refused a free install while
+        # `search.py --all-projects` on that same machine answered.
+        import entitlements
+
+        verdict = entitlements.check_cross_project(
+            db_paths=projects.known_project_dbs()
+        )
+        if not verdict.allowed:
+            print(verdict.reason, file=sys.stderr)
+            return ENTITLEMENT_EXIT
         try:
             payload = federation.search_all_projects(
                 args.query,

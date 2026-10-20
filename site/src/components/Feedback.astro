@@ -1,0 +1,87 @@
+---
+import { WEB3FORMS_KEY, FEEDBACK_ENDPOINT, FEEDBACK_MAIL } from '../lib/feedback.mjs';
+// One form, two sizes: `inline` closes every ledger page (short, "did this page
+// answer you"); `page` is the standalone /feedback.html form.
+interface Props { variant?: 'inline' | 'page'; page: string }
+const { variant = 'inline', page } = Astro.props;
+const live = Boolean(WEB3FORMS_KEY);
+const uid = `fb-${variant}`;
+---
+{live && (
+  <section class={`fb fb-${variant}`} aria-labelledby={`${uid}-h`}>
+    {variant === 'inline'
+      ? <h2 id={`${uid}-h`} class="fb-h">這頁有沒有回答到你的問題？</h2>
+      : <h2 id={`${uid}-h`} class="fb-h">寫給我們</h2>}
+    <form class="fb-form" data-endpoint={FEEDBACK_ENDPOINT} data-key={WEB3FORMS_KEY} data-page={page} novalidate>
+      <label class="fb-label" for={`${uid}-msg`}>{variant === 'inline' ? '哪裡沒講清楚、少了什麼，或哪裡寫錯了' : '問題回報、功能需求、使用心得都可以'}</label>
+      <textarea id={`${uid}-msg`} name="message" rows={variant === 'inline' ? 3 : 7} required maxlength="4000"></textarea>
+      <label class="fb-label" for={`${uid}-email`}>Email<span class="fb-opt">選填，想要回覆再填</span></label>
+      <input id={`${uid}-email`} name="email" type="email" autocomplete="email" placeholder="your@email.com">
+      <!-- 蜜罐：真人看不到也填不到；機器人會勾，勾了就不送 -->
+      <input class="fb-trap" type="checkbox" name="botcheck" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <div class="fb-row">
+        <button class="fb-btn" type="submit">送出</button>
+        <p class="fb-status" role="status" aria-live="polite"></p>
+      </div>
+    </form>
+  </section>
+)}
+{!live && variant === 'page' && (
+  <p class="fb-fallback">回饋表單還在開通中。請直接寫信到 <a href={`mailto:${FEEDBACK_MAIL}`}>{FEEDBACK_MAIL}</a>。</p>
+)}
+
+<script is:inline>
+  // 只有對方明確回 success:true 才說「已收到」。HTTP 200 不算，連線失敗、
+  // 逾時、回傳不是 JSON 都算失敗 —— 與首頁訂閱表單同一條規則。
+  (function () {
+    document.querySelectorAll('.fb-form').forEach(function (form) {
+      if (form.dataset.bound) return;
+      form.dataset.bound = '1';
+      var btn = form.querySelector('.fb-btn');
+      var status = form.querySelector('.fb-status');
+      var msg = form.querySelector('textarea');
+      var email = form.querySelector('input[type=email]');
+      var trap = form.querySelector('.fb-trap');
+      function say(text, cls) { status.textContent = text; status.className = 'fb-status' + (cls ? ' ' + cls : ''); }
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (trap.checked) return;
+        if (!msg.value.trim()) { say('先寫一點內容再送出。', 'bad'); msg.focus(); return; }
+        if (email.value && !email.checkValidity()) { say('Email 格式看起來不對。', 'bad'); email.focus(); return; }
+        btn.disabled = true;
+        say('送出中…');
+        var ctl = new AbortController();
+        var timer = setTimeout(function () { ctl.abort(); }, 12000);
+        fetch(form.dataset.endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            access_key: form.dataset.key,
+            subject: 'arkiv 官網回饋：' + form.dataset.page,
+            from_name: 'arkiv 官網',
+            page: location.href,
+            message: msg.value,
+            email: email.value || undefined,
+            replyto: email.value || undefined,
+            botcheck: false
+          }),
+          signal: ctl.signal
+        })
+          .then(function (res) { return res.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (e) {} return { res: res, j: j }; }); })
+          .then(function (r) {
+            if (r.j && r.j.success === true) {
+              say(email.value ? '收到了，謝謝。我們會回信給你。' : '收到了，謝謝。', 'ok');
+              form.reset();
+              btn.disabled = false;
+            } else {
+              var why = r.j && r.j.message ? String(r.j.message) : (r.res.ok ? '' : '（' + r.res.status + '）');
+              say('沒送出' + (why ? '（' + why.replace(/[.。\s]+$/, '') + '）' : '') + '。可以稍後再試，或直接寫信。', 'bad');
+              btn.disabled = false;
+            }
+          })
+          .catch(function () { say('沒送出：連線失敗或逾時。可以稍後再試，或直接寫信。', 'bad'); btn.disabled = false; })
+          .finally(function () { clearTimeout(timer); });
+      });
+    });
+  })();
+</script>

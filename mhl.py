@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import unicodedata
 import hashlib
 import re
 import socket
@@ -191,7 +192,13 @@ def _compute_directory_hashes(
     file_records: List[FileRecord],
     directory_records: List[DirectoryRecord],
     manifest_entries: List[Tuple[str, object]],
+    known: Optional[Dict[str, Tuple[int, int, Dict[str, str]]]] = None,
 ) -> Dict[str, Tuple[str, str]]:
+    """``known``: rel_path (NFC) → (size, mtime_ns, {algo: hex}) for files whose
+    hash the caller already computed from these exact bytes (offload reads every
+    destination file back right after writing it). Used only when size AND
+    mtime_ns still match and every requested algo is present; otherwise the
+    file is hashed as usual."""
     content_hashes: Dict[str, List[str]] = {algo: [] for algo in algos}
     structure_hashes: Dict[str, List[str]] = {algo: [] for algo in algos}
     entries = sorted(list(directory.iterdir()), key=lambda path: path.name.lower())
@@ -202,7 +209,8 @@ def _compute_directory_hashes(
 
         child_rel = child.name if not rel_dir else rel_dir + "/" + child.name
         if child.is_dir():
-            child_hashes = _compute_directory_hashes(child, child_rel, algos, file_records, directory_records, manifest_entries)
+            child_hashes = _compute_directory_hashes(child, child_rel, algos, file_records, directory_records,
+                                                    manifest_entries, known)
             for algo in algos:
                 content_hashes[algo].append(child_hashes[algo][0])
                 child_structure_bytes = _hash_from_hash_string(algo, child_hashes[algo][1])
@@ -234,9 +242,14 @@ def _compute_directory_hashes(
             )
             manifest_entries.append(("directoryhash", directory_records[-1]))
         else:
-            file_hashes = {algo: hash_file(child, algo) for algo in algos}
-            size = child.stat().st_size
-            mtime = _local_from_timestamp(child.stat().st_mtime)
+            st = child.stat()
+            hit = known.get(unicodedata.normalize("NFC", child_rel)) if known else None
+            if hit and hit[0] == st.st_size and hit[1] == st.st_mtime_ns and all(a in hit[2] for a in algos):
+                file_hashes = {algo: hit[2][algo] for algo in algos}
+            else:
+                file_hashes = {algo: hash_file(child, algo) for algo in algos}
+            size = st.st_size
+            mtime = _local_from_timestamp(st.st_mtime)
             record_time = _local_now()
             file_records.append(
                 FileRecord(
@@ -298,13 +311,17 @@ def _render_hash_values(values: Sequence[HashValue], indent: str) -> List[str]:
     return lines
 
 
-def _render_file_record(record: FileRecord, indent_level: int) -> List[str]:
+def _render_file_record(record: FileRecord, indent_level: int, previous_path: Optional[str] = None) -> List[str]:
     indent = "  " * indent_level
     lines = [f"{indent}<hash>"]
     path_attrs = [f'size="{record.size}"', f'lastmodificationdate="{_xml_text(_format_iso(record.mtime))}"']
     lines.append(
         f"{indent}  <path {' '.join(path_attrs)}>{_xml_text(_posix_path(record.rel_path))}</path>"
     )
+    if previous_path:
+        # ASC MHL v2 <previouspath>: the clip was written under a different name
+        # than its card layout (offload same-name conflict, renamed by the user).
+        lines.append(f"{indent}  <previouspath>{_xml_text(_posix_path(previous_path))}</previouspath>")
     lines.extend(_render_hash_values(record.hashes, indent + "  "))
     lines.append(f"{indent}</hash>")
     return lines
@@ -331,6 +348,7 @@ def _render_manifest(
     root_hashes: Dict[str, Tuple[str, str]],
     manifest_entries: Sequence[Tuple[str, object]],
     op: str,
+    previous_paths: Optional[Dict[str, str]] = None,
 ) -> str:
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<hashlist version="2.0" xmlns="urn:ASC:MHL:v2.0">']
     lines.append("  <creatorinfo>")
@@ -366,7 +384,8 @@ def _render_manifest(
 
     for kind, record in manifest_entries:
         if kind == "hash":
-            lines.extend(_render_file_record(record, 2))
+            lines.extend(_render_file_record(
+                record, 2, (previous_paths or {}).get(_posix_path(record.rel_path))))
         else:
             lines.extend(_render_directory_record(record, 2))
 
@@ -446,6 +465,8 @@ def create_manifest(
     primary_hash: str = DEFAULT_HASH_ALGO,
     secondary_hash: Optional[str] = None,
     op: str = "ingest",
+    previous_paths: Optional[Dict[str, str]] = None,
+    known_hashes: Optional[Dict[str, Tuple[int, int, Dict[str, str]]]] = None,
 ) -> Tuple[Path, Path]:
     source = source.resolve()
     if not source.exists() or not source.is_dir():
@@ -458,17 +479,183 @@ def create_manifest(
     file_records: List[FileRecord] = []
     directory_records: List[DirectoryRecord] = []
     manifest_entries: List[Tuple[str, object]] = []
-    root_hashes = _compute_directory_hashes(source, "", algos, file_records, directory_records, manifest_entries)
+    root_hashes = _compute_directory_hashes(source, "", algos, file_records, directory_records, manifest_entries,
+                                           known_hashes)
 
     creator_time = _local_now().replace(microsecond=0)
-    manifest_xml = _render_manifest(creator_time, root_hashes, manifest_entries, op)
-    mhl_path.write_text(manifest_xml, encoding="utf-8")
+    manifest_xml = _render_manifest(creator_time, root_hashes, manifest_entries, op, previous_paths)
+    _atomic_write_text(mhl_path, manifest_xml)
 
     chain_entries = _read_chain(chain_path)
     chain_entries.append(ChainEntry(sequence=sequence, mhl_name=mhl_path.name, c4=_c4_from_file(mhl_path)))
     chain_xml = _render_chain(chain_entries)
-    chain_path.write_text(chain_xml, encoding="utf-8")
+    _atomic_write_text(chain_path, chain_xml)
     return mhl_path, chain_path
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """tmp in the same dir + fsync + os.replace: a killed offload must never leave
+    a truncated manifest or chain behind (the cross-generation check reads every
+    listed generation and fails closed on one it can't parse)."""
+    import os as _os
+    path = Path(path)
+    tmp = path.with_name("." + path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(text)
+        fh.flush()
+        _os.fsync(fh.fileno())
+    _os.replace(str(tmp), str(path))
+
+
+def latest_manifest(output_dir: Path) -> Optional[Path]:
+    """The newest existing generation in an ``ascmhl/`` folder (by chain sequence,
+    falling back to the filename sequence), or None when there is no history."""
+    output_dir = Path(output_dir)
+    if not output_dir.is_dir():
+        return None
+    chain_path = output_dir / "ascmhl_chain.xml"
+    try:
+        entries = _read_chain(chain_path)
+    except Exception:
+        entries = []
+    for entry in sorted(entries, key=lambda e: e.sequence, reverse=True):
+        candidate = output_dir / entry.mhl_name
+        if candidate.exists():
+            return candidate
+    best = None
+    best_seq = -1
+    for child in output_dir.glob("*.mhl"):
+        match = MHL_FILENAME_RE.match(child.name)
+        if match and int(match.group(1)) > best_seq:
+            best, best_seq = child, int(match.group(1))
+    return best
+
+
+def changed_since(previous_mhl: Path, current_mhl: Path) -> List[str]:
+    """Paths recorded in BOTH generations whose hash (for any algorithm present in
+    both) differs — i.e. bytes that changed under an existing record. This is the
+    chain-of-custody break ascmhl's history check reports: a new generation alone
+    just records the new hash and the chain stays "valid", which is how a silent
+    overwrite of an already-backed-up clip went unnoticed (audit 2026-10-09).
+    Paths that disappeared or are new are not reported here."""
+    prev_files, _ = _manifest_entries(_parse_manifest(Path(previous_mhl)))
+    cur_files, _ = _manifest_entries(_parse_manifest(Path(current_mhl)))
+    prev = {r.rel_path: {h.algo: h.value for h in r.hashes} for r in prev_files}
+    changed: List[str] = []
+    for record in cur_files:
+        old = prev.get(record.rel_path)
+        if not old:
+            continue
+        for item in record.hashes:
+            if item.algo in old and old[item.algo] != item.value:
+                changed.append(record.rel_path)
+                break
+    return sorted(changed)
+
+
+def _generations(output_dir: Path) -> List[Tuple[Path, bool]]:
+    """Manifests in an ascmhl folder, oldest first → [(path, authoritative)].
+
+    Generations the chain lists are authoritative: missing or unreadable → the
+    check fails closed. Every other ``*.mhl`` in the folder (a run killed between
+    writing the manifest and appending the chain, or a folder whose chain was
+    deleted/recreated) is still used as history when it parses, and skipped when
+    it doesn't — so one interrupted offload can't turn the drive red forever,
+    and deleting the chain does not erase the earlier baseline either
+    (dual-track audit of #497). An unreadable chain fails closed."""
+    output_dir = Path(output_dir)
+    chain_path = output_dir / "ascmhl_chain.xml"
+    found: Dict[str, Tuple[int, Path, bool]] = {}
+    for child in output_dir.glob("*.mhl"):
+        match = MHL_FILENAME_RE.match(child.name)
+        found[child.name] = (int(match.group(1)) if match else 0, child, False)
+    if chain_path.exists():
+        for entry in _read_chain(chain_path):  # unreadable chain → raises
+            found[entry.mhl_name] = (entry.sequence, output_dir / entry.mhl_name, True)
+    return [(p, auth) for _, p, auth in sorted(found.values(), key=lambda v: (v[0], v[1].name))]
+
+
+# OS bookkeeping macOS / Windows write onto a DESTINATION drive by mounting or
+# browsing it: AppleDouble ``._*`` (any xattr change on exFAT/FAT — e.g. the
+# lastuseddate LaunchServices stamps when a DIT opens a backup clip in QuickTime),
+# Spotlight, fseventsd, Trash, Windows indexer. Their bytes change for reasons
+# that have nothing to do with the footage, so they must not trip the
+# cross-generation chain-of-custody check — otherwise one opened clip turns every
+# later offload to that drive red, permanently (review of #497, dst-side twin of
+# B1). Keep in sync with offload._OS_METADATA_DIRS / _OS_METADATA_FILES (a test
+# pins the two to the same sets).
+OS_METADATA_DIRS = frozenset((
+    ".fseventsd", ".spotlight-v100", ".trashes", ".temporaryitems",
+    ".documentrevisions-v100", "system volume information", "$recycle.bin",
+))
+OS_METADATA_FILES = frozenset((".ds_store", "thumbs.db", "desktop.ini", ".volumeicon.icns", ".apdisk"))
+
+
+def is_os_metadata_rel(rel_path: str) -> bool:
+    parts = [part for part in rel_path.replace("\\", "/").split("/") if part]
+    if not parts:
+        return False
+    if any(part.lower() in OS_METADATA_DIRS for part in parts[:-1]):
+        return True
+    name = parts[-1]
+    return name.lower() in OS_METADATA_FILES or name.startswith("._")
+
+
+def changed_against_history(current_mhl: Path) -> List[Tuple[str, str]]:
+    """Paths in ``current_mhl`` whose hash differs from the FIRST hash any earlier
+    generation recorded for that path → [(rel_path, first_generation_name)].
+
+    Compared against the first record, not just the previous generation: a
+    tampered/overwritten file is written into the new generation as soon as it is
+    detected, so a previous-generation-only check alerts exactly once and the next
+    run is green again with the damage still on disk (review of #497). Anchoring
+    on the first record keeps it failing until a human resolves it."""
+    current_mhl = Path(current_mhl)
+    baseline: Dict[str, Tuple[Dict[str, str], str]] = {}
+    try:
+        generations = _generations(current_mhl.parent)
+    except Exception as exc:
+        raise RuntimeError("mhl chain unreadable in {0} ({1}: {2}); cannot verify chain "
+                           "of custody".format(current_mhl.parent, type(exc).__name__, exc))
+    for gen, authoritative in generations:
+        if gen.name == current_mhl.name:
+            continue
+        try:
+            files, _ = _manifest_entries(_parse_manifest(gen))
+        except Exception as exc:
+            if not authoritative:
+                continue  # unlisted orphan (interrupted run): best effort
+            # Fail closed: skipping an unreadable generation silently moved the
+            # baseline to a later one — possibly one that already recorded the
+            # tampered hash (dual-track audit of #497).
+            raise RuntimeError(
+                "mhl history unreadable: {0} ({1}: {2}); cannot verify chain of "
+                "custody".format(gen.name, type(exc).__name__, exc))
+        for record in files:
+            hashes = baseline.setdefault(record.rel_path, ({}, gen.name))[0]
+            for item in record.hashes:
+                hashes.setdefault(item.algo, item.value)
+    if not baseline:
+        return []  # first generation in this folder: no history to break
+    cur_files, _ = _manifest_entries(_parse_manifest(current_mhl))
+    changed: List[Tuple[str, str]] = []
+    for record in cur_files:
+        if is_os_metadata_rel(record.rel_path):
+            continue  # Finder/Spotlight churn is not footage (see OS_METADATA_*)
+        base = baseline.get(record.rel_path)
+        if not base:
+            continue
+        common = [item for item in record.hashes if item.algo in base[0]]
+        if not common:
+            # No shared algorithm (e.g. xxh3 history, md5 run): unmeasured is
+            # not "unchanged" — report it rather than pass silently.
+            changed.append((record.rel_path, base[1] + " (no common hash algorithm)"))
+            continue
+        for item in common:
+            if base[0][item.algo] != item.value:
+                changed.append((record.rel_path, base[1]))
+                break
+    return sorted(changed)
 
 
 def _parse_manifest(mhl_path: Path):
@@ -522,7 +709,7 @@ def _manifest_entries(root) -> Tuple[List[FileRecord], List[DirectoryRecord]]:
             size = int(path_node.attrib.get("size", "0"))
             hashes_values: List[HashValue] = []
             for child in list(node):
-                if child.tag.split("}", 1)[-1] == "path":
+                if child.tag.split("}", 1)[-1] in ("path", "previouspath"):
                     continue
                 hashes_values.append(
                     HashValue(
@@ -587,7 +774,12 @@ def verify_manifest(mhl_path: Path, chain: bool = False, strict: bool = False) -
         manifest_root_hashes = _manifest_root(root)
         manifest_files, manifest_dirs = _manifest_entries(root)
         algos = sorted(manifest_root_hashes) if manifest_root_hashes else [DEFAULT_HASH_ALGO]
-        recomputed_root = _recompute_from_tree(source_root, algos)
+        # ONE pass over the tree feeds both the root-hash check and the per-entry
+        # checks below. They used to be two separate full re-hashes of every byte
+        # (#535): on a 117 GB card over Wi-Fi SMB that was 4.5 h instead of 2.2 h.
+        file_records: List[FileRecord] = []
+        directory_records: List[DirectoryRecord] = []
+        recomputed_root = _compute_directory_hashes(source_root, "", algos, file_records, directory_records, [])
     except FileNotFoundError:
         return 3
     except Exception:
@@ -601,9 +793,6 @@ def verify_manifest(mhl_path: Path, chain: bool = False, strict: bool = False) -
 
     actual_file_map: Dict[str, FileRecord] = {}
     actual_dir_map: Dict[str, DirectoryRecord] = {}
-    file_records: List[FileRecord] = []
-    directory_records: List[DirectoryRecord] = []
-    _compute_directory_hashes(source_root, "", algos, file_records, directory_records, [])
     for record in file_records:
         actual_file_map[record.rel_path] = record
     for record in directory_records:
@@ -659,6 +848,7 @@ def verify_manifest(mhl_path: Path, chain: bool = False, strict: bool = False) -
             "hash",
             "directoryhash",
             "path",
+            "previouspath",
             "content",
             "structure",
             "process",

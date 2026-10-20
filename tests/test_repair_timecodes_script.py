@@ -45,7 +45,8 @@ def test_it_refuses_to_run_without_being_told_which_library():
 
     env = {k: v for k, v in __import__("os").environ.items() if k != "ARKIV_PROJECT_ROOT"}
     r = subprocess.run([sys.executable, str(_SCRIPT), "--dry-run"],
-                       capture_output=True, text=True, env=env, timeout=60)
+                       capture_output=True, text=True, encoding="utf-8",
+                       env=dict(env, PYTHONIOENCODING="utf-8"), timeout=60)
 
     assert r.returncode == 2
     assert "ARKIV_PROJECT_ROOT" in r.stderr

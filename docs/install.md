@@ -16,7 +16,7 @@
 brew install python ffmpeg ollama
 git clone https://github.com/vulture-s/arkiv.git && cd arkiv
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 pip install mlx-whisper          # Apple Silicon
 ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b   # + minicpm-v (optional vision fallback)
 python health.py
@@ -32,7 +32,7 @@ python health.py
 sudo apt install python3 python3-venv ffmpeg
 git clone https://github.com/vulture-s/arkiv.git && cd arkiv
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 pip install faster-whisper torch  # NVIDIA GPU
 # pip install faster-whisper      # CPU fallback
 ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b   # + minicpm-v (optional vision fallback)
@@ -48,7 +48,7 @@ Install [Python 3.9+](https://python.org), [FFmpeg](https://ffmpeg.org/download.
 ```powershell
 git clone https://github.com/vulture-s/arkiv.git; cd arkiv
 python -m venv .venv; .\.venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 pip install faster-whisper torch  # NVIDIA GPU
 # pip install faster-whisper      # CPU fallback
 ollama pull bge-m3; ollama pull qwen2.5vl:7b; ollama pull qwen2.5:14b

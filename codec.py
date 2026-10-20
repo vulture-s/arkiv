@@ -20,6 +20,67 @@ PROXY_CODECS = frozenset({
     "prores", "ap4h", "ap4x", "apch", "apcn", "apcs", "apco",
 })
 
+# What a browser will actually decode. An ALLOW-list, deliberately: the codecs
+# browsers play are a short, slow-moving set, while the ones they refuse are
+# unbounded — mjpeg, qtrle, dnxhd, cinepak, rawvideo, whatever the next screen
+# recorder emits. PROXY_CODECS was that unbounded list, so it only ever named
+# the two formats someone had already been bitten by (issue #420: an mjpeg or
+# qtrle clip is handed over raw and the player shows a black pane with no error
+# and no way to ask for a proxy).
+#
+# PROXY_CODECS stays as it is, but ONLY as the wording of the 409 body: it names
+# the two formats a user is likely to recognise, so the refusal can say "ProRes"
+# rather than a codec string. It is NOT the proxy decision — `needs_proxy()` asks
+# this allow-list, because the endpoint that refuses and the builder that clears
+# the refusal have to answer the same question.
+#
+# 🔴 Measured, not remembered. Two entries sat here on the strength of what
+# browsers used to do, and a real Chrome 152 disagrees with both:
+#
+#     canPlayType('video/mp4; codecs="avc1.42E01E"')   → "probably"
+#     canPlayType('video/webm; codecs="vp9"')          → "probably"
+#     canPlayType('video/mp4; codecs="av01.0.05M.08"') → "probably"
+#     canPlayType('video/ogg; codecs="theora"')        → ""   ← cannot
+#     canPlayType('video/mp4; codecs="mp4v.20.8"')     → ""   ← cannot
+#
+# Theora decoding was dropped from Chrome; MPEG-4 Part 2 (DivX/Xvid) was never
+# in it. Listing them was worse than omitting them: this gate exists to send an
+# unplayable codec down the proxy path, so a wrong "playable" hands the raw bytes
+# to a player that shows a black pane and no error — the exact symptom issue #420
+# was opened about, arrived at by the code meant to prevent it.
+#
+# ⚠️ `video/ogg` with no codec string answers "maybe", but that is the CONTAINER
+# — Chrome plays Ogg *audio* (Vorbis/Opus). It is not evidence for Theora video,
+# and asking the bare-container question is how this gets believed again. Ask
+# with the codec.
+BROWSER_PLAYABLE_VIDEO = frozenset({
+    "h264", "avc1",          # the overwhelming majority of everything
+    "vp8", "vp9",
+    "av1", "av01",
+})
+
+
+def is_browser_playable_video(codec_name: Optional[str]) -> Optional[bool]:
+    """True / False / None for "can a browser show this video codec?".
+
+    None means *unknown*, not *no*: ffprobe failing, the binary missing, or a
+    NAS being unreachable must keep the pre-existing fall-through (hand over the
+    original bytes and let the browser try) rather than turning into a 409 that
+    tells the user to build a proxy for a file we could not even read.
+
+    🔴 Only ask this about a VIDEO file. A JPEG still probes as `mjpeg` and an
+    MP3 as `mp3`; both would answer False here and neither wants a proxy. The
+    caller gates on the extension — see `routers/misc.py::stream_media`.
+    """
+    name = (codec_name or "").strip().lower()
+    # Strip FIRST, then test for emptiness: a whitespace-only value is truthy,
+    # so an `if not codec_name` guard lets "   " through and the set lookup
+    # answers False — "the browser cannot play this", from a probe that returned
+    # nothing at all.
+    if not name:
+        return None
+    return name in BROWSER_PLAYABLE_VIDEO
+
 # Containers a browser cannot demux, whatever is inside them. AVCHD camcorder
 # footage (.mts/.m2ts) is almost always plain H.264 — so the codec check says
 # "playable", we hand over the original bytes labelled video/mp4, and the
@@ -52,7 +113,11 @@ def probe_codec(path: str, timeout: float = 10.0) -> Optional[str]:
         return _codec_cache[key]
     cmd = [
         # audit M15: -v error (was quiet) so failure reasons reach stderr.
-        FFPROBE_PATH, "-v", "error", "-select_streams", "v:0",
+        # `V:0` (capital), not `v:0`: capital V excludes attached pictures, so
+        # an MP3/M4A/FLAC's embedded cover art is not reported as the file's
+        # video codec (`mjpeg`) — issue #521. A JPEG still is unaffected (its
+        # picture is not an attached_pic), measured 2026-10-14 on ffmpeg 9.0.1.
+        FFPROBE_PATH, "-v", "error", "-select_streams", "V:0",
         "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(path),
     ]
     try:
@@ -101,7 +166,17 @@ def needs_proxy(path: str, timeout: float = 10.0) -> str:
     codec = probe_codec(path, timeout=timeout)
     if codec is None:
         return UNKNOWN
-    return NEEDED if codec in PROXY_CODECS else NOT_NEEDED
+    # Ask the SAME question the stream gate asks. This used to test membership of
+    # PROXY_CODECS, which answers "will the builder transcode this?" — and that
+    # list names two formats, while `/api/stream` refuses everything outside the
+    # allow-list. A dnxhd or qtrle clip was therefore refused by the endpoint with
+    # "build a proxy" and then skipped here, so the 409 never cleared. The builder
+    # itself was never the limit: `_build_proxy_cmd` is `ffmpeg -i … -c:v libx264`,
+    # which re-encodes anything ffmpeg can decode.
+    playable = is_browser_playable_video(codec)
+    if playable is None:
+        return UNKNOWN
+    return NOT_NEEDED if playable else NEEDED
 
 
 def clear_cache() -> None:

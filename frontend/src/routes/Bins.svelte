@@ -13,6 +13,7 @@
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Thumb from '../lib/Thumb.svelte'
   import { pushToast } from '../lib/toast.js'
+  import { createCopyTracker } from '../lib/binCopy.js'
   import { resolvedTheme } from '../lib/prefs.js'
 
   $: theme = $resolvedTheme
@@ -32,6 +33,9 @@
     path_not_found: { label: '庫不存在', sev: 'bad' },
     timeout: { label: '逾時', sev: 'warn' },
     row_missing: { label: '已從庫刪除', sev: 'bad' },
+    // 這個 id 現在是另一支素材了（SQLite 會把刪掉的 id 發給下一次匯入）。
+    // 是壞的一種，不是「找不到」——標成 bad，並在 title 說清楚。
+    id_reused: { label: '已換成別支', sev: 'bad' },
     file_missing: { label: '檔案不在', sev: 'bad' },
     error: { label: '錯誤', sev: 'warn' },
   }
@@ -121,13 +125,15 @@
 
   function _pushLog(line) { copyLog = [...copyLog.slice(-80), line] }
 
+  // Event → log line + final verdict live in lib/binCopy.js (node:test-pinned):
+  // an index pass skipped as "busy", a non-zero ingest exit, a refused
+  // registration or a stream cut off before `done` all used to read as success
+  // (audit 2026-10-09 K1).
+  let copyTracker = null
   function handleCopyEvent(ev) {
-    if (ev.type === 'gate') _pushLog(`${ev.action === 'skipped' ? '⤫ 跳過' : '＋ 排入'} ${ev.project_name}#${ev.media_id}${ev.action === 'skipped' ? ' · ' + ev.status : ''}`)
-    else if (ev.type === 'copy') _pushLog(ev.error ? `✗ 複製失敗 ${ev.file}: ${ev.error}` : `⇄ 複製 ${ev.file} (${ev.done}/${ev.total})`)
-    else if (ev.type === 'index') _pushLog(ev.status === 'start' ? `▸ 索引 ${ev.files} 檔…` : `▸ 索引完成 (code ${ev.code})`)
-    else if (ev.type === 'log' && ev.line) _pushLog(ev.line)
-    else if (ev.type === 'registered') _pushLog(ev.error ? `註冊: ${ev.error}` : `✓ 已註冊新專案「${ev.name}」`)
-    else if (ev.type === 'done') copySummary = ev.summary
+    const line = copyTracker.handle(ev)
+    if (line) _pushLog(line)
+    if (ev && ev.type === 'done') copySummary = ev.summary
   }
 
   async function runCopy() {
@@ -145,6 +151,7 @@
     const binId = detail && detail.id
     if (!binId) { pushToast('請先選一個精選集', 'error'); return }
     copyRunning = true; copyLog = []; copySummary = null
+    copyTracker = createCopyTracker()
     try {
       const res = await api.copyBin(binId, body)
       const reader = res.body.getReader()
@@ -161,10 +168,8 @@
           if (line) { try { handleCopyEvent(JSON.parse(line)) } catch (e) { /* skip */ } }
         }
       }
-      if (copySummary) {
-        const s = copySummary
-        pushToast(`複製完成 → ${s.dest}：${s.copied} 支${s.skipped.length ? '，略過 ' + s.skipped.length : ''}`)
-      }
+      const out = copyTracker.outcome()
+      pushToast(out.msg, out.kind)
       loadBins(); select(binId)
     } catch (e) { pushToast('複製失敗: ' + e.message, 'error') }
     copyRunning = false
@@ -301,6 +306,9 @@
             {#if copySummary}
               <div class="cpsummary">
                 <Mono style="font-size:11px;font-weight:600;">完成 → {copySummary.dest}：複製 {copySummary.copied} 支（{copySummary.mode === 'copy' ? '實體複製' : '索引引用'}）</Mono>
+                {#if copySummary.index_skipped_busy}
+                  <Mono style="font-size:10px;font-weight:600;">✗ 未索引：當時已有匯入任務進行中，檔案已就位但目的專案還搜不到 — 請稍後對目的專案手動 ingest</Mono>
+                {/if}
                 {#if copySummary.skipped.length}
                   <Mono style="font-size:10px;color:var(--cyan);">略過 {copySummary.skipped.length}：{copySummary.skipped.map((s) => s.project_name + '#' + s.media_id + '(' + s.status + ')').join('、')}</Mono>
                 {/if}
@@ -332,7 +340,10 @@
                       <Mono style="font-size:11.5px;font-weight:500;color:var(--ink);">{it.filename || ('#' + it.media_id)}</Mono>
                     </div>
                     <div class="rbadge">
-                      <span class="badge {bd.sev}" title={it.status}>{bd.label}</span>
+                      <span class="badge {bd.sev}"
+                            title={it.status === 'id_reused'
+                              ? `這個編號現在指到另一支素材（當初加入的是 ${it.filename || '?'}）`
+                              : it.status}>{bd.label}</span>
                     </div>
                     <div class="raction">
                       <button class="ak-btn xbtn" title="從精選集移除（不動原檔）" on:click={() => removeItem(it)}>×</button>

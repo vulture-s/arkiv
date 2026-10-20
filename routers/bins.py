@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 import bins as bins_store
+import orphan_guard
 import projects as project_registry
 from auth import require_scopes
 from config import BASE_DIR
@@ -119,7 +120,7 @@ def _bin_detail_payload(b) -> dict:
     (Phase 16.2 — no absolute path ever leaves the backend)."""
     # fable-audit round-5 #23: one batched status probe (grouped by project) instead
     # of a per-item registry read + health probe + sqlite open.
-    statuses = bins_store.bin_item_statuses(b.items)
+    statuses = bins_store.bin_item_statuses(b.items)  # items carry filename → id-reuse checked
     items = []
     for item in b.items:
         status = statuses.get((item.project_name, str(item.media_id)), bins_store.STATUS_ERROR)
@@ -255,7 +256,7 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
         reachable = []  # (project_name, media_id, absolute_path)
         # ── gate: re-resolve every item server-side; skip unreachable (fail-loud) ──
         for item in b.items:
-            info = bins_store.resolve_source(item.project_name, item.media_id)
+            info = bins_store.resolve_source(item.project_name, item.media_id, item.filename)
             status = (info or {}).get("status") or bins_store.STATUS_PROJECT_UNREGISTERED
             if status != bins_store.STATUS_OK or not (info or {}).get("absolute_path"):
                 skipped.append({"project_name": item.project_name, "media_id": item.media_id, "status": status})
@@ -326,11 +327,16 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
                     # relative. cwd points at the dest .arkiv so ingest's
                     # bench_ingest.json / state don't dirty the install dir (mirrors
                     # /api/offload's state_cwd).
-                    ingest_env = dict(os.environ)
+                    ingest_env = orphan_guard.child_env()  # die with the server (audit N1)
                     ingest_env["ARKIV_PROJECT_ROOT"] = str(dest_root)
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                            text=True, bufsize=1, env=ingest_env,
-                                            cwd=str(dest_root / ".arkiv"))
+                                            text=True, encoding="utf-8", errors="replace",
+                                            bufsize=1, env=ingest_env,
+                                            cwd=str(dest_root / ".arkiv"),
+                                            # own process group (as /api/ingest), so
+                                            # orphan_guard's killpg reaches ffmpeg /
+                                            # whisper children too (Claude review)
+                                            start_new_session=(os.name == "posix"))
                     try:
                         for line in proc.stdout:
                             yield _json.dumps({"type": "log", "line": line.rstrip("\n")}, ensure_ascii=False) + "\n"
