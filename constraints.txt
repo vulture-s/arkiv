@@ -822,7 +822,7 @@ websockets==16.1.1 ; python_full_version == '3.10.*'
     # via uvicorn
 websockets==17.2 ; python_full_version >= '3.11'
     # via uvicorn
-whisper-guard==0.3.2
+whisper-guard==0.3.3
     # via
     #   -r requirements-ci.txt
     #   -r requirements.txt

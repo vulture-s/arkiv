@@ -1025,11 +1025,18 @@
       if (identitiesId === id) identities = null
     }
   }
+  // Fetched ONCE per page (then again after each add/remove), never "while the list is
+  // empty": a library with no people yet answers [], the assignment invalidates this
+  // reactive block, and `!identityNames.length` is still true — 2026-10-21 measured
+  // ~390 requests/s for as long as a clip stayed selected, which starved the
+  // WebView (waveform drag, shortcuts and drag-out all stalled behind it).
+  let identityNamesLoaded = false
   async function fetchIdentityNames() {
+    identityNamesLoaded = true
     try { identityNames = await api.getIdentityNames() } catch (e) { /* autocomplete is optional */ }
   }
   $: if (selected && selected.id !== identitiesId) fetchIdentities(selected.id)
-  $: if (selected && !identityNames.length) fetchIdentityNames()
+  $: if (selected && !identityNamesLoaded) fetchIdentityNames()
   async function addIdentity(name, range) {
     if (!selected) return false
     const id = selected.id

@@ -14,7 +14,7 @@ requests>=2.28
 xxhash>=3.8.1
 nanoid>=2.0.0
 psutil>=7.2.2
-whisper-guard>=0.3
+whisper-guard>=0.3.3
 python-multipart>=0.0.9
 numpy                                   # pytest.approx
 mlx-whisper>=0.4; platform_system == "Darwin"   # install-closure walk resolves mlx
