@@ -94,6 +94,11 @@ editor_proxy_build.reset_progress(running=False, total=0, done=0, created=0, exi
 sample_seed = SingleFlight("sample_seed")
 sample_seed.reset_progress(running=False, ok=False, returncode=None, message="", clips=0)
 
+# First-run wizard (9.8a): model downloads (Ollama pulls + the Whisper weights) run
+# one batch at a time; the wizard polls GET /api/setup/models/pull.
+model_pull = SingleFlight("model_pull")
+model_pull.reset_progress(running=False, items=[], message="")
+
 
 def _rebuild_embeddings():
     """Background task: full embedding rebuild via subprocess. Runs embed.py in a

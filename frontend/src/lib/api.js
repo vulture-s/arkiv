@@ -108,6 +108,7 @@ const qs = (params = {}) => {
 export const getStats = (opts) => req('/api/stats', opts)
 export const getProjects = (opts) => req('/api/projects', opts)
 export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
+export const libraryBusy = (opts) => req('/api/library/busy', opts)
 // 12.6 drag-out: absolute path of the original, or of an IN/OUT sub-clip the backend cuts
 export const dragSource = (id, body, opts) => req(`/api/media/${id}/drag-source`, { method: 'POST', body, ...opts })
 // GET /api/entitlements -> {armed, pro, grandfathered, free_project_limit,
@@ -123,6 +124,12 @@ export const getSeedStatus = (opts) => req('/api/sample/seed/status', opts)
 // A1 pre-built (instant) sample library — distinct from seedSample (re-ingest).
 export const sampleStatus = (opts) => req('/api/sample/status', opts)
 export const loadSample = (opts) => req('/api/sample/load', { method: 'POST', ...opts })
+// 9.8a first-run setup wizard
+export const setupStatus = (opts) => req('/api/setup/status', opts)
+export const setupPull = (body, opts) => req('/api/setup/models/pull', { method: 'POST', body, ...opts })
+export const setupPullStatus = (opts) => req('/api/setup/models/pull', opts)
+export const setupComplete = (body, opts) => req('/api/setup/complete', { method: 'POST', body, ...opts })
+export const setupReset = (opts) => req('/api/setup/reset', { method: 'POST', ...opts })
 export const removeSample = (opts) => req('/api/sample/remove', { method: 'POST', ...opts })
 export const getLogsTail = (n = 200, opts) => req(`/api/logs/tail${qs({ n })}`, opts)
 

@@ -169,3 +169,36 @@ def projects_health(
     _sanitize_project_paths(projects, _tok)  # fable-audit #22 — see list_projects
     ok_count = sum(1 for item in projects if item["status"] == "ok")
     return {"projects": projects, "total": len(projects), "ok": ok_count}
+
+
+def _busy_jobs() -> list:
+    """Names of the long-running jobs this server has in flight right now.
+
+    The desktop app asks before it switches library (#561): switching restarts
+    this process, and a restart mid-ingest or mid-offload is exactly the silent
+    interruption the issue forbids. Every one of these is a single-flight slot
+    the job itself holds for its whole run, so the slots ARE the ground truth —
+    no separate bookkeeping to drift from them.
+    """
+    import state
+    from routers import offload as offload_router
+
+    jobs = []
+    if state._ingest_active:
+        jobs.append("ingest")
+    with offload_router._offload_lock:
+        if offload_router._offload_active:
+            jobs.append("offload")
+    for slot in (state.embed_rebuild, state.retranscribe, state.proxy_build,
+                 state.editor_proxy_build, state.sample_seed, state.model_pull):
+        if slot._active:
+            jobs.append(slot.name)
+    return jobs
+
+
+@router.get("/api/library/busy")
+def library_busy(
+    _tok: dict = Depends(require_scopes("projects_read")),
+):
+    jobs = _busy_jobs()
+    return {"busy": bool(jobs), "jobs": jobs}

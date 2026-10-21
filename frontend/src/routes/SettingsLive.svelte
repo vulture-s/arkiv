@@ -690,6 +690,11 @@
                 </div>
               {/if}
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Privacy</Mono><Mono dim style="font-size:11.5px;">Everything runs locally. Nothing leaves this machine.</Mono></div>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Setup</Mono>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                  <button class="ak-btn" on:click={() => api.setupReset().then(() => (window.location.hash = '#/setup')).catch((e) => (diagMsg = e.message))}>重新執行設定精靈</button>
+                </div>
+              </div>
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Report a problem</Mono>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                   <button class="ak-btn" on:click={copyDiagnostic} disabled={diagBusy}>Copy diagnostic</button>

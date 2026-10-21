@@ -172,6 +172,7 @@ from routers.proxy import router as proxy_router  # noqa: E402
 from routers.recorrect import router as recorrect_router  # noqa: E402
 from routers.misc import router as misc_router  # noqa: E402
 from routers.sample import router as sample_router  # noqa: E402
+from routers.setup import router as setup_router  # noqa: E402
 from routers.dragout import router as dragout_router  # noqa: E402
 from routers.export import router as export_router  # noqa: E402
 from routers.color import router as color_router  # noqa: E402
@@ -191,6 +192,7 @@ app.include_router(proxy_router)
 app.include_router(recorrect_router)
 app.include_router(misc_router)
 app.include_router(sample_router)
+app.include_router(setup_router)
 app.include_router(dragout_router)
 app.include_router(export_router)
 # before media_router: POST /api/media/color-profile must not be read as /api/media/{id}
