@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### 新增
+- **首次啟動設定精靈**（roadmap 9.8a）：第一次打開、而且庫裡還沒有自己的素材時，自動進入三步精靈——
+  ① 檢查這台電腦（CPU／記憶體／顯示卡、轉錄會用哪個裝置、有沒有 ffmpeg；沒有 NVIDIA 卻留著 CUDA 預設、
+  或缺 ffmpeg 會在這裡就講清楚怎麼修）② AI 模型（Whisper 與三顆 Ollama 模型是否已下載，可「現在下載」看逐項進度，
+  或「等匯入時再下載」）③ 加入素材（前往匯入，或先看範例片）。隨時可略過；設定 → System 可重新執行。
+  已經有素材的既有使用者升級後不會被帶進精靈。新 API：`/api/setup/status`、`/api/setup/models/pull`、
+  `/api/setup/complete`、`/api/setup/reset`。只下載模型，素材不離開本機。
+
 ## v1.6.1 - 2026-10-20
 
 **Windows 第一次使用就能從 NAS 匯入；只在 Mac 上看片可以不建 proxy。**

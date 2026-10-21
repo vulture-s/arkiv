@@ -22,6 +22,7 @@
   import TrashModal from '../lib/TrashModal.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
   import { pushToast } from '../lib/toast.js'
+  import { shouldShowWizard } from '../lib/setupWizard.js'
   import { createViewGen } from '../lib/viewGen.js'
   import { shotYearRows, mediaParams } from '../lib/shotYear.js'
   import { parseStartParam } from '../lib/matchTime.js'
@@ -47,6 +48,17 @@
   let stats = null
   let registryProjects = null // /api/projects rows; null = not loaded / unreachable
   let entitlement = null // /api/entitlements; null = not loaded (section then says nothing)
+  // 9.8a: a first-run user (wizard never finished AND no media of their own) lands
+  // on #/setup once per app start. Checked once — reloads of the grid must not
+  // bounce someone who just pressed 略過 back into the wizard.
+  let wizardChecked = false
+  function maybeOpenWizard(st, si) {
+    if (wizardChecked) return
+    wizardChecked = true
+    api.setupStatus()
+      .then((setup) => { if (shouldShowWizard(setup, st, si)) window.location.hash = '#/setup' })
+      .catch(() => {}) // an older backend without /api/setup: no wizard, nothing else changes
+  }
   // First-run readiness gate: 'checking' until /api/health answers, then
   // 'ready' | 'notready' (deps missing, 503) | 'unreachable' (backend down).
   let health = null
@@ -385,6 +397,7 @@
       viewGen.apply(gen, () => {
         stats = s
         sampleInfo = si
+        maybeOpenWizard(s, si)
         registryProjects = pr?.projects ?? null
         entitlement = ent
         deepLinkSubset = false
