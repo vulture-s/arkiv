@@ -43,6 +43,9 @@ Windows 的網路磁碟機與「影片」資料夾可以匯入、Projects 頁不
   （信心 −0.07、每秒約 9 字），Guard 2 只看 no_speech > 0.8 就整段丟、不留紀錄；只有這種段落的短片會在 Guard 1 被整份清空。
   實測一支 177 秒的解說片少了 20 段。現在同一解碼視窗 ≥5 秒、每秒 ≥2 字、信心 > −0.5 就保留；規則沿用 whisper-guard 0.3.2（不另抄一份）。
   靜音幻覺（「Thank you.」「由 Amara.org 社群提供的字幕」）每秒 <1 字，照舊擋下。需要 `whisper-guard>=0.3.2`。
+- **`no_speech_prob` 偏低的靜音幻覺不再混進逐字稿**：噪音底下 faster-whisper 會用「Thank you.」填滿 30 秒的視窗，
+  `no_speech_prob` 只有 0.14–0.75，任何門檻都擋不到。現在同一解碼視窗 ≥10 秒、每秒 <1 字就整段丟掉，不看分數。
+  規則在 whisper-guard 0.3.3（vulture-s/whisper-guard#6）。需要 `whisper-guard>=0.3.3`。
 
 ## v1.6.0 - 2026-10-19
 
