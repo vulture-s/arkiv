@@ -108,6 +108,7 @@ const qs = (params = {}) => {
 export const getStats = (opts) => req('/api/stats', opts)
 export const getProjects = (opts) => req('/api/projects', opts)
 export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
+export const libraryBusy = (opts) => req('/api/library/busy', opts)
 // GET /api/entitlements -> {armed, pro, grandfathered, free_project_limit,
 // projects_used, can_add_project, add_project_reason, cross_project, ...}.
 // Read from the code that ENFORCES the tier - a second copy of the rules in
