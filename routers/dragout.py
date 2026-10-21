@@ -106,7 +106,9 @@ def drag_source(
     dur = t_out - t_in
     accurate = dur <= ACCURATE_MAX_S
     ext = ".mp4" if accurate else src.suffix
-    dst = out_dir / _subclip_name(media_id, src.stem + ("" if accurate else "_kf"), ext, t_in, t_out)
+    # The mode is in the name: a cached file is only reused when it was cut the same way
+    # (an earlier stream-copy cut must never stand in for an exact one).
+    dst = out_dir / _subclip_name(media_id, src.stem + ("_exact" if accurate else "_kf"), ext, t_in, t_out)
     if not (dst.is_file() and dst.stat().st_size > 0 and dst.stat().st_mtime >= src.stat().st_mtime):
         tmp = dst.with_name(".part-" + dst.name)
         if accurate:

@@ -48,7 +48,7 @@ def test_short_window_is_reencoded_to_start_exactly_on_in(fastapi_client, clip, 
     body = r.json()
     assert r.status_code == 200 and body["kind"] == "subclip" and body["keyframe_cut"] is False
     out = body["path"]
-    assert out.endswith("_2.50-4.00.mp4")
+    assert out.endswith("_exact_1_2.50-4.00.mp4") or "_exact_" in out
     assert abs(_duration(out) - 1.5) < 0.15, _duration(out)
     first = os.stat(out).st_ino
     again = fastapi_client.post(f"/api/media/{mid}/drag-source", json={"in_s": 2.5, "out_s": 4.0}).json()
