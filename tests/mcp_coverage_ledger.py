@@ -181,6 +181,7 @@ NOT_EXPOSED = {
     "DELETE /api/projects/{name}": ("admin", "project registry"),
     "GET /api/projects/health": ("admin", "project registry"),
     "POST /api/projects/sync": ("admin", "project registry"),
+    "GET /api/library/busy": ("admin", "desktop library-switch preflight"),
     "GET /api/setup/status": ("admin", "first-run setup wizard"),
     "POST /api/setup/models/pull": ("admin", "first-run setup wizard"),
     "GET /api/setup/models/pull": ("admin", "first-run setup wizard"),

@@ -33,6 +33,7 @@ def test_router_owns_projects_routes_and_helpers():
         ("/api/projects/{name}", "DELETE"),
         ("/api/projects/sync", "POST"),
         ("/api/projects/health", "GET"),
+        ("/api/library/busy", "GET"),
     }
     assert hasattr(rp, "ProjectCreate")
     assert hasattr(rp, "_project_paths_visible")

@@ -484,6 +484,8 @@ SKIP items are **optional dependencies** — they do not affect functionality. A
 
 [ARCHITECTURE.md](ARCHITECTURE.md) (architecture overview) · [docs/api.md](docs/api.md) (API + Chat) · [docs/pipeline.md](docs/pipeline.md) (full pipeline) · [BENCHMARK.md](BENCHMARK.md) (transcription speed, Mac MLX vs PC CUDA) · [docs/adr/](docs/adr/) (architecture decision records) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
 
+> `CHANGELOG.md` is not a release list — each version leads with the user-visible loss and the mechanism behind it (why `.jpg` ingested blind while `.png` did not, why `count()` was right while search was empty, why a 768-dim index cannot accept 1024-dim vectors). Read it when you want to know **why** something is the way it is.
+
 ## License
 
 PolyForm Perimeter License 1.0.1 plus Additional Terms — see [LICENSE](LICENSE).

@@ -22,6 +22,9 @@
   import TrashModal from '../lib/TrashModal.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
   import { pushToast } from '../lib/toast.js'
+  import { canSwitchLibrary, libraryState, switchLibrary, busyMessage, uniqueName, baseName, libraryRows } from '../lib/librarySwitch.js'
+  import { pickFolder } from '../lib/pickFolder.js'
+  import { addErrorMessage } from '../lib/projectsFirstRun.js'
   import { shouldShowWizard } from '../lib/setupWizard.js'
   import { createViewGen } from '../lib/viewGen.js'
   import { shotYearRows, mediaParams } from '../lib/shotYear.js'
@@ -47,6 +50,9 @@
   let loadingMore = false
   let stats = null
   let registryProjects = null // /api/projects rows; null = not loaded / unreachable
+  let libState = null // desktop only: {active, default} from the shell (#561)
+  let switching = false
+  if (canSwitchLibrary()) libraryState().then((s) => (libState = s)).catch(() => {})
   let entitlement = null // /api/entitlements; null = not loaded (section then says nothing)
   // 9.8a: a first-run user (wizard never finished AND no media of their own) lands
   // on #/setup once per app start. Checked once — reloads of the grid must not
@@ -589,18 +595,45 @@
   //
   // Counts: only the open library has one here. A registry entry's item count would
   // need a query per project, and a wrong number is worse than no number.
-  $: liveProjects = (() => {
-    if (!stats) return null
-    const open = { id: 'cur', name: projectName, count: stats.total, active: true }
-    if (!registryProjects || !registryProjects.length) return [open]
-    const rows = registryProjects.map((p) => ({
-      id: `reg:${p.name}`,
-      name: p.name,
-      count: p.is_current ? stats.total : null,
-      active: !!p.is_current,
-    }))
-    return rows.some((r) => r.active) ? rows : [open, ...rows]
-  })()
+  $: liveProjects = libraryRows({ registryProjects, stats, projectName, libState })
+
+  // #561 — desktop only. Switching restarts the backend on another library and the
+  // shell reloads this window onto it, so success never returns here.
+  async function onProjectClick(p) {
+    if (switching || p.active || !p.path || !canSwitchLibrary()) return
+    try {
+      const msg = busyMessage(await api.libraryBusy())
+      if (msg) return pushToast(msg, 'error')
+    } catch { /* the shell checks again before it stops anything */ }
+    switching = true
+    pushToast(`切換到「${p.name}」…（後端重新啟動，約 10–30 秒）`)
+    try {
+      await switchLibrary(p.path)
+    } catch (e) {
+      pushToast(`沒有切換：${e?.message || e}`, 'error')
+    } finally {
+      switching = false
+    }
+  }
+
+  // ＋ 新增素材庫: pick a folder → register it (free-tier cap applies, 403 shows why)
+  // → switch to it. The backend creates `.arkiv/` there on first start.
+  async function onAddLibrary() {
+    if (switching) return
+    const path = await pickFolder()
+    if (!path) return
+    const names = (registryProjects || []).map((r) => r.name)
+    const name = uniqueName(baseName(path), names)
+    try {
+      await api.addProject({ name, path })
+    } catch (e) {
+      // Already registered → it is a library the user owns; just open it.
+      if (!/already registered/i.test(String(e?.body?.detail || e?.message || ''))) {
+        return pushToast(addErrorMessage(e, name), 'error')
+      }
+    }
+    await onProjectClick({ name, path, active: false })
+  }
   // real disk usage for the sidebar Storage footer (replaces the mock placeholder)
   $: liveStorage = stats?.disk ?? null
   // The header used to always read stats.total, so picking "2025 · 54" left the only
@@ -1005,11 +1038,18 @@
       if (identitiesId === id) identities = null
     }
   }
+  // Fetched ONCE per page (then again after each add/remove), never "while the list is
+  // empty": a library with no people yet answers [], the assignment invalidates this
+  // reactive block, and `!identityNames.length` is still true — 2026-10-21 measured
+  // ~390 requests/s for as long as a clip stayed selected, which starved the
+  // WebView (waveform drag, shortcuts and drag-out all stalled behind it).
+  let identityNamesLoaded = false
   async function fetchIdentityNames() {
+    identityNamesLoaded = true
     try { identityNames = await api.getIdentityNames() } catch (e) { /* autocomplete is optional */ }
   }
   $: if (selected && selected.id !== identitiesId) fetchIdentities(selected.id)
-  $: if (selected && !identityNames.length) fetchIdentityNames()
+  $: if (selected && !identityNamesLoaded) fetchIdentityNames()
   async function addIdentity(name, range) {
     if (!selected) return false
     const id = selected.id
@@ -1201,7 +1241,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {entitlement} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
+    <PoolSidebar {liveProjects} {entitlement} onProject={canSwitchLibrary() ? onProjectClick : null} onAddLibrary={canSwitchLibrary() ? onAddLibrary : null} {switching} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
 
     <main class="center">
       <div class="toolrow">

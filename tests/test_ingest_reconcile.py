@@ -147,7 +147,9 @@ def test_names_are_capped_with_a_count(ing, tmp_path):
 @pytest.fixture
 def run_main(tmp_db, tmp_path, monkeypatch, ing, capsys):
     """Run ingest.main() over a real directory with every model / probe stubbed.
-    `behaviour` maps filename → "ok" | "fail" | "lost" ("lost" = process_file
+    `behaviour` maps filename → "ok" | "fail" | "noread" | "raise" | "lost"
+    ("fail" = bare {} with no reason, "noread" = a _NoRecord carrying one,
+    "raise" = process_file throws; "lost" = process_file
     reports success but the row lands under a different path, i.e. the batch
     counts it while the library does not have it)."""
     db = importlib.import_module("db")
@@ -172,6 +174,10 @@ def run_main(tmp_db, tmp_path, monkeypatch, ing, capsys):
             mode = behaviour[path.name]
             if mode == "fail":
                 return {}
+            if mode == "noread":
+                return ing._NoRecord("ffprobe could not read the file")
+            if mode == "raise":
+                raise OSError("[Errno 5] Input/output error: '/Volumes/X/" + path.name + "'")
             stored = path if mode == "ok" else path.with_name("elsewhere_" + path.name)
             return {"path": db.to_relative(str(stored)), "filename": stored.name,
                     "ext": path.suffix.lower(), "duration_s": 1.0, "_frames": []}
@@ -299,3 +305,58 @@ def test_reconcile_unavailable_is_not_a_mismatch(run_main, ing, monkeypatch):
     code, out = run_main({"a.mp4": "ok", "lost.mp4": "lost"})
     assert "Reconcile: unavailable (RuntimeError: db locked)" in out
     assert code in (0, None)
+
+
+# ── #393 point 4: a failed file's reconcile line carries its cause ───────────
+def test_main_reconcile_names_the_reason_for_a_no_record_failure(run_main):
+    """process_file returned an empty record and raised nothing — the blind-spot
+    shape from #393. The cause must sit next to the name in the summary."""
+    code, out = run_main({"a.mp4": "ok", "bad.mp4": "noread"})
+
+    summary = out.split("Reconcile:", 1)[1]
+    assert "bad.mp4 — ffprobe could not read the file" in summary
+    assert code == 1, "exit code is unchanged by the reason"
+
+
+def test_main_reconcile_names_a_generic_reason_when_none_was_given(run_main):
+    code, out = run_main({"a.mp4": "ok", "bad.mp4": "fail"})
+
+    summary = out.split("Reconcile:", 1)[1]
+    assert "bad.mp4 — " + "process_file returned no record (no exception raised)" in summary
+    assert code == 1
+
+
+def test_main_reconcile_carries_the_exception_into_the_summary(run_main):
+    code, out = run_main({"a.mp4": "ok", "gone.mp4": "raise"})
+
+    summary = out.split("Reconcile:", 1)[1]
+    assert "gone.mp4 — OSError: [Errno 5] Input/output error" in summary
+    assert code == 1, "exit code is unchanged by the reason"
+
+
+def test_process_file_returns_a_falsy_record_with_a_reason_when_ffprobe_fails(
+        ing, tmp_path, monkeypatch):
+    clip = tmp_path / "broken.mp4"
+    clip.write_bytes(b"\x00" * 8)
+    monkeypatch.setattr(ing, "probe", lambda p: None)
+
+    rec = ing.process_file(clip, skip_vision=True)
+
+    assert not rec and rec == {}, "callers that test truthiness must see no record"
+    assert ing._failure_reason(record=rec) == "ffprobe could not read the file"
+
+
+def test_failure_reason_is_one_capped_line(ing):
+    r = ing._failure_reason(exc=RuntimeError("line one\nline two " + "x" * 500))
+    assert "\n" not in r and r.startswith("RuntimeError: line one line two")
+    assert len(r) == 200 and r.endswith("…")
+    assert ing._failure_reason(exc=KeyError()) == "KeyError"
+
+
+def test_reconcile_report_accepts_bare_and_tuple_outcomes(ing, tmp_path):
+    db = importlib.import_module("db")
+    a, b = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    outcomes = {str(a): "ingested", str(b): ("failed", "boom")}
+    out = "\n".join(ing._reconcile_report([a, b], outcomes, _known(db, a)))
+    assert "ingested=1" in out and "failed=1" in out
+    assert "b.mp4 — boom" in out
