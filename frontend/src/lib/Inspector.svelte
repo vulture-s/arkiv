@@ -11,7 +11,7 @@
   import { parseCube, webgl2Available, createLutRenderer } from './lutGL.js'
   import { selectionToFrom, validateCorrection } from './transcriptCorrect.js'
   import { identityRange, suggestNames, formatIdentityRange, nameKeyStep } from './identities.js'
-  import { canDragOut, prepare, ready, startDragOut } from './dragOut.js'
+  import { canDragOut, prepare, ready, startDragOut, sourceKey } from './dragOut.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -106,32 +106,40 @@
   // set range exports just that sub-clip (EDL/SRT/FCPXML). Set at the playhead.
   let inSec = null
   let outSec = null
-  // 12.6 drag-out (desktop only). With IN/OUT set the drag carries a sub-clip the
-  // backend cuts on request — that takes seconds, so it is an explicit step; the
-  // original needs no cutting and is prepared as soon as the clip opens.
+  // 12.6 drag-out (desktop only). The path has to exist BEFORE the drag starts
+  // (macOS only begins a native drag while the button is still down), so it is
+  // prepared ahead: the original as soon as the clip opens, an IN/OUT sub-clip
+  // ~0.6 s after the marks stop moving (stream copy — fast, but not free).
+  // Every answer is checked against the CURRENT clip + window before it is shown:
+  // 2026-10-21 a late answer for the original landed after the persisted IN/OUT
+  // hydrated and showed 「拖出 IN/OUT 片段」 with nothing cut behind it.
   const dragOutOn = canDragOut()
   let dragState = 'idle' // idle | preparing | ready | error
   let dragMsg = ''
   let dragImgEl
+  let dragTimer = null
   $: dragTrim = (inSec != null || outSec != null) ? { in_s: inSec ?? 0, out_s: outSec ?? undefined } : null
   $: if (dragOutOn && live && media) refreshDrag(media.id, dragTrim)
   function refreshDrag(id, trim) {
-    if (ready(id, trim)) { dragState = 'ready'; dragMsg = ''; return }
-    dragState = 'idle'
+    clearTimeout(dragTimer)
     dragMsg = ''
-    if (!trim) prepareDrag()
+    if (ready(id, trim)) { dragState = 'ready'; return }
+    dragState = 'preparing'
+    dragTimer = setTimeout(() => prepareDrag(id, trim), trim ? 600 : 0)
   }
-  function prepareDrag() {
-    const id = media.id, trim = dragTrim
+  function prepareDrag(id = media.id, trim = dragTrim) {
+    const key = sourceKey(id, trim)
+    const current = () => media && sourceKey(media.id, dragTrim) === key
     dragState = 'preparing'
     prepare(id, trim)
       .then((src) => {
-        if (media.id !== id) return
+        if (!current()) return
         dragState = 'ready'
         dragMsg = src.keyframe_cut ? '從最近的關鍵格開始切，開頭可能多幾格' : ''
       })
-      .catch((e) => { if (media.id === id) { dragState = 'error'; dragMsg = e?.message || String(e) } })
+      .catch((e) => { if (current()) { dragState = 'error'; dragMsg = e?.message || String(e) } })
   }
+  onDestroy(() => clearTimeout(dragTimer))
   function onDragHandle(e) {
     e.preventDefault()
     if (!startDragOut(media.id, dragTrim, dragImgEl)) prepareDrag()
@@ -190,6 +198,14 @@
     if (inSec != null && inSec >= outSec) inSec = null
     _persistInOut()
   }
+  // Space = play/pause (editor muscle memory). With a LUT on, the visible picture is
+  // the LUT canvas, which has its own toggle; otherwise the <video>/<audio> itself.
+  function togglePlay() {
+    if (lutShown) return lutTogglePlay()
+    if (!playerEl) return
+    if (playerEl.paused) playerEl.play().catch(() => {})
+    else playerEl.pause()
+  }
   function clearInOut() { inSec = null; outSec = null; _persistInOut() }
   // Keyboard shortcuts editors reach for: , / . step one frame, i / o mark IN/OUT.
   // Guarded so they never fire while typing (tag/search fields) or when a modifier
@@ -202,7 +218,9 @@
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
     if (!(useVideo || useAudio)) return
     switch (e.key) {
-      case ' ': if (lutShown) { lutTogglePlay(); e.preventDefault() } break
+      // Hevin 2026-10-21: space = play/pause, always. A focused <video>/<audio> with native
+      // controls already toggles on space — handling it here too would toggle twice (= nothing).
+      case ' ': if (t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO')) break; togglePlay(); e.preventDefault(); break
       case 'i': case 'I': setIn(); e.preventDefault(); break
       case 'o': case 'O': setOut(); e.preventDefault(); break
       case ',': if (frameExact) { stepFrame(-1); e.preventDefault() } break
@@ -672,8 +690,8 @@
           </div>
         {:else if dragState === 'preparing'}
           <Mono dim style="font-size:10.5px;">{dragTrim ? '切 IN/OUT 片段中…' : '準備中…'}</Mono>
-        {:else if dragTrim}
-          <button class="ak-btn" on:click={prepareDrag}>準備 IN/OUT 片段（可拖到剪輯軟體）</button>
+        {:else if dragState === 'error'}
+          <button class="ak-btn" on:click={() => prepareDrag()}>重試拖出</button>
         {/if}
         {#if dragMsg}<Mono dim style="font-size:10px;display:block;margin-top:3px;">{dragMsg}</Mono>{/if}
       </div>
@@ -1297,6 +1315,7 @@
   .scenereason { font-size: 10.5px; line-height: 1.4; color: var(--quiet); font-style: italic; }
   .dragout { margin-top: 8px; }
   .draghandle {
+    -webkit-user-drag: element;
     display: inline-block; padding: 3px 8px; border: 1px dashed var(--rule-hi);
     font-family: var(--ak-mono); font-size: 11px; cursor: grab; user-select: none;
   }
