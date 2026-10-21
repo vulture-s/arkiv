@@ -6,12 +6,14 @@ shell needs an absolute path on disk, and only the backend can resolve a record'
 stored (often root-relative) path, so this endpoint hands it over:
 
   * no IN/OUT (or a window covering the whole clip) → the ORIGINAL file, untouched;
-  * an IN/OUT window → a sub-clip cut with ffmpeg stream copy into
-    `<project>/.arkiv/dragout/`, reused while it exists, swept after 7 days.
-
-Stream copy is instant and lossless but can only cut on keyframes, so the sub-clip
-may start a little before IN — the response says so (`keyframe_cut`). Re-encoding a
-4K original on every drag would take minutes; the editor trims the head anyway.
+  * an IN/OUT window → a sub-clip in `<project>/.arkiv/dragout/`, reused while it
+    exists, swept after 7 days:
+      - up to ACCURATE_MAX_S (2 min): RE-ENCODED, so it starts exactly on IN
+        (Hevin 2026-10-21: 「要剛好從 IN 開始」). VideoToolbox on Apple Silicon
+        (seconds), libx264 elsewhere or when the hardware encoder refuses;
+      - longer: ffmpeg stream copy — instant and lossless, but it can only cut on a
+        keyframe, so it may start a little before IN (`keyframe_cut: true`, and the
+        UI says so). Re-encoding 10 minutes of 4K on a drag would be the wrong trade.
 Leaf router: imports config/db/pathres/proctree/transcript_time, never server.
 """
 import os
@@ -34,6 +36,7 @@ from webguard import _assert_same_site
 router = APIRouter()
 
 KEEP_DAYS = 7
+ACCURATE_MAX_S = 120.0
 
 
 class DragSourceBody(BaseModel):
@@ -64,6 +67,19 @@ def _subclip_name(media_id: int, stem: str, ext: str, t_in: float, t_out: float)
     return "{0}_{1}_{2:.2f}-{3:.2f}{4}".format(safe, media_id, t_in, t_out, ext)
 
 
+def _accurate_cmds(src: Path, tmp: Path, t_in: float, dur: float) -> list:
+    """ffmpeg commands to try in order for a frame-accurate cut (re-encode)."""
+    head = [config.FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-y",
+            "-ss", "{0:.3f}".format(t_in), "-i", str(src), "-t", "{0:.3f}".format(dur),
+            "-map", "0:v:0", "-map", "0:a?", "-c:a", "aac", "-b:a", "320k"]
+    tail = ["-movflags", "+faststart", str(tmp)]
+    sw = head + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p"] + tail
+    if getattr(config, "_IS_MLX", False):
+        hw = head + ["-c:v", "h264_videotoolbox", "-q:v", "70", "-pix_fmt", "yuv420p"] + tail
+        return [hw, sw]
+    return [sw]
+
+
 @router.post("/api/media/{media_id}/drag-source")
 def drag_source(
     media_id: int,
@@ -87,23 +103,35 @@ def drag_source(
     out_dir = dragout_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     _sweep(out_dir)
-    dst = out_dir / _subclip_name(media_id, src.stem, src.suffix, t_in, t_out)
+    dur = t_out - t_in
+    accurate = dur <= ACCURATE_MAX_S
+    ext = ".mp4" if accurate else src.suffix
+    dst = out_dir / _subclip_name(media_id, src.stem + ("" if accurate else "_kf"), ext, t_in, t_out)
     if not (dst.is_file() and dst.stat().st_size > 0 and dst.stat().st_mtime >= src.stat().st_mtime):
         tmp = dst.with_name(".part-" + dst.name)
-        cmd = [config.FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-y",
-               "-ss", "{0:.3f}".format(t_in), "-i", str(src), "-t", "{0:.3f}".format(t_out - t_in),
-               "-map", "0", "-c", "copy", "-avoid_negative_ts", "make_zero", str(tmp)]
-        try:
-            r = proctree.run_tree(cmd, timeout=300, encoding="utf-8", errors="replace")
-        except Exception as e:  # noqa: BLE001 — timeout or ffmpeg missing
+        if accurate:
+            cmds = _accurate_cmds(src, tmp, t_in, dur)
+        else:
+            cmds = [[config.FFMPEG_PATH, "-hide_banner", "-loglevel", "error", "-y",
+                     "-ss", "{0:.3f}".format(t_in), "-i", str(src), "-t", "{0:.3f}".format(dur),
+                     "-map", "0", "-c", "copy", "-avoid_negative_ts", "make_zero", str(tmp)]]
+        err = ""
+        for cmd in cmds:
+            try:
+                r = proctree.run_tree(cmd, timeout=600, encoding="utf-8", errors="replace")
+            except Exception as e:  # noqa: BLE001 — timeout or ffmpeg missing
+                err = type(e).__name__
+                _unlink(tmp)
+                continue
+            if r.returncode == 0 and tmp.is_file() and tmp.stat().st_size > 0:
+                break
+            err = (r.stderr or "").strip()[:200]
             _unlink(tmp)
-            raise HTTPException(500, "子片段切不出來：{0}".format(type(e).__name__))
-        if r.returncode != 0 or not tmp.is_file() or tmp.stat().st_size == 0:
-            _unlink(tmp)
-            raise HTTPException(500, "子片段切不出來：{0}".format((r.stderr or "").strip()[:200]))
+        else:
+            raise HTTPException(500, "子片段切不出來：{0}".format(err))
         os.replace(str(tmp), str(dst))
     os.utime(str(dst), None)  # a re-drag keeps it out of the next sweep
-    return {"path": str(dst), "kind": "subclip", "keyframe_cut": True,
+    return {"path": str(dst), "kind": "subclip", "keyframe_cut": not accurate,
             "in_s": round(t_in, 3), "out_s": round(t_out, 3)}
 
 
