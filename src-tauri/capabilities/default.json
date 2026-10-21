@@ -16,6 +16,7 @@
     "opener:default",
     "dialog:default",
     "allow-library-state",
-    "allow-switch-library"
+    "allow-switch-library",
+    "drag:default"
   ]
 }

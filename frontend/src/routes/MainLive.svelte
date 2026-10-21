@@ -26,6 +26,7 @@
   import { pickFolder } from '../lib/pickFolder.js'
   import { addErrorMessage } from '../lib/projectsFirstRun.js'
   import { shouldShowWizard } from '../lib/setupWizard.js'
+  import { canDragOut } from '../lib/dragOut.js'
   import { createViewGen } from '../lib/viewGen.js'
   import { shotYearRows, mediaParams } from '../lib/shotYear.js'
   import { parseStartParam } from '../lib/matchTime.js'
@@ -1402,6 +1403,7 @@
                 selected={m.id === selectedId}
                 hover={m.id === hoverId}
                 selectable={true}
+                dragOut={canDragOut()}
                 checked={pickedSet.has(m.id)}
                 on:toggle={(e) => togglePick(e.detail)}
                 on:click={() => (selectedId = m.id)}

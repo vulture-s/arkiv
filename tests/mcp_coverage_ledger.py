@@ -187,6 +187,7 @@ NOT_EXPOSED = {
     "GET /api/setup/models/pull": ("admin", "first-run setup wizard"),
     "POST /api/setup/complete": ("admin", "first-run setup wizard"),
     "POST /api/setup/reset": ("admin", "first-run setup wizard"),
+    "POST /api/media/{media_id}/drag-source": ("export", "native drag-out to an NLE: local path or IN/OUT sub-clip"),
     "GET /api/entitlements": ("admin", "licence state"),
     "GET /api/health": ("admin", "service health"),
     "GET /api/embed/status": ("admin", "index freshness; search_media already reports degraded search"),
