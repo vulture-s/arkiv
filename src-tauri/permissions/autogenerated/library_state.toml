@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-library-state"
+description = "Enables the library_state command without any pre-configured scope."
+commands.allow = ["library_state"]
+
+[[permission]]
+identifier = "deny-library-state"
+description = "Denies the library_state command without any pre-configured scope."
+commands.deny = ["library_state"]

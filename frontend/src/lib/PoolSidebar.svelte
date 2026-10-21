@@ -7,6 +7,9 @@
   // Live overrides — all default to mock so mock screens stay byte-identical.
   export let liveProjects = null // [{id,name,count,active,health?}]; count null = unknown
   export let entitlement = null // /api/entitlements; null -> the line is omitted entirely
+  export let onProject = null // desktop only (#561): (row) => switch library; null → rows are plain text
+  export let onAddLibrary = null // desktop only: ＋ 新增素材庫; null → button hidden
+  export let switching = false
   export let livePools = null // [[label, count], ...]
   export let liveTags = null // [{name, count}]
   export let onTag = null // (name) => void; live tag-click → filter
@@ -81,7 +84,11 @@
     {/if}
     <div class="col">
       {#each projects as p (p.id)}
-        <div class="proj" class:active={p.active} style="opacity:{p.health ? 0.6 : 1};">
+        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+        <div class="proj" class:active={p.active} class:switchable={onProject && !p.active && p.path && !switching}
+          title={onProject && !p.active && p.path ? `切換到「${p.name}」` : ''}
+          style="opacity:{p.health ? 0.6 : 1};"
+          on:click={() => onProject && !p.active && p.path && onProject(p)}>
           <div class="projrow">
             <span class="projname" class:activename={p.active}>{p.name}</span>
             {#if p.count != null}
@@ -93,6 +100,9 @@
           {/if}
         </div>
       {/each}
+      {#if onAddLibrary}
+        <button class="addlib" disabled={switching} on:click={onAddLibrary}>＋ 新增素材庫</button>
+      {/if}
     </div>
   </section>
 
@@ -301,4 +311,12 @@
   .strow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
   .bar { height: 2px; background: var(--surface-3); position: relative; }
   .barfill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ink); transition: width 0.2s; }
+  .switchable { cursor: pointer; }
+  .switchable:hover .projname { text-decoration: underline; }
+  .addlib {
+    margin-top: 6px; padding: 3px 0; background: none; border: 0; text-align: left;
+    font: inherit; font-size: 11px; color: inherit; opacity: 0.7; cursor: pointer;
+  }
+  .addlib:hover:not(:disabled) { opacity: 1; }
+  .addlib:disabled { cursor: default; opacity: 0.4; }
 </style>

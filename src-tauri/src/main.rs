@@ -15,7 +15,10 @@
 //      against a dev checkout without bundling 1.5 GB.
 //   2. bundled resources: <resources>/backend/{python,site-packages,src}.
 
+use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -24,6 +27,32 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Holds the spawned backend so we can kill it on exit.
 struct Backend(Mutex<Option<Child>>);
+
+/// How to start the backend: (python, PYTHONPATH, working dir). Resolved once at
+/// startup and kept, because switching library (#561) starts it again.
+#[derive(Clone)]
+struct Spec {
+    python: String,
+    pythonpath: String,
+    src_dir: String,
+}
+
+/// Which library the running backend serves, and on which port.
+///
+/// #561: the app used to have exactly one library, `app_local_data_dir/arkiv`,
+/// and the only way to another was `ARKIV_PROJECT_ROOT` + a restart — nothing a
+/// desktop user can do. The backend reads its library from that env var once, at
+/// import, so "switching" is: stop it, start it again with the new root, point the
+/// window at the new port. `active` is persisted so the next launch reopens it.
+struct Library(Mutex<LibState>);
+
+struct LibState {
+    spec: Option<Spec>,
+    active: PathBuf,
+    default: PathBuf,
+    state_file: PathBuf,
+    port: u16,
+}
 
 /// Holds an Ollama we started ourselves. `None` when Ollama was already running —
 /// killing someone else's daemon on quit would be worse than not starting one.
@@ -209,6 +238,217 @@ fn resolve_backend(app: &tauri::App) -> Result<(String, String, String), String>
     ))
 }
 
+/// Start the backend for `root` on `port`, logging to `<root>/logs/backend.log`.
+fn spawn_backend(spec: &Spec, root: &Path, port: u16) -> std::io::Result<Child> {
+    let _ = std::fs::create_dir_all(root);
+    eprintln!(
+        "[arkiv-tauri] starting backend: {} (cwd={}) on 127.0.0.1:{port}, root={}",
+        spec.python,
+        spec.src_dir,
+        root.display()
+    );
+
+    // Capture the backend's stdout+stderr to a log file under the writable
+    // project root. Without this a Finder-launched .app throws every uvicorn
+    // access line, print(), and traceback into the void — so a broken tester
+    // box is un-debuggable remotely. One-file rotation keeps the previous run.
+    let log_dir = root.join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("backend.log");
+    let _ = std::fs::rename(&log_path, log_dir.join("backend.log.prev"));
+    let (stdout_cfg, stderr_cfg) = match std::fs::File::create(&log_path) {
+        Ok(f) => {
+            // header first (shared O_APPEND-less fd; written before the child starts)
+            let mut hdr: &std::fs::File = &f;
+            let _ = writeln!(
+                hdr,
+                "[arkiv-tauri] backend {} (cwd={}) 127.0.0.1:{port} root={}",
+                spec.python,
+                spec.src_dir,
+                root.display()
+            );
+            // dup the handle so stdout+stderr share one file offset → interleave cleanly
+            let err = f.try_clone().ok();
+            (Some(Stdio::from(f)), err.map(Stdio::from))
+        }
+        Err(e) => {
+            eprintln!("[arkiv-tauri] could not open {}: {e}; backend output not captured", log_path.display());
+            (None, None)
+        }
+    };
+
+    let mut cmd = Command::new(&spec.python);
+    cmd.args([
+        "-m",
+        "uvicorn",
+        "server:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &port.to_string(),
+        // Never trust X-Forwarded-For: nothing proxies the sidecar, and
+        // uvicorn's default lets a loopback peer forge its IP (audit 2026-10-09).
+        "--no-proxy-headers",
+    ])
+    .current_dir(&spec.src_dir)
+    .env("PYTHONPATH", &spec.pythonpath)
+    .env("ARKIV_PROJECT_ROOT", root)
+    .env("ARKIV_PORT", port.to_string())
+    .env("ARKIV_TRUST_LOOPBACK", "1")
+    // Without this the bundled app cannot find ffmpeg (Homebrew is not on
+    // a Finder-launched process's PATH), and faster-whisper's bare
+    // `ffmpeg` call takes the whole batch down with [Errno 2].
+    .env("PATH", augmented_path());
+    // `windows_subsystem = "windows"` (top of this file) only silences OUR
+    // console. Spawning python.exe from a GUI process still allocates a new
+    // one, so without this flag every launch parks a black console window
+    // next to the app for the life of the backend.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    if let Some(out) = stdout_cfg {
+        cmd.stdout(out);
+    }
+    if let Some(err) = stderr_cfg {
+        cmd.stderr(err);
+    }
+    cmd.spawn()
+}
+
+/// The library the previous session left open, if it still exists; else `default`.
+/// A library on an unmounted NAS share must not strand the app on a dead root —
+/// falling back is the only way the user can get back in to pick another.
+fn read_active_library(state_file: &Path, default: &Path) -> PathBuf {
+    match std::fs::read_to_string(state_file) {
+        Ok(s) => {
+            let p = PathBuf::from(s.trim());
+            if !s.trim().is_empty() && p.is_dir() {
+                p
+            } else {
+                default.to_path_buf()
+            }
+        }
+        Err(_) => default.to_path_buf(),
+    }
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+/// Minimal HTTP/1.0 GET against the local backend; returns the body.
+/// No HTTP client crate for one loopback request whose answer is a short JSON.
+fn http_get_body(port: u16, path: &str) -> Option<String> {
+    let addr = format!("127.0.0.1:{port}").parse().ok()?;
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(800)).ok()?;
+    let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
+    write!(s, "GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").ok()?;
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).ok()?;
+    let (head, body) = buf.split_once("\r\n\r\n")?;
+    if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
+        return None;
+    }
+    Some(body.to_string())
+}
+
+fn kill_backend(app: &tauri::AppHandle) {
+    if let Some(mut child) = app.state::<Backend>().0.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait(); // reap, don't leave a zombie
+    }
+}
+
+/// Start the backend for `root` on a fresh port and wait for it. Ok(port) or Err.
+fn start_and_wait(app: &tauri::AppHandle, spec: &Spec, root: &Path) -> Result<u16, String> {
+    let port = free_port();
+    let child = spawn_backend(spec, root, port).map_err(|e| format!("無法啟動後端：{e}"))?;
+    app.state::<Backend>().0.lock().unwrap().replace(child);
+    if wait_ready(port, Duration::from_secs(45)) {
+        Ok(port)
+    } else {
+        kill_backend(app);
+        Err("後端 45 秒內沒有啟動".into())
+    }
+}
+
+fn navigate_main(app: &tauri::AppHandle, port: u16) {
+    if let Some(w) = app.get_webview_window("main") {
+        if let Ok(url) = format!("http://127.0.0.1:{port}").parse() {
+            let _ = w.navigate(url);
+        }
+    }
+}
+
+/// `{active, default}` — the sidebar needs `default` to offer a way back to the
+/// built-in library, which is usually not in the project registry at all.
+#[tauri::command]
+fn library_state(lib: tauri::State<'_, Library>) -> HashMap<&'static str, String> {
+    let st = lib.0.lock().unwrap();
+    let mut out = HashMap::new();
+    out.insert("active", st.active.to_string_lossy().into_owned());
+    out.insert("default", st.default.to_string_lossy().into_owned());
+    out
+}
+
+/// Restart the backend on another library and reload the window onto it (#561).
+///
+/// Refuses while a long job is running (it would be killed mid-way — the "silent
+/// interruption" the issue rules out); `/api/library/busy` reads the jobs' own
+/// single-flight slots. If the new library's backend does not come up, the old
+/// library is started again so the user is never left with no backend at all.
+/// `async` so the up-to-45 s wait runs off the main thread and the window stays
+/// responsive.
+#[tauri::command(async)]
+fn switch_library(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let target = PathBuf::from(path.trim());
+    if !target.is_absolute() || !target.is_dir() {
+        return Err("找不到這個資料夾，或它不是資料夾".into());
+    }
+    let lib = app.state::<Library>();
+    let mut st = lib.0.lock().unwrap();
+    let spec = st.spec.clone().ok_or("後端尚未就緒")?;
+    if same_dir(&st.active, &target) {
+        return Ok(format!("http://127.0.0.1:{}", st.port));
+    }
+    match http_get_body(st.port, "/api/library/busy") {
+        Some(body) if body.contains("\"busy\":true") => {
+            return Err(format!("有工作正在進行，等它完成再切換素材庫：{body}"));
+        }
+        Some(_) => {}
+        // The old backend is unreachable: nothing of its can be interrupted, so
+        // switching is the way out rather than something to refuse.
+        None => eprintln!("[arkiv-tauri] busy probe failed on {}; switching anyway", st.port),
+    }
+    kill_backend(&app);
+    match start_and_wait(&app, &spec, &target) {
+        Ok(port) => {
+            st.active = target.clone();
+            st.port = port;
+            let _ = std::fs::write(&st.state_file, target.to_string_lossy().as_bytes());
+            navigate_main(&app, port);
+            Ok(format!("http://127.0.0.1:{port}"))
+        }
+        Err(e) => {
+            let back = st.active.clone();
+            match start_and_wait(&app, &spec, &back) {
+                Ok(port) => {
+                    st.port = port;
+                    navigate_main(&app, port);
+                    Err(format!("{e}；已回到原本的素材庫"))
+                }
+                Err(e2) => Err(format!("{e}；原本的素材庫也起不來：{e2}")),
+            }
+        }
+    }
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|info| {
         eprintln!("[arkiv-tauri panic] {}", info);
@@ -219,6 +459,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Backend(Mutex::new(None)))
         .manage(Ollama(Mutex::new(None)))
+        .invoke_handler(tauri::generate_handler![library_state, switch_library])
         .setup(|app| {
             let port = free_port();
 
@@ -229,99 +470,32 @@ fn main() {
                     return Err(e.into());
                 }
             };
+            let spec = Spec { python, pythonpath, src_dir };
 
             // Project root must be OUTSIDE the read-only .app bundle. app_local_data_dir
             // is per-user writable; the server's init_db creates the DB/dirs on first run.
-            let proj_root = app
-                .path()
-                .app_local_data_dir()
+            let data_dir = app.path().app_local_data_dir().ok();
+            let default_root = data_dir
+                .as_ref()
                 .map(|d| d.join("arkiv"))
-                .unwrap_or_else(|_| {
-                    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-                        .join(".arkiv")
+                .unwrap_or_else(|| {
+                    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".arkiv")
                 });
-            let _ = std::fs::create_dir_all(&proj_root);
+            let _ = std::fs::create_dir_all(&default_root);
+            let state_file = data_dir
+                .map(|d| d.join("active-library.txt"))
+                .unwrap_or_else(|| default_root.join("active-library.txt"));
+            let proj_root = read_active_library(&state_file, &default_root);
 
-            eprintln!(
-                "[arkiv-tauri] starting backend: {python} (cwd={src_dir}) on 127.0.0.1:{port}, root={}",
-                proj_root.display()
-            );
-
-            // Capture the backend's stdout+stderr to a log file under the writable
-            // project root. Without this a Finder-launched .app throws every uvicorn
-            // access line, print(), and traceback into the void — so a broken tester
-            // box is un-debuggable remotely. One-file rotation keeps the previous run.
-            let log_dir = proj_root.join("logs");
-            let _ = std::fs::create_dir_all(&log_dir);
-            let log_path = log_dir.join("backend.log");
-            let _ = std::fs::rename(&log_path, log_dir.join("backend.log.prev"));
-            let (stdout_cfg, stderr_cfg) = match std::fs::File::create(&log_path) {
-                Ok(f) => {
-                    // header first (shared O_APPEND-less fd; written before the child starts)
-                    let mut hdr: &std::fs::File = &f;
-                    use std::io::Write;
-                    let _ = writeln!(
-                        hdr,
-                        "[arkiv-tauri] backend {python} (cwd={src_dir}) 127.0.0.1:{port} root={}",
-                        proj_root.display()
-                    );
-                    // dup the handle so stdout+stderr share one file offset → interleave cleanly
-                    let err = f.try_clone().ok();
-                    (Some(Stdio::from(f)), err.map(Stdio::from))
-                }
-                Err(e) => {
-                    eprintln!("[arkiv-tauri] could not open {}: {e}; backend output not captured", log_path.display());
-                    (None, None)
-                }
-            };
-
-            let mut cmd = Command::new(&python);
-            cmd.args([
-                "-m",
-                "uvicorn",
-                "server:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                &port.to_string(),
-                // Never trust X-Forwarded-For: nothing proxies the sidecar, and
-                // uvicorn's default lets a loopback peer forge its IP (audit 2026-10-09).
-                "--no-proxy-headers",
-            ])
-            .current_dir(&src_dir)
-            .env("PYTHONPATH", &pythonpath)
-            .env("ARKIV_PROJECT_ROOT", &proj_root)
-            .env("ARKIV_PORT", port.to_string())
-            .env("ARKIV_TRUST_LOOPBACK", "1")
-            // Without this the bundled app cannot find ffmpeg (Homebrew is not on
-            // a Finder-launched process's PATH), and faster-whisper's bare
-            // `ffmpeg` call takes the whole batch down with [Errno 2].
-            .env("PATH", augmented_path());
-            // `windows_subsystem = "windows"` (top of this file) only silences OUR
-            // console. Spawning python.exe from a GUI process still allocates a new
-            // one, so without this flag every launch parks a black console window
-            // next to the app for the life of the backend.
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-            if let Some(out) = stdout_cfg {
-                cmd.stdout(out);
-            }
-            if let Some(err) = stderr_cfg {
-                cmd.stderr(err);
-            }
             // Ollama first: the backend probes it during startup, and starting it
             // after would leave the first minute of a session with vision off.
+            let log_dir = proj_root.join("logs");
+            let _ = std::fs::create_dir_all(&log_dir);
             if let Some(o) = spawn_ollama_if_needed(&log_dir) {
                 app.state::<Ollama>().0.lock().unwrap().replace(o);
             }
 
-            let child = cmd.spawn();
-
-            let child = match child {
+            let child = match spawn_backend(&spec, &proj_root, port) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("[arkiv-tauri] failed to spawn backend: {e}");
@@ -329,11 +503,17 @@ fn main() {
                 }
             };
             app.state::<Backend>().0.lock().unwrap().replace(child);
+            app.manage(Library(Mutex::new(LibState {
+                spec: Some(spec),
+                active: proj_root,
+                default: default_root,
+                state_file,
+                port,
+            })));
 
             if !wait_ready(port, Duration::from_secs(45)) {
                 eprintln!("[arkiv-tauri] backend not ready after 45s on port {port} — opening anyway");
             }
-
             let url = format!("http://127.0.0.1:{port}");
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse().unwrap()))
                 .title("arkiv")
