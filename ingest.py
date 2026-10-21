@@ -918,6 +918,36 @@ def _file_hash(path: Path) -> Optional[str]:
         return None
 
 
+class _NoRecord(dict):
+    """An empty (falsy) process_file result that says WHY there is no record.
+
+    Still a plain empty dict to every caller that only tests truthiness, so the
+    contract `if record:` is unchanged; the Phase-1 loop reads `.reason` to put the
+    cause next to the file name in the end-of-batch reconcile (issue #393 point 4).
+    """
+
+    def __init__(self, reason: str):
+        super().__init__()
+        self.reason = reason
+
+
+_NO_RECORD_REASON = "process_file returned no record (no exception raised)"
+
+
+def _failure_reason(record=None, exc=None, cap=200):
+    """One-line cause for a Phase-1 `failed` file. Pure.
+
+    exc    : the exception the loop caught, if any
+    record : the falsy process_file result otherwise (a _NoRecord carries .reason)
+    """
+    if exc is not None:
+        text = "{0}: {1}".format(type(exc).__name__, exc) if str(exc) else type(exc).__name__
+    else:
+        text = getattr(record, "reason", None) or _NO_RECORD_REASON
+    text = " ".join(str(text).split())  # one line, so the reconcile list stays a list
+    return text if len(text) <= cap else text[:cap - 1] + "…"
+
+
 def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
                  refresh: bool = False, file_hash: Optional[str] = None) -> Dict:
     """
@@ -938,7 +968,7 @@ def process_file(path: Path, skip_vision: bool, existing: Optional[Dict] = None,
         # (test_image_ingest SVG case: ext must be recorded, no thumbnail/frames).
         if ext not in IMAGE_EXT:
             print(" [ffprobe failed]")
-            return {}
+            return _NoRecord("ffprobe could not read the file")
         meta = {
             "duration_s": 0.0,
             "size_mb": 0.0,
@@ -1216,7 +1246,9 @@ def _reconcile_report(queued, outcomes, known_paths, not_reached=(),
     """Return the end-of-ingest reconciliation as a list of printable lines.
 
     queued            : the files the Phase-1 loop was given (Path objects)
-    outcomes          : {str(path): bucket} for every file the loop finished with
+    outcomes          : {str(path): (bucket, reason)} for every file the loop
+                        finished with (a bare bucket string is accepted too);
+                        a `failed` file's reason is printed as `name — reason`
     known_paths       : set of `media.path` values read from the DB AFTER the run
     not_reached       : files after an [INGEST HALTED] break
     deferred          : files found but left out by --limit
@@ -1250,10 +1282,15 @@ def _reconcile(queued, outcomes, known_paths, not_reached=(),
     counts = {b: 0 for b in _RECONCILE_BUCKETS}
     by_bucket = {b: [] for b in _RECONCILE_BUCKETS}
     unaccounted, missing_in_db = [], []
+    reasons = {}
     not_reached_set = {str(p) for p in not_reached}
     for p in queued:
         key = str(p)
         bucket = outcomes.get(key)
+        if isinstance(bucket, tuple):
+            bucket, reason = bucket
+            if reason:
+                reasons[key] = reason
         if bucket is None:
             if key not in not_reached_set:
                 unaccounted.append(p)
@@ -1281,18 +1318,20 @@ def _reconcile(queued, outcomes, known_paths, not_reached=(),
                          else "⚠ {0} file(s) need attention".format(problems))
     lines = [head]
 
-    def _names(label, paths):
+    def _names(label, paths, with_reason=False):
         if not paths:
             return
         lines.append("  {0} ({1}):".format(label, len(paths)))
         for p in paths[:name_cap]:
-            lines.append("    {0}".format(Path(p).name))
+            reason = reasons.get(str(p)) if with_reason else None
+            lines.append("    {0} — {1}".format(Path(p).name, reason) if reason
+                         else "    {0}".format(Path(p).name))
         if len(paths) > name_cap:
             lines.append("    … and {0} more".format(len(paths) - name_cap))
 
     _names("⚠ unaccounted — scanned but in no bucket", unaccounted)
     _names("⚠ counted as in the library but no DB row", missing_in_db)
-    _names("failed", by_bucket["failed"])
+    _names("failed", by_bucket["failed"], with_reason=True)
     _names("not reached (ingest halted)", list(not_reached))
     if frame_skips:
         label = ("--skip-failed skipped vision frames in" if skip_failed
@@ -2693,7 +2732,9 @@ def main():
     import time as _time
 
     ok, skipped, failed, moved = 0, 0, 0, 0
-    outcomes = {}  # issue #393: str(path) -> bucket, one entry per file the loop finished
+    # issue #393: str(path) -> (bucket, reason), one entry per file the loop
+    # finished; reason is "" except for `failed`, where it is the cause (point 4).
+    outcomes = {}
     not_reached = []  # files after an [INGEST HALTED] break
     consecutive_ingest_fail = 0  # whole-file failures in a row → drive-gone halt
     refreshed_ids = set()  # already-indexed ids re-processed this run → force re-embed
@@ -2712,7 +2753,7 @@ def main():
         if already and not args.refresh:
             print(f"[{i}/{len(files)}] SKIP {f.name}")
             skipped += 1
-            outcomes[str(f)] = "already-indexed"
+            outcomes[str(f)] = ("already-indexed", "")
             consecutive_ingest_fail = 0  # a readable skip proves the drive is alive
             continue
 
@@ -2731,7 +2772,7 @@ def main():
                     db.repoint_media_path(mrow["id"], str(f))
                     print(f"[{i}/{len(files)}] MOVED {f.name} → re-pointed id={mrow['id']}")
                     moved += 1
-                    outcomes[str(f)] = "moved"
+                    outcomes[str(f)] = ("moved", "")
                     consecutive_ingest_fail = 0  # a readable move proves the drive is alive
                     continue
 
@@ -2830,17 +2871,17 @@ def main():
                 })
                 print(f"  [{file_elapsed:.1f}s | {dur/max(file_elapsed,1):.1f}x RT]")
                 ok += 1
-                outcomes[str(f)] = "ingested"
+                outcomes[str(f)] = ("ingested", "")
                 consecutive_ingest_fail = 0  # a healthy read resets the drive-gone streak
                 _emit_progress({"t": "file", "index": i, "total": len(files), "file": f.name, "status": "phase1_done"})
             else:
                 failed += 1
-                outcomes[str(f)] = "failed"
+                outcomes[str(f)] = ("failed", _failure_reason(record=record))
                 consecutive_ingest_fail += 1
         except Exception as e:
             print(f" [ERROR: {e}]")
             failed += 1
-            outcomes[str(f)] = "failed"
+            outcomes[str(f)] = ("failed", _failure_reason(exc=e))
             consecutive_ingest_fail += 1
 
         # Phase-1 counterpart to the vision halt: an unbroken run of whole-file
