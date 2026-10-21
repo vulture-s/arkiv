@@ -217,6 +217,9 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // 12.6: native file drag out of the window (search results / Inspector → Resolve,
+        // Finder). The WebView's own HTML5 drag can only carry text, never a file.
+        .plugin(tauri_plugin_drag::init())
         .manage(Backend(Mutex::new(None)))
         .manage(Ollama(Mutex::new(None)))
         .setup(|app| {

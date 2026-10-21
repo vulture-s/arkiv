@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### 新增
+- **把素材直接拖進剪輯軟體**（roadmap 12.6，桌面 App）：搜尋結果的卡片可以直接拖進 DaVinci Resolve、
+  Premiere 或 Finder（拖的是原始檔本身，不是複本）；Inspector 有「拖出原始檔」，標了 IN/OUT 時改成
+  「拖出 IN/OUT 片段」——arkiv 先用 ffmpeg 無損切出那一段（存在 `.arkiv/dragout/`，7 天後自動清掉），
+  再拖那個檔。無損切只能從關鍵格開始，所以片段開頭可能比 IN 多幾格。原始檔不在（NAS 沒連上）時會直接說。
+  新 API：`POST /api/media/{id}/drag-source`；Tauri 加 `tauri-plugin-drag` 2.1.1。瀏覽器版不受影響。
+
 ## v1.6.1 - 2026-10-20
 
 **Windows 第一次使用就能從 NAS 匯入；只在 Mac 上看片可以不建 proxy。**

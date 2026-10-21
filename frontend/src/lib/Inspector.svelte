@@ -11,6 +11,7 @@
   import { parseCube, webgl2Available, createLutRenderer } from './lutGL.js'
   import { selectionToFrom, validateCorrection } from './transcriptCorrect.js'
   import { identityRange, suggestNames, formatIdentityRange, nameKeyStep } from './identities.js'
+  import { canDragOut, prepare, ready, startDragOut } from './dragOut.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -105,6 +106,36 @@
   // set range exports just that sub-clip (EDL/SRT/FCPXML). Set at the playhead.
   let inSec = null
   let outSec = null
+  // 12.6 drag-out (desktop only). With IN/OUT set the drag carries a sub-clip the
+  // backend cuts on request — that takes seconds, so it is an explicit step; the
+  // original needs no cutting and is prepared as soon as the clip opens.
+  const dragOutOn = canDragOut()
+  let dragState = 'idle' // idle | preparing | ready | error
+  let dragMsg = ''
+  let dragImgEl
+  $: dragTrim = (inSec != null || outSec != null) ? { in_s: inSec ?? 0, out_s: outSec ?? undefined } : null
+  $: if (dragOutOn && live && media) refreshDrag(media.id, dragTrim)
+  function refreshDrag(id, trim) {
+    if (ready(id, trim)) { dragState = 'ready'; dragMsg = ''; return }
+    dragState = 'idle'
+    dragMsg = ''
+    if (!trim) prepareDrag()
+  }
+  function prepareDrag() {
+    const id = media.id, trim = dragTrim
+    dragState = 'preparing'
+    prepare(id, trim)
+      .then((src) => {
+        if (media.id !== id) return
+        dragState = 'ready'
+        dragMsg = src.keyframe_cut ? '從最近的關鍵格開始切，開頭可能多幾格' : ''
+      })
+      .catch((e) => { if (media.id === id) { dragState = 'error'; dragMsg = e?.message || String(e) } })
+  }
+  function onDragHandle(e) {
+    e.preventDefault()
+    if (!startDragOut(media.id, dragTrim, dragImgEl)) prepareDrag()
+  }
   // Hydrate the marks from the persisted backend values when a clip opens (and
   // once more if the detail lands after the switch), but never clobber an edit the
   // user already made on this clip (tracked by _ioTouched). Keyed on media.id so a
@@ -631,6 +662,22 @@
     <Mono dim style="font-size:10.5px;margin-top:4px;letter-spacing:0.04em;">
       {pathStr}
     </Mono>
+    {#if dragOutOn && live}
+      <div class="dragout">
+        {#if dragState === 'ready'}
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div class="draghandle" draggable="true" on:dragstart={onDragHandle} title="拖到 DaVinci Resolve、Premiere 或 Finder">
+            <img bind:this={dragImgEl} src={thumbUrl || ''} alt="" draggable="false" style="display:none;" />
+            ⇱ {dragTrim ? '拖出 IN/OUT 片段' : '拖出原始檔'}
+          </div>
+        {:else if dragState === 'preparing'}
+          <Mono dim style="font-size:10.5px;">{dragTrim ? '切 IN/OUT 片段中…' : '準備中…'}</Mono>
+        {:else if dragTrim}
+          <button class="ak-btn" on:click={prepareDrag}>準備 IN/OUT 片段（可拖到剪輯軟體）</button>
+        {/if}
+        {#if dragMsg}<Mono dim style="font-size:10px;display:block;margin-top:3px;">{dragMsg}</Mono>{/if}
+      </div>
+    {/if}
   </div>
 
   <div class="preview" class:hasplayer={useVideo || useAudio || useImage}>
@@ -1248,4 +1295,10 @@
   .chip.dim { color: var(--quiet); }
   .scenedesc { font-size: 11.5px; line-height: 1.45; color: var(--ink); }
   .scenereason { font-size: 10.5px; line-height: 1.4; color: var(--quiet); font-style: italic; }
+  .dragout { margin-top: 8px; }
+  .draghandle {
+    display: inline-block; padding: 3px 8px; border: 1px dashed var(--rule-hi);
+    font-family: var(--ak-mono); font-size: 11px; cursor: grab; user-select: none;
+  }
+  .draghandle:active { cursor: grabbing; }
 </style>

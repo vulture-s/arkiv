@@ -108,6 +108,8 @@ const qs = (params = {}) => {
 export const getStats = (opts) => req('/api/stats', opts)
 export const getProjects = (opts) => req('/api/projects', opts)
 export const getProjectsHealth = (opts) => req('/api/projects/health', opts)
+// 12.6 drag-out: absolute path of the original, or of an IN/OUT sub-clip the backend cuts
+export const dragSource = (id, body, opts) => req(`/api/media/${id}/drag-source`, { method: 'POST', body, ...opts })
 // GET /api/entitlements -> {armed, pro, grandfathered, free_project_limit,
 // projects_used, can_add_project, add_project_reason, cross_project, ...}.
 // Read from the code that ENFORCES the tier - a second copy of the rules in

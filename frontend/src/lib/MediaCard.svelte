@@ -5,6 +5,8 @@
   import Rating from './Rating.svelte'
   import Mono from './Mono.svelte'
   import CornerTick from './CornerTick.svelte'
+  import { prepare, startDragOut } from './dragOut.js'
+  import { pushToast } from './toast.js'
   export let m
   export let theme = 'dark'
   export let selected = false
@@ -14,15 +16,31 @@
   // Multi-select for batch export. Off by default so mock screens are unchanged.
   export let selectable = false
   export let checked = false
+  // 12.6: desktop-only native drag of the original file into Resolve / Finder.
+  export let dragOut = false
   const dispatch = createEventDispatcher()
   let imgFailed = false
+  let imgEl
+  function onEnter() {
+    if (dragOut) prepare(m.id).catch(() => {}) // path must be ready before the drag starts
+  }
+  function onDragStart(e) {
+    if (!dragOut) return
+    e.preventDefault()
+    if (!startDragOut(m.id, null, imgEl)) {
+      prepare(m.id)
+        .then(() => pushToast('準備好了，再拖一次'))
+        .catch((err) => pushToast(err?.message || String(err), 'error'))
+    }
+  }
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-<div class="card" class:selected class:hover on:click on:mouseenter on:mouseleave>
+<div class="card" class:selected class:hover draggable={dragOut ? "true" : undefined} title={dragOut ? "可拖到剪輯軟體或 Finder" : undefined}
+  on:click on:mouseenter on:mouseenter={onEnter} on:mouseleave on:dragstart={onDragStart}>
   <div class="thumbarea">
     {#if thumbUrl && !imgFailed}
-      <img class="thumbimg" src={thumbUrl} alt={m.name} loading="lazy" on:error={() => (imgFailed = true)} />
+      <img class="thumbimg" bind:this={imgEl} src={thumbUrl} alt={m.name} loading="lazy" draggable="false" on:error={() => (imgFailed = true)} />
     {:else}
       <Thumb seed={m.id} kind={m.kind} {theme} />
     {/if}
