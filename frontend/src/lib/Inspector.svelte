@@ -182,8 +182,16 @@
   // the value just now lands precisely on a frame edge instead of wherever the
   // decoder happened to be.
   const markSec = () => (frameExact ? curFrame / fps : (playerEl ? playerEl.currentTime : null))
+  // Hevin 2026-10-21: marking IN/OUT freezes the picture — an editor marks on a
+  // still frame, not on footage that keeps running past the point they chose.
+  function freeze(seekTo) {
+    if (!playerEl) return
+    if (!playerEl.paused) playerEl.pause()
+    if (seekTo != null && Number.isFinite(seekTo)) playerEl.currentTime = seekTo
+  }
   function setIn() {
     if (!playerEl) return
+    freeze()
     const t = markSec()
     if (t == null) return
     inSec = t
@@ -192,6 +200,7 @@
   }
   function setOut() {
     if (!playerEl) return
+    freeze()
     const t = markSec()
     if (t == null) return
     outSec = t
@@ -231,6 +240,7 @@
   function onTrim(e) {
     if (!mediaDuration) return
     const t = e.detail.frac * mediaDuration
+    freeze(t) // show the frame the marker sits on while it is being dragged
     if (e.detail.which === 'in') {
       inSec = t
       if (outSec != null && outSec <= inSec) outSec = null
@@ -680,22 +690,6 @@
     <Mono dim style="font-size:10.5px;margin-top:4px;letter-spacing:0.04em;">
       {pathStr}
     </Mono>
-    {#if dragOutOn && live}
-      <div class="dragout">
-        {#if dragState === 'ready'}
-          <!-- svelte-ignore a11y-no-static-element-interactions -->
-          <div class="draghandle" draggable="true" on:dragstart={onDragHandle} title="拖到 DaVinci Resolve、Premiere 或 Finder">
-            <img bind:this={dragImgEl} src={thumbUrl || ''} alt="" draggable="false" style="display:none;" />
-            ⇱ {dragTrim ? '拖出 IN/OUT 片段' : '拖出原始檔'}
-          </div>
-        {:else if dragState === 'preparing'}
-          <Mono dim style="font-size:10.5px;">{dragTrim ? '切 IN/OUT 片段中…' : '準備中…'}</Mono>
-        {:else if dragState === 'error'}
-          <button class="ak-btn" on:click={() => prepareDrag()}>重試拖出</button>
-        {/if}
-        {#if dragMsg}<Mono dim style="font-size:10px;display:block;margin-top:3px;">{dragMsg}</Mono>{/if}
-      </div>
-    {/if}
   </div>
 
   <div class="preview" class:hasplayer={useVideo || useAudio || useImage}>
@@ -920,6 +914,22 @@
             {#if frameExact && inSec != null && outSec != null}{secToFrame(outSec) - secToFrame(inSec)} 格{:else}匯出將套用此區間{/if}
           </Mono>
         {/if}
+      </div>
+    {/if}
+    {#if dragOutOn && live}
+      <div class="dragout">
+        {#if dragState === 'ready'}
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div class="draghandle" draggable="true" on:dragstart={onDragHandle} title="拖到 DaVinci Resolve、Premiere 或 Finder">
+            <img bind:this={dragImgEl} src={thumbUrl || ''} alt="" draggable="false" style="display:none;" />
+            ⇱ {dragTrim ? '拖出 IN/OUT 片段' : '拖出原始檔'}
+          </div>
+        {:else if dragState === 'preparing'}
+          <Mono dim style="font-size:10.5px;">{dragTrim ? '切 IN/OUT 片段中…' : '準備中…'}</Mono>
+        {:else if dragState === 'error'}
+          <button class="ak-btn" on:click={() => prepareDrag()}>重試拖出</button>
+        {/if}
+        {#if dragMsg}<Mono dim style="font-size:10px;display:block;margin-top:3px;">{dragMsg}</Mono>{/if}
       </div>
     {/if}
   </div>
@@ -1313,7 +1323,7 @@
   .chip.dim { color: var(--quiet); }
   .scenedesc { font-size: 11.5px; line-height: 1.45; color: var(--ink); }
   .scenereason { font-size: 10.5px; line-height: 1.4; color: var(--quiet); font-style: italic; }
-  .dragout { margin-top: 8px; }
+  .dragout { margin-top: 10px; }
   .draghandle {
     -webkit-user-drag: element;
     display: inline-block; padding: 3px 8px; border: 1px dashed var(--rule-hi);
