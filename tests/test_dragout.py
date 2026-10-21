@@ -34,7 +34,7 @@ def test_no_trim_drags_the_original(fastapi_client, clip):
 
 def _duration(path):
     out = subprocess.run([config.FFPROBE_PATH, "-v", "error", "-show_entries", "format=duration",
-                          "-of", "csv=p=0", path], capture_output=True, text=True, check=True).stdout
+                          "-of", "csv=p=0", path], capture_output=True, text=True, encoding="utf-8", check=True).stdout
     return float(out.strip())
 
 
