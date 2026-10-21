@@ -181,6 +181,7 @@ NOT_EXPOSED = {
     "DELETE /api/projects/{name}": ("admin", "project registry"),
     "GET /api/projects/health": ("admin", "project registry"),
     "POST /api/projects/sync": ("admin", "project registry"),
+    "GET /api/library/busy": ("admin", "desktop library-switch preflight"),
     "GET /api/entitlements": ("admin", "licence state"),
     "GET /api/health": ("admin", "service health"),
     "GET /api/embed/status": ("admin", "index freshness; search_media already reports degraded search"),
