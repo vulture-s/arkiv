@@ -417,6 +417,8 @@ SKIP 項目是**選用的相依套件** — 不影響功能。通過的結果是
 
 [ARCHITECTURE.md](ARCHITECTURE.md)（架構總覽） · [docs/api.zh-TW.md](docs/api.zh-TW.md)（API + Chat） · [docs/pipeline.zh-TW.md](docs/pipeline.zh-TW.md)（完整 pipeline） · [BENCHMARK.md](BENCHMARK.md)（轉錄速度實測，Mac MLX vs PC CUDA） · [docs/adr/](docs/adr/)（架構決策紀錄） · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md)
 
+> `CHANGELOG.md` 不是版本清單 —— 每個版本都從「使用者看不見的那個損失」寫起，然後給機制（為什麼 `.jpg` 進庫是半盲的而 `.png` 沒事、為什麼 `count()` 對但搜尋是空的、為什麼 768 維的索引接不了 1024 維的向量）。**想知道某件事為什麼長這樣，讀它。**
+
 ## 授權
 
 PolyForm Perimeter License 1.0.1 加附加條款 —— 見 [LICENSE](LICENSE)。
