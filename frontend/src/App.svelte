@@ -11,6 +11,7 @@
   import Offload from './routes/Offload.svelte'
   import SettingsLive from './routes/SettingsLive.svelte'
   import Bins from './routes/Bins.svelte'
+  import Setup from './routes/Setup.svelte'
   import ToastHost from './lib/ToastHost.svelte'
   import { resolvedTheme } from './lib/prefs.js'
 
@@ -32,6 +33,7 @@
     '/search-live': SearchLive, // search wired to live /api/media?q=
     '/query-live': QueryLive, // G6 — structured query builder, live /api/search/query
     '/bins': Bins, // 多專案 Phase 2 — cross-library 精選集 (persistent named selections spanning projects)
+    '/setup': Setup, // 9.8a first-run setup wizard (hardware → models → footage)
     '/settings': SettingsLive, // settings — live theme switcher + real system/about (engine config deferred)
 
     // ── design reference (Claude-design mock artboards; not the product) ──────

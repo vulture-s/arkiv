@@ -33,3 +33,11 @@ def test_offload_and_single_flight_slots_are_reported(fastapi_client):
         offload_router._release_offload_slot("/Volumes/CARD")
         state.proxy_build.release()
     assert fastapi_client.get("/api/library/busy").json()["busy"] is False
+
+
+def test_model_download_from_the_setup_wizard_blocks_switching(fastapi_client):
+    assert state.model_pull.acquire()
+    try:
+        assert fastapi_client.get("/api/library/busy").json() == {"busy": True, "jobs": ["model_pull"]}
+    finally:
+        state.model_pull.release()

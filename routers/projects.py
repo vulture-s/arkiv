@@ -190,7 +190,7 @@ def _busy_jobs() -> list:
         if offload_router._offload_active:
             jobs.append("offload")
     for slot in (state.embed_rebuild, state.retranscribe, state.proxy_build,
-                 state.editor_proxy_build, state.sample_seed):
+                 state.editor_proxy_build, state.sample_seed, state.model_pull):
         if slot._active:
             jobs.append(slot.name)
     return jobs

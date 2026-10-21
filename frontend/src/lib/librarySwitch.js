@@ -34,6 +34,7 @@ const JOB_LABELS = {
   proxy_build: '產生 proxy',
   editor_proxy_build: '產生剪輯 proxy',
   sample_seed: '載入範例片',
+  model_pull: '下載 AI 模型',
 }
 
 /** /api/library/busy → the sentence shown instead of switching. null = not busy. */
