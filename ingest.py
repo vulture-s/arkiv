@@ -276,6 +276,9 @@ def _preflight_vision_model():
     model = _settings.vision_model()
     if vis.is_model_installed(model) is False:
         print(_vision_model_abort_message(model, vis.list_vision_models()))
+        # #393: the abort box ends in a divider — the verdict must be the last line.
+        print("[exit 2] vision model not installed: {0} (see message above)".format(
+            " ".join(str(model).split())))
         sys.exit(2)
 
 
@@ -2569,6 +2572,7 @@ def main():
             for e in errors_pf:
                 print(f"  - {e}")
             print("\n        修法後重跑；或先跑 --migrate-storage 落 Phase 8.0c layout。")
+            print("[exit 4] storage preflight failed: {0} problem(s) (see above)".format(len(errors_pf)))
             sys.exit(4)
 
     db.init_db()
@@ -2613,6 +2617,9 @@ def main():
                 print(f"[embed] ⚠ vector index build failed: {e}")
                 print("[embed]   run manually: py -3.12 embed.py")
         if halted:
+            # #393: embed output follows the halt banner — restate it as the last line.
+            print("[exit 1] vision-only halted mid-patch ({0} clip(s) updated; "
+                  "see VISION HALTED above)".format(len(written_ids or ())))
             sys.exit(1)  # halt mid-patch must not report success to cron/watch
         return
 
@@ -2677,6 +2684,7 @@ def main():
         media_dir = Path(args.dir).expanduser().resolve()
         if not media_dir.exists():
             print(f"Error: {media_dir} does not exist")
+            print("[exit 1] --dir does not exist: " + " ".join(str(media_dir).split()))
             sys.exit(1)
 
         if media_dir.is_file():
@@ -2905,6 +2913,8 @@ def main():
     vision_ok = vision_fail = 0
     consecutive_vision_fail = 0  # halt-on-N-consecutive whole-file EXCEPTIONS (Phase 6 / R6)
     vision_halted = False
+    vision_halt_reason = ""  # for the final [exit N] line (#393)
+    vision_errors = []  # [(filename, reason)] whole-file vision exceptions (#393)
     # issue #48: frame-failure tolerance (see _vision_halt_decision). Default 0 /
     # False = historical zero-tolerance halt.
     max_failures = getattr(args, "max_failures", 0) or 0
@@ -3011,6 +3021,8 @@ def main():
                         n_failed, len(video_frames), total_failed, consecutive_empty_frames, max_failures, skip_failed)
                     if should_halt:
                         vision_halted = True
+                        vision_halt_reason = "{0} (last: {1}, {2}/{3} frames failed; {4} total)".format(
+                            reason, fname, n_failed, len(video_frames), total_failed)
                         remaining = len(phase1_results) - vi
                         print(f"\n\n{'!'*60}")
                         print(f"VISION HALTED: {reason}")
@@ -3026,6 +3038,7 @@ def main():
             except Exception as e:
                 print(f" [ERROR: {e}]")
                 vision_fail += 1
+                vision_errors.append((fname, _failure_reason(exc=e)))
                 consecutive_vision_fail += 1
                 # Halt on consecutive whole-file EXCEPTIONS (likely Ollama disconnect
                 # / model crash). Distinct from the empty-description streak above —
@@ -3033,6 +3046,8 @@ def main():
                 # file writing the same error 200 times.
                 if consecutive_vision_fail >= 3:
                     vision_halted = True
+                    vision_halt_reason = "{0} consecutive vision errors (last: {1})".format(
+                        consecutive_vision_fail, fname)
                     remaining = len(phase1_results) - vi
                     print(f"\n{'!'*60}")
                     print(f"VISION HALTED: {consecutive_vision_fail} consecutive failures (last: {fname})")
@@ -3149,15 +3164,62 @@ def main():
     # (it is usually upstream); a file that left NO trace outranks a partial
     # failure, because a failure is already named in the output and counted,
     # while the mismatch is the one that otherwise goes unnoticed.
+    #
+    # Every non-zero exit of main() ends with ONE `[exit N] …` stdout line (exit 7 already
+    # did; storage preflight / missing --dir / vision-model preflight print theirs at
+    # their own exit; argparse usage errors go to stderr, which `| tail` doesn't eat).
+    # Issue #393 root cause (2026-10-22): the failure WAS counted and exit WAS 1,
+    # but the `fail=` / Reconcile lines sit mid-output, before embed + BENCHMARK —
+    # run under `| tail` they scroll off and `$?` is tail's 0. The last line is
+    # the one that survives a tail, so it must carry the verdict.
     if failed and not ok:
+        print(_exit_tail_line(2, outcomes, vision_errors, vision_halt_reason, vision_halted))
         sys.exit(2)  # all phase 1 failed
     if reconcile_mismatch:
         print(f"[exit {EXIT_RECONCILE_MISMATCH}] reconcile mismatch: "
               f"{reconcile_mismatch} file(s) not accounted for (see Reconcile above)")
         sys.exit(EXIT_RECONCILE_MISMATCH)
     if failed or vision_fail or vision_halted:
+        print(_exit_tail_line(1, outcomes, vision_errors, vision_halt_reason, vision_halted))
         sys.exit(1)  # partial fail (phase 1) or vision failure/halt (phase 2)
     # else: implicit exit 0
+
+
+_EXIT_TAIL_NAME_CAP = 3
+
+
+def _exit_tail_line(code, outcomes, vision_errors=(), vision_halt_reason="",
+                    vision_halted=False, name_cap=_EXIT_TAIL_NAME_CAP):
+    """One-line verdict printed as the LAST line before a non-zero batch exit (#393).
+
+    Names up to `name_cap` failed files with their reason (the full list is in
+    the Reconcile block above) and counts the rest; same for whole-file vision
+    errors. A vision halt carries its reason, so exit 1 is never unexplained."""
+    def _one_line(text):  # a newline in a filename/reason must not split the verdict
+        return " ".join(str(text).split())
+
+    def _names(items):
+        shown = "; ".join("{0} — {1}".format(_one_line(n), _one_line(r))
+                          for n, r in items[:name_cap])
+        more = "  (+{0} more, see output above)".format(len(items) - name_cap) \
+            if len(items) > name_cap else ""
+        return shown + more
+
+    failed = []
+    for key, val in (outcomes or {}).items():
+        bucket, reason = val if isinstance(val, tuple) else (val, "")
+        if bucket == "failed":
+            failed.append((Path(key).name, reason or "no reason recorded"))
+    parts = []
+    if failed:
+        parts.append("{0} file(s) failed: {1}".format(len(failed), _names(failed)))
+    vision_errors = list(vision_errors or ())
+    if vision_errors:
+        parts.append("vision failed on {0} file(s): {1}".format(
+            len(vision_errors), _names(vision_errors)))
+    if vision_halted:
+        parts.append("vision halted: " + _one_line(vision_halt_reason or "see VISION HALTED above"))
+    return "[exit {0}] {1}".format(code, "; ".join(parts) if parts else "see output above")
 
 
 def detect_gpu() -> str:
