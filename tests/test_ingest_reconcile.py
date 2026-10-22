@@ -178,13 +178,15 @@ def run_main(tmp_db, tmp_path, monkeypatch, ing, capsys):
                 return ing._NoRecord("ffprobe could not read the file")
             if mode == "raise":
                 raise OSError("[Errno 5] Input/output error: '/Volumes/X/" + path.name + "'")
-            stored = path if mode == "ok" else path.with_name("elsewhere_" + path.name)
+            stored = path if mode in ("ok", "vis") else path.with_name("elsewhere_" + path.name)
+            frames = [{"index": 0, "timestamp_s": 0.0, "thumbnail_path": "t.jpg"}] if mode == "vis" else []
             return {"path": db.to_relative(str(stored)), "filename": stored.name,
-                    "ext": path.suffix.lower(), "duration_s": 1.0, "_frames": []}
+                    "ext": path.suffix.lower(), "duration_s": 1.0, "_frames": frames}
 
         monkeypatch.setattr(ing, "process_file", fake_process)
+        vision = ["--skip-vision"] if "vis" not in behaviour.values() else []
         monkeypatch.setattr(sys, "argv", ["ingest.py", "--dir", str(media),
-                                          "--skip-vision", "--no-embed", *extra])
+                                          *vision, "--no-embed", *extra])
         code = 0
         try:
             ing.main()
@@ -360,3 +362,131 @@ def test_reconcile_report_accepts_bare_and_tuple_outcomes(ing, tmp_path):
     out = "\n".join(ing._reconcile_report([a, b], outcomes, _known(db, a)))
     assert "ingested=1" in out and "failed=1" in out
     assert "b.mp4 — boom" in out
+
+
+# ── #393 root cause: the verdict must be the LAST line (survives `| tail`) ──────
+def _last_line(out):
+    return [l for l in out.splitlines() if l.strip()][-1]
+
+
+def test_partial_failure_ends_with_an_exit_line_naming_file_and_reason(run_main):
+    code, out = run_main({"a.mp4": "ok", "A7520260820_9912.MP4": "noread"})
+    assert code == 1
+    assert _last_line(out) == ("[exit 1] 1 file(s) failed: "
+                               "A7520260820_9912.MP4 — ffprobe could not read the file")
+
+
+def test_all_failed_ends_with_an_exit_2_line(run_main):
+    code, out = run_main({"bad1.mp4": "raise", "bad2.mp4": "fail"})
+    assert code == 2
+    last = _last_line(out)
+    assert last.startswith("[exit 2] 2 file(s) failed: ")
+    assert "bad1.mp4 — OSError" in last and "bad2.mp4 — " in last
+
+
+def test_exit_line_survives_a_tail_after_benchmark(run_main):
+    """The concrete #393 failure: `… | tail -3` showed only BENCHMARK rows."""
+    code, out = run_main({"a.mp4": "ok", "b.mp4": "ok", "bad.mp4": "fail"})
+    tail3 = "\n".join(out.splitlines()[-3:])
+    assert code == 1
+    assert "[exit 1]" in tail3 and "bad.mp4" in tail3
+
+
+def test_exit_line_caps_names_and_handles_bare_outcomes(ing):
+    outcomes = {"/x/f%d.mp4" % i: ("failed", "r%d" % i) for i in range(4)}
+    outcomes["/x/bare.mp4"] = "failed"
+    outcomes["/x/ok.mp4"] = ("ingested", "")
+    line = ing._exit_tail_line(1, outcomes)
+    assert line.startswith("[exit 1] 5 file(s) failed: f0.mp4 — r0; f1.mp4 — r1; f2.mp4 — r2")
+    assert "(+2 more, see output above)" in line and "f3.mp4" not in line
+    assert ing._exit_tail_line(1, {"/x/bare.mp4": "failed"}) == \
+        "[exit 1] 1 file(s) failed: bare.mp4 — no reason recorded"
+
+
+def test_exit_line_names_vision_errors_and_halt_reason(ing):
+    line = ing._exit_tail_line(1, {}, [("v.mp4", "RuntimeError: ollama gone")],
+                               "3 consecutive vision errors (last: v.mp4)", True)
+    assert line == ("[exit 1] vision failed on 1 file(s): v.mp4 — RuntimeError: ollama gone; "
+                    "vision halted: 3 consecutive vision errors (last: v.mp4)")
+
+
+def test_vision_only_halt_ends_with_an_exit_line(ing, monkeypatch, capsys, tmp_db):
+    """--vision-only halt: embed output follows the VISION HALTED banner, so the
+    verdict has to be restated last (#393 shape on the vision-only path)."""
+    monkeypatch.setattr(ing, "_run_vision_only", lambda args: (True, [1, 2]))
+    monkeypatch.setattr(importlib.import_module("health"), "preflight_paths", lambda: (True, []))
+    monkeypatch.setattr(sys, "argv", ["ingest.py", "--vision-only", "--no-embed"])
+    code = 0
+    try:
+        ing.main()
+    except SystemExit as e:
+        code = e.code
+    out = capsys.readouterr().out
+    assert code == 1
+    assert _last_line(out) == ("[exit 1] vision-only halted mid-patch "
+                               "(2 clip(s) updated; see VISION HALTED above)")
+
+
+def test_clean_batch_prints_no_exit_line(run_main):
+    code, out = run_main({"a.mp4": "ok"})
+    assert code in (0, None) and "[exit " not in out
+
+
+def test_batch_vision_halt_ends_with_an_exit_line_naming_the_cause(run_main, ing, monkeypatch):
+    """Phase-2 whole-file vision errors → halt after 3 in a row. The final line
+    must name the files, the error, and why it halted — not just `vision halted`."""
+    for name in ("_preflight_vision_model", "_unload_ollama_model", "_ensure_vision_ready"):
+        monkeypatch.setattr(ing, name, lambda *a, **k: None)
+
+    def boom(paths):
+        raise RuntimeError("ollama connection refused")
+    monkeypatch.setattr(ing, "_describe_frames_with_fallback", boom)
+
+    code, out = run_main({"v1.mp4": "vis", "v2.mp4": "vis", "v3.mp4": "vis"})
+    last = _last_line(out)
+    assert "VISION HALTED" in out, "precondition: the halt path ran"
+    assert code == 1
+    assert last.startswith("[exit 1] vision failed on 3 file(s): v1.mp4 — RuntimeError: "
+                           "ollama connection refused"), last
+    assert last.endswith("vision halted: 3 consecutive vision errors (last: v3.mp4)"), last
+
+
+def test_exit_line_stays_one_line_with_newlines_in_names(ing):
+    line = ing._exit_tail_line(1, {"/x/bad\nname.mp4": ("failed", "OSError: a\nb")})
+    assert "\n" not in line
+    assert line == "[exit 1] 1 file(s) failed: bad name.mp4 — OSError: a b"
+
+
+def test_vision_model_preflight_ends_with_an_exit_line(ing, monkeypatch, capsys, tmp_db):
+    monkeypatch.setattr(ing.vis, "is_model_installed", lambda m: False)
+    monkeypatch.setattr(ing.vis, "list_vision_models", lambda: ["other:7b"])
+    try:
+        ing._preflight_vision_model()
+    except SystemExit as e:
+        code = e.code
+    out = capsys.readouterr().out
+    assert code == 2
+    assert _last_line(out).startswith("[exit 2] vision model not installed: ")
+
+
+def test_missing_dir_ends_with_an_exit_line(ing, monkeypatch, capsys, tmp_path, tmp_db):
+    monkeypatch.setattr(importlib.import_module("health"), "preflight_paths", lambda: (True, []))
+    monkeypatch.setattr(sys, "argv", ["ingest.py", "--dir", str(tmp_path / "nope"), "--no-embed"])
+    try:
+        ing.main()
+    except SystemExit as e:
+        code = e.code
+    out = capsys.readouterr().out
+    assert code == 1 and _last_line(out).startswith("[exit 1] --dir does not exist: ")
+
+
+def test_storage_preflight_ends_with_an_exit_line(ing, monkeypatch, capsys, tmp_path, tmp_db):
+    monkeypatch.setattr(importlib.import_module("health"), "preflight_paths",
+                        lambda: (False, ["thumbs dir missing"]))
+    monkeypatch.setattr(sys, "argv", ["ingest.py", "--dir", str(tmp_path), "--no-embed"])
+    try:
+        ing.main()
+    except SystemExit as e:
+        code = e.code
+    out = capsys.readouterr().out
+    assert code == 4 and _last_line(out) == "[exit 4] storage preflight failed: 1 problem(s) (see above)"
