@@ -186,7 +186,7 @@ const peaks = [0.42,0.48,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,
 <script is:inline>
   // Run each stage only while it is on screen.
   (function () {
-    var stages = document.querySelectorAll('.feat .stage');
+    var stages = document.querySelectorAll('.feat .stage, .mini-art');
     if (!('IntersectionObserver' in window)) { stages.forEach(function (s) { s.classList.add('on'); }); return; }
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (e) { e.target.classList.toggle('on', e.isIntersecting); });

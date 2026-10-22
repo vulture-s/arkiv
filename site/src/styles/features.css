@@ -131,6 +131,28 @@
 .mini-art .t.a{fill:var(--cyan)}
 .mini-art .t.x{text-decoration:line-through;fill:var(--quiet)}
 .mini-art .t.big{font-size:30px;fill:var(--ink-2)}
+.mini-art .t.sm{font-size:8px}
+.mini-art .fill-soft{fill:color-mix(in srgb,var(--cyan) 22%,transparent)}
+/* Card motion (2026-10-22): one moving idea per card, 6 s loop, staggered by --d.
+   Base styles ARE the finished state, so no-motion and paused-before-scroll both read. */
+.mini-art *{animation-play-state:paused;animation-duration:6s;animation-iteration-count:infinite;animation-delay:var(--d,0s);animation-fill-mode:backwards}
+.mini-art.on *{animation-play-state:running}
+.mini-art .m-in{animation-name:m-in}
+.mini-art .m-pop{animation-name:m-pop;transform-box:fill-box;transform-origin:center}
+.mini-art .m-draw{stroke-dasharray:1;animation-name:m-draw}
+.mini-art .m-move{animation-name:m-move;transform-box:fill-box}
+.mini-art .m-fillx{animation-name:m-fillx;transform-box:fill-box;transform-origin:left center}
+.mini-art .m-h1{animation-name:m-h1;animation-delay:0s}
+.mini-art .m-h2{animation-name:m-h2;animation-delay:0s}
+.mini-art .m-pan{animation-name:m-pan;animation-timing-function:ease-in-out;animation-delay:0s}
+@keyframes m-in{0%{opacity:0}6%,86%{opacity:1}94%,100%{opacity:0}}
+@keyframes m-pop{0%{opacity:0;transform:scale(.6)}6%{opacity:1;transform:scale(1.08)}10%,86%{opacity:1;transform:none}94%,100%{opacity:0;transform:none}}
+@keyframes m-draw{0%{stroke-dashoffset:1}10%,86%{stroke-dashoffset:0}94%,100%{stroke-dashoffset:1}}
+@keyframes m-move{0%{opacity:0;transform:translate(var(--dx,0px),var(--dy,0px))}4%{opacity:1;transform:translate(var(--dx,0px),var(--dy,0px))}18%{transform:none}18%,86%{opacity:1;transform:none}94%,100%{opacity:0;transform:none}}
+@keyframes m-fillx{0%{transform:scaleX(0)}16%,86%{transform:scaleX(1)}94%,100%{transform:scaleX(0)}}
+@keyframes m-h1{0%,45%{opacity:1}50%,95%{opacity:0}100%{opacity:1}}
+@keyframes m-h2{0%,45%{opacity:0}50%,95%{opacity:1}100%{opacity:0}}
+@keyframes m-pan{0%,100%{transform:translateX(-14px)}50%{transform:translateX(14px)}}
 .mini h5{font-size:15px;font-weight:600;color:var(--ink);line-height:1.4}
 .mini p{font-size:13px;line-height:1.65;color:var(--ink-2);flex:1}
 .mini .more-where{align-self:flex-start;margin:4px 0 0}
@@ -198,7 +220,8 @@
 
 @media (prefers-reduced-motion:reduce){
   .mini{transition:none}.mini:hover{transform:none}
-  .stage *,.stage.on *{animation:none!important}
+  .stage *,.stage.on *,.mini-art *,.mini-art.on *{animation:none!important}
+  .mini-art .m-h2{opacity:0}
   .sn-row,.se-res img,.rv-clip,.rt-stamp,.dt-ok,.dt-mhl,.wz-kv,.wz-ok{opacity:1}
   .dt-bar i,.wz-bar i{transform:none}
 }
