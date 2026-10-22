@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).parent
 # Backend product version. Keep in sync with the release tag + frontend
 # version.js at release time. Served by GET /api/version and included in
 # GET /api/health so a user/support can identify the build.
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 # Codex Round-2 audit (J3): without bounds, ARKIV_PROXIES_DIR=/etc would have
 # arkiv write generated proxy mp4 files into /etc on every HEVC ingest. Same
@@ -138,7 +138,10 @@ def proxy_path_for(media_id: int, abs_source_path: str) -> Path:
 
 # ── Ollama ───────────────────────────────────────────────────────────────────
 OLLAMA_URL = _validate_http_url(
-    os.getenv("ARKIV_OLLAMA_URL", "http://localhost:11434"), "ARKIV_OLLAMA_URL"
+    # 127.0.0.1, not localhost: on Windows `localhost` resolves to ::1 first and Ollama
+    # listens on IPv4 only, so every call paid a ~2 s IPv6 connect timeout before the
+    # fallback (measured 2026-10-22: /api/tags 2.2 s → instant). Same server elsewhere.
+    os.getenv("ARKIV_OLLAMA_URL", "http://127.0.0.1:11434"), "ARKIV_OLLAMA_URL"
 )
 ARKIV_CHAT_MODEL = os.getenv("ARKIV_CHAT_MODEL", "qwen2.5:14b")
 # Intent classification reuses the chat model by default so a single
