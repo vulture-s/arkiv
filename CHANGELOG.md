@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### 修正
+- **Windows：首次啟動精靈要等好幾秒才出現，等不到的人直接錯過**：精靈的檢查一次要 3.7 秒（冷開機更久），
+  其中 2.2 秒是連 Ollama——`localhost` 在 Windows 先解析成 IPv6 的 `::1`，Ollama 只聽 IPv4，每次都要等連線逾時才退回；
+  1.3 秒是用 PowerShell 查 CPU 名稱。`ARKIV_OLLAMA_URL` 預設改成 `http://127.0.0.1:11434`（所有 Ollama 呼叫——畫面描述、
+  語意搜尋、對話——在 Windows 上都省下這 2 秒）、CPU 名稱改讀登錄檔、硬體資訊每個程序只查一次。
+- **打開 App 的頭幾秒，側欄會出現不是你的素材庫**（「Bicycle Diaries」「vulture.s reels」「Furutech RCA spot」…）：
+  那是設計稿的示範資料，真資料還沒載入前拿來墊底，每個使用者都會看到。正式畫面載入中改為留空。
+- **Windows：桌面 App 每次啟動都在 console 報一個 CSP 違規**：Tauri 對桌面殼的呼叫在 Windows 走 `http://ipc.localhost`，
+  被 arkiv 自己的 CSP 擋下後才退回 postMessage。`connect-src` 加上 `ipc:` 與 `http://ipc.localhost`（兩者都不出本機）。
+
 ## v1.7.0 - 2026-10-22
 
 **桌面 App 可以開第二個素材庫、第一次打開有設定精靈、片段可以直接拖進剪輯軟體。**

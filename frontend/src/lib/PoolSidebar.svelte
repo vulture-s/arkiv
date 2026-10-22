@@ -5,6 +5,11 @@
   import { PROJECTS, TAGS } from './mockData.js'
   import { DAY_CAP } from './shotYear.js'
   // Live overrides — all default to mock so mock screens stay byte-identical.
+  // `live` turns the mock fallback OFF: the product passes it, so while the real data
+  // is still loading the sidebar is empty instead of showing the design mock's
+  // invented libraries (2026-10-22: every user saw 「Furutech RCA spot」「vulture.s reels」
+  // for ~3 s on a Windows cold start).
+  export let live = false
   export let liveProjects = null // [{id,name,count,active,health?}]; count null = unknown
   export let entitlement = null // /api/entitlements; null -> the line is omitted entirely
   export let onProject = null // desktop only (#561): (row) => switch library; null → rows are plain text
@@ -37,7 +42,7 @@
     ['Recently ingested', 18],
     ['No transcript', 12],
   ]
-  $: projects = liveProjects ?? PROJECTS
+  $: projects = liveProjects ?? (live ? [] : PROJECTS)
   // Says what the install is actually entitled to, from the endpoint that enforces
   // it. Omitted when unknown rather than guessed: a wrong tier label is worse than
   // no label, and the refusal itself already explains the cap when someone hits it.
@@ -48,8 +53,8 @@
       : entitlement.pro
         ? 'Pro · 無限專案'
         : `${entitlement.projects_used} / ${entitlement.free_project_limit} 個免費專案`
-  $: pools = livePools ?? MOCK_POOLS
-  $: tags = liveTags ?? TAGS
+  $: pools = livePools ?? (live ? [] : MOCK_POOLS)
+  $: tags = liveTags ?? (live ? [] : TAGS)
   // Cap the cloud so a long tail (74+ on a real library) doesn't bury the useful
   // ones. Tags arrive sorted by count desc, so the top slice is the most-used.
   const TAG_CAP = 24
@@ -73,7 +78,7 @@
   const gb = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)} TB` : `${Math.round(n)} GB`)
   $: storage = liveStorage
     ? { pct: liveStorage.pct, label: `${gb(liveStorage.used_gb)} · ${gb(liveStorage.total_gb)} · disk` }
-    : { pct: 40, label: '4.8 TB · 12 TB · NAS' }
+    : live ? null : { pct: 40, label: '4.8 TB · 12 TB · NAS' }
 </script>
 
 <aside class="pool">
@@ -230,6 +235,7 @@
 
   <div class="spacer"></div>
 
+  {#if storage}
   <section class="storage">
     <div class="strow">
       <Eyebrow>Storage</Eyebrow>
@@ -238,6 +244,7 @@
     <div class="bar"><div class="barfill" style="width:{storage.pct}%;"></div></div>
     <Mono dim style="font-size:10.5px;margin-top:5px;letter-spacing:0.02em;">{storage.label}</Mono>
   </section>
+  {/if}
 </aside>
 
 <style>
