@@ -70,6 +70,7 @@ const STEPS = [
       <div><h3>Ratings live on the clip</h3><p>GOOD, REV and N·G stay on the footage; Smart Pools split it into to-review, usable and rejected.</p></div>
       <div><h3>Click a transcript line to jump to it</h3><p>Seek to the exact spot a line is spoken. Export SRT, VTT or plain text. Whisper hallucinations are filtered in four layers.</p></div>
       <div><h3>Waveform and frame-accurate IN / OUT</h3><p>Mark with <span class="mono">i</span> / <span class="mono">o</span> or drag; marks snap to real frame boundaries, 59.94p included, and exports use the range.</p></div>
+      <div class="wide"><h3>First launch: three steps and you're ready</h3><p>arkiv reads this machine's CPU, memory and GPU and tells you whether transcription will run on Metal, CUDA or CPU; a missing ffmpeg, or CUDA selected with no NVIDIA card, is flagged with the fix. Missing models can be downloaded now with per-model progress, or later on the first ingest. Only models are downloaded; your footage never leaves the machine.</p></div>
       <div class="wide"><h3>Into DaVinci Resolve, timecode intact</h3><p>Search arkiv inside Resolve and import results into the Media Pool with clip colors (GOOD green, REV yellow, N·G orange), binned by camera. EDL and FCPXML use the camera's own start timecode plus your IN point, so relinking lands on the same frame; 29.97 / 59.94 use drop-frame automatically.</p></div>
     </div>
 
@@ -85,6 +86,8 @@ const STEPS = [
       <li>Watch folders and auto-ingest <span class="more-where tag-cli">CLI</span></li>
       <li>Library chat assistant with conversation memory</li>
       <li>Bins that collect clips across libraries</li>
+      <li>Several separate libraries, switched from the sidebar (desktop app)</li>
+      <li>Drag clips, or just the IN / OUT range, into Resolve, Premiere or Finder (desktop app)</li>
       <li>Cross-project search <span class="more-where tag-pro">Pro</span></li>
       <li>360 footage (.insv / .360) flattened for review</li>
       <li>Video, audio and stills in one library; automatic proxies</li>

@@ -32,6 +32,10 @@ export const MORE = [
       art: `<rect x="40" y="30" width="46" height="34" rx="3"/><rect x="50" y="22" width="46" height="34" rx="3"/><rect x="60" y="14" width="46" height="34" rx="3"/><path d="M122 30l4 9 10 1-7 7 2 10-9-5-9 5 2-10-7-7 10-1z" class="a"/>` },
     { t: '跨專案搜尋', d: '一次搜所有專案，結果依專案分組。', w: 'Pro', tag: 'pro',
       art: `<rect x="14" y="14" width="56" height="16" rx="3"/><rect x="14" y="37" width="56" height="16" rx="3"/><rect x="14" y="60" width="56" height="16" rx="3"/><path d="M70 22h14M70 45h14M70 68h14M84 22v46"/><circle cx="114" cy="42" r="16" class="a"/><path d="M126 54l14 14" class="a"/>` },
+    { t: '多個素材庫', d: '工作案、生活紀錄各開一個庫；側欄點一下就切換，下次打開回到上次那個。有匯入在跑時不讓切，免得做到一半被中斷。', w: '側欄・桌面 App',
+      art: `<rect x="14" y="16" width="48" height="16" rx="3"/><rect x="14" y="38" width="48" height="16" rx="3" class="a"/><rect x="14" y="60" width="48" height="16" rx="3"/><path d="M70 46h18" class="a"/><path d="M84 42l4 4-4 4" class="a"/><rect x="96" y="20" width="52" height="52" rx="4" class="a"/><rect x="104" y="28" width="16" height="12" rx="1"/><rect x="124" y="28" width="16" height="12" rx="1"/><rect x="104" y="46" width="16" height="12" rx="1"/><rect x="124" y="46" width="16" height="12" rx="1"/>` },
+    { t: '拖進剪輯軟體', d: '搜尋結果直接拖進 Resolve、Premiere 或 Finder，拖的是原始檔本身；標了 IN／OUT 就拖那一段，剛好從 IN 開始。', w: '卡片・Inspector・桌面 App',
+      art: `<rect x="12" y="12" width="52" height="32" rx="3"/><path d="M64 44l34 18" class="a dash"/><path d="M96 54l4 9-9 1" class="a"/><path d="M12 72h136"/><rect x="40" y="64" width="34" height="16" rx="2"/><rect x="96" y="64" width="40" height="16" rx="2" class="a dash"/>` },
     { t: '360 素材', d: '雙魚眼 .insv／.360 攤平成全景，在 Inspector 裡拖曳環視。', w: 'Inspector',
       art: `<circle cx="26" cy="30" r="14"/><circle cx="26" cy="62" r="14"/><path d="M48 46h14" /><path d="M58 42l4 4-4 4"/><rect x="70" y="24" width="78" height="44" rx="3"/><path d="M70 46h78M90 24v44M110 24v44M130 24v44"/><circle cx="110" cy="46" r="5" class="a"/><path d="M98 46h-6M122 46h6" class="a"/>` },
   ]},
@@ -50,10 +54,6 @@ export const MORE = [
 ];
 
 export const NEXT = [
-  { t: '拖進剪輯軟體', d: '從搜尋結果直接把素材，或 IN／OUT 那一段，拖進 Resolve 或 Finder。',
-    art: `<rect x="12" y="12" width="52" height="32" rx="3"/><path d="M64 44l34 18" class="a dash"/><path d="M96 54l4 9-9 1" class="a"/><path d="M12 72h136"/><rect x="40" y="64" width="34" height="16" rx="2"/><rect x="96" y="64" width="40" height="16" rx="2" class="a dash"/>` },
-  { t: '首次啟動精靈', d: '偵測硬體、選裝置、顯示模型下載進度，不用再自己照指令裝。',
-    art: `<circle cx="28" cy="30" r="10" class="a"/>${T(25,34,'1','a')}<path d="M38 30h24"/><circle cx="72" cy="30" r="10"/>${T(69,34,'2')}<path d="M82 30h24"/><circle cx="116" cy="30" r="10"/>${T(113,34,'3')}<rect x="18" y="58" width="124" height="8" rx="4"/><rect x="18" y="58" width="58" height="8" rx="4" class="a fill"/>` },
   { t: '多語轉錄改進', d: '同一句中英夾雜的訪談（評估中），以及日文特有的幻覺句與重複清理。',
     art: `<path d="M12 45h4M20 36v18M24 30v30M28 38v14M32 32v26M36 40v10M40 34v22"/><path d="M50 45h14" class="a"/><path d="M60 41l4 4-4 4" class="a"/>${T(74,36,'這個 shot')}${T(74,56,'要 re-take')}${T(74,76,'もう一度','a')}` },
   { t: '跨案分析', d: '統計產品在畫面裡出現的頻率與時長、比對多支影片的拍攝風格。',
