@@ -152,9 +152,40 @@
 .rv-clip.y{--c:var(--y);animation-delay:.25s}.rv-clip.o{--c:var(--o);animation-delay:.5s}
 @keyframes rv{0%,15%{opacity:0;transform:translateX(-90px) scale(.7)}15%{animation-timing-function:cubic-bezier(.34,1.56,.64,1)}30%,88%{opacity:1;transform:none}100%{opacity:0}}
 
+/* first-run wizard (v1.7) — step rail, hardware read-out, model downloads */
+.feat-wide .stage.st-wiz{height:auto;display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1.3fr);gap:24px;align-items:center;padding:22px}
+.wz-steps{list-style:none;margin:0;padding:0;display:grid;gap:12px;font-size:13px;color:var(--quiet)}
+.wz-steps li{display:flex;align-items:center;gap:10px}
+.wz-n{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid var(--rule-hi);font-family:var(--ak-mono);font-size:11px}
+.wz-s1{animation:wz-step1 8s infinite}.wz-s1 .wz-n{animation:wz-num1 8s infinite}
+.wz-s2{animation:wz-step2 8s infinite}.wz-s2 .wz-n{animation:wz-num2 8s infinite}
+.wz-s3{animation:wz-step3 8s infinite}.wz-s3 .wz-n{animation:wz-num3 8s infinite}
+@keyframes wz-step1{0%,30%{color:var(--ink)}34%,100%{color:var(--ink-2)}}
+@keyframes wz-num1{0%,30%{background:var(--invert);color:var(--invert-ink);border-color:transparent}34%,100%{background:transparent;color:var(--cyan);border-color:var(--cyan)}}
+@keyframes wz-step2{0%,30%{color:var(--quiet)}34%,72%{color:var(--ink)}76%,100%{color:var(--ink-2)}}
+@keyframes wz-num2{0%,30%{background:transparent;color:var(--quiet);border-color:var(--rule-hi)}34%,72%{background:var(--invert);color:var(--invert-ink);border-color:transparent}76%,100%{background:transparent;color:var(--cyan);border-color:var(--cyan)}}
+@keyframes wz-step3{0%,72%{color:var(--quiet)}76%,96%{color:var(--ink)}100%{color:var(--quiet)}}
+@keyframes wz-num3{0%,72%{background:transparent;color:var(--quiet);border-color:var(--rule-hi)}76%,96%{background:var(--invert);color:var(--invert-ink);border-color:transparent}100%{background:transparent;color:var(--quiet);border-color:var(--rule-hi)}}
+.wz-hw{display:grid;gap:7px}
+.wz-kv{display:grid;grid-template-columns:56px minmax(0,1fr);gap:10px;font-size:12px;opacity:0;animation:wz-in 8s infinite;animation-delay:var(--d)}
+.wz-k{font-family:var(--ak-mono);font-size:10.5px;letter-spacing:.06em;color:var(--quiet)}
+.wz-v{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@keyframes wz-in{0%{opacity:0;transform:translateY(6px)}6%,90%{opacity:1;transform:none}98%,100%{opacity:0}}
+.wz-models{display:grid;gap:10px;max-width:380px}
+.wz-row{display:grid;grid-template-columns:minmax(0,1fr) 64px auto;grid-template-rows:auto auto;column-gap:10px;align-items:center;font-family:var(--ak-mono);font-size:11px}
+.wz-name{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wz-size{grid-column:1;color:var(--quiet);font-size:10px}
+.wz-bar{height:4px;border-radius:2px;background:var(--rule-hi);overflow:hidden}
+.wz-bar i{display:block;height:100%;background:var(--ink-2);transform-origin:left;transform:scaleX(0);animation:wz-fill 8s infinite;animation-delay:var(--d)}
+@keyframes wz-fill{0%,10%{transform:scaleX(0)}38%,90%{transform:scaleX(1)}98%,100%{transform:scaleX(0)}}
+.wz-ok{color:var(--cyan);opacity:0;animation:wz-ok 8s infinite;animation-delay:var(--d)}
+@keyframes wz-ok{0%,37%{opacity:0;transform:scale(.6)}37%{animation-timing-function:cubic-bezier(.34,1.56,.64,1)}43%,90%{opacity:1;transform:none}98%,100%{opacity:0}}
 @media (max-width:1000px){.card-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:700px){
   .feat-wide .stage.st-dit{grid-template-columns:1fr}
+  .feat-wide .stage.st-wiz{grid-template-columns:1fr;gap:16px}
+  .wz-steps{grid-auto-flow:column;justify-content:start;gap:16px;font-size:12px}
+  .wz-models{max-width:none}
   .dt-dsts{grid-template-columns:1fr}
   .card-row{grid-template-columns:1fr}
   .feat-grid{grid-template-columns:1fr;gap:36px}
@@ -164,9 +195,10 @@
   .sn-tag{display:none}
 }
 /* No motion: every stage shows its finished state. */
+
 @media (prefers-reduced-motion:reduce){
   .mini{transition:none}.mini:hover{transform:none}
   .stage *,.stage.on *{animation:none!important}
-  .sn-row,.se-res img,.rv-clip,.rt-stamp,.dt-ok,.dt-mhl{opacity:1}
-  .dt-bar i{transform:none}
+  .sn-row,.se-res img,.rv-clip,.rt-stamp,.dt-ok,.dt-mhl,.wz-kv,.wz-ok{opacity:1}
+  .dt-bar i,.wz-bar i{transform:none}
 }

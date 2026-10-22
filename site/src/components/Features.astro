@@ -111,6 +111,30 @@ const peaks = [0.42,0.48,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,
       </article>
 
       <article class="feat feat-wide">
+        <div class="stage st-wiz" aria-hidden="true">
+          <ol class="wz-steps">
+            <li class="wz-s1"><span class="wz-n">1</span>這台電腦</li>
+            <li class="wz-s2"><span class="wz-n">2</span>AI 模型</li>
+            <li class="wz-s3"><span class="wz-n">3</span>加入素材</li>
+          </ol>
+          <div class="wz-hw">
+            {[['處理器', 'Apple M2 Max · 12 核'], ['記憶體', '32 GB'], ['轉錄', 'Apple Silicon（Metal）'], ['ffmpeg', '已安裝']].map(([k, v], i) => (
+              <div class="wz-kv" style={`--d:${(0.2 + i * 0.25).toFixed(2)}s`}><span class="wz-k">{k}</span><span class="wz-v">{v}</span></div>
+            ))}
+          </div>
+          <div class="wz-models">
+            {[['whisper-large-v3-turbo', '1.6 GB', 0], ['bge-m3', '1.2 GB', 1], ['qwen2.5vl:7b', '6 GB', 2]].map(([n, size, i]) => (
+              <div class="wz-row" style={`--d:${(1.4 + Number(i) * 0.5).toFixed(2)}s`}>
+                <span class="wz-name">{n}</span><span class="wz-bar"><i></i></span><span class="wz-ok">已就緒</span><span class="wz-size">{size}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <h3>第一次打開：三步就能開始用</h3>
+        <p>先看這台電腦的處理器、記憶體與顯示卡，告訴你轉錄會跑在 Metal、CUDA 還是 CPU；缺 ffmpeg、或沒有 NVIDIA 卻設成 CUDA，當場說怎麼修。缺的模型可以現在下載、逐項看進度，也可以等第一次匯入再下。<b>只下載模型，素材不離開這台電腦。</b></p>
+      </article>
+
+      <article class="feat feat-wide">
         <div class="stage st-resolve" aria-hidden="true">
           <ul class="rv-src">
             <li class="g">A7520260818_9896.MP4</li>
