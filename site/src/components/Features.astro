@@ -93,7 +93,9 @@ const peaks = [0.42,0.48,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01,
           <div class="io-wf">
             <div class="io-sel"></div>
             <svg viewBox="0 0 60 56" preserveAspectRatio="none" class="io-svg">
-              {peaks.map((v, i) => <rect x={i + 0.15} y={(56 - Math.max(2, v * 50)) / 2} width="0.7" height={Math.max(2, v * 50)} />)}
+              {/* Lines with a non-scaling stroke, not rects: the SVG stretches to the card width,
+                   so a 0.7-unit rect became a 20 px slab on a wide screen (2026-10-23). */}
+              {peaks.map((v, i) => { const h = Math.max(1, v * 50); return <line x1={i + 0.5} x2={i + 0.5} y1={(56 - h) / 2} y2={(56 + h) / 2} />; })}
             </svg>
             <div class="io-mk io-mk-in"></div>
             <div class="io-mk io-mk-out"></div>
