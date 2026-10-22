@@ -26,7 +26,8 @@
 .io-out{animation:io-pop 7s infinite 1.1s}
 @keyframes io-pop{0%,22%{color:var(--quiet);transform:none}26%{color:var(--cyan);transform:scale(1.12)}34%,100%{color:var(--ink-2);transform:none}}
 .io-wf{position:relative;height:84px;margin:16px 0 14px}
-.io-svg{width:100%;height:100%;display:block;fill:var(--ink-2)}
+.io-svg{width:100%;height:100%;display:block}
+.io-svg line{stroke:var(--ink-2);stroke-width:3px;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .io-sel{position:absolute;top:0;bottom:0;left:13%;right:72.6%;background:var(--ink);opacity:.1;transform-origin:left;animation:io-sel 7s infinite}
 @keyframes io-sel{0%,30%{transform:scaleX(0)}38%,88%{transform:scaleX(1)}96%,100%{transform:scaleX(0)}}
 .io-mk{position:absolute;top:-6px;bottom:-6px;width:1.5px;background:var(--invert)}
