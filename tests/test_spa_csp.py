@@ -21,7 +21,7 @@ EXPECTED = (
     "img-src 'self' data: blob:; "
     "media-src 'self' blob:; "
     "font-src 'self' data:; "
-    "connect-src 'self' ws://127.0.0.1:8611 wss://127.0.0.1:8611; "
+    "connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:8611 wss://127.0.0.1:8611; "
     "object-src 'none'; "
     "base-uri 'self'; "
     "form-action 'self'; "
@@ -48,7 +48,7 @@ def test_spa_csp_rejects_injected_host():
     for bad in ("evil; script-src *", "a b", "x" * 300, "h\r\nX: y"):
         pol = webguard.spa_csp(bad)
         assert "script-src *" not in pol
-        assert _directives(pol)["connect-src"] == ["'self'"]
+        assert _directives(pol)["connect-src"] == ["'self'", "ipc:", "http://ipc.localhost"]
 
 
 def test_root_route_sends_csp_header(fastapi_client, server_module, tmp_path, monkeypatch):

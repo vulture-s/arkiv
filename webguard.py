@@ -554,7 +554,12 @@ def spa_csp(host: str = "") -> str:
     a plain host[:port] is accepted — anything else (a `;` would inject a
     directive) falls back to 'self' only.
     """
-    connect = ["'self'"]
+    # Tauri's IPC to the desktop shell is a fetch to its own custom protocol:
+    # `ipc://localhost` on macOS/Linux, `http://ipc.localhost` on Windows (WebView2).
+    # Without these the shell's first call is refused by this very policy and Tauri
+    # falls back to postMessage after logging a CSP violation on every launch
+    # (seen 2026-10-22 on the Windows build). Neither scheme reaches the network.
+    connect = ["'self'", "ipc:", "http://ipc.localhost"]
     if host and len(host) <= 255 and all(c in _CSP_HOST_OK for c in host):
         connect += ["ws://" + host, "wss://" + host]
     directives = [

@@ -13,7 +13,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 
   <h2 class="lg-group">軟體</h2>
   <Row level={3} id="media" q="我的素材和逐字稿|會離開這台電腦嗎？" mark="yes"
-    ev={`轉錄在本機；視覺、向量、助手都打 <code>ARKIV_OLLAMA_URL</code>，預設 <code>http://localhost:11434</code>。<a href="${GH}config.py">config.py</a>`}>
+    ev={`轉錄在本機；視覺、向量、助手都打 <code>ARKIV_OLLAMA_URL</code>，預設 <code>http://127.0.0.1:11434</code>。<a href="${GH}config.py">config.py</a>`}>
     <p>預設不會。轉錄在本機跑，看畫面、建索引、素材庫助手都交給你電腦上的 Ollama。</p>
     <p>有兩個例外，都要你自己設定才會發生：</p>
     <ul>

@@ -1242,7 +1242,7 @@
 <div class="artboard" data-theme={theme}>
   <TopBar />
   <div class="body">
-    <PoolSidebar {liveProjects} {entitlement} onProject={canSwitchLibrary() ? onProjectClick : null} onAddLibrary={canSwitchLibrary() ? onAddLibrary : null} {switching} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
+    <PoolSidebar live {liveProjects} {entitlement} onProject={canSwitchLibrary() ? onProjectClick : null} onAddLibrary={canSwitchLibrary() ? onAddLibrary : null} {switching} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
 
     <main class="center">
       <div class="toolrow">

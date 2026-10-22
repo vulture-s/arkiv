@@ -80,10 +80,18 @@ def _cpu_name() -> str:
         if name:
             return name
     if system == "Windows":
-        name = _run(["powershell", "-NoProfile", "-Command",
-                     "(Get-CimInstance Win32_Processor | Select-Object -First 1).Name"])
-        if name:
-            return name
+        # The registry, not PowerShell: Get-CimInstance cost 1.3 s warm (and more on a cold
+        # boot), which is most of why the first-run wizard arrived late on Windows.
+        try:
+            import winreg
+
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as k:
+                name = str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).strip()
+            if name:
+                return name
+        except OSError:
+            pass
     return platform.processor() or platform.machine() or "unknown"
 
 
@@ -101,7 +109,18 @@ def _nvidia() -> Optional[Dict[str, Any]]:
     return {"name": first[0].strip(), "vram_gb": vram}
 
 
+_HW_CACHE: Dict[str, Any] = {}
+
+
 def hardware() -> Dict[str, Any]:
+    """Probed once per process: the machine does not change while the server runs,
+    and the wizard polls status while models download."""
+    if not _HW_CACHE:
+        _HW_CACHE.update(_probe_hardware())
+    return dict(_HW_CACHE)
+
+
+def _probe_hardware() -> Dict[str, Any]:
     apple_silicon = platform.system() == "Darwin" and platform.machine() == "arm64"
     nv = None if apple_silicon else _nvidia()
     ram = _ram_gb()
