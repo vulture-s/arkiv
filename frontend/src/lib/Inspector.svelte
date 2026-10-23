@@ -12,6 +12,7 @@
   import { selectionToFrom, validateCorrection } from './transcriptCorrect.js'
   import { identityRange, suggestNames, formatIdentityRange, nameKeyStep } from './identities.js'
   import { canDragOut, prepare, ready, startDragOut, sourceKey } from './dragOut.js'
+  import { keyAction, shuttleNext, KEY_HINTS } from './transport.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -94,6 +95,7 @@
   }
   let mediaDuration = 0 // seconds, from the player once metadata loads
   function onTimeUpdate() {
+    onRangeTick()
     if (playerEl && playerEl.duration) {
       mediaDuration = playerEl.duration
       playProgress = playerEl.currentTime / playerEl.duration
@@ -186,6 +188,7 @@
   // still frame, not on footage that keeps running past the point they chose.
   function freeze(seekTo) {
     if (!playerEl) return
+    stopShuttle() // a reverse shuttle steps on a timer; pausing alone would not stop it
     if (!playerEl.paused) playerEl.pause()
     if (seekTo != null && Number.isFinite(seekTo)) playerEl.currentTime = seekTo
   }
@@ -221,19 +224,93 @@
   // is held (don't hijack ⌘K etc.), and only when this clip actually has a player —
   // so the design-mock inspector (no videoSrc) and audio-without-fps stay inert for
   // the frame steppers while i/o still mark on any player.
+  // Transport keys, Resolve / Premiere layout (transport.js holds the map). Never while
+  // typing, only when this clip has a player.
+  let shuttleRate = 0
+  let reverseTimer = null
+  let rangeStop = null // seconds: stop playback here (set by "/")
+  function stopShuttle() {
+    shuttleRate = 0
+    if (reverseTimer) { clearInterval(reverseTimer); reverseTimer = null }
+    if (playerEl) playerEl.playbackRate = 1
+  }
+  function applyShuttle(rate) {
+    if (!playerEl) return
+    if (reverseTimer) { clearInterval(reverseTimer); reverseTimer = null }
+    shuttleRate = rate
+    if (rate === 0) { playerEl.pause(); playerEl.playbackRate = 1; return }
+    if (rate > 0) {
+      playerEl.playbackRate = rate
+      playerEl.play().catch(() => {})
+      return
+    }
+    // <video> cannot play backwards (negative playbackRate is unsupported in
+    // Chromium/WebView2), so reverse is stepped: |rate|× real time, 15 steps a second.
+    playerEl.pause()
+    playerEl.playbackRate = 1
+    reverseTimer = setInterval(() => {
+      if (!playerEl) return
+      const t = playerEl.currentTime + rate / 15
+      if (t <= 0) { playerEl.currentTime = 0; stopShuttle(); return }
+      playerEl.currentTime = t
+    }, 1000 / 15)
+  }
+  function nudge(sec) {
+    if (!playerEl) return
+    stopShuttle()
+    playerEl.pause()
+    const d = playerEl.duration || mediaDuration || 0
+    playerEl.currentTime = Math.max(0, Math.min(d || Infinity, playerEl.currentTime + sec))
+  }
+  function goTo(sec) {
+    if (!playerEl || sec == null) return
+    stopShuttle()
+    playerEl.pause()
+    playerEl.currentTime = sec
+  }
+  function playRange() {
+    if (!playerEl || inSec == null) return
+    stopShuttle()
+    rangeStop = outSec
+    playerEl.currentTime = inSec
+    playerEl.play().catch(() => {})
+  }
+  function onRangeTick() {
+    if (rangeStop != null && playerEl && playerEl.currentTime >= rangeStop) {
+      playerEl.pause()
+      playerEl.currentTime = rangeStop
+      rangeStop = null
+    }
+  }
+  onDestroy(() => { if (reverseTimer) clearInterval(reverseTimer) })
   function onKey(e) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return
     const t = e.target
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
     if (!(useVideo || useAudio)) return
-    switch (e.key) {
-      // Hevin 2026-10-21: space = play/pause, always. A focused <video>/<audio> with native
-      // controls already toggles on space — handling it here too would toggle twice (= nothing).
-      case ' ': if (t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO')) break; togglePlay(); e.preventDefault(); break
-      case 'i': case 'I': setIn(); e.preventDefault(); break
-      case 'o': case 'O': setOut(); e.preventDefault(); break
-      case ',': if (frameExact) { stepFrame(-1); e.preventDefault() } break
-      case '.': if (frameExact) { stepFrame(1); e.preventDefault() } break
+    const action = keyAction(e)
+    if (!action) return
+    // A focused <video>/<audio> already toggles on space with its native controls —
+    // doing it here too would toggle twice (= nothing). Let the element have it.
+    if (action === 'toggle' && t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO')) return
+    e.preventDefault()
+    const step = frameExact ? null : 0.1 // audio, or video with unknown fps: 0.1 s
+    switch (action) {
+      case 'toggle': rangeStop = null; stopShuttle(); togglePlay(); break
+      case 'shuttleJ': applyShuttle(shuttleNext(shuttleRate, 'j')); break
+      case 'shuttleK': applyShuttle(0); break
+      case 'shuttleL': applyShuttle(shuttleNext(shuttleRate, 'l')); break
+      case 'markIn': setIn(); break
+      case 'markOut': setOut(); break
+      case 'gotoIn': goTo(inSec); break
+      case 'gotoOut': goTo(outSec); break
+      case 'clearInOut': clearInOut(); break
+      case 'prevFrame': stopShuttle(); step ? nudge(-step) : stepFrame(-1); break
+      case 'nextFrame': stopShuttle(); step ? nudge(step) : stepFrame(1); break
+      case 'back1s': nudge(-1); break
+      case 'fwd1s': nudge(1); break
+      case 'gotoStart': goTo(0); break
+      case 'gotoEnd': goTo((playerEl && playerEl.duration) || mediaDuration || 0); break
+      case 'playRange': playRange(); break
     }
   }
   // Waveform marker drag → set IN/OUT directly (no need to scrub the playhead there)
@@ -892,6 +969,11 @@
       <Eyebrow>Waveform</Eyebrow>
       <Mono dim style="font-size:9.5px;">IN {_tcf(inSec)} · OUT {_tcf(outSec)}</Mono>
     </div>
+    {#if useVideo || useAudio}
+      <div class="keyhints" aria-label="快捷鍵">
+        {#each KEY_HINTS as [k, what]}<span class="kh"><kbd>{k}</kbd>{what}</span>{/each}
+      </div>
+    {/if}
     <Waveform {peaks} progress={playProgress} {inFrac} {outFrac} on:seek={(e) => seekFraction(e.detail)} on:trim={onTrim} />
     {#if frameExact}
       <!-- frame-exact stepper: step one frame, mark at the exact frame boundary.
@@ -1330,4 +1412,6 @@
     font-family: var(--ak-mono); font-size: 11px; cursor: grab; user-select: none;
   }
   .draghandle:active { cursor: grabbing; }
+  .keyhints { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 2px 0 8px; font-size: 10.5px; color: var(--quiet); }
+  .keyhints kbd { font-family: var(--ak-mono); font-size: 10px; color: var(--ink-2); border: 1px solid var(--rule-hi); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
 </style>
