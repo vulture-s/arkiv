@@ -30,6 +30,7 @@
   import { createViewGen } from '../lib/viewGen.js'
   import { shotYearRows, mediaParams } from '../lib/shotYear.js'
   import { parseStartParam } from '../lib/matchTime.js'
+  import { createIdentityNamesLoader } from '../lib/identityNames.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
@@ -1039,18 +1040,16 @@
       if (identitiesId === id) identities = null
     }
   }
-  // Fetched ONCE per page (then again after each add/remove), never "while the list is
-  // empty": a library with no people yet answers [], the assignment invalidates this
-  // reactive block, and `!identityNames.length` is still true — 2026-10-21 measured
-  // ~390 requests/s for as long as a clip stayed selected, which starved the
-  // WebView (waveform drag, shortcuts and drag-out all stalled behind it).
-  let identityNamesLoaded = false
-  async function fetchIdentityNames() {
-    identityNamesLoaded = true
-    try { identityNames = await api.getIdentityNames() } catch (e) { /* autocomplete is optional */ }
-  }
+  // Fetched ONCE per page (then again after each add/remove) — see lib/identityNames.js
+  // for why "while the list is empty" looped (#572). The reactive line below depends
+  // only on `selected`, so assigning identityNames cannot re-run it.
+  const identityNamesLoader = createIdentityNamesLoader(
+    () => api.getIdentityNames(),
+    (names) => { identityNames = names },
+  )
+  const fetchIdentityNames = identityNamesLoader.refresh
   $: if (selected && selected.id !== identitiesId) fetchIdentities(selected.id)
-  $: if (selected && !identityNamesLoaded) fetchIdentityNames()
+  $: if (selected) identityNamesLoader.ensure()
   async function addIdentity(name, range) {
     if (!selected) return false
     const id = selected.id

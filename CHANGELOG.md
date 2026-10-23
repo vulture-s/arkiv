@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### 新增
+- **`scripts/upgrade_desktop_windows.py`：Windows 桌面 App 原地升級**：解除安裝 → 等背景的 NSIS 解除安裝程式真的結束 →
+  殘留的安裝目錄改名移到 `%USERPROFILE%\arkiv-upgrade-backup-<日期>\`（不刪）→ 靜默安裝 → 驗檔案數、
+  `site-packages` 沒有同一套件兩個版本、`config.VERSION` 與登錄檔版本。arkiv 在跑就不動手。
+  素材庫、資料庫與專案登錄不在安裝目錄裡，一律不碰。
+
+### 測試
+- **#572 回歸測試**：人名清單的「一頁只抓一次」抽成 `lib/identityNames.js`，node 測試釘住空清單不會重抓，
+  另檢查 `MainLive.svelte` 驅動它的反應式那一行不讀它寫入的 `identityNames`（#572 就是這條縫）。
+
 ## v1.7.2 - 2026-10-23
 
 **Inspector 用剪輯軟體的快捷鍵操作；匯入失敗時最後一行一定講清楚是哪一支、為什麼。**
