@@ -41,6 +41,14 @@
 .io-ph{position:absolute;top:-8px;bottom:-8px;width:1px;background:var(--ink);left:2%;animation:io-ph 7s infinite}
 @keyframes io-ph{0%{left:2%}14%{left:13%}22%{left:13%}30%{left:27.4%}46%{left:27.4%}60%,90%{left:20%}100%{left:2%}}
 .io-tools{display:flex;align-items:center;gap:8px;margin-top:8px}
+/* transport keys (v1.7.2) — L, K, I, O light up in step with the playhead and the IN/OUT presses */
+.io-keys{display:flex;flex-wrap:wrap;gap:4px 12px;margin:-2px 0 8px;font-size:11px;color:var(--quiet)}
+.io-keys kbd{display:inline-block;font-family:var(--ak-mono);font-size:10.5px;color:var(--ink-2);border:1px solid var(--rule-hi);border-radius:3px;padding:0 5px;margin-right:4px}
+.kb-l kbd{animation:kb-press 7s infinite -.95s}
+.kb-k kbd{animation:kb-press 7s infinite -.14s}
+.kb-i kbd{animation:kb-press 7s infinite}
+.kb-o kbd{animation:kb-press 7s infinite 1.12s}
+@keyframes kb-press{0%,13%{background:transparent;color:var(--ink-2);border-color:var(--rule-hi)}15%{background:var(--cyan);color:var(--bg);border-color:var(--cyan);transform:translateY(1px)}21%,100%{background:transparent;color:var(--ink-2);border-color:var(--rule-hi);transform:none}}
 .io-btn{font-family:var(--ak-mono);font-size:12px;color:var(--ink);border:1px solid var(--rule-hi);border-radius:4px;padding:4px 12px}
 .io-dim{color:var(--quiet)}
 .io-frame,.io-count{font-family:var(--ak-mono);font-size:11.5px;color:var(--quiet);margin-left:8px}
