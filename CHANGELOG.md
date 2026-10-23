@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v1.7.2 - 2026-10-23
+
+**Inspector 用剪輯軟體的快捷鍵操作；匯入失敗時最後一行一定講清楚是哪一支、為什麼。**
+J／K／L、逐格、跳點、只播 IN→OUT，照 Resolve／Premiere 的鍵位；ingest 非 0 結束時結論改印在最後一行，
+`… | tail` 也看得到。
+
+### 新增
+- **Inspector 的剪輯快捷鍵，照 DaVinci Resolve／Premiere 的鍵位**：J／K／L 倒轉、停、快轉（連按加速到 8×）、
+  ←／→ 逐格（Shift 一次一秒）、I／O 設點、Shift＋I／O 跳到 IN／OUT、Home／End、「/」只播 IN 到 OUT、⌥X 清除 IN／OUT。
+  waveform 上方列出這些按鍵。鍵位用實體按鍵位置判斷，中文輸入法開著也能用；⌘／Ctrl 組合鍵一律不攔。
+  `<video>` 不能倒著播，倒轉是以每秒 15 步往回跳模擬。
+
 ### 修正
 - **ingest 非 0 結束時，最後一行一律是 `[exit N] …` 結論**（#393 根因）：失敗檔名＋原因（最多列 3 支）、
   vision 失敗的檔與錯誤、vision 停下的原因；`--vision-only` 中途停、vision 模型沒裝、儲存空間預檢失敗、
