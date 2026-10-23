@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.7.2 - 2026-10-23
+
+**Inspector 用剪輯軟體的快捷鍵操作；匯入失敗時最後一行一定講清楚是哪一支、為什麼。**
+J／K／L、逐格、跳點、只播 IN→OUT，照 Resolve／Premiere 的鍵位；ingest 非 0 結束時結論改印在最後一行，
+`… | tail` 也看得到。
+
 ### 新增
 - **Inspector 的剪輯快捷鍵，照 DaVinci Resolve／Premiere 的鍵位**：J／K／L 倒轉、停、快轉（連按加速到 8×）、
   ←／→ 逐格（Shift 一次一秒）、I／O 設點、Shift＋I／O 跳到 IN／OUT、Home／End、「/」只播 IN 到 OUT、⌥X 清除 IN／OUT。
