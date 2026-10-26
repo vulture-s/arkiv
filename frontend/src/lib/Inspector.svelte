@@ -830,6 +830,22 @@
     {/if}
   </div>
 
+  <!-- Rate sits right under the preview: it is the call made while watching,
+       so it should not be at the far end of the panel past transcript/vision. -->
+  <div class="block rate">
+    <Eyebrow>Rate</Eyebrow>
+    <div class="ratebtns">
+      {#each rateBtns as [r, label]}
+        <button
+          class="ratebtn"
+          class:active={media.rating === r}
+          class:rev={r === 'rev'}
+          on:click={() => onRate && onRate(r)}
+        >{label}</button>
+      {/each}
+    </div>
+  </div>
+
   <div class="block">
     <Eyebrow style="margin-bottom:8px;">Metadata</Eyebrow>
     <div class="metagrid">
@@ -1163,17 +1179,6 @@
   {/if}
 
   <div class="rate">
-    <Eyebrow>Rate</Eyebrow>
-    <div class="ratebtns">
-      {#each rateBtns as [r, label]}
-        <button
-          class="ratebtn"
-          class:active={media.rating === r}
-          class:rev={r === 'rev'}
-          on:click={() => onRate && onRate(r)}
-        >{label}</button>
-      {/each}
-    </div>
     <!-- primary exports = footage→edit handoff (Resolve). Per the scope spec,
          finished-product-adjacent formats (Remotion / YouTube chapters) are NOT
          here — they're demoted to the ancillary "更多" group below. -->
