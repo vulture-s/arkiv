@@ -172,3 +172,24 @@ test('clearing the year drops the key instead of sending an empty one', () => {
   assert.equal('shot_date' in mediaParams({ limit: 500, shotDate: null }), false)
   assert.equal('q' in mediaParams({ limit: 500, query: '   ' }), false)
 })
+
+test('list view has a 拍攝日期 column that reads shot_date, beside 匯入日期 (processed_at)', () => {
+  // The grid card already shows the shoot day; the list view only had 匯入日期,
+  // so an editor scanning the table saw ingest time and nothing else. Pin the
+  // header↔cell pairing, not just the label: a header that says 拍攝日期 over a
+  // cell that reads processed_at would look fine and be wrong.
+  const src = readFileSync(new URL('../src/routes/MainLive.svelte', import.meta.url), 'utf8')
+  const table = src.match(/<table class="medialist">([\s\S]*?)<\/table>/)
+  assert.ok(table, 'list view table not found')
+  const ths = [...table[1].matchAll(/<th\b[^>]*>([^<]*)<\/th>/g)].map((m) => m[1].trim())
+  const tds = [...table[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1])
+  assert.equal(ths.length, tds.length, `header/cell count differ: ${ths.length} vs ${tds.length}`)
+
+  const shot = ths.indexOf('拍攝日期')
+  const ingest = ths.indexOf('匯入日期')
+  assert.ok(shot >= 0, 'no 拍攝日期 column')
+  assert.ok(ingest >= 0, '匯入日期 column was dropped')
+  assert.match(tds[shot], /fmtDate\(m\.shot\)/)
+  assert.doesNotMatch(tds[shot], /processed_at/)
+  assert.match(tds[ingest], /processed_at/)
+})
