@@ -116,7 +116,7 @@
     return `00:${p(m)}:${p(ss)}`
   }
   const fmtSize = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`)
-  // date column for list view — just the YYYY-MM-DD slice of processed_at
+  // date columns for list view (拍攝日 shot_date／匯入日 processed_at) — YYYY-MM-DD slice
   const fmtDate = (iso) => (iso ? String(iso).slice(0, 10) : '—')
 
   // backend rating value (good/ng/review/null) → UI value (good/ng/rev/none).
@@ -1363,6 +1363,7 @@
                 <th class="num">解析度</th>
                 <th class="num">時長</th>
                 <th class="num">容量</th>
+                <th class="num">拍攝日期</th>
                 <th class="num">匯入日期</th>
               </tr>
             </thead>
@@ -1387,6 +1388,8 @@
                   <td class="num mono">{m._raw?.width && m._raw?.height ? `${m._raw.width}×${m._raw.height}` : '—'}</td>
                   <td class="num mono">{m.dur}</td>
                   <td class="num mono">{m.size}</td>
+                  <!-- 拍攝日讀不到就顯示「—」，不 fallback 到入庫日（理由見 toCard 的 shot） -->
+                  <td class="num mono">{fmtDate(m.shot)}</td>
                   <td class="num mono dim">{fmtDate(m._raw?.processed_at)}</td>
                 </tr>
               {/each}
