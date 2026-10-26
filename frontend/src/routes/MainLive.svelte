@@ -1496,7 +1496,7 @@
 
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; position: relative; display: grid; grid-template-rows: 52px 1fr; background: var(--bg); color: var(--ink); overflow: hidden; margin: 0 auto; }
-  .body { display: grid; grid-template-columns: 220px 1fr 340px; min-height: 0; }
+  .body { display: grid; grid-template-columns: 220px 1fr var(--inspector-w); min-height: 0; }
   .center { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   /* flex-wrap so the controls reflow onto a second line on a narrow window instead
      of clipping off the right edge (the artboard is overflow:hidden, so a non-

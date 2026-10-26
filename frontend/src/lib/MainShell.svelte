@@ -30,5 +30,5 @@
     display: grid; background: var(--bg); color: var(--ink); overflow: hidden;
     margin: 0 auto;
   }
-  .body { display: grid; grid-template-columns: 220px 1fr 340px; min-height: 0; }
+  .body { display: grid; grid-template-columns: 220px 1fr var(--inspector-w); min-height: 0; }
 </style>
