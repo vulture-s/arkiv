@@ -104,6 +104,42 @@
   function seekFraction(frac) {
     if (playerEl && playerEl.duration) seekTo(frac * playerEl.duration)
   }
+  // Preview scrub bar. The LUT canvas covers the native control bar (see
+  // .lutcanvas), which left the waveform as the only way to move the playhead.
+  // Dragging only sets currentTime — unlike seekTo it does not start playback,
+  // so the frame under the pointer stays put; a clip that was playing resumes on
+  // release.
+  let scrubbing = false
+  let scrubWasPlaying = false
+  function scrubAt(e, bar) {
+    if (!playerEl || !playerEl.duration) return
+    const r = bar.getBoundingClientRect()
+    const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / (r.width || 1)))
+    playerEl.currentTime = frac * playerEl.duration
+    playProgress = frac
+  }
+  function onScrubDown(e) {
+    if (!playerEl || !playerEl.duration) return
+    scrubbing = true
+    scrubWasPlaying = !playerEl.paused
+    if (scrubWasPlaying) playerEl.pause()
+    e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId)
+    scrubAt(e, e.currentTarget)
+  }
+  function onScrubMove(e) {
+    if (scrubbing) scrubAt(e, e.currentTarget)
+  }
+  function onScrubUp() {
+    if (!scrubbing) return
+    scrubbing = false
+    if (scrubWasPlaying && playerEl) playerEl.play().catch(() => {})
+  }
+  const fmtScrub = (sec) => {
+    sec = Math.max(0, Math.floor(sec || 0))
+    const p = (n) => String(n).padStart(2, '0')
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), ss = sec % 60
+    return h ? `${h}:${p(m)}:${p(ss)}` : `${p(m)}:${p(ss)}`
+  }
   // IN/OUT trim points (seconds). The backend export accepts ?in_s&out_s, so a
   // set range exports just that sub-clip (EDL/SRT/FCPXML). Set at the playhead.
   let inSec = null
@@ -797,6 +833,19 @@
       {#if lutShown}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
         <canvas bind:this={lutCanvas} class="lutcanvas" on:click={lutTogglePlay} title="點擊播放／暫停（空白鍵）"></canvas>
+        <!-- The canvas hides the native control bar, scrubber included, so it gets
+             its own. Only while the canvas is up: without it the native bar works. -->
+        <div class="scrubbar">
+          <Mono style="font-size:10.5px;color:#f3f2ee;">{fmtScrub(playProgress * mediaDuration)}</Mono>
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <div class="scrubtrack" class:dragging={scrubbing} title="拖動時間軸"
+            on:pointerdown={onScrubDown} on:pointermove={onScrubMove}
+            on:pointerup={onScrubUp} on:pointercancel={onScrubUp}>
+            <div class="scrubfill" style="width:{playProgress * 100}%"></div>
+            <div class="scrubhead" style="left:{playProgress * 100}%"></div>
+          </div>
+          <Mono style="font-size:10.5px;color:#f3f2ee;">{fmtScrub(mediaDuration)}</Mono>
+        </div>
       {/if}
       {#if lutApplies}
         <div class="lutpill">
@@ -1256,6 +1305,20 @@
   /* LUT preview: drawn over the video (same contain box); takes over play/pause
      because it covers the native control bar. */
   .lutcanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; cursor: pointer; }
+  .scrubbar {
+    position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 8px;
+    padding: 14px 10px 8px; background-image: linear-gradient(to top, rgba(0, 0, 0, 0.6), transparent);
+  }
+  .scrubtrack { flex: 1; height: 14px; position: relative; cursor: pointer; touch-action: none; }
+  .scrubtrack::before {
+    content: ''; position: absolute; left: 0; right: 0; top: 6px; height: 2px; background: rgba(243, 242, 238, 0.3);
+  }
+  .scrubfill { position: absolute; left: 0; top: 6px; height: 2px; background: #f3f2ee; pointer-events: none; }
+  .scrubhead {
+    position: absolute; top: 3px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%;
+    background: #f3f2ee; pointer-events: none;
+  }
+  .scrubtrack:hover::before, .scrubtrack.dragging::before { height: 4px; top: 5px; }
   .lutpill { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; }
   .lutbtn { font-size: 10px; padding: 2px 8px; background: rgba(0,0,0,0.55); color: #f3f2ee; border-color: rgba(255,255,255,0.25); }
   .lutbtn.on { border-color: #e8b04a; color: #e8b04a; }
