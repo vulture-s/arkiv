@@ -18,6 +18,9 @@ body { margin: 0; padding: 0; min-height: 100%; }
   /* ---------- Type stack ---------- */
   --ak-display: 'Archivo Black', 'Helvetica Now Display Black', 'Neue Haas Grotesk Display Black', 'Inter', sans-serif;
   --ak-sans: 'Inter', 'Noto Sans TC', system-ui, -apple-system, sans-serif;
+  /* Inspector column width — shared by the body grid and the top bar so their
+     rules line up. 340 clipped the export row (字幕 MARKER ran off the edge). */
+  --inspector-w: 400px;
   --ak-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
 
   /* ---------- Type scale ---------- */

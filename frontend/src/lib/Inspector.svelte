@@ -879,8 +879,8 @@
     {/if}
   </div>
 
-  <!-- Rate sits right under the preview: it is the call made while watching,
-       so it should not be at the far end of the panel past transcript/vision. -->
+  <!-- Rate + export sit right under the preview: rating is the call made while
+       watching, export the next step — neither belongs past transcript/vision. -->
   <div class="block rate">
     <Eyebrow>Rate</Eyebrow>
     <div class="ratebtns">
@@ -893,6 +893,42 @@
         >{label}</button>
       {/each}
     </div>
+    <!-- primary exports = footage→edit handoff (Resolve). Per the scope spec,
+         finished-product-adjacent formats (Remotion / YouTube chapters) are NOT
+         here — they're demoted to the ancillary "更多" group below. -->
+    <div class="exports">
+      {#if onExport}
+        {#each EXPORT_FMTS as fmt}
+          <button class="ak-btn exp" title={(fmt === 'edl' && edlTitle) || EXPORT_TITLES[fmt] || ''}
+                  disabled={!!exportBusy} aria-busy={exportBusy === `clip:${fmt}`}
+                  on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{fmt === 'edl' && edlOffSpec ? ' ⚠' : ''}{trimArgs ? ' ✂' : ''}{exportBusy === `clip:${fmt}` ? ' …' : ''}</button>
+        {/each}
+        <button class="ak-btn exp" title={TRANSCRIPT_MARKERS_TITLE}
+                disabled={!!exportBusy} aria-busy={exportBusy === 'clip:fcpxml.transcript'}
+                on:click={() => onExport('fcpxml', { ...(trimArgs || {}), markers: 'transcript' })}
+        >字幕 MARKER{trimArgs ? ' ✂' : ''}{exportBusy === 'clip:fcpxml.transcript' ? ' …' : ''}</button>
+      {:else}
+        {#each EXPORT_FMTS as fmt}
+          <button class="ak-btn exp">{fmt.toUpperCase()}</button>
+        {/each}
+      {/if}
+    </div>
+    {#if onChapters || onRemotion}
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+      <span class="moreexp" on:click={() => (showMore = !showMore)}>{showMore ? '成品輔助 ▴' : '更多 · 成品輔助 ▾'}</span>
+      {#if showMore}
+        <div class="exports sub">
+          {#if onChapters}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'chapters'} on:click={() => onChapters('youtube')} title="YouTube 章節文字（成品輔助，非 arkiv 核心）">YT 章節</button>{/if}
+          {#if onRemotion}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'remotion'} on:click={() => onRemotion(trimArgs)} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion{trimArgs ? ' ✂' : ''}{exportBusy === 'remotion' ? ' …' : ''}</button>{/if}
+        </div>
+      {/if}
+    {/if}
+    {#if onReveal}
+      <button class="ak-btn reveal" on:click={onReveal} title="在 Finder / 檔案總管中顯示原始檔">⊙ 在 Finder 顯示</button>
+    {/if}
+    {#if onDelete}
+      <button class="ak-btn del" on:click={onDelete} title="刪除素材（移至回收桶，可還原）">刪除素材</button>
+    {/if}
   </div>
 
   <div class="block">
@@ -1227,44 +1263,6 @@
     </div>
   {/if}
 
-  <div class="rate">
-    <!-- primary exports = footage→edit handoff (Resolve). Per the scope spec,
-         finished-product-adjacent formats (Remotion / YouTube chapters) are NOT
-         here — they're demoted to the ancillary "更多" group below. -->
-    <div class="exports">
-      {#if onExport}
-        {#each EXPORT_FMTS as fmt}
-          <button class="ak-btn exp" title={(fmt === 'edl' && edlTitle) || EXPORT_TITLES[fmt] || ''}
-                  disabled={!!exportBusy} aria-busy={exportBusy === `clip:${fmt}`}
-                  on:click={() => onExport(fmt, trimArgs)}>{fmt.toUpperCase()}{fmt === 'edl' && edlOffSpec ? ' ⚠' : ''}{trimArgs ? ' ✂' : ''}{exportBusy === `clip:${fmt}` ? ' …' : ''}</button>
-        {/each}
-        <button class="ak-btn exp" title={TRANSCRIPT_MARKERS_TITLE}
-                disabled={!!exportBusy} aria-busy={exportBusy === 'clip:fcpxml.transcript'}
-                on:click={() => onExport('fcpxml', { ...(trimArgs || {}), markers: 'transcript' })}
-        >字幕 MARKER{trimArgs ? ' ✂' : ''}{exportBusy === 'clip:fcpxml.transcript' ? ' …' : ''}</button>
-      {:else}
-        {#each EXPORT_FMTS as fmt}
-          <button class="ak-btn exp">{fmt.toUpperCase()}</button>
-        {/each}
-      {/if}
-    </div>
-    {#if onChapters || onRemotion}
-      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-      <span class="moreexp" on:click={() => (showMore = !showMore)}>{showMore ? '成品輔助 ▴' : '更多 · 成品輔助 ▾'}</span>
-      {#if showMore}
-        <div class="exports sub">
-          {#if onChapters}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'chapters'} on:click={() => onChapters('youtube')} title="YouTube 章節文字（成品輔助，非 arkiv 核心）">YT 章節</button>{/if}
-          {#if onRemotion}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'remotion'} on:click={() => onRemotion(trimArgs)} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion{trimArgs ? ' ✂' : ''}{exportBusy === 'remotion' ? ' …' : ''}</button>{/if}
-        </div>
-      {/if}
-    {/if}
-    {#if onReveal}
-      <button class="ak-btn reveal" on:click={onReveal} title="在 Finder / 檔案總管中顯示原始檔">⊙ 在 Finder 顯示</button>
-    {/if}
-    {#if onDelete}
-      <button class="ak-btn del" on:click={onDelete} title="刪除素材（移至回收桶，可還原）">刪除素材</button>
-    {/if}
-  </div>
 </aside>
 
 <style>
@@ -1453,7 +1451,7 @@
   }
   .ratebtn.rev { border: 1px dashed var(--rule-hi); }
   .ratebtn.active { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); font-weight: 700; }
-  .exports { display: flex; gap: 6px; margin-top: 6px; }
+  .exports { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .exp { flex: 1; }
   /* scene timeline */
   .scenes { display: flex; flex-direction: column; }

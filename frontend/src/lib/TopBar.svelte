@@ -64,9 +64,9 @@
 
 <style>
   .topbar {
-    /* 3rd col = 340px so the search box's right rule lines up with the body's
-       340px inspector column below (was `auto`, which drifted). */
-    display: grid; grid-template-columns: 220px 1fr 340px; align-items: center;
+    /* 3rd col = --inspector-w so the search box's right rule lines up with the
+       body's inspector column below (was `auto`, which drifted). */
+    display: grid; grid-template-columns: 220px 1fr var(--inspector-w); align-items: center;
     border-bottom: 1px solid var(--rule); padding-right: 16px; background: var(--bg);
   }
   .logo { padding-left: 16px; display: flex; align-items: center; gap: 12px; }
