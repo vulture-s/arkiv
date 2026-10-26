@@ -31,6 +31,7 @@
   import { shotYearRows, mediaParams } from '../lib/shotYear.js'
   import { parseStartParam } from '../lib/matchTime.js'
   import { createIdentityNamesLoader } from '../lib/identityNames.js'
+  import { rateMany } from '../lib/bulkRating.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
@@ -1225,6 +1226,31 @@
     }
   }
 
+  // Batch rating for the multi-select bar — same optimistic/revert shape as rate(),
+  // but per clip: only the rows whose PATCH failed go back to their old rating.
+  let bulkRateBusy = false
+  async function rateBulk(uiRating) {
+    if (!picked.length || bulkRateBusy) return
+    const ids = [...picked]
+    const want = new Set(ids)
+    const prev = new Map(items.filter((m) => want.has(m.id)).map((m) => [m.id, m.rating]))
+    items = items.map((m) => (want.has(m.id) ? { ...m, rating: uiRating } : m))
+    bulkRateBusy = true
+    try {
+      const { failed } = await rateMany(ids, RATING_MAP[uiRating] ?? null, api.setRating)
+      if (failed.length) {
+        const bad = new Set(failed.map((f) => f.id))
+        items = items.map((m) => (bad.has(m.id) && prev.has(m.id) ? { ...m, rating: prev.get(m.id) } : m))
+        pushToast(`rating 寫入失敗 ${failed.length}/${ids.length} 支: ${failed[0].error}`, 'error')
+      } else {
+        pushToast(`已將 ${ids.length} 支設為 ${RATE_LABELS[uiRating]}`)
+      }
+    } finally {
+      bulkRateBusy = false
+    }
+  }
+  const RATE_LABELS = { good: 'GOOD', rev: 'REVIEW', ng: 'N·G', none: '未評分' }
+
   // Persist the inspector's IN/OUT marks (debounced upstream in the inspector).
   // Optimistically fold into the local detail so re-opening the clip restores the
   // range without a refetch; toast on write failure.
@@ -1278,6 +1304,13 @@
         <div class="exportbar">
           <Mono style="font-size:11px;letter-spacing:0.04em;">已選 {picked.length} 支</Mono>
           <div class="expbtns">
+            <span class="barlabel">評分</span>
+            {#each ['good', 'rev', 'ng', 'none'] as r}
+              <button class="ak-btn expbtn" on:click={() => rateBulk(r)} disabled={bulkRateBusy}
+                      title={r === 'none' ? '清除所選的評分' : `所選全部設為 ${RATE_LABELS[r]}`}
+              >{r === 'none' ? '—' : RATE_LABELS[r]}</button>
+            {/each}
+            <div class="barvrule"></div>
             <span class="barlabel">時間軸</span>
             {#each EXPORT_FMTS as fmt}
               <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}
