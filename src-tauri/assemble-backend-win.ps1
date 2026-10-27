@@ -253,9 +253,13 @@ p = silero_onnx.speech_probs(np.zeros(16000, dtype=np.float32), silero_onnx.Sile
 assert len(p) == 32 and max(p) < 0.5, p
 print("  ok: silero VAD on onnxruntime, torch absent")
 '@
-& $pyExe -I -c $smoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
+& $pyExe -B -I -c $smoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
 if ($LASTEXITCODE -ne 0) { throw "VAD smoke failed (exit $LASTEXITCODE)" }
 
+# Both smokes run with -B: they execute the bundle in place, and without it
+# Python writes __pycache__ into it -- 1,177 files that then shipped (measured
+# on the first dry-run of this change).
+#
 # Import smoke on the trimmed tree (same as the .sh): catches an exclude that
 # went too far -- a package that imports its own tests\, or something needing Tk.
 # mcp_server is NOT in the Windows list, unlike the .sh: under PYTHONPATH (how
@@ -276,7 +280,7 @@ New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
 $env:ARKIV_PROJECT_ROOT = $smokeRoot
 Push-Location (Join-Path $BACKEND 'src')
 try {
-    & $pyExe -I -c $importSmoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
+    & $pyExe -B -I -c $importSmoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
     if ($LASTEXITCODE -ne 0) { throw "import smoke failed (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location

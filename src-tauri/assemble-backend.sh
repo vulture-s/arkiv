@@ -154,7 +154,7 @@ fi
 # exactly what a slimmed bundle would get wrong silently — ingest would only
 # break on the first clip a user transcribes.
 echo "[assemble] VAD smoke (bundled python, no torch)"
-"$BACKEND/python/bin/python3" -I -c '
+"$BACKEND/python/bin/python3" -B -I -c '
 import importlib.util, sys
 sys.path[:0] = sys.argv[1:]
 assert importlib.util.find_spec("torch") is None, "torch is in the bundle again"
@@ -164,12 +164,16 @@ assert len(p) == 32 and max(p) < 0.5, p
 print("  ok: silero VAD on onnxruntime, torch absent")
 ' "$BACKEND/src" "$BACKEND/site-packages"
 
+# Both smokes run with -B: they execute the bundle in place, and without it
+# Python writes __pycache__ into it -- 1,177 files that then shipped (measured
+# on the first dry-run of this change).
+#
 # Import smoke: every top-level module the server and the CLI entry points load,
 # on the trimmed tree. This is what catches an exclude above that went too far —
 # a package that does import its own tests/, or something that needs Tk.
 echo "[assemble] import smoke (bundled python, trimmed tree)"
 SMOKE_ROOT="$(mktemp -d)"
-( cd "$BACKEND/src" && ARKIV_PROJECT_ROOT="$SMOKE_ROOT" "$BACKEND/python/bin/python3" -I -c '
+( cd "$BACKEND/src" && ARKIV_PROJECT_ROOT="$SMOKE_ROOT" "$BACKEND/python/bin/python3" -B -I -c '
 import importlib, sys
 sys.path[:0] = sys.argv[1:]
 for m in ("server", "ingest", "transcribe", "vision", "embed", "search", "mcp_server", "export"):
