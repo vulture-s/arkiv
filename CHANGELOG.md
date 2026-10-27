@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### 改善
+- **安裝包不再帶 torch（Windows 少約一半的檔案）**：torch 原本只為了跑 silero VAD（判斷哪幾段有人講話），
+  Windows 安裝目錄 25,764 個檔裡它佔 11,956 個、macOS .app 裡 526 MB。VAD 改在 onnxruntime 上跑同一個
+  silero 模型（`silero_onnx.py`，模型隨原始碼附在 `models/`，MIT），切段結果與 torch 版逐一相同：
+  真實素材 50 支、54 分鐘全數一致，CI 另以 torch 版產生的參考值釘住。Linux／Docker 連帶不再裝 torch 與
+  NVIDIA CUDA 套件。macOS 的 mlx-whisper 仍列 torch 為依賴，但轉錄路徑不用它，打包時排除；
+  打包腳本最後會用打包內的 Python 實跑一次 VAD、並確認 torch 不在裡面。
+
 ## v1.7.3 - 2026-10-27
 
 **看片時順手的四件事：列表看得到拍攝日、套 LUT 也能拖時間軸、評分和匯出搬到預覽下方、一次評很多支。**

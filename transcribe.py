@@ -15,8 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from silero_vad import load_silero_vad, get_speech_timestamps
-import torch
+from silero_onnx import SileroVAD, get_speech_timestamps
 
 import progress
 import subtitle
@@ -179,7 +178,9 @@ def _get_vad_model():
     """Lazy-load Silero VAD model."""
     global _vad_model
     if _vad_model is None:
-        _vad_model = load_silero_vad()
+        # onnxruntime, not torch: torch was in the bundle for this call alone
+        # (see silero_onnx.py for the measured file/size cost and equivalence).
+        _vad_model = SileroVAD()
     return _vad_model
 
 
@@ -210,8 +211,7 @@ def _vad_filter(wav_path: str, sample_rate: int = 16000):
     if sr != sample_rate:
         return wav_path, None  # safety: skip VAD if sample rate mismatch
 
-    tensor = torch.from_numpy(audio)
-    stamps = get_speech_timestamps(tensor, _get_vad_model(),
+    stamps = get_speech_timestamps(audio, _get_vad_model(),
                                    sampling_rate=sample_rate,
                                    min_silence_duration_ms=300,
                                    speech_pad_ms=150,

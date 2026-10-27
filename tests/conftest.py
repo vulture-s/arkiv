@@ -81,17 +81,7 @@ def _install_fake_modules():
             return False
 
     fake_torch.cuda = _Cuda()
-    # `_vad_filter` does `torch.from_numpy(audio)` purely to hand silero a tensor;
-    # it never calls a tensor method itself. Identity keeps the numpy array flowing
-    # through, which is what the energy-VAD fixture below wants to slice. Without
-    # this the function cannot be executed at all — see the note on soundfile.
-    fake_torch.from_numpy = lambda a: a
     sys.modules.setdefault("torch", fake_torch)
-
-    fake_silero = types.ModuleType("silero_vad")
-    fake_silero.get_speech_timestamps = lambda *args, **kwargs: []
-    fake_silero.load_silero_vad = lambda *args, **kwargs: object()
-    sys.modules.setdefault("silero_vad", fake_silero)
 
     # soundfile is a real dependency (requirements.txt), but CI does NOT install it
     # — ci.yml hand-picks its packages and soundfile is not on the list — so the fake
@@ -248,13 +238,13 @@ def synth_wav(tmp_path):
 def energy_vad(monkeypatch):
     """Replace Silero with a deterministic energy gate, in the module that uses it.
 
-    `transcribe.py:14` does `from silero_vad import get_speech_timestamps`, so the
-    name is bound into `transcribe` — patch it there, not on the fake module.
+    `transcribe.py` does `from silero_onnx import get_speech_timestamps`, so the
+    name is bound into `transcribe` — patch it there, not on silero_onnx.
 
-    Why not the real Silero: `load_silero_vad()` downloads a model (three runners,
-    three chances to flake), the torch wheel CI deliberately avoids is ~2 GB, and
-    real stamps move with the model version — the test would then assert against a
-    moving target instead of against our own arithmetic. Our arithmetic is what broke.
+    Why not the real Silero: real stamps move with the model version — the test
+    would then assert against a moving target instead of against our own
+    arithmetic. Our arithmetic is what broke. (The real model is exercised on its
+    own in tests/test_silero_onnx.py.)
     """
     import numpy as np
 
@@ -283,6 +273,17 @@ def energy_vad(monkeypatch):
     transcribe = importlib.import_module("transcribe")
     monkeypatch.setattr(transcribe, "get_speech_timestamps", _fake)
     return _fake
+
+
+@pytest.fixture(autouse=True)
+def _no_real_vad_model(monkeypatch):
+    """`_vad_filter` builds the onnxruntime VAD session before it calls the
+    (usually patched) `get_speech_timestamps`. CI hand-picks its packages and
+    onnxruntime is not one of them, so hand those tests a placeholder model —
+    the same thing the old fake `load_silero_vad()` returned."""
+    transcribe = sys.modules.get("transcribe")
+    if transcribe is not None:
+        monkeypatch.setattr(transcribe, "_get_vad_model", lambda: object())
 
 
 @pytest.fixture(autouse=True)
