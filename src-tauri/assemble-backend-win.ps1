@@ -15,19 +15,14 @@
 # Three things differ from the .sh beyond path separators:
 #
 #   1. The venv layout is `Lib\site-packages`, not `lib/python3.12/site-packages`.
-#   2. The source venv defaults to .venv-pack, NOT .venv. On a dev box with an
-#      NVIDIA card `pip install -r requirements.txt` resolves silero-vad's torch
-#      to the +cuXXX build -- 4.2 GB against ~250 MB for the CPU wheel, measured
-#      on the Win11/RTX 4070 box on 2026-08-12 -- and all of it would land in the
-#      installer. torch here only backs silero VAD (transcribe.py:14-15);
-#      transcription itself runs on ctranslate2, so the CPU build costs nothing
-#      a user would feel. Build .venv-pack with:
+#   2. The source venv defaults to .venv-pack, NOT .venv: a clean venv holding
+#      only what requirements.txt resolves to, rather than whatever a dev box
+#      has accumulated. (It used to exist to force the CPU torch wheel -- the
+#      +cuXXX build is 4.2 GB -- but torch is gone: silero VAD runs on
+#      onnxruntime via silero_onnx.py, and nothing else pulls torch on Windows.)
+#      Build .venv-pack with:
 #        py -3.12 -m venv .venv-pack
-#        .venv-pack\Scripts\pip install --index-url https://download.pytorch.org/whl/cpu "torch==<the torch pin in constraints.txt>"
 #        .venv-pack\Scripts\pip install -r requirements.txt -c constraints.txt
-#      (No torchaudio: nothing in arkiv imports it and silero-vad only wants it
-#      for extras -- and torchaudio 2.9.1 pins torch==2.9.1, which held the
-#      Windows build three torch minors behind the Mac one.)
 #      Override with $env:ARKIV_PACKAGING_VENV to point somewhere else.
 #   3. Copies go through robocopy rather than rsync -- it is native on every
 #      Windows box and on the windows-latest runner, so the script has no
@@ -101,12 +96,11 @@ if (-not (Test-Path $VENV_SP)) {
     Write-Error @"
 $VENV_SP not found.
 
-Build the packaging venv first (CPU-only torch -- see the header of this script for why):
+Build the packaging venv first (see the header of this script):
   py -3.12 -m venv .venv-pack
-  .venv-pack\Scripts\pip install --index-url https://download.pytorch.org/whl/cpu "torch==<the torch pin in constraints.txt>"
   .venv-pack\Scripts\pip install -r requirements.txt -c constraints.txt
 
-Or point `$env:ARKIV_PACKAGING_VENV` at an existing CPU-only venv.
+Or point `$env:ARKIV_PACKAGING_VENV` at an existing venv.
 "@
     exit 1
 }
@@ -138,11 +132,12 @@ $pyExe = Join-Path $BACKEND 'python\python.exe'
 if (-not (Test-Path $pyExe)) { throw "expected $pyExe after extracting the PBS tarball" }
 
 Write-Host "[assemble] site-packages from $PACK_VENV (trim caches + chromadb transitives arkiv never imports at runtime)"
-# arkiv embeds via ollama, not chromadb's built-in onnx/k8s embedding paths, so
-# kubernetes\ and onnxruntime\ (~155 MB) are dead weight in the bundle. Drop
-# bytecode caches too. If a future feature needs them, remove the excludes.
+# arkiv embeds via ollama, not chromadb's built-in k8s embedding path, so
+# kubernetes\ is dead weight in the bundle. Drop bytecode caches too.
+# onnxruntime\ SHIPS: silero VAD runs on it (silero_onnx.py) -- it used to be
+# excluded here as a chromadb-only transitive.
 Invoke-Robocopy -Source $VENV_SP -Dest (Join-Path $BACKEND 'site-packages') -ExtraArgs @(
-    '/XD', '__pycache__', 'kubernetes', 'onnxruntime',
+    '/XD', '__pycache__', 'kubernetes',
     '/XF', '*.pyc'
 )
 
@@ -231,6 +226,21 @@ if (-not (Test-Path (Join-Path $BACKEND 'src\frontend\dist\index.html'))) {
     Write-Warning "frontend\dist\index.html missing -- run 'cd frontend; npm run build' first,"
     Write-Warning "      or the packaged app will serve the fallback page."
 }
+
+# VAD smoke on the bundled interpreter and bundled tree only (same as the .sh):
+# the model must load and run on onnxruntime, and torch must be absent.
+Write-Host "[assemble] VAD smoke (bundled python, no torch)"
+$smoke = @'
+import importlib.util, sys
+sys.path[:0] = sys.argv[1:]
+assert importlib.util.find_spec("torch") is None, "torch is in the bundle again"
+import numpy as np, silero_onnx
+p = silero_onnx.speech_probs(np.zeros(16000, dtype=np.float32), silero_onnx.SileroVAD())
+assert len(p) == 32 and max(p) < 0.5, p
+print("  ok: silero VAD on onnxruntime, torch absent")
+'@
+& $pyExe -I -c $smoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
+if ($LASTEXITCODE -ne 0) { throw "VAD smoke failed (exit $LASTEXITCODE)" }
 
 Write-Host "[assemble] done:"
 foreach ($d in '', 'python', 'site-packages', 'src') {

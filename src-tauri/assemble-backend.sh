@@ -8,7 +8,7 @@
 # The backend is python-build-standalone (a portable, self-contained CPython) +
 # the project's already-built site-packages + the arkiv Python source + the built
 # SPA. It is deliberately NOT PyInstaller: the spike (2026-07-17) showed the
-# native-heavy tree (torch / mlx / chromadb / mlx-whisper / silero-vad) imports
+# native-heavy tree (mlx / chromadb / mlx-whisper / onnxruntime) imports
 # and boots cleanly under a stock portable interpreter, sidestepping the
 # hidden-import/dylib whack-a-mole PyInstaller would demand for this dep set.
 #
@@ -42,12 +42,25 @@ mv "$TMP/python" "$BACKEND/python"
 
 echo "[assemble] site-packages (trim caches + chromadb transitives arkiv never imports at runtime)"
 mkdir -p "$BACKEND/site-packages"
-# arkiv embeds via ollama, not chromadb's built-in onnx/k8s embedding paths, so
-# kubernetes/ and onnxruntime/ (~155 MB) are dead weight in the bundle. Drop
-# bytecode caches too. If a future feature needs them, remove the excludes.
+# arkiv embeds via ollama, not chromadb's built-in k8s embedding path, so
+# kubernetes/ is dead weight in the bundle. Drop bytecode caches too.
+#
+# onnxruntime/ SHIPS: silero VAD runs on it (silero_onnx.py). It used to be
+# excluded here as a chromadb-only transitive; that is no longer true.
+#
+# torch/ does NOT ship (+ the packages only torch pulls in). mlx-whisper lists
+# torch as a hard requirement, so pip installs it on macOS, but nothing on the
+# transcription path imports it — only mlx_whisper/torch_whisper.py, a
+# checkpoint-conversion helper arkiv never calls. It was 12,610 files / 526 MB
+# of the .app. The smoke check after this copy proves VAD loads without it.
 rsync -a --delete \
   --exclude '__pycache__/' --exclude '*.pyc' \
-  --exclude 'kubernetes/' --exclude 'onnxruntime/' \
+  --exclude 'kubernetes/' \
+  --exclude 'torch/' --exclude 'torch-*.dist-info/' \
+  --exclude 'torchgen/' --exclude 'functorch/' \
+  --exclude 'sympy/' --exclude 'sympy-*.dist-info/' \
+  --exclude 'mpmath/' --exclude 'mpmath-*.dist-info/' \
+  --exclude 'networkx/' --exclude 'networkx-*.dist-info/' \
   "$VENV_SP/" "$BACKEND/site-packages/"
 
 echo "[assemble] arkiv source (runtime .py + routers + built SPA; no tests/docs/venv)"
@@ -121,6 +134,21 @@ if [ ! -f "$BACKEND/src/frontend/dist/index.html" ]; then
   echo "WARN: frontend/dist/index.html missing — run 'cd frontend && npm run build' first," >&2
   echo "      or the packaged app will serve the fallback page." >&2
 fi
+
+# VAD smoke, on the bundled interpreter with the bundled tree only: the model
+# must load and run on onnxruntime, and torch must be absent. Either failing is
+# exactly what a slimmed bundle would get wrong silently — ingest would only
+# break on the first clip a user transcribes.
+echo "[assemble] VAD smoke (bundled python, no torch)"
+"$BACKEND/python/bin/python3" -I -c '
+import importlib.util, sys
+sys.path[:0] = sys.argv[1:]
+assert importlib.util.find_spec("torch") is None, "torch is in the bundle again"
+import numpy as np, silero_onnx
+p = silero_onnx.speech_probs(np.zeros(16000, dtype=np.float32), silero_onnx.SileroVAD())
+assert len(p) == 32 and max(p) < 0.5, p
+print("  ok: silero VAD on onnxruntime, torch absent")
+' "$BACKEND/src" "$BACKEND/site-packages"
 
 echo "[assemble] done:"
 du -sh "$BACKEND" "$BACKEND"/python "$BACKEND"/site-packages "$BACKEND"/src 2>/dev/null || true

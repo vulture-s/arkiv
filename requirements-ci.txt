@@ -1,6 +1,6 @@
 # The lean set CI's test legs install on top of requirements-dev.txt — the real
 # (non-faked) deps the suite imports. Heavy backends faked in tests/conftest.py
-# (chromadb, silero-vad/torch, faster-whisper) are deliberately NOT here.
+# (chromadb, faster-whisper) are deliberately NOT here.
 # Versions come from constraints.txt / constraints-py39.txt (`-c`), not from the
 # floors below — the floors only say what the code needs.
 fastapi>=0.140.6; python_version >= "3.10"
@@ -17,6 +17,7 @@ psutil>=7.2.2
 whisper-guard>=0.3.3
 python-multipart>=0.0.9
 numpy                                   # pytest.approx
+onnxruntime>=1.16.1                     # silero_onnx: tests/test_silero_onnx.py runs the real VAD model
 mlx-whisper>=0.4; platform_system == "Darwin"   # install-closure walk resolves mlx
 opencc>=1.4.1; python_version >= "3.10" and platform_system != "Windows"
 mcp>=1.2,<2; python_version >= "3.10"
