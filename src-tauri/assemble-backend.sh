@@ -40,6 +40,16 @@ curl -fsSL "$PBS_URL" -o "$TMP/pbs.tar.gz"
 tar xzf "$TMP/pbs.tar.gz" -C "$TMP"     # extracts ./python/
 mv "$TMP/python" "$BACKEND/python"
 
+# Trim the interpreter. pip: arkiv never installs anything at runtime. Tk/IDLE/
+# turtle: no GUI toolkit is used (the UI is the Tauri webview) — grep the tree
+# for tkinter before undoing this. ~1,200 files. The import smoke at the end
+# boots every top-level module on this trimmed tree.
+PYLIB="$BACKEND/python/lib"
+rm -rf "$PYLIB"/python3.*/site-packages/pip "$PYLIB"/python3.*/site-packages/pip-*.dist-info \
+       "$PYLIB"/python3.*/tkinter "$PYLIB"/python3.*/idlelib "$PYLIB"/python3.*/turtledemo \
+       "$PYLIB"/python3.*/lib-dynload/_tkinter* \
+       "$PYLIB"/tcl[0-9]* "$PYLIB"/tk[0-9]* "$PYLIB"/itcl[0-9]* "$PYLIB"/thread[0-9]* "$PYLIB"/libtcl*
+
 echo "[assemble] site-packages (trim caches + chromadb transitives arkiv never imports at runtime)"
 mkdir -p "$BACKEND/site-packages"
 # arkiv embeds via ollama, not chromadb's built-in k8s embedding path, so
@@ -56,6 +66,7 @@ mkdir -p "$BACKEND/site-packages"
 rsync -a --delete \
   --exclude '__pycache__/' --exclude '*.pyc' \
   --exclude 'kubernetes/' \
+  --exclude 'tests/' --exclude 'pip/' --exclude 'pip-*.dist-info/' \
   --exclude 'torch/' --exclude 'torch-*.dist-info/' \
   --exclude 'torchgen/' --exclude 'functorch/' \
   --exclude 'sympy/' --exclude 'sympy-*.dist-info/' \
@@ -135,6 +146,9 @@ if [ ! -f "$BACKEND/src/frontend/dist/index.html" ]; then
   echo "      or the packaged app will serve the fallback page." >&2
 fi
 
+# tests/ (≈1,700 files: numpy/scipy/numba ship their test suites) and pip/ are
+# excluded above as well; nothing imports a package's own tests at runtime.
+#
 # VAD smoke, on the bundled interpreter with the bundled tree only: the model
 # must load and run on onnxruntime, and torch must be absent. Either failing is
 # exactly what a slimmed bundle would get wrong silently — ingest would only
@@ -149,6 +163,20 @@ p = silero_onnx.speech_probs(np.zeros(16000, dtype=np.float32), silero_onnx.Sile
 assert len(p) == 32 and max(p) < 0.5, p
 print("  ok: silero VAD on onnxruntime, torch absent")
 ' "$BACKEND/src" "$BACKEND/site-packages"
+
+# Import smoke: every top-level module the server and the CLI entry points load,
+# on the trimmed tree. This is what catches an exclude above that went too far —
+# a package that does import its own tests/, or something that needs Tk.
+echo "[assemble] import smoke (bundled python, trimmed tree)"
+SMOKE_ROOT="$(mktemp -d)"
+( cd "$BACKEND/src" && ARKIV_PROJECT_ROOT="$SMOKE_ROOT" "$BACKEND/python/bin/python3" -I -c '
+import importlib, sys
+sys.path[:0] = sys.argv[1:]
+for m in ("server", "ingest", "transcribe", "vision", "embed", "search", "mcp_server", "export"):
+    importlib.import_module(m)
+print("  ok: server + ingest + transcribe + mcp import on the trimmed tree")
+' "$BACKEND/src" "$BACKEND/site-packages" )
+rm -rf "$SMOKE_ROOT"
 
 echo "[assemble] done:"
 du -sh "$BACKEND" "$BACKEND"/python "$BACKEND"/site-packages "$BACKEND"/src 2>/dev/null || true

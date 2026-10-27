@@ -9,6 +9,9 @@
   真實素材 50 支、54 分鐘全數一致，CI 另以 torch 版產生的參考值釘住。Linux／Docker 連帶不再裝 torch 與
   NVIDIA CUDA 套件。macOS 的 mlx-whisper 仍列 torch 為依賴，但轉錄路徑不用它，打包時排除；
   打包腳本最後會用打包內的 Python 實跑一次 VAD、並確認 torch 不在裡面。
+- **安裝包再瘦一輪**：打包時不再放入各套件自帶的測試（numpy／scipy／numba 等約 1,700 個檔）、pip，以及
+  Python 內建的 Tk／IDLE（arkiv 的介面是 Tauri，用不到）。打包最後會用精簡後的內容把 server、ingest、
+  轉錄、MCP 全部載入一次，排除過頭會直接讓打包失敗。
 
 ## v1.7.3 - 2026-10-27
 

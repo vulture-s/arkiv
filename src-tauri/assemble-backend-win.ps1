@@ -131,13 +131,27 @@ try {
 $pyExe = Join-Path $BACKEND 'python\python.exe'
 if (-not (Test-Path $pyExe)) { throw "expected $pyExe after extracting the PBS tarball" }
 
+# Trim the interpreter (same as the .sh). pip: arkiv never installs anything at
+# runtime. Tk/IDLE/turtle: no GUI toolkit is used (the UI is the Tauri webview).
+# ~1,700 files on Windows (python\tcl alone is 1,265). The import smoke at the
+# end boots every top-level module on this trimmed tree.
+$pyRoot = Join-Path $BACKEND 'python'
+foreach ($rel in @('tcl', 'Lib\tkinter', 'Lib\idlelib', 'Lib\turtledemo', 'Lib\site-packages\pip')) {
+    $p = Join-Path $pyRoot $rel
+    if (Test-Path $p) { Remove-Item -LiteralPath $p -Recurse -Force }
+}
+Get-ChildItem (Join-Path $pyRoot 'Lib\site-packages') -Directory -Filter 'pip-*.dist-info' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+Get-ChildItem (Join-Path $pyRoot 'DLLs') -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like '_tkinter*' -or $_.Name -like 'tcl*.dll' -or $_.Name -like 'tk*.dll' } | Remove-Item -Force
+
 Write-Host "[assemble] site-packages from $PACK_VENV (trim caches + chromadb transitives arkiv never imports at runtime)"
 # arkiv embeds via ollama, not chromadb's built-in k8s embedding path, so
 # kubernetes\ is dead weight in the bundle. Drop bytecode caches too.
 # onnxruntime\ SHIPS: silero VAD runs on it (silero_onnx.py) -- it used to be
 # excluded here as a chromadb-only transitive.
 Invoke-Robocopy -Source $VENV_SP -Dest (Join-Path $BACKEND 'site-packages') -ExtraArgs @(
-    '/XD', '__pycache__', 'kubernetes',
+    # tests\ (numpy/scipy ship their suites) and pip\ are dead at runtime too.
+    '/XD', '__pycache__', 'kubernetes', 'tests', 'pip', 'pip-*.dist-info',
     '/XF', '*.pyc'
 )
 
@@ -241,6 +255,29 @@ print("  ok: silero VAD on onnxruntime, torch absent")
 '@
 & $pyExe -I -c $smoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
 if ($LASTEXITCODE -ne 0) { throw "VAD smoke failed (exit $LASTEXITCODE)" }
+
+# Import smoke on the trimmed tree (same as the .sh): catches an exclude that
+# went too far -- a package that imports its own tests\, or something needing Tk.
+Write-Host "[assemble] import smoke (bundled python, trimmed tree)"
+$importSmoke = @'
+import importlib, sys
+sys.path[:0] = sys.argv[1:]
+for m in ("server", "ingest", "transcribe", "vision", "embed", "search", "mcp_server", "export"):
+    importlib.import_module(m)
+print("  ok: server + ingest + transcribe + mcp import on the trimmed tree")
+'@
+$smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("arkiv-smoke-" + [System.Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
+$env:ARKIV_PROJECT_ROOT = $smokeRoot
+Push-Location (Join-Path $BACKEND 'src')
+try {
+    & $pyExe -I -c $importSmoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
+    if ($LASTEXITCODE -ne 0) { throw "import smoke failed (exit $LASTEXITCODE)" }
+} finally {
+    Pop-Location
+    Remove-Item Env:ARKIV_PROJECT_ROOT -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host "[assemble] done:"
 foreach ($d in '', 'python', 'site-packages', 'src') {
