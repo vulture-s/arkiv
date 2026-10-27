@@ -71,9 +71,11 @@ export function shotYearRows(facets) {
  * @param {{limit?: number, offset?: number, query?: string, shotYear?: string|null, shotDate?: string|null}} opts
  */
 export function mediaParams({
-  limit = null, offset = null, query = '', shotYear = null, shotDate = null,
+  limit = null, offset = null, query = '', shotYear = null, shotDate = null, sort = null,
 } = {}) {
   const p = {}
+  // Only the browse branch orders by this; a text search stays relevance-ranked.
+  if (sort) p.sort = sort
   const q = (query || '').trim()
   if (q) p.q = q
   if (shotDate) {

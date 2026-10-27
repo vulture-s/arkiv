@@ -416,6 +416,8 @@ def init_db():
         ]:
             _add_column_if_missing(conn, "media", col, typ)  # audit L10
         _backfill_shot_date(conn)
+        # Backs the shot_new / shot_old sorts (SORT_MAP) the media pool offers.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_media_shot_date ON media(shot_date)")
         for col, typ in [
             ("content_type", "TEXT"),
             ("focus_score", "INTEGER"),
@@ -1986,8 +1988,15 @@ def get_shoot_date_facets() -> dict:
 # processed_at) leave row order undefined, so LIMIT/OFFSET pagination can repeat or
 # drop rows across page fetches — and media_position (the "next/prev in this sort")
 # can disagree with the grid. id is the PK, so it's a total order.
+#
+# shot_new / shot_old order on `shot_date` (normalised ISO, so string order is date
+# order) and put undated clips LAST in both directions: an undated clip is not
+# "oldest" or "newest", and leading with it would bury the footage asked for.
 SORT_MAP = {
     "date": "processed_at DESC, id DESC",
+    "date_old": "processed_at ASC, id ASC",
+    "shot_new": "shot_date IS NULL, shot_date DESC, id DESC",
+    "shot_old": "shot_date IS NULL, shot_date ASC, id ASC",
     "name": "filename ASC, id ASC",
     "duration": "duration_s DESC, id DESC",
     "size": "size_mb DESC, id DESC",
