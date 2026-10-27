@@ -291,3 +291,35 @@ def test_a_relative_row_is_still_joined_to_the_project_root():
     out = db.resolve_path("media/sub/clip.mp4").replace("\\", "/")
     assert out.endswith("media/sub/clip.mp4")
     assert out != "media/sub/clip.mp4", "a relative row must be made absolute"
+
+
+def test_shot_date_sorts_both_directions_with_undated_last(tmp_db, sample_record):
+    """The media pool's 拍攝 新→舊 / 舊→新: ordered by the normalised shot_date
+    (mixed exiftool / ISO raw shapes must not sort as strings), undated clips last
+    in BOTH directions, and imported-order (processed_at) must not leak in."""
+    db = importlib.import_module("db")
+    clips = [
+        # (filename, creation_date, processed_at)
+        ("mid.mp4", "2025:06:01 10:00:00", "2026-01-01T00:00:00"),
+        ("undated.mp4", None, "2026-01-05T00:00:00"),
+        ("new.mp4", "2025-10-03T13:56:20+08:00", "2026-01-02T00:00:00"),
+        ("old.mp4", "2019:01:01 08:00:00", "2026-01-04T00:00:00"),
+    ]
+    for name, created, processed in clips:
+        db.upsert(sample_record(path="/tmp/" + name, filename=name,
+                                creation_date=created, processed_at=processed))
+
+    rows, total = db.get_media_filtered(sort="shot_new")
+    assert total == 4
+    assert [r["filename"] for r in rows] == ["new.mp4", "mid.mp4", "old.mp4", "undated.mp4"]
+
+    rows, _ = db.get_media_filtered(sort="shot_old")
+    assert [r["filename"] for r in rows] == ["old.mp4", "mid.mp4", "new.mp4", "undated.mp4"]
+
+    # Paging must walk the same total order (no repeat / drop across pages).
+    paged = [r["filename"] for off in range(4)
+             for r in db.get_media_filtered(sort="shot_new", offset=off, limit=1)[0]]
+    assert paged == ["new.mp4", "mid.mp4", "old.mp4", "undated.mp4"]
+
+    rows, _ = db.get_media_filtered(sort="date_old")
+    assert [r["filename"] for r in rows] == ["mid.mp4", "new.mp4", "old.mp4", "undated.mp4"]

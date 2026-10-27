@@ -32,6 +32,7 @@
   import { parseStartParam } from '../lib/matchTime.js'
   import { createIdentityNamesLoader } from '../lib/identityNames.js'
   import { rateMany } from '../lib/bulkRating.js'
+  import { POOL_SORTS, loadPoolSort, savePoolSort } from '../lib/poolSort.js'
 
   $: theme = $resolvedTheme
   let state = 'loading' // loading | ok | error
@@ -89,15 +90,17 @@
   // the loaded page would leave the row claiming "2025 · 54" beside a grid holding
   // however many of those happened to fall inside the first PAGE rows.
   let activeShotYear = null
+  // Server-side for the same reason as the shoot filters: the pool is paginated.
+  let poolSort = loadPoolSort()
   let activeShotDate = null // an ISO day inside activeShotYear; narrows it further
   let liveShotYears = null
   // #/main-live?ids=… is a narrowing with no sidebar row to represent it, so the
   // header has no other way to know the grid is a subset.
   let deepLinkSubset = false
-  // Spread into every mediaParams() call, so the shoot filters cannot end up present
+  // Spread into every mediaParams() call, so the shoot filters (and the sort) cannot end up present
   // on one request path and missing on another — which is the whole failure this
   // feature's backend went out of its way to prevent.
-  const shotArgs = () => ({ shotYear: activeShotYear, shotDate: activeShotDate })
+  const shotArgs = () => ({ shotYear: activeShotYear, shotDate: activeShotDate, sort: poolSort })
   // Normalize a raw camera_model into a browsable machine category so the pool
   // groups clips by device (A7 V / FX30 / iPhone) instead of fragmenting on
   // per-focal-length model strings ("...iPhone 16 Pro 48mm" etc.).
@@ -482,6 +485,13 @@
   function reloadForShotFilter() {
     if (query.trim()) runSearch()
     else load() // also clears any active collection, whose members carry no shoot date
+  }
+  function onPoolSortChange() {
+    savePoolSort(poolSort)
+    // A collection / ?ids= subset is served whole in its own order; the choice is
+    // kept and applies once the user is back on the library.
+    if (activeCollection || deepLinkSubset) return
+    reloadForShotFilter()
   }
   function onShotYearClick(year) {
     activeShotYear = activeShotYear === year ? null : year
@@ -1295,6 +1305,10 @@
           aria-busy={exportBusy === 'csv:all'}
           title="匯出整庫 metadata CSV（DaVinci Resolve）"
         >{exportBusy === 'csv:all' ? 'CSV …' : 'CSV ↓'}</button>
+        <select class="ak-input poolsort" bind:value={poolSort} on:change={onPoolSortChange}
+                title="排序（搜尋結果依相關度；沒有拍攝日期的排最後）" aria-label="排序">
+          {#each POOL_SORTS as [key, label]}<option value={key}>{label}</option>{/each}
+        </select>
         <FilterRow bind:activeFilter bind:activeRating />
         <ViewToggle bind:view />
         <button class="ak-btn trash" on:click={() => (trashOpen = true)} title="回收桶（已刪除、可還原）">回收桶</button>
@@ -1541,6 +1555,7 @@
      off-screen; the stats line stays on one row (see the nowrap on the Mono). */
   .livesearch { flex: 1 1 200px; min-width: 160px; max-width: 360px; font-size: 12px; }
   .ranked { font-size: 10px; padding: 6px 10px; }
+  .poolsort { font-size: 11px; padding: 4px 6px; width: auto; }
   .metacsv { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .trash { font-size: 10px; padding: 6px 10px; white-space: nowrap; }
   .expbtn.danger { color: #d9534f; border-color: #d9534f; }
