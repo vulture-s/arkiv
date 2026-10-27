@@ -131,13 +131,27 @@ try {
 $pyExe = Join-Path $BACKEND 'python\python.exe'
 if (-not (Test-Path $pyExe)) { throw "expected $pyExe after extracting the PBS tarball" }
 
+# Trim the interpreter (same as the .sh). pip: arkiv never installs anything at
+# runtime. Tk/IDLE/turtle: no GUI toolkit is used (the UI is the Tauri webview).
+# ~1,700 files on Windows (python\tcl alone is 1,265). The import smoke at the
+# end boots every top-level module on this trimmed tree.
+$pyRoot = Join-Path $BACKEND 'python'
+foreach ($rel in @('tcl', 'Lib\tkinter', 'Lib\idlelib', 'Lib\turtledemo', 'Lib\site-packages\pip')) {
+    $p = Join-Path $pyRoot $rel
+    if (Test-Path $p) { Remove-Item -LiteralPath $p -Recurse -Force }
+}
+Get-ChildItem (Join-Path $pyRoot 'Lib\site-packages') -Directory -Filter 'pip-*.dist-info' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+Get-ChildItem (Join-Path $pyRoot 'DLLs') -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like '_tkinter*' -or $_.Name -like 'tcl*.dll' -or $_.Name -like 'tk*.dll' } | Remove-Item -Force
+
 Write-Host "[assemble] site-packages from $PACK_VENV (trim caches + chromadb transitives arkiv never imports at runtime)"
 # arkiv embeds via ollama, not chromadb's built-in k8s embedding path, so
 # kubernetes\ is dead weight in the bundle. Drop bytecode caches too.
 # onnxruntime\ SHIPS: silero VAD runs on it (silero_onnx.py) -- it used to be
 # excluded here as a chromadb-only transitive.
 Invoke-Robocopy -Source $VENV_SP -Dest (Join-Path $BACKEND 'site-packages') -ExtraArgs @(
-    '/XD', '__pycache__', 'kubernetes',
+    # tests\ (numpy/scipy ship their suites) and pip\ are dead at runtime too.
+    '/XD', '__pycache__', 'kubernetes', 'tests', 'pip', 'pip-*.dist-info',
     '/XF', '*.pyc'
 )
 
@@ -239,8 +253,40 @@ p = silero_onnx.speech_probs(np.zeros(16000, dtype=np.float32), silero_onnx.Sile
 assert len(p) == 32 and max(p) < 0.5, p
 print("  ok: silero VAD on onnxruntime, torch absent")
 '@
-& $pyExe -I -c $smoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
+& $pyExe -B -I -c $smoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
 if ($LASTEXITCODE -ne 0) { throw "VAD smoke failed (exit $LASTEXITCODE)" }
+
+# Both smokes run with -B: they execute the bundle in place, and without it
+# Python writes __pycache__ into it -- 1,177 files that then shipped (measured
+# on the first dry-run of this change).
+#
+# Import smoke on the trimmed tree (same as the .sh): catches an exclude that
+# went too far -- a package that imports its own tests\, or something needing Tk.
+# mcp_server is NOT in the Windows list, unlike the .sh: under PYTHONPATH (how
+# main.rs launches the backend) site-packages\*.pth files are not processed, so
+# pywin32's pywintypes is not importable and `import mcp` fails. That is true of
+# the shipped 1.7.3 bundle too (checked on the PC install) -- pre-existing, not
+# caused by this trim, and the desktop app never starts mcp_server on Windows.
+Write-Host "[assemble] import smoke (bundled python, trimmed tree)"
+$importSmoke = @'
+import importlib, sys
+sys.path[:0] = sys.argv[1:]
+for m in ("server", "ingest", "transcribe", "vision", "embed", "search", "export"):
+    importlib.import_module(m)
+print("  ok: server + ingest + transcribe import on the trimmed tree")
+'@
+$smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("arkiv-smoke-" + [System.Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
+$env:ARKIV_PROJECT_ROOT = $smokeRoot
+Push-Location (Join-Path $BACKEND 'src')
+try {
+    & $pyExe -B -I -c $importSmoke (Join-Path $BACKEND 'src') (Join-Path $BACKEND 'site-packages')
+    if ($LASTEXITCODE -ne 0) { throw "import smoke failed (exit $LASTEXITCODE)" }
+} finally {
+    Pop-Location
+    Remove-Item Env:ARKIV_PROJECT_ROOT -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host "[assemble] done:"
 foreach ($d in '', 'python', 'site-packages', 'src') {
