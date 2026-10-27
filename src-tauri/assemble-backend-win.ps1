@@ -258,13 +258,18 @@ if ($LASTEXITCODE -ne 0) { throw "VAD smoke failed (exit $LASTEXITCODE)" }
 
 # Import smoke on the trimmed tree (same as the .sh): catches an exclude that
 # went too far -- a package that imports its own tests\, or something needing Tk.
+# mcp_server is NOT in the Windows list, unlike the .sh: under PYTHONPATH (how
+# main.rs launches the backend) site-packages\*.pth files are not processed, so
+# pywin32's pywintypes is not importable and `import mcp` fails. That is true of
+# the shipped 1.7.3 bundle too (checked on the PC install) -- pre-existing, not
+# caused by this trim, and the desktop app never starts mcp_server on Windows.
 Write-Host "[assemble] import smoke (bundled python, trimmed tree)"
 $importSmoke = @'
 import importlib, sys
 sys.path[:0] = sys.argv[1:]
-for m in ("server", "ingest", "transcribe", "vision", "embed", "search", "mcp_server", "export"):
+for m in ("server", "ingest", "transcribe", "vision", "embed", "search", "export"):
     importlib.import_module(m)
-print("  ok: server + ingest + transcribe + mcp import on the trimmed tree")
+print("  ok: server + ingest + transcribe import on the trimmed tree")
 '@
 $smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("arkiv-smoke-" + [System.Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
