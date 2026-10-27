@@ -2,8 +2,14 @@
 
 ## Unreleased
 
+## v1.7.4 - 2026-10-27
+
+**安裝包瘦身：檔案數約剩三成。** macOS 27,779 → 8,899 個檔（1.4 GB → 863 MB）、Windows 25,764 → 7,895 個檔
+（1.06 GB → 564 MB）。功能沒有變；轉錄的切段與 1.7.3 逐一相同。檔案少了，Windows 的安裝、解除安裝與升級
+會快很多，防毒掃描也是按檔案數算時間。
+
 ### 改善
-- **安裝包不再帶 torch（Windows 少約一半的檔案）**：torch 原本只為了跑 silero VAD（判斷哪幾段有人講話），
+- **安裝包不再帶 torch**（#605）：torch 原本只為了跑 silero VAD（判斷哪幾段有人講話），
   Windows 安裝目錄 25,764 個檔裡它佔 11,956 個、macOS .app 裡 526 MB。VAD 改在 onnxruntime 上跑同一個
   silero 模型（`silero_onnx.py`，模型隨原始碼附在 `models/`，MIT），切段結果與 torch 版逐一相同：
   真實素材 50 支、54 分鐘全數一致，CI 另以 torch 版產生的參考值釘住。Linux／Docker 連帶不再裝 torch 與
@@ -11,7 +17,7 @@
   打包腳本最後會用打包內的 Python 實跑一次 VAD、並確認 torch 不在裡面。
 - **安裝包再瘦一輪**：打包時不再放入各套件自帶的測試（numpy／scipy／numba 等約 1,700 個檔）、pip，以及
   Python 內建的 Tk／IDLE（arkiv 的介面是 Tauri，用不到）。打包最後會用精簡後的內容把 server、ingest、
-  轉錄、MCP 全部載入一次，排除過頭會直接讓打包失敗。
+  轉錄（macOS 另含 MCP）全部載入一次，排除過頭會直接讓打包失敗（#606）。
 
 ## v1.7.3 - 2026-10-27
 
