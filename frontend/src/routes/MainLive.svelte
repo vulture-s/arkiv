@@ -1294,6 +1294,10 @@
               {#if stats && subsetTotal !== null}{subsetTotal} / {stats.total} items · 篩選中{:else if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB · live{:else}loading…{/if}
             </Mono>
           </div>
+          <FilterRow bind:activeFilter bind:activeRating />
+          <ViewToggle bind:view />
+        </div>
+        <div class="tr-sub">
           <input
             class="ak-input livesearch"
             placeholder="搜尋（語意 + 關鍵字）…"
@@ -1306,6 +1310,13 @@
             title="排名檢視（score + 摘要）"
           >排名 →</a>
           <div class="tr-end">
+          <!-- List view sorts from its column headers; the grid has none, so it keeps the menu. -->
+          {#if view !== 'list'}
+            <select class="ak-input poolsort" bind:value={poolSort} on:change={onPoolSortChange}
+                    title="排序（搜尋結果依相關度；沒有拍攝日期的排最後）" aria-label="排序">
+              {#each POOL_SORTS as [key, label]}<option value={key}>{label}</option>{/each}
+            </select>
+          {/if}
           <button
             class="ak-btn tbtn metacsv"
             on:click={() => exportMetadataCsv(null)}
@@ -1314,19 +1325,6 @@
             title="匯出整庫 metadata CSV（DaVinci Resolve）"
           >{exportBusy === 'csv:all' ? 'CSV …' : 'CSV ↓'}</button>
           <button class="ak-btn tbtn" on:click={() => (trashOpen = true)} title="回收桶（已刪除、可還原）">回收桶</button>
-          </div>
-        </div>
-        <div class="tr-sub">
-          <FilterRow bind:activeFilter bind:activeRating />
-          <div class="tr-end">
-          <!-- List view sorts from its column headers; the grid has none, so it keeps the menu. -->
-          {#if view !== 'list'}
-            <select class="ak-input poolsort" bind:value={poolSort} on:change={onPoolSortChange}
-                    title="排序（搜尋結果依相關度；沒有拍攝日期的排最後）" aria-label="排序">
-              {#each POOL_SORTS as [key, label]}<option value={key}>{label}</option>{/each}
-            </select>
-          {/if}
-          <ViewToggle bind:view />
           </div>
         </div>
       </div>
@@ -1417,24 +1415,25 @@
         {:else if visible.length === 0}
           <div class="msg"><Eyebrow>No media</Eyebrow><Mono dim>清搜尋或篩選。</Mono></div>
         {:else if view === 'list'}
-          <table class="medialist">
+          <table class="medialist" class:picking={picked.length > 0}>
             <thead>
               <tr>
                 <th class="c-chk"></th>
                 <th class="c-thumb"></th>
                 <th class="c-name"><button class="sorth" class:on={columnArrow('name', poolSort)} on:click={() => sortByColumn('name')} title="依檔名排序（再按一次反向）">檔名<span class="arrow">{columnArrow('name', poolSort)}</span></button></th>
                 <th><button class="sorth" class:on={columnArrow('rating', poolSort)} on:click={() => sortByColumn('rating')} title="依評分排序（Good → Review → N·G → 未評）">評分<span class="arrow">{columnArrow('rating', poolSort)}</span></button></th>
-                <th class="num">解析度</th>
-                <th class="num"><button class="sorth" class:on={columnArrow('duration', poolSort)} on:click={() => sortByColumn('duration')} title="依時長排序（再按一次反向）"><span class="arrow">{columnArrow('duration', poolSort)}</span>時長</button></th>
-                <th class="num"><button class="sorth" class:on={columnArrow('size', poolSort)} on:click={() => sortByColumn('size')} title="依容量排序（再按一次反向）"><span class="arrow">{columnArrow('size', poolSort)}</span>容量</button></th>
-                <th class="num"><button class="sorth" class:on={columnArrow('shot', poolSort)} on:click={() => sortByColumn('shot')} title="依拍攝日期排序（再按一次反向；沒有拍攝日期的排最後）"><span class="arrow">{columnArrow('shot', poolSort)}</span>拍攝日期</button></th>
-                <th class="num"><button class="sorth" class:on={columnArrow('date', poolSort)} on:click={() => sortByColumn('date')} title="依匯入日期排序（再按一次反向）"><span class="arrow">{columnArrow('date', poolSort)}</span>匯入日期</button></th>
+                <th>解析度</th>
+                <th><button class="sorth" class:on={columnArrow('duration', poolSort)} on:click={() => sortByColumn('duration')} title="依時長排序（再按一次反向）">時長<span class="arrow">{columnArrow('duration', poolSort)}</span></button></th>
+                <th><button class="sorth" class:on={columnArrow('size', poolSort)} on:click={() => sortByColumn('size')} title="依容量排序（再按一次反向）">容量<span class="arrow">{columnArrow('size', poolSort)}</span></button></th>
+                <th><button class="sorth" class:on={columnArrow('shot', poolSort)} on:click={() => sortByColumn('shot')} title="依拍攝日期排序（再按一次反向；沒有拍攝日期的排最後）">拍攝日期<span class="arrow">{columnArrow('shot', poolSort)}</span></button></th>
+                <th><button class="sorth" class:on={columnArrow('date', poolSort)} on:click={() => sortByColumn('date')} title="依匯入日期排序（再按一次反向）">匯入日期<span class="arrow">{columnArrow('date', poolSort)}</span></button></th>
               </tr>
             </thead>
             <tbody>
               {#each visible as m (m.id)}
                 <tr
                   class:sel={m.id === selectedId}
+                  class:ng={m.rating === 'ng'}
                   on:click={() => (selectedId = m.id)}
                 >
                   <td class="c-chk">
@@ -1449,12 +1448,12 @@
                   </td>
                   <td class="c-name" title={m.name}>{m.name}</td>
                   <td><Rating value={m.rating} /></td>
-                  <td class="num mono">{m._raw?.width && m._raw?.height ? `${m._raw.width}×${m._raw.height}` : '—'}</td>
-                  <td class="num mono">{m.dur}</td>
-                  <td class="num mono">{m.size}</td>
+                  <td class="mono">{m._raw?.width && m._raw?.height ? `${m._raw.width}×${m._raw.height}` : '—'}</td>
+                  <td class="mono">{m.dur}</td>
+                  <td class="mono">{m.size}</td>
                   <!-- 拍攝日讀不到就顯示「—」，不 fallback 到入庫日（理由見 toCard 的 shot） -->
-                  <td class="num mono">{fmtDate(m.shot)}</td>
-                  <td class="num mono dim">{fmtDate(m._raw?.processed_at)}</td>
+                  <td class="mono">{fmtDate(m.shot)}</td>
+                  <td class="mono">{fmtDate(m._raw?.processed_at)}</td>
                 </tr>
               {/each}
             </tbody>
@@ -1562,22 +1561,24 @@
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; position: relative; display: grid; grid-template-rows: 52px 1fr; background: var(--bg); color: var(--ink); overflow: hidden; margin: 0 auto; }
   .body { display: grid; grid-template-columns: 220px 1fr var(--inspector-w); min-height: 0; }
   .center { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-  /* Two rows: identity + search + library actions, then filters + sort + view.
-     Each row wraps on a narrow window instead of clipping (the artboard is
-     overflow:hidden, so a non-wrapping row made VIDEO/…/GRID-LIST unreachable
-     below ~1000px). Every control in both rows is --tb-h tall so they share a
-     line instead of each picking its own height. */
-  .toolrow { --tb-h: 26px; display: flex; flex-direction: column; gap: 12px; padding: 14px 22px 12px; border-bottom: 1px solid var(--rule); }
+  /* Row 1 is the design's tool row (01 / 01a): title + stats left, kind/rating
+     filters + view toggle right. Row 2 holds what the design doesn't draw but the
+     app needs — pool search, 排名, CSV, 回收桶 — as a quieter utility line. Both
+     wrap on a narrow window instead of clipping (the artboard is overflow:hidden).
+     Every control is --tb-h tall so they share a baseline. */
+  .toolrow { --tb-h: 26px; display: flex; flex-direction: column; gap: 10px; padding: 14px 22px 10px; border-bottom: 1px solid var(--rule); }
   .tr-main, .tr-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
-  .tr-main { align-items: flex-end; }
-  /* Right-hand groups wrap as a unit (a lone 回收桶 on its own line read as a
-     stray control) and stay pushed to the right edge. */
+  .tr-main { gap: 10px 14px; }
+  /* Right-hand groups wrap as a unit and stay on the right edge. */
   .tr-end { display: flex; align-items: center; gap: 8px 10px; margin-left: auto; }
-  .proj { min-width: 0; margin-right: 8px; }
+  /* flex-basis 0 + ellipsis: the title block gives up width first, so the filters
+     and view toggle stay on the title's line in a 780px center column. */
+  .proj { flex: 1 1 0; min-width: 120px; overflow: hidden; }
+  .proj :global(*) { overflow: hidden; text-overflow: ellipsis; }
   .projtitle { font-size: 28px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
   /* min-width so the search shrinks then WRAPS rather than collapsing the buttons
-     off-screen; the stats line stays on one row (see the nowrap on the Mono). */
-  .livesearch { flex: 1 1 220px; min-width: 160px; max-width: 380px; font-size: 12px; height: var(--tb-h); box-sizing: border-box; }
+     off-screen. */
+  .livesearch { flex: 1 1 220px; min-width: 160px; max-width: 420px; font-size: 12px; height: var(--tb-h); box-sizing: border-box; }
   .tbtn { font-size: 10px; height: var(--tb-h); box-sizing: border-box; padding: 0 12px; display: inline-flex; align-items: center; white-space: nowrap; text-decoration: none; }
   /* A <select> is not covered by input.ak-input, so WKWebView drew its own rounded
      control; square it off to match the buttons beside it. */
@@ -1606,17 +1607,20 @@
      auto-fill (not auto-fit) so a sparse last row keeps card size instead of stretching. */
   .mediagrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(198px, 1fr)); gap: 1px; padding: 22px; background: var(--rule); }
 
-  /* G1 list view */
-  .medialist { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  /* G1 list view — design 01a: 16:9 thumbs at 110px, mono throughout, values in
+     the quiet tone with only the filename at full ink, selection as a 2px left bar
+     on the raised surface (not a full inverted row), N·G rows dimmed. */
+  .medialist { width: 100%; border-collapse: collapse; font-family: var(--ak-mono); font-size: 11px; }
   .medialist thead th {
     position: sticky; top: 0; z-index: 1; background: var(--bg);
-    text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--rule);
-    font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--quiet-2); font-weight: 400; white-space: nowrap;
+    text-align: left; padding: 10px 7px 8px; border-bottom: 1px solid var(--rule);
+    font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--quiet); font-weight: 400; white-space: nowrap;
   }
-  .medialist th.num, .medialist td.num { text-align: right; }
+  .medialist th:first-child, .medialist td:first-child { padding-left: 22px; }
+  .medialist th:last-child, .medialist td:last-child { padding-right: 22px; }
   /* Sortable headers: the whole label is the button; the arrow slot is always
-     there (fixed width) so switching the active column doesn't shift the labels. */
+     there (fixed width) so switching the active column doesn't shift labels. */
   .sorth {
     font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
     background: none; border: none; padding: 0; margin: 0; cursor: pointer;
@@ -1624,20 +1628,23 @@
   }
   .sorth:hover, .sorth.on { color: var(--ink); }
   .sorth .arrow { display: inline-block; width: 8px; text-align: center; }
-  /* Right-aligned columns carry the arrow on the left, so the label's right edge
-     stays on the numbers' right edge. */
   .medialist tbody tr { cursor: pointer; border-bottom: 1px solid var(--rule); }
-  .medialist tbody tr:hover { background: var(--rule); }
-  .medialist tbody tr.sel { background: var(--invert); color: var(--invert-ink); }
-  .medialist td { padding: 7px 14px; vertical-align: middle; white-space: nowrap; }
-  .medialist td.c-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; width: 100%; }
-  .medialist td.mono { font-family: var(--ak-mono); font-size: 11px; }
-  .medialist td.dim { color: var(--quiet); }
-  .medialist tr.sel td.dim { color: var(--invert-ink); }
-  .c-chk { width: 28px; }
-  .c-thumb { width: 56px; }
+  .medialist tbody tr:hover { background: var(--surface); }
+  .medialist tbody tr.sel { background: var(--surface); box-shadow: inset 2px 0 0 var(--invert); }
+  .medialist tbody tr.ng { opacity: 0.55; }
+  .medialist tbody tr.ng td.c-name { text-decoration: line-through; }
+  .medialist td { padding: 7px; vertical-align: middle; white-space: nowrap; color: var(--quiet); }
+  /* max-width:0 + width:100% lets the name column absorb the slack and ellipsize,
+     so the date columns stay on screen at 1400px instead of being cut off. */
+  .medialist td.c-name { color: var(--ink); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; max-width: 0; width: 100%; }
+  .c-chk { width: 16px; }
+  /* The design has no checkbox column; it shows on hover, when checked, or while
+     anything is picked, so multi-select stays one click away. */
+  .medialist td.c-chk input { opacity: 0; margin: 0; }
+  .medialist tr:hover td.c-chk input, .medialist td.c-chk input:checked, .medialist.picking td.c-chk input { opacity: 1; }
+  .c-thumb { width: 110px; }
   .medialist td.c-thumb img, .medialist td.c-thumb .lthumbph {
-    width: 44px; height: 25px; object-fit: cover; display: block; background: var(--rule-hi);
+    width: 110px; height: 62px; object-fit: cover; display: block; background: var(--surface-2);
   }
   .lthumbph.audio { background: repeating-linear-gradient(90deg, var(--rule-hi) 0 2px, transparent 2px 4px); }
 

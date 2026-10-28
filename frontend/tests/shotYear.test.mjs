@@ -179,7 +179,7 @@ test('list view has a 拍攝日期 column that reads shot_date, beside 匯入日
   // header↔cell pairing, not just the label: a header that says 拍攝日期 over a
   // cell that reads processed_at would look fine and be wrong.
   const src = readFileSync(new URL('../src/routes/MainLive.svelte', import.meta.url), 'utf8')
-  const table = src.match(/<table class="medialist">([\s\S]*?)<\/table>/)
+  const table = src.match(/<table class="medialist"[^>]*>([\s\S]*?)<\/table>/)
   assert.ok(table, 'list view table not found')
   // A header's label is its text once the sort button's {…} expressions (the arrow,
   // the `() =>` handler) and then its tags are stripped — expressions first, since
