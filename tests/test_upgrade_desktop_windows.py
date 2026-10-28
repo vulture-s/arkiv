@@ -46,8 +46,52 @@ def test_duplicate_dist_info_clean_tree_is_empty():
 def test_partial_install_fails_the_file_count():
     assert not up.file_count_ok(3080, 25759)  # the 2026-10-22 partial install
     assert up.file_count_ok(25760, 25759)
-    assert up.file_count_ok(23500, 25759)  # a release may drop a few files
-    assert not up.file_count_ok(3080, 0)  # no previous install: absolute floor
+    assert not up.file_count_ok(7888, 7889)  # one file short of the payload
+    assert not up.file_count_ok(3080, None)  # payload unknown: absolute floor
+
+
+def test_a_slimmed_release_is_not_a_partial_install():
+    # 2026-10-28: 1.7.3 → 1.7.4 went 26,691 → 7,890 files by design (torch
+    # dropped). The installer carried 7,889; uninstall.exe is the +1.
+    assert up.file_count_ok(7890, 7889)
+    assert up.file_count_ok(7890, None)
+
+
+_LISTING = """
+7-Zip 23.01 (x64)
+
+Listing archive: C:\\Users\\user\\Downloads\\arkiv_1.7.4_x64-setup.exe
+
+--
+Path = C:\\Users\\user\\Downloads\\arkiv_1.7.4_x64-setup.exe
+Type = Nsis
+
+----------
+Path = $PLUGINSDIR\\System.dll
+Size = 12288
+
+Path = $PLUGINSDIR\\nsDialogs.dll
+Size = 9728
+
+Path = arkiv.exe
+Size = 1000
+
+Path = backend\\python\\python.exe
+Size = 2000
+
+Path = backend\\site-packages\\fastapi\\__init__.py
+Size = 30
+"""
+
+
+def test_payload_count_skips_the_archive_header_and_installer_plugins():
+    assert up.payload_count(_LISTING) == 3
+
+
+def test_payload_count_is_unknown_without_a_listing():
+    assert up.payload_count("") is None
+    assert up.payload_count("ERROR: cannot open file") is None
+    assert up.payload_count(_LISTING.split("----------")[0] + "----------\n") is None
 
 
 def test_unique_path_never_reuses_a_backup(tmp_path):

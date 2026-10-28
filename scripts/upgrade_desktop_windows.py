@@ -62,16 +62,58 @@ def duplicate_dist_info(names):
     return {k: sorted(v) for k, v in seen.items() if len(v) > 1}
 
 
-def file_count_ok(after, before):
-    """A fresh install must be roughly as big as the one it replaced.
+def payload_count(listing):
+    """Files the installer carries, from `7z l -slt <setup.exe>` output.
 
-    The failure this catches is the partial install (3,080 of ~25,700 files)
-    that still starts and registers the right version. Without a previous count
-    fall back to a floor no real install is below.
+    The header block before the `----------` line describes the archive itself;
+    `$PLUGINSDIR\\` entries are the installer's own DLLs and never land in the
+    install dir. None when the listing holds no entries (7-Zip missing / failed).
     """
-    if before:
-        return after >= int(before * 0.9)
-    return after >= 10000
+    _, sep, body = listing.partition("\n----------")
+    if not sep:
+        return None
+    n = 0
+    for line in body.splitlines():
+        if line.startswith("Path = ") and not line[7:].startswith("$PLUGINSDIR"):
+            n += 1
+    return n or None
+
+
+# Only used when the payload can't be listed. 1.7.4 dropped from ~25,700 files
+# to ~7,900 on purpose (no torch), so a floor must sit well under that while
+# still catching the 3,080-file partial install.
+FILE_FLOOR = 5000
+
+
+def file_count_ok(after, expected):
+    """The install dir must hold everything the installer carries.
+
+    Compared against THIS installer's payload, not the install it replaced: a
+    release that slims the bundle (1.7.4: 26,691 → 7,890) is not a partial
+    install, and comparing against the old count failed every such upgrade.
+    The failure this catches is the partial install (3,080 files) that still
+    starts and registers the right version. Without a payload count fall back
+    to FILE_FLOOR.
+    """
+    if expected:
+        return after >= expected
+    return after >= FILE_FLOOR
+
+
+SEVEN_ZIP = r"C:\Program Files\7-Zip\7z.exe"
+
+
+def installer_payload(exe):
+    if not os.path.isfile(SEVEN_ZIP):
+        return None
+    try:
+        out = subprocess.run([SEVEN_ZIP, "l", "-slt", exe], capture_output=True,
+                             # 7-Zip prints in the console code page (cp950 on the PC); only
+                             # the ASCII "Path = " prefixes are read, so replace the rest.
+                             text=True, encoding="utf-8", errors="replace", timeout=300).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return payload_count(out)
 
 
 def unique_path(path):
@@ -185,6 +227,7 @@ def main(argv=None):
     stamp = datetime.date.today().strftime("%Y%m%d")
     bak = os.path.expandvars(r"%USERPROFILE%\arkiv-upgrade-backup-" + stamp)
     before_files = count_files(inst)
+    expected_files = installer_payload(exe)
     before_ver = read_installed_version(inst)
     print("installed: %s (%d files) → installing %s" % (before_ver or "none", before_files, want))
 
@@ -222,7 +265,9 @@ def main(argv=None):
     got_cfg = read_installed_version(inst)
     got_reg = registered_version()
     checks = [
-        ("files %d (before %d)" % (after_files, before_files), file_count_ok(after_files, before_files)),
+        ("files %d (installer carries %s, before %d)" % (
+            after_files, expected_files if expected_files else "? — no 7-Zip, floor %d" % FILE_FLOOR,
+            before_files), file_count_ok(after_files, expected_files)),
         ("no duplicate dist-info %s" % (dups or ""), not dups),
         ("config VERSION %s" % got_cfg, got_cfg == want),
         ("registry DisplayVersion %s" % got_reg, got_reg == [want]),
