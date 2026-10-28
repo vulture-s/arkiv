@@ -32,3 +32,18 @@ test('mediaParams carries the sort to every page request', () => {
   assert.equal(mediaParams({ limit: 60, offset: 60, sort: 'shot_old', shotYear: '2025' }).sort, 'shot_old')
   assert.ok(!('sort' in mediaParams({ limit: 60 })))
 })
+
+test('column header click picks a first direction, then toggles', async () => {
+  const { nextColumnSort, columnArrow, COLUMN_SORTS } = await import('../src/lib/poolSort.js')
+  const keys = new Set(POOL_SORTS.map(([k]) => k))
+  for (const opts of Object.values(COLUMN_SORTS)) for (const k of opts) assert.ok(keys.has(k), k)
+  assert.equal(nextColumnSort('shot', 'date'), 'shot_new')
+  assert.equal(nextColumnSort('shot', 'shot_new'), 'shot_old')
+  assert.equal(nextColumnSort('shot', 'shot_old'), 'shot_new')
+  assert.equal(nextColumnSort('rating', 'rating'), 'rating')
+  assert.equal(nextColumnSort('nope', 'size'), 'size')
+  assert.equal(columnArrow('shot', 'shot_old'), '↑')
+  assert.equal(columnArrow('shot', 'shot_new'), '↓')
+  assert.equal(columnArrow('name', 'name'), '↑')
+  assert.equal(columnArrow('date', 'shot_new'), '')
+})

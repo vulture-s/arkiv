@@ -1998,8 +1998,11 @@ SORT_MAP = {
     "shot_new": "shot_date IS NULL, shot_date DESC, id DESC",
     "shot_old": "shot_date IS NULL, shot_date ASC, id ASC",
     "name": "filename ASC, id ASC",
+    "name_desc": "filename DESC, id DESC",
     "duration": "duration_s DESC, id DESC",
+    "duration_asc": "duration_s ASC, id ASC",
     "size": "size_mb DESC, id DESC",
+    "size_asc": "size_mb ASC, id ASC",
     "rating": "CASE rating WHEN 'good' THEN 1 WHEN 'review' THEN 2 WHEN 'ng' THEN 3 ELSE 4 END, id DESC",
 }
 

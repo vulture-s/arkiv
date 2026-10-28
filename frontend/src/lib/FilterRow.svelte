@@ -26,7 +26,8 @@
   .fbtn {
     font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
     padding: 4px 9px; background: transparent; color: var(--ink-2);
-    border: 1px solid var(--rule); cursor: pointer; line-height: 1; white-space: nowrap;
+    border: 1px solid var(--rule); cursor: pointer; line-height: 1;
+    height: var(--tb-h, auto); box-sizing: border-box; white-space: nowrap;
   }
   .fbtn.active { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
   .vrule { width: 1px; background: var(--rule); margin: 0 4px; }
