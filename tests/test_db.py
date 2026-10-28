@@ -323,3 +323,18 @@ def test_shot_date_sorts_both_directions_with_undated_last(tmp_db, sample_record
 
     rows, _ = db.get_media_filtered(sort="date_old")
     assert [r["filename"] for r in rows] == ["mid.mp4", "new.mp4", "old.mp4", "undated.mp4"]
+
+
+def test_every_frontend_pool_sort_is_a_backend_sort():
+    # The pool sort keys live in frontend/src/lib/poolSort.js; an unknown key
+    # silently falls back to `id` order in get_media_filtered, so a typo there
+    # would look like "sorting does nothing" rather than an error.
+    import re
+    from pathlib import Path
+    db = importlib.import_module("db")
+    src = (Path(__file__).resolve().parent.parent / "frontend/src/lib/poolSort.js").read_text(encoding="utf-8")
+    keys = set(re.findall(r"\[\s*'([a-z_]+)'\s*,\s*'", src))
+    # COLUMN_SORTS keys are bare identifiers, so only the quoted values match.
+    keys |= set(re.findall(r"'([a-z_]+)'", src.split("export const COLUMN_SORTS", 1)[1].split("}", 1)[0]))
+    assert keys, "no sort keys parsed from poolSort.js"
+    assert keys <= set(db.SORT_MAP), sorted(keys - set(db.SORT_MAP))

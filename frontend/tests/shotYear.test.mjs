@@ -181,7 +181,11 @@ test('list view has a 拍攝日期 column that reads shot_date, beside 匯入日
   const src = readFileSync(new URL('../src/routes/MainLive.svelte', import.meta.url), 'utf8')
   const table = src.match(/<table class="medialist">([\s\S]*?)<\/table>/)
   assert.ok(table, 'list view table not found')
-  const ths = [...table[1].matchAll(/<th\b[^>]*>([^<]*)<\/th>/g)].map((m) => m[1].trim())
+  // A header's label is its text once the sort button's {…} expressions (the arrow,
+  // the `() =>` handler) and then its tags are stripped — expressions first, since
+  // the `>` in `=>` would end a tag match early.
+  const ths = [...table[1].matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g)]
+    .map((m) => m[1].replace(/\{[^}]*\}/g, '').replace(/<[^>]*>/g, '').trim())
   const tds = [...table[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1])
   assert.equal(ths.length, tds.length, `header/cell count differ: ${ths.length} vs ${tds.length}`)
 
