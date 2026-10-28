@@ -108,7 +108,9 @@ def installer_payload(exe):
         return None
     try:
         out = subprocess.run([SEVEN_ZIP, "l", "-slt", exe], capture_output=True,
-                             text=True, errors="replace", timeout=300).stdout
+                             # 7-Zip prints in the console code page (cp950 on the PC); only
+                             # the ASCII "Path = " prefixes are read, so replace the rest.
+                             text=True, encoding="utf-8", errors="replace", timeout=300).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     return payload_count(out)
