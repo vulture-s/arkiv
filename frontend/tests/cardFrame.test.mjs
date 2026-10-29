@@ -27,3 +27,15 @@ test('top bar carries no padding of its own, so its column rule meets the inspec
   assert.match(rule[1], /grid-template-columns:\s*220px 1fr var\(--inspector-w\)/)
   assert.doesNotMatch(rule[1].replace(/\/\*[\s\S]*?\*\//g, ''), /padding(-[a-z]+)?\s*:/)
 })
+
+test('list thumbnails start on the 22px line: no checkbox column ahead of them', () => {
+  const live = readFileSync(new URL('../src/routes/MainLive.svelte', import.meta.url), 'utf8')
+  const table = live.match(/<table class="medialist"[^>]*>([\s\S]*?)<\/table>/)
+  assert.ok(table, 'medialist table not found')
+  const firstTh = table[1].match(/<th\b[^>]*>/)
+  const firstTd = table[1].match(/<td\b[^>]*>/)
+  assert.match(firstTh[0], /class="c-thumb"/)
+  assert.match(firstTd[0], /class="c-thumb"/)
+  // the pick box rides inside the thumbnail cell instead
+  assert.match(table[1], /<td class="c-thumb">\s*<input[^>]*class="lpick"/)
+})
