@@ -1418,7 +1418,6 @@
           <table class="medialist" class:picking={picked.length > 0}>
             <thead>
               <tr>
-                <th class="c-chk"></th>
                 <th class="c-thumb"></th>
                 <th class="c-name"><button class="sorth" class:on={columnArrow('name', poolSort)} on:click={() => sortByColumn('name')} title="依檔名排序（再按一次反向）">檔名<span class="arrow">{columnArrow('name', poolSort)}</span></button></th>
                 <th><button class="sorth" class:on={columnArrow('rating', poolSort)} on:click={() => sortByColumn('rating')} title="依評分排序（Good → Review → N·G → 未評）">評分<span class="arrow">{columnArrow('rating', poolSort)}</span></button></th>
@@ -1436,14 +1435,13 @@
                   class:ng={m.rating === 'ng'}
                   on:click={() => (selectedId = m.id)}
                 >
-                  <td class="c-chk">
+                  <td class="c-thumb">
                     <input
                       type="checkbox"
+                      class="lpick"
                       checked={pickedSet.has(m.id)}
                       on:click|stopPropagation={() => togglePick(m.id)}
                     />
-                  </td>
-                  <td class="c-thumb">
                     {#if m.thumb}<img src={m.thumb} alt="" />{:else}<div class="lthumbph" class:audio={m.kind === 'audio'}></div>{/if}
                   </td>
                   <td class="c-name" title={m.name}>{m.name}</td>
@@ -1637,12 +1635,13 @@
   /* max-width:0 + width:100% lets the name column absorb the slack and ellipsize,
      so the date columns stay on screen at 1400px instead of being cut off. */
   .medialist td.c-name { color: var(--ink); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; max-width: 0; width: 100%; }
-  .c-chk { width: 16px; }
-  /* The design has no checkbox column; it shows on hover, when checked, or while
-     anything is picked, so multi-select stays one click away. */
-  .medialist td.c-chk input { opacity: 0; margin: 0; }
-  .medialist tr:hover td.c-chk input, .medialist td.c-chk input:checked, .medialist.picking td.c-chk input { opacity: 1; }
-  .c-thumb { width: 110px; }
+  /* The design has no checkbox column — a column of its own pushed the thumbnails
+     27px right of the 22px line the title and toolbar sit on. The box rides on the
+     thumbnail's top-left corner instead (as on a grid card) and shows on hover, when
+     checked, or while anything is picked, so multi-select stays one click away. */
+  .c-thumb { width: 110px; position: relative; }
+  .medialist td.c-thumb .lpick { position: absolute; top: 11px; left: 26px; z-index: 1; margin: 0; opacity: 0; }
+  .medialist tr:hover .lpick, .medialist .lpick:checked, .medialist.picking .lpick { opacity: 1; }
   .medialist td.c-thumb img, .medialist td.c-thumb .lthumbph {
     width: 110px; height: 62px; object-fit: cover; display: block; background: var(--surface-2);
   }
