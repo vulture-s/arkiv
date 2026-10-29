@@ -54,10 +54,10 @@
         on:click|stopPropagation={() => dispatch('toggle', m.id)}
       >{checked ? '✓' : ''}</div>
     {/if}
-    {#if selected}
-      <CornerTick pos="tl" /><CornerTick pos="tr" /><CornerTick pos="bl" /><CornerTick pos="br" />
-    {/if}
   </div>
+  {#if selected}
+    <CornerTick pos="tl" /><CornerTick pos="tr" /><CornerTick pos="bl" /><CornerTick pos="br" />
+  {/if}
   <div class="meta">
     <div class="name" class:ng={m.rating === 'ng'}>{m.name}</div>
     <div class="row">
@@ -73,8 +73,17 @@
 </div>
 
 <style>
-  .card { background: var(--bg); position: relative; cursor: pointer; transition: box-shadow 0.12s; }
-  .card.selected { box-shadow: inset 0 0 0 1px var(--invert); }
+  .card { background: var(--bg); position: relative; cursor: pointer; }
+  /* The frame is an overlay sitting ON the 1px grid gutter (inset -1px), not an inset
+     shadow: the thumbnail paints over an inset shadow, so it only showed round the meta
+     row, and there it ran beside the gutter rule as two parallel lines. The corner ticks
+     hang off the card for the same reason — inside .thumbarea (overflow hidden) they
+     were clipped and the bottom pair sat at the thumbnail's edge, mid-card. */
+  .card.selected { z-index: 1; }
+  .card.selected::after {
+    content: ''; position: absolute; inset: -1px; z-index: 2; pointer-events: none;
+    border: 1px solid var(--invert);
+  }
   .card.hover:not(.selected) { outline: 1px solid var(--rule-hi); outline-offset: -1px; }
   .thumbarea { position: relative; aspect-ratio: 16 / 9; background: var(--surface-2); overflow: hidden; }
   .thumbimg { width: 100%; height: 100%; object-fit: cover; display: block; }

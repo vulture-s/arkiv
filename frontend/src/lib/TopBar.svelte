@@ -65,15 +65,17 @@
 <style>
   .topbar {
     /* 3rd col = --inspector-w so the search box's right rule lines up with the
-       body's inspector column below (was `auto`, which drifted). */
+       body's inspector column below (was `auto`, which drifted). No padding on the
+       bar itself: a right padding here shrinks the 1fr column and pushes that rule
+       17px left of the inspector edge — the actions column carries its own. */
     display: grid; grid-template-columns: 220px 1fr var(--inspector-w); align-items: center;
-    border-bottom: 1px solid var(--rule); padding-right: 16px; background: var(--bg);
+    border-bottom: 1px solid var(--rule); background: var(--bg);
   }
   .logo { padding-left: 16px; display: flex; align-items: center; gap: 12px; }
   .search {
     display: flex; align-items: center; gap: 14px;
     border-left: 1px solid var(--rule); border-right: 1px solid var(--rule);
-    padding-left: 16px; height: 100%;
+    padding: 0 16px; height: 100%;
   }
   .searchinput { flex: 1; font-size: 13px; font-family: var(--ak-sans); border-bottom: none; }
   .allproj {
@@ -82,6 +84,6 @@
     border: 1px solid var(--rule-hi); cursor: pointer; line-height: 1; white-space: nowrap;
   }
   .allproj.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
-  .actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-left: 16px; }
+  .actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 16px; }
   .vrule { width: 1px; height: 18px; background: var(--rule); margin: 0 4px; }
 </style>

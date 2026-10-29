@@ -6,7 +6,7 @@
 <div class="tick {pos}"></div>
 
 <style>
-  .tick { position: absolute; width: 14px; height: 14px; z-index: 2; }
+  .tick { position: absolute; width: 14px; height: 14px; z-index: 3; pointer-events: none; }
   .tl { top: -1px; left: -1px; border-top: 2px solid var(--invert); border-left: 2px solid var(--invert); }
   .tr { top: -1px; right: -1px; border-top: 2px solid var(--invert); border-right: 2px solid var(--invert); }
   .bl { bottom: -1px; left: -1px; border-bottom: 2px solid var(--invert); border-left: 2px solid var(--invert); }
