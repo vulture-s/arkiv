@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -360,6 +360,26 @@ def api_entitlements(_tok: dict = Depends(require_scopes("projects_read"))):
     except project_registry.RegistryError:
         used = 0
     return entitlements.status(used, db_paths=project_registry.known_project_dbs())
+
+
+@router.post("/api/licence")
+def api_licence_install(
+    record: Any = Body(...),
+    _tok: dict = Depends(require_scopes("projects_write")),
+):
+    """Install a Pro licence from the file the buyer received (Settings → 授權).
+
+    Body = the licence JSON exactly as issued. Verified offline before anything
+    is written; a record that does not verify is a 400 carrying the reason and
+    leaves the current licence file alone. Returns the fresh entitlement state
+    so the UI shows the new tier without a second round-trip.
+    """
+    import entitlements
+
+    ok, reason, _info = entitlements.install_licence(record)
+    if not ok:
+        raise HTTPException(status_code=400, detail={"code": "licence_rejected", "message": reason})
+    return api_entitlements(_tok)
 
 
 @router.get("/api/health")

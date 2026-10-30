@@ -20,6 +20,8 @@
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
 
   import { VERSION } from '../lib/version.js'
+  import { describeTier, readLicenceFile, rejectReason } from '../lib/licenceView.js'
+  import { fetchSidecar } from '../lib/sidecar.js'
   // G5 step ①: nav expanded to the design's tab set. Real-backed tabs are
   // interactive; tabs without backend (vision/export) show honest pending rows.
   let section = 'general'
@@ -81,6 +83,26 @@
   let projects = [] // [{name, path, added_at, last_indexed_at, tags, source}]
   let projHealth = {} // name -> status string ("ok" | …)
   let projMsg = ''
+  // Settings → Projects → 授權: the buyer's way to install the licence file they
+  // were sent, instead of copying it by hand into a hidden folder.
+  let entitlement = null
+  let licMsg = ''
+  let licBusy = false
+  let licInput
+  async function loadEntitlement() {
+    entitlement = await fetchSidecar(api.getEntitlements)
+  }
+  async function importLicence(ev) {
+    const file = ev.currentTarget.files?.[0]
+    ev.currentTarget.value = '' // picking the same file again must re-fire change
+    if (!file || licBusy) return
+    licBusy = true; licMsg = ''
+    try {
+      entitlement = await api.installLicence(await readLicenceFile(file))
+      licMsg = `已安裝：${describeTier(entitlement).detail}`
+    } catch (e) { licMsg = `沒有安裝：${rejectReason(e)}（原本的授權不受影響）` }
+    finally { licBusy = false }
+  }
   let projBusy = false
   let newName = '', newPath = '', newTags = ''
   // First-run: an empty open library → point at + INGEST, not at this form.
@@ -304,7 +326,7 @@
   }
   onDestroy(() => { if (retrTimer) clearTimeout(retrTimer) })
 
-  onMount(() => { loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab(); loadEngines(); loadProjects(); loadSettings(); loadSampleStatus() })
+  onMount(() => { loadEntitlement(); loadSystem(); loadProxy(); loadAnalytics(); loadCache(); loadVocab(); loadEngines(); loadProjects(); loadSettings(); loadSampleStatus() })
 
   const shortDate = (s) => (s ? String(s).slice(0, 10) : '—')
 
@@ -624,6 +646,20 @@
               </div>
             {/if}
             <div class="fshead">
+              <Eyebrow style="margin-bottom:4px;">LICENCE · 授權</Eyebrow>
+            </div>
+            <div class="lic" data-testid="licence">
+              <div class="lictier"><span class="liclabel">{describeTier(entitlement).label}</span><span class="licdetail">{describeTier(entitlement).detail}</span></div>
+              {#if entitlement?.licence_problem}<div class="licprob">授權檔無效：{entitlement.licence_problem}</div>{/if}
+              <div class="vctl">
+                <input type="file" accept=".json,application/json" bind:this={licInput} on:change={importLicence} hidden />
+                <button class="ak-btn" on:click={() => licInput.click()} disabled={licBusy}>匯入授權檔…</button>
+                {#if licMsg}<Mono dim style="font-size:11px;">{licMsg}</Mono>{/if}
+              </div>
+              <div class="paddnote">選購買後收到的 <code>arkiv-licence-….json</code>。授權在這台電腦離線驗證，不連網；檔案存到 <code>~/.arkiv/pro-license.json</code>。</div>
+            </div>
+            <div class="vdiv"></div>
+            <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">PROJECT REGISTRY · 專案註冊表</Eyebrow>
               <div class="ak-display fstitle">Projects</div>
               <div class="fsdesc">如果你在別處已經建好其他 arkiv 素材庫（例如另一顆硬碟或 NAS 上的庫），可以把它們登記在這裡，搜尋時就能一起找。<br /><strong>這裡不會建立新的素材庫，也不會匯入素材</strong>——要加入素材請用右上角 ＋ INGEST。</div>
@@ -804,4 +840,9 @@
   .pacthint { font-size: 11px; color: var(--quiet); margin-bottom: 10px; line-height: 1.5; }
   .prow.pcurrent .pname { color: var(--cyan); }
   .pdot { color: var(--cyan); font-size: 9px; margin-left: 5px; vertical-align: middle; }
+  .lic { margin-bottom: 8px; }
+  .lictier { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .liclabel { font-family: var(--ak-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink); border: 1px solid var(--rule-hi); padding: 3px 8px; }
+  .licdetail { font-size: 12.5px; color: var(--ink-2); }
+  .licprob { font-size: 12px; color: var(--cyan); margin-bottom: 8px; }
 </style>

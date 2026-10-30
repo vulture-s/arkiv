@@ -37,11 +37,12 @@ def test_router_owns_misc_routes_and_helpers():
         ("/api/client-log", "POST"),
         ("/api/version", "GET"),
         ("/api/entitlements", "GET"),
+        ("/api/licence", "POST"),
         ("/api/health", "GET"),
         ("/api/logs/tail", "GET"),
     }
     for name in ("stream_media", "embed_rebuild", "open_file", "client_log",
-                 "api_version", "api_entitlements", "api_health", "logs_tail",
+                 "api_version", "api_entitlements", "api_licence_install", "api_health", "logs_tail",
                  "_log_safe", "OpenFileRequest", "ClientLogRequest"):
         assert hasattr(rm, name)
 
