@@ -20,6 +20,11 @@ const GH = 'https://github.com/vulture-s/arkiv/blob/main/';
     ev={`<a href="${base}/#tiers">首頁：免費版與 Pro</a>`}>
     <p>免費版可以建 3 個專案。Pro 是 NT$3,000 一次買斷，專案數不限，並且可以跨專案一起搜。1.1.0 以前就在用的安裝，這兩項永久保留。</p>
   </Row>
+  <Row level={3} id="activate" q="買了 Pro 之後|要怎麼啟用？" mark="yes"
+    ev={`驗證與存檔：<a href="${GH}entitlements.py">entitlements.py</a>`}>
+    <p>付款後會收到一個 <code>.json</code> 授權檔。更新到 1.8.0 以後，打開 arkiv →「設定 → Projects → 授權」→「匯入授權檔…」，選這個檔就好，成功會顯示「Pro · 授權給（你的名字）」。</p>
+    <p>授權在你的電腦上離線驗證，不用連網。檔案驗不過時會說明原因，原本的授權不會被蓋掉。1.8.0 以前的版本，把檔案改名為 <code>pro-license.json</code> 放進 <code>~/.arkiv/</code> 也可以。</p>
+  </Row>
 
   <Row level={3} id="public-interest" q="做紀錄片或公益影像，|可以免費用 Pro 嗎？" mark="yes"
     ev={`方案全文與申請範例：<a href="${GH}PUBLIC-INTEREST.md">公益方案</a>`}>
