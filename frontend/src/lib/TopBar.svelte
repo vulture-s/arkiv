@@ -71,10 +71,16 @@
     display: grid; grid-template-columns: 220px 1fr var(--inspector-w); align-items: center;
     border-bottom: 1px solid var(--rule); background: var(--bg);
   }
-  .logo { padding-left: 16px; display: flex; align-items: center; gap: 12px; }
+  /* The two rules belong to the OUTER cells, not the search box: the body below
+     draws them as the pool's right border and the inspector's left border, so a
+     rule drawn by .search sat 1px on the other side of the same boundary and the
+     lines never met. Same side as the body = one continuous line. */
+  .logo {
+    padding-left: 16px; display: flex; align-items: center; gap: 12px;
+    height: 100%; border-right: 1px solid var(--rule);
+  }
   .search {
     display: flex; align-items: center; gap: 14px;
-    border-left: 1px solid var(--rule); border-right: 1px solid var(--rule);
     padding: 0 16px; height: 100%;
   }
   .searchinput { flex: 1; font-size: 13px; font-family: var(--ak-sans); border-bottom: none; }
@@ -84,6 +90,9 @@
     border: 1px solid var(--rule-hi); cursor: pointer; line-height: 1; white-space: nowrap;
   }
   .allproj.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
-  .actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 16px; }
+  .actions {
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 16px;
+    height: 100%; border-left: 1px solid var(--rule);
+  }
   .vrule { width: 1px; height: 18px; background: var(--rule); margin: 0 4px; }
 </style>

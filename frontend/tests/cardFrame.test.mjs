@@ -39,3 +39,14 @@ test('list thumbnails start on the 22px line: no checkbox column ahead of them',
   // the pick box rides inside the thumbnail cell instead
   assert.match(table[1], /<td class="c-thumb">\s*<input[^>]*class="lpick"/)
 })
+
+test('topbar rules sit on the same side of each boundary as the body columns below', () => {
+  // The body draws the boundaries as the pool's RIGHT border and the inspector's
+  // LEFT border. When .search drew them instead (its left/right borders), each
+  // topbar rule landed 1px on the other side and the lines never met.
+  const css = topbar.replace(/\/\*[\s\S]*?\*\//g, '')
+  const block = (sel) => (css.match(new RegExp(`\\.${sel}\\s*\\{([^}]*)\\}`)) || [])[1] || ''
+  assert.doesNotMatch(block('search'), /border(-left|-right)?\s*:/)
+  assert.match(block('logo'), /border-right:\s*1px solid var\(--rule\)/)
+  assert.match(block('actions'), /border-left:\s*1px solid var\(--rule\)/)
+})
