@@ -7,6 +7,7 @@
   import { onMount } from 'svelte'
   import { createExportGuard, downloadedMsg } from '../lib/exportFeedback.js'
   import * as api from '../lib/api.js'
+  import { fetchSidecar } from '../lib/sidecar.js'
   import { describeDelete } from '../lib/deleteOutcome.js'
   import { describeLearn } from '../lib/transcriptCorrect.js'
   import TopBar from '../lib/TopBar.svelte'
@@ -394,24 +395,25 @@
     if (!viewGen.isCurrent(gen)) return
     readyState = ready
     if (readyState === 'unreachable') { state = 'ok'; return } // panel renders via readyState
+    // Not part of the Promise.all below: the tier line is sidebar garnish, and a
+    // hung entitlements request must not keep the pool on "loading…".
+    fetchSidecar(api.getEntitlements).then((ent) => viewGen.apply(gen, () => { entitlement = ent }))
     try {
-      const [s, m, t, c, si, f, pr, ent] = await Promise.all([
+      const [s, m, t, c, si, f, pr] = await Promise.all([
         api.getStats(),
         api.getMedia(mediaParams({ limit: PAGE, ...shotArgs() })),
         api.getTags(), api.getCollections(),
         api.sampleStatus().catch(() => null), // non-fatal: chip just stays hidden
         api.getShootDateFacets().catch((e) => ({ _error: e.message })),
-        // Both non-fatal on purpose: the sidebar falls back to naming just the
+        // Non-fatal on purpose: the sidebar falls back to naming just the
         // open library, which is strictly what it showed before this existed.
         api.getProjects().catch(() => null),
-        api.getEntitlements().catch(() => null),
       ])
       viewGen.apply(gen, () => {
         stats = s
         sampleInfo = si
         maybeOpenWizard(s, si)
         registryProjects = pr?.projects ?? null
-        entitlement = ent
         deepLinkSubset = false
         applyShotYearFacets(f)
         items = (m.items || []).map(toCard)
