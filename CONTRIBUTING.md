@@ -258,6 +258,10 @@ from `main` by tag:
 5. A second job, `release-windows`, then builds the Windows `.exe`/`.msi` on `windows-latest`
    and attaches them to the same Release. It runs **after** the macOS job, so expect the
    Windows artifacts a few minutes behind the `.dmg`. Both legs stamp the version identically.
+6. The website (`site/`, served at vulture-s.github.io/arkiv) redeploys by itself: merging the
+   release commit touches `CHANGELOG.md`, which triggers `site.yml` on `main`. Check that the
+   live changelog page (`/arkiv/changelog.html`) shows the new version; if it does not, run
+   `site.yml` by hand (`gh workflow run site.yml --ref main`).
 
 **Release-artifact matrix:**
 

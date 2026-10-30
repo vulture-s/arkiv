@@ -1,10 +1,11 @@
 # Builds the Astro site in site/ (docs pages are read from ../docs and
 # ../CHANGELOG.md). Every PR that touches them gets a build check.
 #
-# Deploy is manual (workflow_dispatch) until the cutover: Pages is still served
-# from main:/docs by the legacy Jekyll build, and an Actions deploy only takes
-# effect once Settings → Pages → Source is switched to "GitHub Actions".
-# After that switch, add `push: branches: [main]` to the deploy trigger.
+# Deploy runs on every push to main that touches those paths, plus manual
+# workflow_dispatch. Pages Source is "GitHub Actions" (cutover done). Until
+# 2026-10-30 deploy was dispatch-only, and the live changelog sat at v1.7.2
+# for a week while 1.7.3–1.8.0 shipped — a release merge changes CHANGELOG.md,
+# so it now redeploys the site by itself.
 name: site
 
 on:
@@ -45,12 +46,12 @@ jobs:
             test -f "dist/$f" || { echo "missing dist/$f"; exit 1; }
           done
       - uses: actions/upload-pages-artifact@v5
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         with:
           path: site/dist
 
   deploy:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:
