@@ -117,6 +117,9 @@ export const dragSource = (id, body, opts) => req(`/api/media/${id}/drag-source`
 // the frontend drifts, and the drift shows up as a user promised one thing
 // and refused another.
 export const getEntitlements = (opts) => req('/api/entitlements', opts)
+// POST /api/licence <- the licence JSON as issued; returns the fresh entitlement
+// state. 400 {code:'licence_rejected', message} leaves the current licence alone.
+export const installLicence = (record, opts) => req('/api/licence', { method: 'POST', body: record, ...opts })
 // ---- first-run: version / sample seed / log tail ----
 export const getVersion = (opts) => req('/api/version', opts)
 export const seedSample = (opts) => req('/api/sample/seed', { method: 'POST', ...opts })

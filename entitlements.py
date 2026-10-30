@@ -244,6 +244,55 @@ def licence_status():
     return {k: data[k] for k in ("key", "licensee", "issued", "issuer", "kind")}, None
 
 
+# A signed record is a few hundred bytes; anything far larger is not a licence.
+LICENCE_MAX_BYTES = 16 * 1024
+
+
+def install_licence(record):
+    """(ok, reason, info): verify `record` and, only if it verifies, make it THE licence.
+
+    The buyer's route in. Before this, a purchased licence had to be copied by
+    hand into a hidden folder (`~/.arkiv/pro-license.json`) -- the one step of
+    the purchase the app gave no help with. The record is checked with the same
+    `pro_licence.check` that `has_pro()` relies on, so "accepted here" and
+    "counts as Pro" cannot disagree.
+
+    A record that does not verify is refused with the user-facing reason and the
+    file on disk is left untouched: a mistyped import must never replace a
+    licence that works. The write goes through a temp file + `os.replace` so a
+    crash mid-write cannot leave a half-file that reads as "could not be read".
+    """
+    import pro_licence
+
+    if not isinstance(record, dict):
+        return False, "not a licence record", None
+    try:
+        encoded = json.dumps(record, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        return False, "not a licence record", None
+    if len(encoded.encode("utf-8")) > LICENCE_MAX_BYTES:
+        return False, "file is too large to be a licence", None
+    ok, reason = pro_licence.check(record)
+    if not ok:
+        return False, reason, None
+    path = _license_file_path()
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(encoded + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False, "could not save the licence file: {0}".format(exc.strerror or exc), None
+    info, problem = licence_status()
+    if info is None:  # pragma: no cover - verified above; guards a racing writer
+        return False, problem or "licence did not verify after saving", None
+    return True, "ok", info
+
+
 def _pro_from_license_file():
     """True when the licence file carries a valid licensor signature."""
     info, _ = licence_status()
