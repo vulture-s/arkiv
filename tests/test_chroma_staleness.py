@@ -151,6 +151,24 @@ _needs_real_chromadb = pytest.mark.skipif(
     not _real_chromadb_available(), reason="real chromadb not importable"
 )
 
+# Windows CreateProcess caps lpCommandLine at 32767 chars (POSIX ARG_MAX is ~1MB).
+_WIN_CMDLINE_MAX = 32767
+
+# Writes three rows from a separate process. It builds its own vectors and takes
+# path / collection / dim from argv: the earlier version inlined three 1024-float
+# reprs, a ~58K-char command line that died in subprocess._execute_child with
+# WinError 206 on Windows before running a line, while staying green on POSIX.
+_GRANDCHILD = (
+    'import os, sys\n'
+    'os.environ["ANONYMIZED_TELEMETRY"] = "False"\n'
+    'import chromadb\n'
+    'path, name, D = sys.argv[1], sys.argv[2], int(sys.argv[3])\n'
+    'def emb(s): return [float((s * 3 + i) % 11) / 11.0 for i in range(D)]\n'
+    'c = chromadb.PersistentClient(path=path)\n'
+    'col = c.get_or_create_collection(name)\n'
+    'col.add(ids=["c1","c2","c3"], embeddings=[emb(5),emb(6),emb(7)], documents=["a","b","c"])\n'
+)
+
 # Runs in a clean interpreter so the conftest stub is out of the way. Writes from
 # a grandchild process, then asks OUR get_collection() whether search can see it.
 _E2E = r'''
@@ -169,15 +187,17 @@ col = vectordb.get_collection()
 col.add(ids=["parent1"], embeddings=[emb(1)], documents=["parent"])
 col.query(query_embeddings=[emb(1)], n_results=10)   # force the HNSW index in
 
-child = (
-    'import os\n'
-    'os.environ["ANONYMIZED_TELEMETRY"] = "False"\n'
-    'import chromadb\n'
-    'c = chromadb.PersistentClient(path=r"%s")\n'
-    'col = c.get_or_create_collection("%s")\n'
-    'col.add(ids=["c1","c2","c3"], embeddings=[%s,%s,%s], documents=["a","b","c"])\n'
-) % (chroma, vectordb.COLLECTION_NAME, emb(5), emb(6), emb(7))
-subprocess.run([sys.executable, "-c", child], capture_output=True, check=True)
+child = sys.argv[3]   # _GRANDCHILD, passed in rather than inlined (see there)
+argv = [sys.executable, "-c", child, chroma, vectordb.COLLECTION_NAME, str(D)]
+# Hold every platform to the Windows limit, so a regression is red on Mac too.
+n = len(subprocess.list2cmdline(argv))
+if n >= 32767:
+    print("CMDLINE_TOO_LONG", n)
+    sys.exit(3)
+g = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8")
+if g.returncode != 0:
+    sys.stderr.write(g.stderr[-2000:])
+    sys.exit(4)
 
 res = vectordb.get_collection().query(query_embeddings=[emb(5)], n_results=10)
 print("HITS", len(res["ids"][0]))
@@ -190,12 +210,28 @@ def test_search_sees_another_process_write(tmp_path):
     chroma = tmp_path / "chroma"
     chroma.mkdir()
     r = subprocess.run(
-        [sys.executable, "-c", _E2E, str(chroma), str(config.BASE_DIR)],
+        [sys.executable, "-c", _E2E, str(chroma), str(config.BASE_DIR), _GRANDCHILD],
         capture_output=True, text=True, encoding="utf-8", timeout=180,
         # Parent decodes utf-8; the child writes the locale encoding by default.
         env=dict(os.environ, PYTHONIOENCODING="utf-8"),
     )
+    assert "CMDLINE_TOO_LONG" not in r.stdout, (
+        "grandchild command line exceeds Windows' %d-char limit: " % _WIN_CMDLINE_MAX + r.stdout[-200:])
     assert r.returncode == 0, r.stderr[-2000:]
     hits = [l for l in r.stdout.splitlines() if l.startswith("HITS")]
     assert hits, r.stdout[-2000:] + r.stderr[-2000:]
     assert hits[0] == "HITS 4", "search missed rows written by another process"
+
+
+def test_e2e_command_lines_fit_the_windows_limit(tmp_path):
+    """Not gated on real chromadb: no CI job installs it, so the e2e test above is
+    skipped everywhere in CI and its own length check never runs there. This one
+    pins the constraint that made it red on Windows, on every platform."""
+    deep = str(tmp_path / ("d" * 200) / "chroma")
+    for argv in (
+        [sys.executable, "-c", _E2E, deep, str(config.BASE_DIR), _GRANDCHILD],
+        [sys.executable, "-c", _GRANDCHILD, deep, vectordb.COLLECTION_NAME,
+         str(config.EMBED_DIM)],
+    ):
+        n = len(subprocess.list2cmdline(argv))
+        assert n < _WIN_CMDLINE_MAX, "%d chars: Windows CreateProcess would refuse it" % n
