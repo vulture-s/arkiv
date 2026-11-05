@@ -734,7 +734,7 @@ whisper-guard==0.3.3
     # via
     #   -r requirements-ci.txt
     #   -r requirements.txt
-xxhash==4.0.1
+xxhash==4.0.2
     # via
     #   -r requirements-ci.txt
     #   -r requirements.txt
