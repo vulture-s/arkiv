@@ -1,6 +1,7 @@
 // A6 person annotations (manual, human-entered — never face recognition).
 // Pure helpers for the Inspector's 人物 block, kept out of the .svelte file so
 // node --test can pin them (frontend/tests/identities.test.mjs).
+import { tr } from './i18n.js'
 
 // The range a new annotation covers, from the inspector's IN/OUT marks.
 //   both marks, IN < OUT  → that range
@@ -50,7 +51,7 @@ function mmss(sec) {
 
 // Label for one annotation row (or a {start_s, end_s} range): 整支片 / 00:12–00:31.
 export function formatIdentityRange(ident) {
-  if (!ident || ident.start_s == null || ident.end_s == null) return '整支片'
+  if (!ident || ident.start_s == null || ident.end_s == null) return tr('整支片')
   return `${mmss(ident.start_s)}–${mmss(ident.end_s)}`
 }
 

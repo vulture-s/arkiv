@@ -19,6 +19,7 @@
   import { resolvedTheme } from '../lib/prefs.js'
   import { pickFolder, canPickFolder } from '../lib/pickFolder.js'
   import { pushToast } from '../lib/toast.js'
+  import { t } from '../lib/i18n.js'
 
   let path = ''
   let limit = 0
@@ -50,10 +51,10 @@
   let scanning = false, starting = false, err = '', notice = ''
 
   $: gb = manifest ? (manifest.total_size_mb / 1024).toFixed(1) : null
-  const hhmm = (s) => {
-    if (!s || s < 60) return `${Math.max(1, Math.round(s || 0))} 秒`
+  $: hhmm = (s) => {
+    if (!s || s < 60) return $t('{n} 秒', { n: Math.max(1, Math.round(s || 0)) })
     const m = Math.round(s / 60)
-    return m < 60 ? `${m} 分` : `${Math.floor(m / 60)} 小時 ${m % 60} 分`
+    return m < 60 ? $t('{m} 分', { m }) : $t('{h} 小時 {m} 分', { h: Math.floor(m / 60), m: m % 60 })
   }
 
   // The header button has read "ESC · CANCEL" since this screen shipped, but the
@@ -79,7 +80,7 @@
       const p = await pickFolder(path)
       if (p) path = p
     } catch (e) {
-      pushToast(`資料夾選擇器打不開：${e?.name || ''} ${e?.message || e}`, 'error')
+      pushToast($t('資料夾選擇器打不開：{name} {error}', { name: e?.name || '', error: e?.message || e }), 'error')
     }
   }
 
@@ -89,14 +90,14 @@
     // inline text is easy to miss. `err` stays for operation failures below, so
     // validation and runtime errors do not compete for the same slot.
     if (!path.trim()) {
-      pushToast('請先填來源資料夾路徑（Source · folder）', 'error')
+      pushToast($t('請先填來源資料夾路徑（Source · folder）'), 'error')
       return
     }
     err = ''; notice = ''; scanning = true; manifest = null; estimate = null
     try {
       const d = await api.scanMedia(path.trim())
       manifest = d.manifest; total = d.total; fresh = d.new; estimate = d.estimate || null
-      if (total === 0) notice = '這個資料夾沒有可匯入的媒體檔。'
+      if (total === 0) notice = $t('這個資料夾沒有可匯入的媒體檔。')
     } catch (e) { err = e.message } finally { scanning = false }
   }
 
@@ -106,11 +107,11 @@
     // different problems with the same symptom (total === 0), so they get
     // different sentences — manifest is null only before a scan has run.
     const missing = []
-    if (!path.trim()) missing.push('來源資料夾路徑（Source · folder）')
-    if (manifest === null) missing.push('先按 Scan 掃描來源資料夾')
-    else if (total === 0) missing.push('可匯入的媒體檔（這個資料夾掃到 0 個）')
+    if (!path.trim()) missing.push($t('來源資料夾路徑（Source · folder）'))
+    if (manifest === null) missing.push($t('先按 Scan 掃描來源資料夾'))
+    else if (total === 0) missing.push($t('可匯入的媒體檔（這個資料夾掃到 0 個）'))
     if (missing.length) {
-      pushToast(`無法開始匯入 — 缺少：${missing.join('、')}`, 'error')
+      pushToast($t('無法開始匯入 — 缺少：{list}', { list: missing.join($t('、')) }), 'error')
       return
     }
     err = ''; starting = true
@@ -143,31 +144,31 @@
   const PRESET_UNSAFE = /[;|]/
   async function savePreset() {
     const val = path.trim()
-    if (!val) { presetNote = '先填路徑'; return }
-    if (presets.some((p) => p.path === val)) { presetNote = '這個路徑已在捷徑裡'; return }
+    if (!val) { presetNote = $t('先填路徑'); return }
+    if (presets.some((p) => p.path === val)) { presetNote = $t('這個路徑已在捷徑裡'); return }
     const bad = val.match(PRESET_UNSAFE)
-    if (bad) { presetNote = `路徑含有「${bad[0]}」，捷徑格式存不了這個字元`; return }
+    if (bad) { presetNote = $t('路徑含有「{ch}」，捷徑格式存不了這個字元', { ch: bad[0] }); return }
     if (presets.some((p) => PRESET_UNSAFE.test(p.path) || PRESET_UNSAFE.test(p.label))) {
       // Writing now would persist the damage to the existing entries too.
-      presetNote = '既有捷徑裡有「;」或「|」，請先到 Settings 修好再新增'
+      presetNote = $t('既有捷徑裡有「;」或「|」，請先到 Settings 修好再新增')
       return
     }
     const label = (val.replace(/\/+$/, '').split('/').pop() || val).slice(0, 24)
     const next = [...presets, { label, path: val }]
-    presetNote = '儲存中…'
+    presetNote = $t('儲存中…')
     try {
       await api.putSettings({
         'ingest.source_presets': next.map((p) => `${p.label}|${p.path}`).join('; '),
       })
       presets = next
-      presetNote = `已加入捷徑「${label}」`
-    } catch (e) { presetNote = '儲存失敗' }
+      presetNote = $t('已加入捷徑「{label}」', { label })
+    } catch (e) { presetNote = $t('儲存失敗') }
   }
 
   async function saveVisionModel() {
-    visionNote = '儲存中…'
-    try { await api.putSettings({ 'vision.model': visionModel }); visionNote = '已設為全庫預設 ✓' }
-    catch (e) { visionNote = '儲存失敗' }
+    visionNote = $t('儲存中…')
+    try { await api.putSettings({ 'vision.model': visionModel }); visionNote = $t('已設為全庫預設 ✓') }
+    catch (e) { visionNote = $t('儲存失敗') }
   }
 
   // 2-phase DIT handoff: /offload sends the completed destination here as
@@ -189,12 +190,12 @@
     if (src) { path = src; scan() }
   })
 
-  const TOGGLES = [
-    ['skip_vision', 'Skip vision', '跳過 AI 視覺標註（只轉錄）'],
-    ['refresh', 'Refresh', '重抽已索引檔（含 360 reproject 重套）'],
-    ['recursive', 'Recursive', '遞迴掃子資料夾'],
-    ['skip_failed', 'Tolerate vision fails', '零星幀失敗不中斷（過夜跑）'],
-    ['no_embed', 'Skip index rebuild', '匯入後不自動重建向量索引'],
+  $: TOGGLES = [
+    ['skip_vision', 'Skip vision', $t('跳過 AI 視覺標註（只轉錄）')],
+    ['refresh', 'Refresh', $t('重抽已索引檔（含 360 reproject 重套）')],
+    ['recursive', 'Recursive', $t('遞迴掃子資料夾')],
+    ['skip_failed', 'Tolerate vision fails', $t('零星幀失敗不中斷（過夜跑）')],
+    ['no_embed', 'Skip index rebuild', $t('匯入後不自動重建向量索引')],
   ]
 </script>
 
@@ -221,9 +222,9 @@
         <div class="field">
           <Eyebrow>Source · folder</Eyebrow>
           <div class="srcrow">
-            <input class="ak-input" placeholder="/Volumes/CARD/DCIM  或  ~/footage" bind:value={path} spellcheck="false" on:keydown={(e)=>e.key==='Enter'&&scan()} />
+            <input class="ak-input" placeholder={$t('/Volumes/CARD/DCIM  或  ~/footage')} bind:value={path} spellcheck="false" on:keydown={(e)=>e.key==='Enter'&&scan()} />
             {#if canBrowse}
-              <button class="seg" on:click={browsePath} disabled={scanning} title="選擇資料夾">⋯</button>
+              <button class="seg" on:click={browsePath} disabled={scanning} title={$t('選擇資料夾')}>⋯</button>
             {/if}
             <button class="ak-btn" on:click={scan} disabled={scanning}>{scanning ? 'scanning…' : 'Scan'}</button>
           </div>
@@ -233,9 +234,9 @@
                       title={p.path} on:click={() => { path = p.path; scan() }}>{p.label}</button>
             {/each}
             <button class="seg preset add" on:click={savePreset}
-                    title="把目前路徑存成捷徑（存在 Settings 的 ingest.source_presets）">＋</button>
+                    title={$t('把目前路徑存成捷徑（存在 Settings 的 ingest.source_presets）')}>＋</button>
             {#if presetNote}<Mono dim style="font-size:9.5px;">{presetNote}</Mono>
-            {:else if !presets.length}<Mono dim style="font-size:9.5px;">按 ＋ 把常用路徑存成捷徑</Mono>{/if}
+            {:else if !presets.length}<Mono dim style="font-size:9.5px;">{$t('按 ＋ 把常用路徑存成捷徑')}</Mono>{/if}
           </div>
         </div>
 
@@ -249,11 +250,11 @@
           {/each}
           <div class="optrow">
             <input class="ak-input num" type="number" min="0" bind:value={maxFailures} title="max-failures (0 = halt on first)" />
-            <div class="optlabel"><span>Max vision failures</span><Mono dim style="font-size:10px;">累計幾個幀失敗才停（0 = 第一個就停）</Mono></div>
+            <div class="optlabel"><span>Max vision failures</span><Mono dim style="font-size:10px;">{$t('累計幾個幀失敗才停（0 = 第一個就停）')}</Mono></div>
           </div>
           <div class="optrow">
             <input class="ak-input num" type="number" min="0" bind:value={limit} title="limit (0 = all)" />
-            <div class="optlabel"><span>Limit</span><Mono dim style="font-size:10px;">只處理前 N 個（0 = 全部）</Mono></div>
+            <div class="optlabel"><span>Limit</span><Mono dim style="font-size:10px;">{$t('只處理前 N 個（0 = 全部）')}</Mono></div>
           </div>
         </div>
 
@@ -267,16 +268,16 @@
                 <option value={String(m.mode)}>{m.name}</option>
               {/each}
             </select>
-            <div class="optlabel"><span>Model · quality</span><Mono dim style="font-size:10px;">whisper guard preset（0 快 → 4 最準，預設 4）</Mono></div>
+            <div class="optlabel"><span>Model · quality</span><Mono dim style="font-size:10px;">{$t('whisper guard preset（0 快 → 4 最準，預設 4）')}</Mono></div>
           </div>
           <div class="optrow">
             <select class="ak-input sel" bind:value={language} title="force transcription language">
-              <option value="">系統預設（中文 zh）</option>
+              <option value="">{$t('系統預設（中文 zh）')}</option>
               {#each (engines?.languages ?? []) as l}
                 <option value={l.code}>{l.label} · {l.code}</option>
               {/each}
             </select>
-            <div class="optlabel"><span>Language</span><Mono dim style="font-size:10px;">強制語言（留白＝系統預設，目前為中文 zh；非中文素材請選對應語言，無自動偵測）</Mono></div>
+            <div class="optlabel"><span>Language</span><Mono dim style="font-size:10px;">{$t('強制語言（留白＝系統預設，目前為中文 zh；非中文素材請選對應語言，無自動偵測）')}</Mono></div>
           </div>
         </div>
 
@@ -293,7 +294,7 @@
                 <option value={m}>{m}</option>
               {/each}
             </select>
-            <div class="optlabel"><span>Model{visionNote ? ` · ${visionNote}` : ''}</span><Mono dim style="font-size:10px;">全庫預設視覺模型（持久，同 Settings）{engines && !(engines.vision_models?.length) ? ' · ollama 無法連線' : ''}</Mono></div>
+            <div class="optlabel"><span>Model{visionNote ? ` · ${visionNote}` : ''}</span><Mono dim style="font-size:10px;">{$t('全庫預設視覺模型（持久，同 Settings）')}{engines && !(engines.vision_models?.length) ? $t(' · ollama 無法連線') : ''}</Mono></div>
           </div>
           <div class="pendrow"><Mono dim>tag pool · frames</Mono><span class="pend">picker pending · brick 4b</span></div>
         </div>
@@ -303,7 +304,7 @@
       <div class="col manifest">
         <Eyebrow>Manifest</Eyebrow>
         {#if !manifest}
-          <div class="empty"><Mono dim>{scanning ? '掃描中…' : '填路徑後按 Scan 看清單'}</Mono></div>
+          <div class="empty"><Mono dim>{scanning ? $t('掃描中…') : $t('填路徑後按 Scan 看清單')}</Mono></div>
         {:else}
           <div class="mtotal"><Mono>{total} files · {gb} GB</Mono></div>
           <div class="mrow"><span>Video</span><Mono dim>{manifest.video.count}</Mono><Mono dim>{manifest.video.size_mb} MB</Mono></div>
@@ -314,16 +315,13 @@
           <div class="estimated">
             <Eyebrow>Estimated</Eyebrow>
             {#if estimate}
-              <div class="estrow"><span>約需</span><Mono>{hhmm(estimate.seconds)}</Mono></div>
-              <div class="estrow dim"><span>上限</span><Mono dim>{hhmm(estimate.budget_s)}</Mono></div>
+              <div class="estrow"><span>{$t('約需')}</span><Mono>{hhmm(estimate.seconds)}</Mono></div>
+              <div class="estrow dim"><span>{$t('上限')}</span><Mono dim>{hhmm(estimate.budget_s)}</Mono></div>
               <Mono dim style="font-size:9.5px;line-height:1.5;display:block;margin-top:4px;">
-                依 {estimate.probed}/{estimate.of} 支的實際時長推算（成本由視覺分析的
-                幀數決定，不是由檔案數）。超過上限或連續
-                {hhmm(estimate.stall_s)}沒有進度會停止並告知原因；
-                已完成的素材都會留在庫裡，重跑接續。
+                {$t('依 {probed}/{of} 支的實際時長推算（成本由視覺分析的 幀數決定，不是由檔案數）。超過上限或連續 {stall}沒有進度會停止並告知原因； 已完成的素材都會留在庫裡，重跑接續。', { probed: estimate.probed, of: estimate.of, stall: hhmm(estimate.stall_s) })}
               </Mono>
             {:else}
-              <span class="pend">掃描後顯示</span>
+              <span class="pend">{$t('掃描後顯示')}</span>
             {/if}
           </div>
         {/if}
@@ -340,7 +338,7 @@
       <!-- Disabled only while a start is actually in flight; every other refusal
            is a toast naming what is missing, same as Offload's Run. -->
       <button class="ak-btn ak-btn--primary" on:click={start} disabled={starting}
-              title={total > 0 ? `開始匯入 ${total} 個檔案` : '開始匯入'}>{starting ? 'starting…' : 'Start ingest →'}</button>
+              title={total > 0 ? $t('開始匯入 {n} 個檔案', { n: total }) : $t('開始匯入')}>{starting ? 'starting…' : 'Start ingest →'}</button>
     </div>
   </div>
 </div>

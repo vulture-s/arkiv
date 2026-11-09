@@ -183,9 +183,10 @@ test('list view has a 拍攝日期 column that reads shot_date, beside 匯入日
   assert.ok(table, 'list view table not found')
   // A header's label is its text once the sort button's {…} expressions (the arrow,
   // the `() =>` handler) and then its tags are stripped — expressions first, since
-  // the `>` in `=>` would end a tag match early.
+  // the `>` in `=>` would end a tag match early. Labels are i18n-wrapped (#581), so
+  // `{$t('拍攝日期')}` is unwrapped to its zh-TW source text before that.
   const ths = [...table[1].matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g)]
-    .map((m) => m[1].replace(/\{[^}]*\}/g, '').replace(/<[^>]*>/g, '').trim())
+    .map((m) => m[1].replace(/\{\$t\('([^']*)'\)\}/g, '$1').replace(/\{[^}]*\}/g, '').replace(/<[^>]*>/g, '').trim())
   const tds = [...table[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1])
   assert.equal(ths.length, tds.length, `header/cell count differ: ${ths.length} vs ${tds.length}`)
 

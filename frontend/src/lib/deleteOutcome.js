@@ -16,7 +16,10 @@
 //   requested: the ids that were sent
 // → { msg, kind: 'ok' | 'error', removeIds }  (removeIds = rows that are gone)
 
-const NOT_TRASHED_HINT = '原始檔未進回收桶，標籤／評分／逐字稿無法還原'
+import { tr } from './i18n.js'
+
+// A function so it is translated when the toast is built, not at module load.
+const notTrashedHint = () => tr('原始檔未進回收桶，標籤／評分／逐字稿無法還原')
 
 export function describeDelete(kind, r, label, requested = []) {
   r = r || {}
@@ -24,13 +27,13 @@ export function describeDelete(kind, r, label, requested = []) {
     const id = r.media_id != null ? r.media_id : requested[0]
     if (r.file_deleted) {
       if (r.warning) {
-        return { msg: `已移至回收桶 · ${label}（注意：${r.warning}）`, kind: 'error', removeIds: [id] }
+        return { msg: tr('已移至回收桶 · {label}（注意：{warning}）', { label, warning: r.warning }), kind: 'error', removeIds: [id] }
       }
-      return { msg: `已移至回收桶 · ${label}`, kind: 'ok', removeIds: [id] }
+      return { msg: tr('已移至回收桶 · {label}', { label }), kind: 'ok', removeIds: [id] }
     }
     return {
-      msg: `已刪除「${label}」的資料，但未進回收桶：${NOT_TRASHED_HINT}` +
-        (r.warning ? `（${r.warning}）` : ''),
+      msg: tr('已刪除「{label}」的資料，但未進回收桶：{hint}', { label, hint: notTrashedHint() }) +
+        (r.warning ? tr('（{warning}）', { warning: r.warning }) : ''),
       kind: 'error',
       removeIds: [id],
     }
@@ -44,11 +47,11 @@ export function describeDelete(kind, r, label, requested = []) {
   const otherWarnings = (r.warnings || []).filter((w) => !notTrashedIds.has(w.media_id))
   const trashed = deleted.length - notTrashed.length
 
-  const parts = [`已移至回收桶 ${trashed} 支`]
-  if (notTrashed.length) parts.push(`${notTrashed.length} 支未進回收桶（${NOT_TRASHED_HINT}）`)
-  if (skipped.length) parts.push(`跳過 ${skipped.length} 支（找不到）`)
-  if (errors.length) parts.push(`${errors.length} 支失敗`)
-  if (otherWarnings.length) parts.push(`${otherWarnings.length} 支有警告：${otherWarnings[0].warning}`)
+  const parts = [tr('已移至回收桶 {n} 支', { n: trashed })]
+  if (notTrashed.length) parts.push(tr('{n} 支未進回收桶（{hint}）', { n: notTrashed.length, hint: notTrashedHint() }))
+  if (skipped.length) parts.push(tr('跳過 {n} 支（找不到）', { n: skipped.length }))
+  if (errors.length) parts.push(tr('{n} 支失敗', { n: errors.length }))
+  if (otherWarnings.length) parts.push(tr('{n} 支有警告：{warning}', { n: otherWarnings.length, warning: otherWarnings[0].warning }))
 
   return {
     msg: parts.join(' · '),

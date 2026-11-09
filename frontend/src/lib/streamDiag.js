@@ -22,6 +22,8 @@
 // test pins the range behaviour so swapping the response class cannot silently
 // turn this into a full download.
 
+import { tr } from './i18n.js'
+
 export const CODEC = 'codec'            // the file is there and readable; the browser cannot decode it
 export const FORBIDDEN = 'forbidden'    // 401/403 — auth, not encoding
 export const MISSING = 'missing'        // 404 — the row or the file is gone
@@ -91,21 +93,21 @@ export async function diagnosePlaybackFailure(url, doFetch = fetch) {
 
 /** One line for the panel. Keeps the 409 wording the UI already shipped. */
 export function playbackFailureMessage(diag) {
-  if (!diag) return '播放失敗'
+  if (!diag) return tr('播放失敗')
   switch (diag.kind) {
     case CODEC:
       // #558: in a proxies-off library "build a proxy" is not what the next
       // ingest will do, so show the endpoint's own explanation instead.
       if (diag.proxiesDisabled && diag.message) return diag.message
-      return diag.reason ? `此編碼瀏覽器播不了（${diag.reason}）` : '此編碼瀏覽器播不了'
+      return diag.reason ? tr('此編碼瀏覽器播不了（{reason}）', { reason: diag.reason }) : tr('此編碼瀏覽器播不了')
     case FORBIDDEN:
-      return '沒有權限讀取這個檔案 —— 這不是編碼問題'
+      return tr('沒有權限讀取這個檔案 —— 這不是編碼問題')
     case MISSING:
-      return '找不到這個檔案 —— 它可能被移走或刪掉了'
+      return tr('找不到這個檔案 —— 它可能被移走或刪掉了')
     case UNREACHABLE:
-      return '連不上伺服器，所以讀不到這個檔案'
+      return tr('連不上伺服器，所以讀不到這個檔案')
     default:
-      return `伺服器回報錯誤（${diag.status}）`
+      return tr('伺服器回報錯誤（{status}）', { status: diag.status })
   }
 }
 
@@ -119,5 +121,5 @@ export function playbackFailureMessage(diag) {
  */
 export function proxyButtonLabel(diag) {
   if (!diag || !diag.canProxy) return null
-  return diag.proxiesDisabled ? '只為這一支建立 proxy' : '建立 proxy 後可播放'
+  return diag.proxiesDisabled ? tr('只為這一支建立 proxy') : tr('建立 proxy 後可播放')
 }

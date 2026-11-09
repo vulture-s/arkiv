@@ -7,6 +7,7 @@
   import Eyebrow from './Eyebrow.svelte'
   import Mono from './Mono.svelte'
   import ConfirmDialog from './ConfirmDialog.svelte'
+  import { t } from './i18n.js'
   export let open = false
   const dispatch = createEventDispatcher()
 
@@ -27,24 +28,24 @@
       const r = await api.getTrash()
       items = (r && r.trash) || []
     } catch (e) {
-      msg = '讀取回收桶失敗: ' + e.message
+      msg = $t('讀取回收桶失敗: {error}', { error: e.message })
     } finally {
       loading = false
     }
   }
 
-  async function restore(t) {
-    busyId = t.id
+  async function restore(item) {
+    busyId = item.id
     msg = ''
     try {
-      const r = await api.restoreTrash(t.id)
+      const r = await api.restoreTrash(item.id)
       msg =
         r.ingest === 'triggered'
-          ? `已還原並觸發重新匯入：${r.restored_to || t.filename}`
-          : `已還原：${r.restored_to || t.filename}`
-      items = items.filter((x) => x.id !== t.id)
+          ? $t('已還原並觸發重新匯入：{name}', { name: r.restored_to || item.filename })
+          : $t('已還原：{name}', { name: r.restored_to || item.filename })
+      items = items.filter((x) => x.id !== item.id)
     } catch (e) {
-      msg = '還原失敗: ' + e.message
+      msg = $t('還原失敗: {error}', { error: e.message })
     } finally {
       busyId = null
     }
@@ -55,11 +56,11 @@
     msg = ''
     try {
       const r = await api.purgeTrash(ttlDays)
-      msg = `已清空 ${r.purged} 項`
+      msg = $t('已清空 {n} 項', { n: r.purged })
       items = ttlDays ? [] : items
       await load()
     } catch (e) {
-      msg = '清空失敗: ' + e.message
+      msg = $t('清空失敗: {error}', { error: e.message })
     } finally {
       busyId = null
     }
@@ -73,7 +74,7 @@
     n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB'
       : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB'
       : Math.max(0, Math.round((n || 0) / 1024)) + ' KB'
-  $: purgeAllBytes = items.reduce((a, t) => a + (t.size_bytes || 0), 0)
+  $: purgeAllBytes = items.reduce((a, it) => a + (it.size_bytes || 0), 0)
 
   const fmt = (s) => (s ? s.replace('T', ' ').slice(0, 16) : '—')
 </script>
@@ -100,29 +101,29 @@
       on:keydown={(e) => e.stopPropagation()}
     >
       <div class="head">
-        <Eyebrow>回收桶 · Trash</Eyebrow>
+        <Eyebrow>{$t('回收桶 · Trash')}</Eyebrow>
         <div class="head-actions">
-          <button class="ak-btn" on:click={() => purge(null)} disabled={busyId === 'purge' || !items.length} title="清空過期項（依 TTL）">清空過期</button>
-          <button class="ak-btn danger" on:click={() => (confirmPurgeAll = true)} disabled={busyId === 'purge' || !items.length} title="立即清空全部">清空全部</button>
-          <button class="ak-btn" on:click={() => dispatch('close')}>關閉</button>
+          <button class="ak-btn" on:click={() => purge(null)} disabled={busyId === 'purge' || !items.length} title={$t('清空過期項（依 TTL）')}>{$t('清空過期')}</button>
+          <button class="ak-btn danger" on:click={() => (confirmPurgeAll = true)} disabled={busyId === 'purge' || !items.length} title={$t('立即清空全部')}>{$t('清空全部')}</button>
+          <button class="ak-btn" on:click={() => dispatch('close')}>{$t('關閉')}</button>
         </div>
       </div>
 
       {#if msg}<div class="msg"><Mono>{msg}</Mono></div>{/if}
 
       {#if loading}
-        <div class="empty"><Mono dim>讀取中…</Mono></div>
+        <div class="empty"><Mono dim>{$t('讀取中…')}</Mono></div>
       {:else if items.length === 0}
-        <div class="empty"><Mono dim>回收桶是空的。</Mono></div>
+        <div class="empty"><Mono dim>{$t('回收桶是空的。')}</Mono></div>
       {:else}
         <div class="rows">
-          {#each items as t (t.id)}
+          {#each items as item (item.id)}
             <div class="row">
               <div class="meta">
-                <div class="fname">{t.filename}</div>
-                <Mono dim style="font-size:10px;">刪除 {fmt(t.deleted_at)} · 過期 {fmt(t.expires_at)}</Mono>
+                <div class="fname">{item.filename}</div>
+                <Mono dim style="font-size:10px;">{$t('刪除 {deleted} · 過期 {expires}', { deleted: fmt(item.deleted_at), expires: fmt(item.expires_at) })}</Mono>
               </div>
-              <button class="ak-btn" on:click={() => restore(t)} disabled={busyId === t.id}>還原</button>
+              <button class="ak-btn" on:click={() => restore(item)} disabled={busyId === item.id}>{$t('還原')}</button>
             </div>
           {/each}
         </div>
@@ -135,9 +136,9 @@
 <ConfirmDialog
   open={confirmPurgeAll}
   danger
-  title="永久清空回收桶？"
-  message={`將永久刪除 ${items.length} 個原始檔（共 ${fmtBytes(purgeAllBytes)}），無法復原。`}
-  confirmLabel="永久刪除"
+  title={$t('永久清空回收桶？')}
+  message={$t('將永久刪除 {n} 個原始檔（共 {size}），無法復原。', { n: items.length, size: fmtBytes(purgeAllBytes) })}
+  confirmLabel={$t('永久刪除')}
   busy={busyId === 'purge'}
   on:cancel={() => (confirmPurgeAll = false)}
   on:confirm={async () => { await purge(0); confirmPurgeAll = false }}

@@ -3,6 +3,7 @@
      and slide). Flat baseline when a clip has no peaks. -->
 <script>
   import { createEventDispatcher } from 'svelte'
+  import { t } from './i18n.js'
   export let peaks = null // number[] 0..1 from /api/media/{id}/waveform, or null
   export let progress = 0 // 0..1 playhead position (player currentTime / duration)
   export let inFrac = null // 0..1 IN trim point, or null
@@ -49,7 +50,7 @@
 
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div class="wf" bind:this={wfEl} on:click={onClick} on:pointermove={onMove}
-  on:pointerup={endDrag} on:pointercancel={endDrag} title="點擊跳播 · 拖曳 IN/OUT 標記調整區間">
+  on:pointerup={endDrag} on:pointercancel={endDrag} title={$t('點擊跳播 · 拖曳 IN/OUT 標記調整區間')}>
   {#if hasSel}
     <div class="sel" style="left:{selL}%;right:{100 - selR}%"></div>
   {/if}

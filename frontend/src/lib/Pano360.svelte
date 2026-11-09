@@ -5,6 +5,7 @@
      (arkiv reprojects 360 for tagging; there's no equirect video proxy). -->
 <script>
   import { onMount, onDestroy } from 'svelte'
+  import { t } from './i18n.js'
   import * as THREE from 'three'
 
   export let src // equirectangular image URL (the 360 frame thumbnail)
@@ -95,7 +96,7 @@
   aria-label="360 panorama — drag to look around"
 >
   {#if !ready}<div class="loading">360 · loading…</div>{/if}
-  <div class="hint">360 · 拖曳環視</div>
+  <div class="hint">{$t('360 · 拖曳環視')}</div>
 </div>
 
 <style>

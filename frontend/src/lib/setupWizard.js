@@ -6,6 +6,7 @@
 // /api/setup/status; the page does the fetching.
 
 import { needsIngestHint } from './projectsFirstRun.js'
+import { tr } from './i18n.js'
 
 /** Should opening the app land on the wizard? Only for a user who has not finished
  *  (or skipped) it AND whose library holds none of their own media — someone who
@@ -24,14 +25,14 @@ export function fmtBytes(n) {
 /** One line of progress for a pull item. */
 export function pullLine(item) {
   if (!item) return ''
-  if (item.status === 'done') return '完成'
-  if (item.status === 'error') return `失敗：${item.message || '未知錯誤'}`
-  if (item.status === 'queued') return '排隊中'
+  if (item.status === 'done') return tr('完成')
+  if (item.status === 'error') return tr('失敗：{msg}', { msg: item.message || tr('未知錯誤') })
+  if (item.status === 'queued') return tr('排隊中')
   if (item.total) {
     const pct = Math.min(100, Math.round((100 * (item.completed || 0)) / item.total))
     return `${pct}% · ${fmtBytes(item.completed)} / ${fmtBytes(item.total)}`
   }
-  return item.completed ? `已下載 ${fmtBytes(item.completed)}` : item.message || '下載中…'
+  return item.completed ? tr('已下載 {size}', { size: fmtBytes(item.completed) }) : item.message || tr('下載中…')
 }
 
 /** The install command for ffmpeg on this OS (shown, never run). */
@@ -47,9 +48,9 @@ export function modelRows(setup) {
   if (!setup) return []
   const rows = []
   const w = setup.whisper
-  if (w) rows.push({ key: w.name, label: '語音轉文字（Whisper）', name: w.name, present: !!w.present, size: w.size_hint || '' })
+  if (w) rows.push({ key: w.name, label: tr('語音轉文字（Whisper）'), name: w.name, present: !!w.present, size: w.size_hint || '' })
   for (const m of setup.ollama?.models || []) {
-    rows.push({ key: m.name, label: `${m.label}（Ollama）`, name: m.name, present: !!m.present, size: m.size_hint || '' })
+    rows.push({ key: m.name, label: tr('{label}（Ollama）', { label: m.label }), name: m.name, present: !!m.present, size: m.size_hint || '' })
   }
   return rows
 }
@@ -58,7 +59,7 @@ export function modelRows(setup) {
 export function blockers(setup) {
   if (!setup) return []
   const out = []
-  if (!setup.ffmpeg) out.push(`沒有 ffmpeg——匯入需要它。安裝：${ffmpegHint(setup.hardware?.os)}`)
+  if (!setup.ffmpeg) out.push(tr('沒有 ffmpeg——匯入需要它。安裝：{cmd}', { cmd: ffmpegHint(setup.hardware?.os) }))
   if (setup.transcribe && setup.transcribe.ok === 'false') out.push(setup.transcribe.note)
   return out
 }

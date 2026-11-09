@@ -18,6 +18,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
+  import { localePref, t } from '../lib/i18n.js'
 
   import { VERSION } from '../lib/version.js'
   import { describeTier, readLicenceFile, rejectReason } from '../lib/licenceView.js'
@@ -25,9 +26,9 @@
   // G5 step ①: nav expanded to the design's tab set. Real-backed tabs are
   // interactive; tabs without backend (vision/export) show honest pending rows.
   let section = 'general'
-  const nav = [
+  $: nav = [
     ['general', 'General'],
-    ['ingest', 'Ingest · 匯入'],
+    ['ingest', $t('Ingest · 匯入')],
     ['transcription', 'Transcription'],
     ['vision', 'Vision tagging'],
     ['export', 'Export defaults'],
@@ -37,6 +38,12 @@
     ['system', 'System · about'],
   ]
   const themeOpts = [['dark', 'Dark'], ['light', 'Light'], ['system', 'System']]
+  // Language names are shown in their own language; the sample is a real Chinese mishearing.
+  const LANG_FALLBACK = [{ code: 'zh', label: '中文' }, { code: 'en', label: 'English' }] // i18n-ignore language names
+  const DEFAULT_LANG_LABEL = '中文 zh' // i18n-ignore language name
+  const SAMPLE_FROM = '富田' // i18n-ignore sample data: a Chinese mishearing of Furutech
+  // Language names stay in their own language (a user who can't read the current UI still finds theirs).
+  const localeOpts = [['system', null], ['zh-TW', '繁體中文'], ['en', 'English']] // i18n-ignore
 
   // Transcription engines (brick 4, PR #77) — real whisper quality presets +
   // forced-language set. We display the available options + current default; the
@@ -68,14 +75,14 @@
   }
   async function saveSetting(values) {
     settingsBusy = true; settingsMsg = ''
-    try { await api.putSettings(values); await loadSettings(); settingsMsg = '已儲存 ✓' }
-    catch (e) { settingsMsg = '儲存失敗：' + (e?.body?.detail || e.message) }
+    try { await api.putSettings(values); await loadSettings(); settingsMsg = $t('已儲存 ✓') }
+    catch (e) { settingsMsg = $t('儲存失敗：{msg}', { msg: e?.body?.detail || e.message }) }
     finally { settingsBusy = false }
   }
   async function resetSettingKey(key) {
     settingsBusy = true; settingsMsg = ''
-    try { await api.resetSetting(key); await loadSettings(); settingsMsg = '已重設為預設 ✓' }
-    catch (e) { settingsMsg = '重設失敗：' + (e?.body?.detail || e.message) }
+    try { await api.resetSetting(key); await loadSettings(); settingsMsg = $t('已重設為預設 ✓') }
+    catch (e) { settingsMsg = $t('重設失敗：{msg}', { msg: e?.body?.detail || e.message }) }
     finally { settingsBusy = false }
   }
 
@@ -99,8 +106,8 @@
     licBusy = true; licMsg = ''
     try {
       entitlement = await api.installLicence(await readLicenceFile(file))
-      licMsg = `已安裝：${describeTier(entitlement).detail}`
-    } catch (e) { licMsg = `沒有安裝：${rejectReason(e)}（原本的授權不受影響）` }
+      licMsg = $t('已安裝：{detail}', { detail: describeTier(entitlement).detail })
+    } catch (e) { licMsg = $t('沒有安裝：{reason}（原本的授權不受影響）', { reason: rejectReason(e) }) }
     finally { licBusy = false }
   }
   let projBusy = false
@@ -122,7 +129,7 @@
   async function addProj() {
     if (projBusy) return
     const name = newName.trim(), path = newPath.trim()
-    if (!name || !path) { projMsg = '名稱與路徑都要填'; return }
+    if (!name || !path) { projMsg = $t('名稱與路徑都要填'); return }
     projBusy = true; projMsg = ''
     try {
       await api.addProject({ name, path, tags: newTags.split(',').map((t) => t.trim()).filter(Boolean) })
@@ -135,14 +142,14 @@
   async function delProj(name) {
     if (projBusy) return
     projBusy = true; projMsg = ''
-    try { await api.deleteProject(name); await loadProjects(); projMsg = `已移除 ${name}` }
-    catch (e) { projMsg = `失敗: ${e.message}` } finally { projBusy = false }
+    try { await api.deleteProject(name); await loadProjects(); projMsg = $t('已移除 {name}', { name }) }
+    catch (e) { projMsg = $t('失敗: {msg}', { msg: e.message }) } finally { projBusy = false }
   }
   async function syncProj() {
     if (projBusy) return
     projBusy = true; projMsg = ''
-    try { await api.syncProjects(); await loadProjects(); projMsg = '已同步索引時間' }
-    catch (e) { projMsg = `失敗: ${e.message}` } finally { projBusy = false }
+    try { await api.syncProjects(); await loadProjects(); projMsg = $t('已同步索引時間') }
+    catch (e) { projMsg = $t('失敗: {msg}', { msg: e.message }) } finally { projBusy = false }
   }
 
   // System panel — real backend state.
@@ -201,11 +208,11 @@
     proxyMsg = ''
     try {
       const r = await api.buildProxies()
-      proxyMsg = r.message || `已排入 ${r.queued} 個`
+      proxyMsg = r.message || $t('已排入 {n} 個', { n: r.queued })
       setTimeout(loadProxy, 2000)
       setTimeout(loadProxy, 8000)
     } catch (e) {
-      proxyMsg = `失敗: ${e.message}`
+      proxyMsg = $t('失敗: {msg}', { msg: e.message })
     } finally {
       proxyBusy = false
     }
@@ -230,9 +237,9 @@
     cacheBusy = true; cacheMsg = ''
     try {
       const r = await api.clearCache(target)
-      cacheMsg = r.message || `已清除 ${target}`
+      cacheMsg = r.message || $t('已清除 {target}', { target })
       setTimeout(loadCache, 800)
-    } catch (e) { cacheMsg = `失敗: ${e.message}` } finally { cacheBusy = false }
+    } catch (e) { cacheMsg = $t('失敗: {msg}', { msg: e.message }) } finally { cacheBusy = false }
   }
 
   // Correction dictionary (Phase 9.6) — one per-project dictionary, two paths:
@@ -263,20 +270,20 @@
   function removeRule(i) { rules = rules.filter((_, j) => j !== i); preview = null }
   async function saveVocab() {
     if (vocabBusy) return
-    if (!vocabCanSave) { vocabMsg = '字典尚未成功讀取，暫停儲存 — 重新整理後再試'; return }
+    if (!vocabCanSave) { vocabMsg = $t('字典尚未成功讀取，暫停儲存 — 重新整理後再試'); return }
     vocabBusy = true; vocabMsg = ''
     try {
       const res = await api.putCorrections(rules.filter((r) => (r.from || '').trim()))
       rules = (res.rules || []).map(normRule)
-      vocabMsg = `已存 ${res.count} 條規則`
+      vocabMsg = $t('已存 {n} 條規則', { n: res.count })
       preview = null
-    } catch (e) { vocabMsg = `失敗: ${e.message}` } finally { vocabBusy = false }
+    } catch (e) { vocabMsg = $t('失敗: {msg}', { msg: e.message }) } finally { vocabBusy = false }
   }
   async function runPreview() {
     if (vocabBusy) return
     vocabBusy = true; vocabMsg = ''; applyResult = null
     try { preview = await api.recorrectPreview() }
-    catch (e) { vocabMsg = `預覽失敗: ${e.message}` } finally { vocabBusy = false }
+    catch (e) { vocabMsg = $t('預覽失敗: {msg}', { msg: e.message }) } finally { vocabBusy = false }
   }
   async function runApply() {
     if (vocabBusy) return
@@ -285,8 +292,8 @@
       applyResult = await api.recorrectApply(doRebuild)
       preview = null
       backups = (await api.getRecorrectBackups()).backups || []
-      vocabMsg = `已套用：更新 ${applyResult.media_updated} 筆、${applyResult.total_hits} 處替換`
-    } catch (e) { vocabMsg = `套用失敗: ${e.message}` } finally { vocabBusy = false }
+      vocabMsg = $t('已套用：更新 {n} 筆、{hits} 處替換', { n: applyResult.media_updated, hits: applyResult.total_hits })
+    } catch (e) { vocabMsg = $t('套用失敗: {msg}', { msg: e.message }) } finally { vocabBusy = false }
   }
   async function runRevert() {
     if (vocabBusy) return
@@ -294,9 +301,9 @@
     try {
       const r = await api.recorrectRevert()
       applyResult = null
-      vocabMsg = r.error ? `還原失敗: ${r.error}` : `已還原 ${r.restored} 筆（${r.backup}）`
+      vocabMsg = r.error ? $t('還原失敗: {msg}', { msg: r.error }) : $t('已還原 {n} 筆（{backup}）', { n: r.restored, backup: r.backup })
       backups = (await api.getRecorrectBackups()).backups || []
-    } catch (e) { vocabMsg = `還原失敗: ${e.message}` } finally { vocabBusy = false }
+    } catch (e) { vocabMsg = $t('還原失敗: {msg}', { msg: e.message }) } finally { vocabBusy = false }
   }
 
   // Batch retranscribe (2a, 9.6d) — heavy upgrade path: re-runs Whisper across
@@ -319,10 +326,10 @@
     vocabMsg = ''
     try {
       const r = await api.retranscribeAll(true, retrLang || 'zh')
-      if (!r.queued) { vocabMsg = r.message || '沒有可重轉錄的素材'; return }
+      if (!r.queued) { vocabMsg = r.message || $t('沒有可重轉錄的素材'); return }
       retr = { total: r.queued, done: 0, failed: 0, current: null, running: true, backup: null }
       pollRetr()
-    } catch (e) { vocabMsg = e.status === 409 ? '批次重轉錄已在進行中' : `重轉錄失敗: ${e.message}` }
+    } catch (e) { vocabMsg = e.status === 409 ? $t('批次重轉錄已在進行中') : $t('重轉錄失敗: {msg}', { msg: e.message }) }
   }
   onDestroy(() => { if (retrTimer) clearTimeout(retrTimer) })
 
@@ -378,11 +385,20 @@
                 </div>
               </div>
               <div class="frow">
+                <Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">{$t('語言')}</Mono>
+                <div class="seg">
+                  {#each localeOpts as [id, label], i}
+                    {#if i > 0}<div class="segsep"></div>{/if}
+                    <button class="segbtn" class:on={$localePref === id} on:click={() => localePref.set(id)}>{label ?? $t('跟隨系統')}</button>
+                  {/each}
+                </div>
+              </div>
+              <div class="frow">
                 <Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">UI scale</Mono>
                 <div class="scalectl">
                   <input class="scalerange" type="range" min={SCALE_MIN} max={SCALE_MAX} step="0.05" bind:value={$uiScale} />
                   <Mono style="font-size:11px;color:var(--ink);min-width:38px;">{Math.round($uiScale * 100)}%</Mono>
-                  <button class="ak-btn" on:click={() => uiScale.set(1)} disabled={$uiScale === 1}>重設</button>
+                  <button class="ak-btn" on:click={() => uiScale.set(1)} disabled={$uiScale === 1}>{$t('重設')}</button>
                 </div>
               </div>
               <div class="frow disabled">
@@ -394,9 +410,9 @@
         {:else if section === 'advanced'}
           <section>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">EFFECTIVE SETTINGS · 生效設定</Eyebrow>
+              <Eyebrow style="margin-bottom:4px;">{$t('EFFECTIVE SETTINGS · 生效設定')}</Eyebrow>
               <div class="ak-display fstitle">Advanced</div>
-              <div class="fsdesc">所有持久化設定的<b>生效值</b>與來源（<code>default</code> = config 預設／<code>global</code> = 全庫覆寫）。可從這裡一鍵重設任一覆寫回預設。</div>
+              <div class="fsdesc">{$t('所有持久化設定的')}<b>{$t('生效值')}</b>{$t('與來源（')}<code>default</code>{$t(' = config 預設／')}<code>global</code>{$t(' = 全庫覆寫）。可從這裡一鍵重設任一覆寫回預設。')}</div>
             </div>
             {#if settingsList.length}
               <div class="settbl">
@@ -406,85 +422,85 @@
                     <span class="setk" title={s.label}>{s.key}</span>
                     <span class="setv">{s.value === '' ? '—' : s.value}</span>
                     <span class="srctag" class:srcset={s.source !== 'default'}>{s.source}</span>
-                    <span>{#if s.source !== 'default'}<button class="vx" title="重設為預設" on:click={() => resetSettingKey(s.key)} disabled={settingsBusy}>↺</button>{/if}</span>
+                    <span>{#if s.source !== 'default'}<button class="vx" title={$t('重設為預設')} on:click={() => resetSettingKey(s.key)} disabled={settingsBusy}>↺</button>{/if}</span>
                   </div>
                 {/each}
               </div>
             {/if}
             <div class="fshead" style="margin-top:24px;">
-              <Eyebrow style="margin-bottom:4px;">CORRECTION DICTIONARY · 校正字典</Eyebrow>
+              <Eyebrow style="margin-bottom:4px;">{$t('CORRECTION DICTIONARY · 校正字典')}</Eyebrow>
               <div class="ak-display fstitle" style="font-size:15px;">Correction dictionary</div>
-              <div class="fsdesc">一本 per-project 字典，兩條路徑：<b>pre</b> 把 <code>to</code> 詞餵 Whisper hotword（轉錄前防聽錯）；<b>post</b> 把 <code>from→to</code> 套到已存逐字稿（批次校正，秒級修整庫搜尋召回、不碰音訊）。寫入 <code>.arkiv/corrections.json</code>。</div>
+              <div class="fsdesc">{$t('一本 per-project 字典，兩條路徑：')}<b>pre</b>{$t(' 把 ')}<code>to</code>{$t(' 詞餵 Whisper hotword（轉錄前防聽錯）；')}<b>post</b>{$t(' 把 ')}<code>from→to</code>{$t(' 套到已存逐字稿（批次校正，秒級修整庫搜尋召回、不碰音訊）。寫入 ')}<code>.arkiv/corrections.json</code>{$t('。')}</div>
             </div>
 
             <div class="vrules">
               <div class="vhead"><span>FROM</span><span>TO</span><span>SCOPE</span><span>PRE</span><span>POST</span><span></span></div>
               {#each rules as r, i}
                 <div class="crow">
-                  <input class="vin" bind:value={r.from} placeholder="富田" />
+                  <input class="vin" bind:value={r.from} placeholder={SAMPLE_FROM} />
                   <input class="vin" bind:value={r.to} placeholder="Furutech" />
                   <select class="vsel" bind:value={r.scope}>
                     <option value="global">global</option>
                     <option value="word">word</option>
                     <option value="line">line</option>
                   </select>
-                  <input class="vcb" type="checkbox" bind:checked={r.pre} title="餵 hotword（轉錄前）" />
-                  <input class="vcb" type="checkbox" bind:checked={r.post} title="套已存逐字稿（轉錄後）" />
-                  <button class="vx" on:click={() => removeRule(i)} title="移除">✕</button>
+                  <input class="vcb" type="checkbox" bind:checked={r.pre} title={$t('餵 hotword（轉錄前）')} />
+                  <input class="vcb" type="checkbox" bind:checked={r.post} title={$t('套已存逐字稿（轉錄後）')} />
+                  <button class="vx" on:click={() => removeRule(i)} title={$t('移除')}>✕</button>
                 </div>
               {/each}
-              {#if !rules.length}<div class="vempty">尚無規則 — 點下方「新增規則」。</div>{/if}
+              {#if !rules.length}<div class="vempty">{$t('尚無規則 — 點下方「新增規則」。')}</div>{/if}
             </div>
 
             <div class="vctl">
-              <button class="ak-btn" on:click={addRule}>+ 新增規則</button>
-              <button class="ak-btn" on:click={saveVocab} disabled={vocabBusy || !vocabCanSave}>儲存字典</button>
+              <button class="ak-btn" on:click={addRule}>+ {$t('新增規則')}</button>
+              <button class="ak-btn" on:click={saveVocab} disabled={vocabBusy || !vocabCanSave}>{$t('儲存字典')}</button>
             </div>
 
             <div class="vdiv"></div>
 
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">BATCH RECORRECT · 批次套用</Eyebrow>
-              <div class="fsdesc">把 <b>post</b> 規則套到整個專案已存的逐字稿（transcript + 時間軸 segments 同步改）。<b>預覽不寫入</b>；套用前自動備份，可還原。</div>
+              <Eyebrow style="margin-bottom:4px;">{$t('BATCH RECORRECT · 批次套用')}</Eyebrow>
+              <div class="fsdesc">{$t('把 ')}<b>post</b>{$t(' 規則套到整個專案已存的逐字稿（transcript + 時間軸 segments 同步改）。')}<b>{$t('預覽不寫入')}</b>{$t('；套用前自動備份，可還原。')}</div>
             </div>
             <div class="vctl">
-              <button class="ak-btn" on:click={runPreview} disabled={vocabBusy}>預覽命中</button>
-              <label class="vchk"><input class="vcb" type="checkbox" bind:checked={doRebuild} /> 套用後重建向量索引</label>
-              <button class="ak-btn" on:click={runApply} disabled={vocabBusy || !preview || !preview.total_hits}>套用校正</button>
-              {#if backups.length}<button class="ak-btn" on:click={runRevert} disabled={vocabBusy}>還原最近一次</button>{/if}
+              <button class="ak-btn" on:click={runPreview} disabled={vocabBusy}>{$t('預覽命中')}</button>
+              <label class="vchk"><input class="vcb" type="checkbox" bind:checked={doRebuild} /> {$t('套用後重建向量索引')}</label>
+              <button class="ak-btn" on:click={runApply} disabled={vocabBusy || !preview || !preview.total_hits}>{$t('套用校正')}</button>
+              {#if backups.length}<button class="ak-btn" on:click={runRevert} disabled={vocabBusy}>{$t('還原最近一次')}</button>{/if}
             </div>
 
             {#if preview}
               <div class="vresult">
-                <Mono style="font-size:12px;color:var(--ink);">預覽：{preview.media_affected} 筆素材 · {preview.total_hits} 處替換</Mono>
+                <Mono style="font-size:12px;color:var(--ink);">{$t('預覽：{n} 筆素材 · {hits} 處替換', { n: preview.media_affected, hits: preview.total_hits })}</Mono>
                 {#each preview.rules.filter((x) => x.hits) as x}
-                  <Mono dim style="font-size:11px;">· {x.from} → {x.to || '(刪除)'} [{x.scope}] ×{x.hits}</Mono>
+                  <Mono dim style="font-size:11px;">· {x.from} → {x.to || $t('(刪除)')} [{x.scope}] ×{x.hits}</Mono>
                 {/each}
-                {#if !preview.total_hits}<Mono dim style="font-size:11px;">沒有命中（post 關閉、或無 transcript 含這些詞）。先「儲存字典」再預覽。</Mono>{/if}
+                {#if !preview.total_hits}<Mono dim style="font-size:11px;">{$t('沒有命中（post 關閉、或無 transcript 含這些詞）。先「儲存字典」再預覽。')}</Mono>{/if}
               </div>
             {/if}
             {#if applyResult}
               <div class="vresult">
-                <Mono style="font-size:12px;color:var(--ink);">✓ 已套用：更新 {applyResult.media_updated} 筆 · {applyResult.total_hits} 處{applyResult.embed_rebuild_started ? ' · 向量索引重建中' : ''}</Mono>
-                {#if applyResult.backup}<Mono dim style="font-size:11px;">備份 {applyResult.backup} — 可還原</Mono>{/if}
+                <Mono style="font-size:12px;color:var(--ink);">✓ {$t('已套用：更新 {n} 筆 · {hits} 處', { n: applyResult.media_updated, hits: applyResult.total_hits })}{applyResult.embed_rebuild_started ? ' · ' + $t('向量索引重建中') : ''}</Mono>
+                {#if applyResult.backup}<Mono dim style="font-size:11px;">{$t('備份 {name} — 可還原', { name: applyResult.backup })}</Mono>{/if}
               </div>
             {/if}
             {#if vocabMsg}<div class="vmsg"><Mono dim style="font-size:11px;">{vocabMsg}</Mono></div>{/if}
 
             <div class="vdiv"></div>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">BATCH RETRANSCRIBE · 批次重轉錄（2a · 升級）</Eyebrow>
-              <div class="fsdesc">重跑整庫 Whisper，讓新加的 hotword 生效——<b>慢、耗資源</b>，只在某詞被聽成完全不同的東西、批次校正救不回時才用。重轉前自動備份，可還原。</div>
+              <Eyebrow style="margin-bottom:4px;">{$t('BATCH RETRANSCRIBE · 批次重轉錄（2a · 升級）')}</Eyebrow>
+              <div class="fsdesc">{$t('重跑整庫 Whisper，讓新加的 hotword 生效——')}<b>{$t('慢、耗資源')}</b>{$t('，只在某詞被聽成完全不同的東西、批次校正救不回時才用。重轉前自動備份，可還原。')}</div>
             </div>
             <div class="vctl">
-              <select class="ak-input" bind:value={retrLang} disabled={retr && retr.running} title="批次重轉錄語言（強制指定，非自動偵測）" style="max-width:170px;">
-                {#each (engines?.languages ?? [{ code: 'zh', label: '中文' }, { code: 'en', label: 'English' }]) as l}
+              <select class="ak-input" bind:value={retrLang} disabled={retr && retr.running} title={$t('批次重轉錄語言（強制指定，非自動偵測）')} style="max-width:170px;">
+                {#each (engines?.languages ?? LANG_FALLBACK) as l}
                   <option value={l.code}>{l.label} · {l.code}</option>
                 {/each}
               </select>
-              <button class="ak-btn" on:click={runRetranscribeAll} disabled={retr && retr.running}>{retr && retr.running ? '重轉錄中…' : '批次重轉錄'}</button>
+              <button class="ak-btn" on:click={runRetranscribeAll} disabled={retr && retr.running}>{retr && retr.running ? $t('重轉錄中…') : $t('批次重轉錄')}</button>
               {#if retr}
-                <Mono dim style="font-size:11px;">{retr.done}/{retr.total} 完成{retr.failed ? ` · ${retr.failed} 失敗` : ''}{retr.running ? '…' : ' · 完成'}</Mono>
+                <Mono dim style="font-size:11px;">{$t('{done}/{total} 完成', { done: retr.done, total: retr.total })}{retr.failed ? ' · ' + $t('{n} 失敗', { n: retr.failed }) : ''}{retr.running ? '…' : ' · ' + $t('完成')}</Mono>
               {/if}
             </div>
           </section>
@@ -492,11 +508,11 @@
           <section>
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">INGEST · ALLOWED FOLDERS</Eyebrow>
-              <div class="ak-display fstitle">額外允許的資料夾</div>
-              <div class="fsdesc">arkiv 預設只讀這個庫的資料夾、Desktop、Documents、Movies／Videos、Pictures，以及已連上的網路磁碟（Mac 的 /Volumes、Windows 對應的網路磁碟機如 Z:）。NAS 上的資料夾如果是 <code>\\伺服器\分享\…</code> 這種網路路徑，加在這裡就能匯入。<strong>真實生效</strong>：匯入前的路徑檢查會讀這裡（整顆本機磁碟如 C:\ 不能加）。</div>
+              <div class="ak-display fstitle">{$t('額外允許的資料夾')}</div>
+              <div class="fsdesc">{$t('arkiv 預設只讀這個庫的資料夾、Desktop、Documents、Movies／Videos、Pictures，以及已連上的網路磁碟（Mac 的 /Volumes、Windows 對應的網路磁碟機如 Z:）。NAS 上的資料夾如果是 ')}<code>{$t('\\\\伺服器\\分享\\…')}</code>{$t(' 這種網路路徑，加在這裡就能匯入。')}<strong>{$t('真實生效')}</strong>{$t('：匯入前的路徑檢查會讀這裡（整顆本機磁碟如 C:\\ 不能加）。')}</div>
             </div>
             <div class="frows">
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">額外允許的資料夾 · 一行一個</Mono>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">{$t('額外允許的資料夾 · 一行一個')}</Mono>
                 <div class="setctl">
                   <textarea class="ak-input" rows="4" bind:value={extraRoots} spellcheck="false"
                             placeholder={'\\\\100.64.154.6\\home\\Photos\nD:\\Footage'}></textarea>
@@ -505,8 +521,8 @@
               </div>
               <div class="frow"><span></span>
                 <div class="setctl">
-                  <button class="ak-btn" on:click={() => saveSetting({ 'ingest.extra_roots': extraRoots.split('\n').map((x) => x.trim()).filter(Boolean).join('; ') })} disabled={settingsBusy}>儲存</button>
-                  <button class="ak-btn" on:click={() => resetSettingKey('ingest.extra_roots')} disabled={settingsBusy}>重設</button>
+                  <button class="ak-btn" on:click={() => saveSetting({ 'ingest.extra_roots': extraRoots.split('\n').map((x) => x.trim()).filter(Boolean).join('; ') })} disabled={settingsBusy}>{$t('儲存')}</button>
+                  <button class="ak-btn" on:click={() => resetSettingKey('ingest.extra_roots')} disabled={settingsBusy}>{$t('重設')}</button>
                   {#if settingsMsg}<span class="setmsg">{settingsMsg}</span>{/if}
                 </div>
               </div>
@@ -517,7 +533,7 @@
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">WHISPER · GUARD PRESETS</Eyebrow>
               <div class="ak-display fstitle">Transcription</div>
-              <div class="fsdesc">轉錄品質預設（whisper-guard 0–4）與強制語言，每次匯入於 setup 對話框選。此處顯示可用選項 + 目前預設；設成全庫預設＝下一步（settings 表）。</div>
+              <div class="fsdesc">{$t('轉錄品質預設（whisper-guard 0–4）與強制語言，每次匯入於 setup 對話框選。此處顯示可用選項 + 目前預設；設成全庫預設＝下一步（settings 表）。')}</div>
             </div>
             {#if engines}
               <div class="frows">
@@ -534,7 +550,7 @@
                     <span class="chip">auto-detect</span>
                   </div>
                 </div>
-                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Current default</Mono><Mono style="font-size:12px;color:var(--ink);">preset {engines.default_mode} · 語言預設 {engines.default_language || '中文 zh'}</Mono></div>
+                <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Current default</Mono><Mono style="font-size:12px;color:var(--ink);">preset {engines.default_mode} · {$t('語言預設')} {engines.default_language || DEFAULT_LANG_LABEL}</Mono></div>
               </div>
             {:else}
               <span class="pend">engines endpoint unreachable</span>
@@ -545,7 +561,7 @@
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">VLM · LIBRARY DEFAULT</Eyebrow>
               <div class="ak-display fstitle">Vision tagging</div>
-              <div class="fsdesc">視覺模型與 context window 的全庫預設。<strong>真實生效</strong>：每次 ingest 的 vision 標註與 warm-up 都讀這裡（未設＝沿用 config 預設）。Tag pool 約束仍待後端（brick 4b），不造假。</div>
+              <div class="fsdesc">{$t('視覺模型與 context window 的全庫預設。')}<strong>{$t('真實生效')}</strong>{$t('：每次 ingest 的 vision 標註與 warm-up 都讀這裡（未設＝沿用 config 預設）。Tag pool 約束仍待後端（brick 4b），不造假。')}</div>
             </div>
             <div class="frows">
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Vision model</Mono>
@@ -562,8 +578,8 @@
               </div>
               <div class="frow"><span></span>
                 <div class="setctl">
-                  <button class="ak-btn" on:click={() => saveSetting({ 'vision.model': visModel, 'vision.num_ctx': Number(visNumCtx) })} disabled={settingsBusy}>儲存全庫預設</button>
-                  <button class="ak-btn" on:click={() => { resetSettingKey('vision.model'); resetSettingKey('vision.num_ctx') }} disabled={settingsBusy}>重設</button>
+                  <button class="ak-btn" on:click={() => saveSetting({ 'vision.model': visModel, 'vision.num_ctx': Number(visNumCtx) })} disabled={settingsBusy}>{$t('儲存全庫預設')}</button>
+                  <button class="ak-btn" on:click={() => { resetSettingKey('vision.model'); resetSettingKey('vision.num_ctx') }} disabled={settingsBusy}>{$t('重設')}</button>
                   {#if settingsMsg}<span class="setmsg">{settingsMsg}</span>{/if}
                 </div>
               </div>
@@ -575,26 +591,26 @@
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">EXPORT · DEFAULT DEST</Eyebrow>
               <div class="ak-display fstitle">Export defaults</div>
-              <div class="fsdesc">預設匯出資料夾。<strong>真實生效</strong>：server-write CSV 匯出（Tauri 存檔路徑）未指定時落這個目錄。字幕行寬<strong>真實生效</strong>：SRT/VTT（單支、批次、時間軸）與 CLI 都讀這個值。EDL fps / proxy 解析度 / drop-frame 仍每次呼叫帶入、無持久預設（待後端）。</div>
+              <div class="fsdesc">{$t('預設匯出資料夾。')}<strong>{$t('真實生效')}</strong>{$t('：server-write CSV 匯出（Tauri 存檔路徑）未指定時落這個目錄。字幕行寬')}<strong>{$t('真實生效')}</strong>{$t('：SRT/VTT（單支、批次、時間軸）與 CLI 都讀這個值。EDL fps / proxy 解析度 / drop-frame 仍每次呼叫帶入、無持久預設（待後端）。')}</div>
             </div>
             <div class="frows">
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Default export dir</Mono>
                 <div class="setctl">
-                  <input class="ak-input" bind:value={expDir} placeholder="~/Desktop/arkiv-exports（空＝瀏覽器下載）" spellcheck="false" />
+                  <input class="ak-input" bind:value={expDir} placeholder={$t('~/Desktop/arkiv-exports（空＝瀏覽器下載）')} spellcheck="false" />
                   {#if settingMeta('export.default_dir')}<span class="srctag">{settingMeta('export.default_dir').source}</span>{/if}
                 </div>
               </div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">字幕行寬 · CJK 單位</Mono>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">{$t('字幕行寬 · CJK 單位')}</Mono>
                 <div class="setctl">
                   <input class="ak-input" type="number" min="8" max="40" bind:value={subMaxCjk}
-                         title="一行字幕最多幾個中文字（拉丁字母算 1/3）。14 = Netflix 繁中規範" />
+                         title={$t('一行字幕最多幾個中文字（拉丁字母算 1/3）。14 = Netflix 繁中規範')} />
                   {#if settingMeta('export.subtitle_max_cjk')}<span class="srctag">{settingMeta('export.subtitle_max_cjk').source}</span>{/if}
                 </div>
               </div>
               <div class="frow"><span></span>
                 <div class="setctl">
-                  <button class="ak-btn" on:click={() => saveSetting({ 'export.default_dir': expDir, 'export.subtitle_max_cjk': Number(subMaxCjk) })} disabled={settingsBusy}>儲存</button>
-                  <button class="ak-btn" on:click={() => { resetSettingKey('export.default_dir'); resetSettingKey('export.subtitle_max_cjk') }} disabled={settingsBusy}>重設</button>
+                  <button class="ak-btn" on:click={() => saveSetting({ 'export.default_dir': expDir, 'export.subtitle_max_cjk': Number(subMaxCjk) })} disabled={settingsBusy}>{$t('儲存')}</button>
+                  <button class="ak-btn" on:click={() => { resetSettingKey('export.default_dir'); resetSettingKey('export.subtitle_max_cjk') }} disabled={settingsBusy}>{$t('重設')}</button>
                   {#if settingsMsg}<span class="setmsg">{settingsMsg}</span>{/if}
                 </div>
               </div>
@@ -606,7 +622,7 @@
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">PROXY · CACHE · BREAKDOWN</Eyebrow>
               <div class="ak-display fstitle">Storage · proxy</div>
-              <div class="fsdesc">編輯用 proxy 狀態與生成、快取清理，以及庫的語言時長 / 格式容量分布。</div>
+              <div class="fsdesc">{$t('編輯用 proxy 狀態與生成、快取清理，以及庫的語言時長 / 格式容量分布。')}</div>
             </div>
             <div class="frows">
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Proxies</Mono>
@@ -614,21 +630,21 @@
               </div>
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Build proxies</Mono>
                 <div class="proxyctl">
-                  <button class="ak-btn" on:click={runProxyBuild} disabled={proxyBusy}>{proxyBusy ? '排入中…' : '生成缺漏 proxy'}</button>
+                  <button class="ak-btn" on:click={runProxyBuild} disabled={proxyBusy}>{proxyBusy ? $t('排入中…') : $t('生成缺漏 proxy')}</button>
                   {#if proxyMsg}<Mono dim style="font-size:10.5px;">{proxyMsg}</Mono>{/if}
                 </div>
               </div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">語言時長</Mono>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">{$t('語言時長')}</Mono>
                 {#if durLang && durLang.length}<Mono style="font-size:12px;color:var(--ink);">{durLang.slice(0, 4).map((d) => `${d.lang} ${hms(d.total_s)}`).join(' · ')}</Mono>{:else}<Mono dim style="font-size:12px;">—</Mono>{/if}
               </div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">格式容量</Mono>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">{$t('格式容量')}</Mono>
                 {#if sizeExt && sizeExt.length}<Mono style="font-size:12px;color:var(--ink);">{sizeExt.slice(0, 4).map((s) => `${s.ext || '?'} ${mb(s.total_mb)}`).join(' · ')}</Mono>{:else}<Mono dim style="font-size:12px;">—</Mono>{/if}
               </div>
-              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">快取</Mono>
+              <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">{$t('快取')}</Mono>
                 <div class="proxyctl">
                   <Mono style="font-size:12px;color:var(--ink);">{mb(cache?.total_mb)}</Mono>
-                  <button class="ak-btn" on:click={() => runClearCache('app')} disabled={cacheBusy}>清 app 快取</button>
-                  <button class="ak-btn" on:click={() => runClearCache('all')} disabled={cacheBusy}>清全部</button>
+                  <button class="ak-btn" on:click={() => runClearCache('app')} disabled={cacheBusy}>{$t('清 app 快取')}</button>
+                  <button class="ak-btn" on:click={() => runClearCache('all')} disabled={cacheBusy}>{$t('清全部')}</button>
                   {#if cacheMsg}<Mono dim style="font-size:10.5px;">{cacheMsg}</Mono>{/if}
                 </div>
               </div>
@@ -639,72 +655,72 @@
             {#if showIngestHint}
               <div class="pstart" data-testid="projects-ingest-hint">
                 <div class="pstarttxt">
-                  <div class="pstarttitle">要開始使用 arkiv，請按右上角 ＋ INGEST</div>
-                  <div class="pstartsub">選擇你的素材資料夾，arkiv 會替它建立索引——素材不會被搬動。這一頁不是開始的地方。</div>
+                  <div class="pstarttitle">{$t('要開始使用 arkiv，請按右上角 ＋ INGEST')}</div>
+                  <div class="pstartsub">{$t('選擇你的素材資料夾，arkiv 會替它建立索引——素材不會被搬動。這一頁不是開始的地方。')}</div>
                 </div>
                 <button class="ak-btn ak-btn--primary" on:click={() => push('/ingest-setup')}>＋ Ingest</button>
               </div>
             {/if}
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">LICENCE · 授權</Eyebrow>
+              <Eyebrow style="margin-bottom:4px;">{$t('LICENCE · 授權')}</Eyebrow>
             </div>
             <div class="lic" data-testid="licence">
               <div class="lictier"><span class="liclabel">{describeTier(entitlement).label}</span><span class="licdetail">{describeTier(entitlement).detail}</span></div>
-              {#if entitlement?.licence_problem}<div class="licprob">授權檔無效：{entitlement.licence_problem}</div>{/if}
+              {#if entitlement?.licence_problem}<div class="licprob">{$t('授權檔無效：{problem}', { problem: entitlement.licence_problem })}</div>{/if}
               <div class="vctl">
                 <input type="file" accept=".json,application/json" bind:this={licInput} on:change={importLicence} hidden />
-                <button class="ak-btn" on:click={() => licInput.click()} disabled={licBusy}>匯入授權檔…</button>
+                <button class="ak-btn" on:click={() => licInput.click()} disabled={licBusy}>{$t('匯入授權檔…')}</button>
                 {#if licMsg}<Mono dim style="font-size:11px;">{licMsg}</Mono>{/if}
               </div>
-              <div class="paddnote">選購買後收到的 <code>arkiv-licence-….json</code>。授權在這台電腦離線驗證，不連網；檔案存到 <code>~/.arkiv/pro-license.json</code>。</div>
+              <div class="paddnote">{$t('選購買後收到的 ')}<code>arkiv-licence-….json</code>{$t('。授權在這台電腦離線驗證，不連網；檔案存到 ')}<code>~/.arkiv/pro-license.json</code>{$t('。')}</div>
             </div>
             <div class="vdiv"></div>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">PROJECT REGISTRY · 專案註冊表</Eyebrow>
+              <Eyebrow style="margin-bottom:4px;">{$t('PROJECT REGISTRY · 專案註冊表')}</Eyebrow>
               <div class="ak-display fstitle">Projects</div>
-              <div class="fsdesc">如果你在別處已經建好其他 arkiv 素材庫（例如另一顆硬碟或 NAS 上的庫），可以把它們登記在這裡，搜尋時就能一起找。<br /><strong>這裡不會建立新的素材庫，也不會匯入素材</strong>——要加入素材請用右上角 ＋ INGEST。</div>
+              <div class="fsdesc">{$t('如果你在別處已經建好其他 arkiv 素材庫（例如另一顆硬碟或 NAS 上的庫），可以把它們登記在這裡，搜尋時就能一起找。')}<br /><strong>{$t('這裡不會建立新的素材庫，也不會匯入素材')}</strong>{$t('——要加入素材請用右上角 ＋ INGEST。')}</div>
               <details class="pdetails">
-                <summary>技術細節</summary>
-                <div>登記寫入 <code>~/.arkiv-projects.json</code>；健康狀態來自 <code>/api/projects/health</code>。註冊表讓跨庫搜尋與精選集能以名稱指認片段，不是素材庫的切換器——一個伺服器行程只服務一個素材庫；要改開別的庫，得用該路徑重新啟動後端（<code>ARKIV_PROJECT_ROOT</code>）。</div>
+                <summary>{$t('技術細節')}</summary>
+                <div>{$t('登記寫入 ')}<code>~/.arkiv-projects.json</code>{$t('；健康狀態來自 ')}<code>/api/projects/health</code>{$t('。註冊表讓跨庫搜尋與精選集能以名稱指認片段，不是素材庫的切換器——一個伺服器行程只服務一個素材庫；要改開別的庫，得用該路徑重新啟動後端（')}<code>ARKIV_PROJECT_ROOT</code>{$t('）。')}</div>
               </details>
             </div>
 
             <div class="pactive">
-              <span class="pactlabel">目前開啟</span>
+              <span class="pactlabel">{$t('目前開啟')}</span>
               <span class="pactname">{stats?.project_registered_name || stats?.project || '—'}</span>
-              {#if stats && !stats.project_registered_name}<span class="pactwarn" title="目前開啟的這個庫還沒登記在下表；不影響使用">未登記</span>{/if}
+              {#if stats && !stats.project_registered_name}<span class="pactwarn" title={$t('目前開啟的這個庫還沒登記在下表；不影響使用')}>{$t('未登記')}</span>{/if}
             </div>
-            <div class="pacthint">這是 arkiv 目前在用的素材庫。在下表新增或移除，不會改變這一行。</div>
+            <div class="pacthint">{$t('這是 arkiv 目前在用的素材庫。在下表新增或移除，不會改變這一行。')}</div>
 
             <div class="ptable">
               <div class="phead"><span>NAME</span><span>PATH</span><span>INDEXED</span><span>HEALTH</span><span></span></div>
               {#each projects as p}
                 <div class="prow" class:pcurrent={!!stats?.project_registered_name && p.name === stats.project_registered_name}>
-                  <span class="pname">{p.name}{#if !!stats?.project_registered_name && p.name === stats.project_registered_name}<span class="pdot" title="目前開啟中">●</span>{/if}</span>
+                  <span class="pname">{p.name}{#if !!stats?.project_registered_name && p.name === stats.project_registered_name}<span class="pdot" title={$t('目前開啟中')}>●</span>{/if}</span>
                   <span class="ppath" title={p.path}>{p.path}</span>
                   <Mono dim style="font-size:10.5px;">{shortDate(p.last_indexed_at)}</Mono>
                   <span class="phealth" class:ok={projHealth[p.name] === 'ok'} title={projHealth[p.name] || ''}>{healthLabel(projHealth[p.name])}</span>
-                  <button class="vx" on:click={() => delProj(p.name)} disabled={projBusy} title="移除">✕</button>
+                  <button class="vx" on:click={() => delProj(p.name)} disabled={projBusy} title={$t('移除')}>✕</button>
                 </div>
               {/each}
-              {#if !projects.length}<div class="vempty">還沒有登記其他素材庫。只用一個庫的話，這裡保持空白就好。</div>{/if}
+              {#if !projects.length}<div class="vempty">{$t('還沒有登記其他素材庫。只用一個庫的話，這裡保持空白就好。')}</div>{/if}
             </div>
 
             <div class="vdiv"></div>
             <div class="fshead">
-              <Eyebrow style="margin-bottom:4px;">ADD PROJECT · 登記既有素材庫</Eyebrow>
+              <Eyebrow style="margin-bottom:4px;">{$t('ADD PROJECT · 登記既有素材庫')}</Eyebrow>
             </div>
             <div class="paddrow">
-              <input class="vin" bind:value={newName} placeholder="專案名稱" />
-              <input class="vin" bind:value={newPath} placeholder="素材庫資料夾路徑（內含 .arkiv/）" />
-              <input class="vin" bind:value={newTags} placeholder="tags（逗號分隔，可空）" />
+              <input class="vin" bind:value={newName} placeholder={$t('專案名稱')} />
+              <input class="vin" bind:value={newPath} placeholder={$t('素材庫資料夾路徑（內含 .arkiv/）')} />
+              <input class="vin" bind:value={newTags} placeholder={$t('tags（逗號分隔，可空）')} />
             </div>
             <div class="vctl">
-              <button class="ak-btn" on:click={addProj} disabled={projBusy}>+ 登記素材庫</button>
-              <button class="ak-btn" on:click={syncProj} disabled={projBusy}>同步索引時間</button>
+              <button class="ak-btn" on:click={addProj} disabled={projBusy}>+ {$t('登記素材庫')}</button>
+              <button class="ak-btn" on:click={syncProj} disabled={projBusy}>{$t('同步索引時間')}</button>
               {#if projMsg}<Mono dim style="font-size:11px;">{projMsg}</Mono>{/if}
             </div>
-            <div class="paddnote">登記一個已經存在的 arkiv 素材庫資料夾（裡面要有 <code>.arkiv/</code>）。一般的素材資料夾請用 ＋ INGEST 匯入。</div>
+            <div class="paddnote">{$t('登記一個已經存在的 arkiv 素材庫資料夾（裡面要有 ')}<code>.arkiv/</code>{$t('）。一般的素材資料夾請用 ＋ INGEST 匯入。')}</div>
           </section>
         {:else}
           <section>
@@ -728,7 +744,7 @@
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Privacy</Mono><Mono dim style="font-size:11.5px;">Everything runs locally. Nothing leaves this machine.</Mono></div>
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Setup</Mono>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                  <button class="ak-btn" on:click={() => api.setupReset().then(() => (window.location.hash = '#/setup')).catch((e) => (diagMsg = e.message))}>重新執行設定精靈</button>
+                  <button class="ak-btn" on:click={() => api.setupReset().then(() => (window.location.hash = '#/setup')).catch((e) => (diagMsg = e.message))}>{$t('重新執行設定精靈')}</button>
                 </div>
               </div>
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Report a problem</Mono>

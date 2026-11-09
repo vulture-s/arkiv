@@ -10,22 +10,24 @@
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Thumb from '../lib/Thumb.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
+  import { t } from '../lib/i18n.js'
 
   $: theme = $resolvedTheme
 
   // Field catalogue — mirrors query_builder._FIELDS on the backend. `kind` drives
   // which input renders; `ops` are the operators the backend accepts per field.
+  // labels are i18n keys, translated where rendered ($t(f.label) in the field <select>)
   const FIELDS = [
-    { key: 'semantic', label: 'Semantic（語意）', ops: ['contains'], kind: 'text' },
-    { key: 'transcript', label: 'Transcript（逐字稿）', ops: ['contains'], kind: 'text' },
-    { key: 'tag', label: 'Tag（標籤）', ops: ['contains', 'eq'], kind: 'text' },
-    { key: 'filename', label: 'Filename（檔名）', ops: ['contains', 'eq'], kind: 'text' },
-    { key: 'camera', label: 'Camera（機型）', ops: ['contains', 'eq'], kind: 'text' },
+    { key: 'semantic', label: 'Semantic（語意）', ops: ['contains'], kind: 'text' }, // i18n-ignore label key, translated at render
+    { key: 'transcript', label: 'Transcript（逐字稿）', ops: ['contains'], kind: 'text' }, // i18n-ignore label key, translated at render
+    { key: 'tag', label: 'Tag（標籤）', ops: ['contains', 'eq'], kind: 'text' }, // i18n-ignore label key, translated at render
+    { key: 'filename', label: 'Filename（檔名）', ops: ['contains', 'eq'], kind: 'text' }, // i18n-ignore label key, translated at render
+    { key: 'camera', label: 'Camera（機型）', ops: ['contains', 'eq'], kind: 'text' }, // i18n-ignore label key, translated at render
     { key: 'content_type', label: 'Content type', ops: ['contains', 'eq'], kind: 'text' },
     { key: 'lang', label: 'Language', ops: ['eq'], kind: 'text' },
-    { key: 'rating', label: 'Rating（評分）', ops: ['eq'], kind: 'enum', options: ['good', 'ng', 'review', 'unrated'] },
+    { key: 'rating', label: 'Rating（評分）', ops: ['eq'], kind: 'enum', options: ['good', 'ng', 'review', 'unrated'] }, // i18n-ignore label key, translated at render
     { key: 'media_type', label: 'Media type', ops: ['eq'], kind: 'enum', options: ['video', 'audio', 'image'] },
-    { key: 'duration', label: 'Duration（秒）', ops: ['range'], kind: 'range' },
+    { key: 'duration', label: 'Duration（秒）', ops: ['range'], kind: 'range' }, // i18n-ignore label key, translated at render
     { key: 'iso', label: 'ISO', ops: ['range'], kind: 'range' },
     { key: 'date', label: 'Processed date', ops: ['range'], kind: 'daterange' },
   ]
@@ -85,7 +87,7 @@
 
   async function run() {
     const spec = buildSpec()
-    if (!spec.length) { state = 'idle'; results = []; total = 0; err = '至少填一個條件'; return }
+    if (!spec.length) { state = 'idle'; results = []; total = 0; err = $t('至少填一個條件'); return }
     err = ''; degraded = ''; state = 'loading'
     const t0 = performance.now()
     try {
@@ -121,7 +123,7 @@
   <div class="main">
     <div class="builder">
       <div class="bhead">
-        <Eyebrow style="margin-bottom:6px;">Query builder · compound（結構化查詢）</Eyebrow>
+        <Eyebrow style="margin-bottom:6px;">Query builder · compound{$t('（結構化查詢）')}</Eyebrow>
         <div class="matchrow">
           <Mono dim style="font-size:11px;">Find media matching</Mono>
           <div class="seg">
@@ -138,7 +140,7 @@
           {@const meta = fieldMeta(c.field)}
           <div class="clause">
             <select class="ak-input sel cfield" bind:value={c.field} on:change={() => onFieldChange(i)}>
-              {#each FIELDS as f}<option value={f.key}>{f.label}</option>{/each}
+              {#each FIELDS as f}<option value={f.key}>{$t(f.label)}</option>{/each}
             </select>
 
             {#if meta.ops.length > 1}
@@ -163,15 +165,15 @@
               </span>
             {:else if meta.kind === 'enum'}
               <select class="ak-input sel cvalue" bind:value={c.value}>
-                <option value="" disabled selected>選擇…</option>
+                <option value="" disabled selected>{$t('選擇…')}</option>
                 {#each meta.options as o}<option value={o}>{o}</option>{/each}
               </select>
             {:else}
-              <input class="ak-input cvalue" placeholder="值…" bind:value={c.value}
+              <input class="ak-input cvalue" placeholder={$t('值…')} bind:value={c.value}
                      on:keydown={(e) => e.key === 'Enter' && run()} spellcheck="false" />
             {/if}
 
-            <button class="cx" title="移除" on:click={() => removeCondition(i)} disabled={conditions.length === 1}>✕</button>
+            <button class="cx" title={$t('移除')} on:click={() => removeCondition(i)} disabled={conditions.length === 1}>✕</button>
           </div>
         {/each}
         <button class="addclause" on:click={addCondition}>+ Add condition</button>
@@ -194,7 +196,7 @@
 
     <div class="results">
       {#if state === 'ok' && results.length === 0}
-        <div class="emptyresult">沒有符合條件的素材</div>
+        <div class="emptyresult">{$t('沒有符合條件的素材')}</div>
       {:else if results.length}
         <section class="rgroup">
           <div class="ghead">

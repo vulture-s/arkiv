@@ -25,6 +25,7 @@
   import { resolvedTheme } from '../lib/prefs.js'
   import { pickFolder, canPickFolder } from '../lib/pickFolder.js'
   import { pushToast } from '../lib/toast.js'
+  import { t } from '../lib/i18n.js'
   import OffloadRenameDialog from '../lib/OffloadRenameDialog.svelte'
   import {
     conflictsFromDone, shouldOpenRenameDialog, cardStatus, canFormat, statusLine, applyResolveResult,
@@ -104,7 +105,7 @@
     try {
       return await pickFolder(current)
     } catch (e) {
-      pushToast(`資料夾選擇器打不開：${e?.name || ''} ${e?.message || e}`, 'error')
+      pushToast($t('資料夾選擇器打不開：{name} {msg}', { name: e?.name || '', msg: e?.message || e }), 'error')
       return null
     }
   }
@@ -130,15 +131,15 @@
   // again, and only then find out a destination was blank too.
   function blockers({ needDst, needPreview }) {
     const missing = []
-    if (!src.trim()) missing.push('來源路徑（Source）')
-    if (needDst && liveDsts.length === 0) missing.push('至少一個目的地路徑（Destinations）')
-    if (needPreview && !previewed) missing.push('先按 Preview 讀取來源檔案清單')
+    if (!src.trim()) missing.push($t('來源路徑（Source）'))
+    if (needDst && liveDsts.length === 0) missing.push($t('至少一個目的地路徑（Destinations）'))
+    if (needPreview && !previewed) missing.push($t('先按 Preview 讀取來源檔案清單'))
     return missing
   }
 
   async function doPreview() {
     const missing = blockers({ needDst: false, needPreview: false })
-    if (missing.length) { pushToast(`無法預覽 — 缺少：${missing.join('、')}`, 'error'); return }
+    if (missing.length) { pushToast($t('無法預覽 — 缺少：{list}', { list: missing.join($t('、')) }), 'error'); return }
     err = ''; phase = 'previewing'; preview = null
     try {
       preview = await api.offloadPreview({
@@ -154,7 +155,7 @@
   async function doRun() {
     if (phase === 'running') return
     const missing = blockers({ needDst: true, needPreview: true })
-    if (missing.length) { pushToast(`無法開始複製 — 缺少：${missing.join('、')}`, 'error'); return }
+    if (missing.length) { pushToast($t('無法開始複製 — 缺少：{list}', { list: missing.join($t('、')) }), 'error'); return }
     err = ''; phase = 'running'; stopped = false
     curDst = ''; pTotal = 0; pDone = 0; pFailed = 0; recent = []; summary = null; doneCode = null; conflictToasted = false
     stage = ''; stageFiles = 0
@@ -196,13 +197,13 @@
             // on hundreds of names (#497 review N1). Count shows in the summary.
             if (ev.reason === 'conflict' && !conflictToasted) {
               conflictToasted = true
-              pushToast(`目的地已有同名但內容不同的檔案，未覆蓋（${ev.name} 等）— 結束後請改名`, 'error')
+              pushToast($t('目的地已有同名但內容不同的檔案，未覆蓋（{name} 等）— 結束後請改名', { name: ev.name }), 'error')
             }
           } else if (ev.type === 'phase') {
             // mhl_failed is terminal for this destination: keep the row's own
             // error visible rather than showing a hashing pass that already died.
             stage = ev.phase; stageFiles = ev.files || 0
-            if (ev.phase === 'mhl_failed') pushToast(`MHL 失敗 · ${ev.dst}：${ev.error || ''}`, 'error')
+            if (ev.phase === 'mhl_failed') pushToast($t('MHL 失敗 · {dst}：{error}', { dst: ev.dst, error: ev.error || '' }), 'error')
           } else if (ev.type === 'done') {
             stage = ''
             doneCode = ev.code
@@ -243,7 +244,7 @@
       card = next.status
       if (next.summary && Object.keys(next.summary).length) summary = next.summary
       doneCode = card === 'done' ? 0 : (doneCode || 3)
-      if (card === 'done') { pushToast('同名衝突全部處理完 · 校驗通過', 'ok'); renameOpen = false }
+      if (card === 'done') { pushToast($t('同名衝突全部處理完 · 校驗通過'), 'ok'); renameOpen = false }
     } catch (e) {
       const msg = e.body?.detail || e.message
       renameRows = renameRows.map((r) => (r.dst === row.dst && r.rel === row.rel ? { ...r, state: 'error', error: msg } : r))
@@ -257,7 +258,7 @@
   // state file is preserved so a later Run resumes from the last verified file.
   function stopRun() {
     if (phase !== 'running' || !abortCtl) return
-    if (!confirm('轉存進行中，確定停止？已複製並校驗的檔案會保留，可稍後從中斷處續傳。')) return
+    if (!confirm($t('轉存進行中，確定停止？已複製並校驗的檔案會保留，可稍後從中斷處續傳。'))) return
     stopped = true
     abortCtl.abort()
   }
@@ -315,7 +316,7 @@
     <div class="dhead">
       <Eyebrow>DIT · card → backup</Eyebrow>
       <div class="ak-display title">Offload{preview ? ` · ${preview.count} files` : ''}</div>
-      <button class="esc" on:click={escAction}>ESC · {phase === 'running' ? '停止複製' : 'CANCEL'}</button>
+      <button class="esc" on:click={escAction}>ESC · {phase === 'running' ? $t('停止複製') : 'CANCEL'}</button>
     </div>
 
     <div class="body">
@@ -324,16 +325,16 @@
         <div class="field">
           <Eyebrow>Source · card / folder</Eyebrow>
           <div class="srcrow">
-            <input class="ak-input" placeholder="/Volumes/CARD/DCIM  或  ~/footage" bind:value={src} spellcheck="false" on:keydown={(e) => e.key === 'Enter' && doPreview()} />
+            <input class="ak-input" placeholder={$t('/Volumes/CARD/DCIM  或  ~/footage')} bind:value={src} spellcheck="false" on:keydown={(e) => e.key === 'Enter' && doPreview()} />
             {#if canBrowse}
-              <button class="seg" on:click={browseSrc} disabled={phase === 'running'} title="選擇資料夾">⋯</button>
+              <button class="seg" on:click={browseSrc} disabled={phase === 'running'} title={$t('選擇資料夾')}>⋯</button>
             {/if}
             <button class="ak-btn" on:click={doPreview} disabled={phase === 'previewing' || phase === 'running'}>{phase === 'previewing' ? 'reading…' : 'Preview'}</button>
           </div>
         </div>
 
         <div class="field">
-          <Eyebrow>Organize template · 留空=鏡射原結構</Eyebrow>
+          <Eyebrow>Organize template · {$t('留空=鏡射原結構')}</Eyebrow>
           <input class="ak-input" placeholder="{'{date}/{camera}/{reel}'}" bind:value={organize} spellcheck="false" disabled={phase === 'running'} />
           <Mono dim style="font-size:9.5px;">tokens · {'{date} {camera} {reel} {stem} {ext}'}</Mono>
         </div>
@@ -344,7 +345,7 @@
             <div class="dstrow">
               <input class="ak-input" placeholder={`/Volumes/Backup${i + 1}`} bind:value={dsts[i]} spellcheck="false" disabled={phase === 'running'} />
               {#if canBrowse}
-                <button class="seg" on:click={() => browseDst(i)} disabled={phase === 'running'} title="選擇資料夾">⋯</button>
+                <button class="seg" on:click={() => browseDst(i)} disabled={phase === 'running'} title={$t('選擇資料夾')}>⋯</button>
               {/if}
               {#if i === dsts.length - 1}
                 <button class="seg" on:click={addDst} disabled={phase === 'running'} title="add destination">+</button>
@@ -359,7 +360,7 @@
           <Eyebrow>Options</Eyebrow>
           <div class="optrow">
             <button class="seg" class:on={includeHeic} on:click={() => includeHeic = !includeHeic} disabled={phase === 'running'}>{includeHeic ? 'ON' : 'OFF'}</button>
-            <div class="optlabel"><span>Include .heic</span><Mono dim style="font-size:10px;">連同 .heic 靜照一起轉存</Mono></div>
+            <div class="optlabel"><span>Include .heic</span><Mono dim style="font-size:10px;">{$t('連同 .heic 靜照一起轉存')}</Mono></div>
           </div>
         </div>
       </div>
@@ -368,10 +369,10 @@
       <div class="col out">
         {#if phase === 'idle' || phase === 'previewing'}
           <Eyebrow>Layout preview</Eyebrow>
-          <div class="empty"><Mono dim>{phase === 'previewing' ? '讀取中…' : '填來源後按 Preview（只讀、不複製）'}</Mono></div>
+          <div class="empty"><Mono dim>{phase === 'previewing' ? $t('讀取中…') : $t('填來源後按 Preview（只讀、不複製）')}</Mono></div>
         {:else if phase === 'preview'}
-          <Eyebrow>Layout · {preview.organize ? `organize ${preview.organize}` : '鏡射原結構'}</Eyebrow>
-          <Mono dim style="font-size:10px;">{base(preview.src)} · {preview.count} files{preview.count >= 200 ? ' · 顯示前 200' : ''}</Mono>
+          <Eyebrow>Layout · {preview.organize ? `organize ${preview.organize}` : $t('鏡射原結構')}</Eyebrow>
+          <Mono dim style="font-size:10px;">{base(preview.src)} · {preview.count} files{preview.count >= 200 ? ' · ' + $t('顯示前 200') : ''}</Mono>
           <div class="rowsbox">
             {#each preview.files as f}
               <div class="prow">
@@ -403,7 +404,7 @@
             {#each recent as r}
               <div class="prow file" class:fail={r.status === 'failed' || r.status === 'needs_rename'}>
                 <Mono style="font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{r.name}</Mono>
-                {#if r.mibs != null}<Mono dim style="font-size:10px;margin-left:auto;padding-right:8px;" title="這支的複製速度（不含讀回驗證）">{r.mibs} MiB/s</Mono>{/if}
+                {#if r.mibs != null}<Mono dim style="font-size:10px;margin-left:auto;padding-right:8px;" title={$t('這支的複製速度（不含讀回驗證）')}>{r.mibs} MiB/s</Mono>{/if}
                 <span class="st {r.status === 'needs_rename' ? 'failed' : r.status}">{r.reason === 'conflict' ? 'RENAME?' : r.status === 'failed' ? 'FAIL' : r.status === 'skipped' ? 'SKIP' : 'OK'}</span>
               </div>
             {/each}
@@ -414,7 +415,7 @@
               {#each Object.entries(summary) as [dst, s]}
                 <div class="srow" class:fail={s.failed_files > 0}>
                   <Mono style="font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{base(dst)}</Mono>
-                  <Mono dim style="font-size:10px;">{s.verified_files} ok{s.failed_files ? ` · ${s.failed_files} fail` : ''}{s.conflict_files?.length ? ` · ${s.conflict_files.length} 檔與既有備份同名不同內容（未覆蓋）` : ''}{s.mhl_path ? ' · MHL' : ''}{s.error ? ` · MHL 失敗：${s.error}` : ''}</Mono>
+                  <Mono dim style="font-size:10px;">{s.verified_files} ok{s.failed_files ? ` · ${s.failed_files} fail` : ''}{s.conflict_files?.length ? ' · ' + $t('{n} 檔與既有備份同名不同內容（未覆蓋）', { n: s.conflict_files.length }) : ''}{s.mhl_path ? ' · MHL' : ''}{s.error ? ' · ' + $t('MHL 失敗：{error}', { error: s.error }) : ''}</Mono>
                 </div>
               {/each}
             </div>
@@ -429,25 +430,25 @@
 
     <div class="footer">
       {#if err}<Mono style="font-size:11px;" class="errtext">{err}</Mono>
-      {:else if phase === 'done' && stopped}<Mono style="font-size:11px;">■ 已停止 · 已校驗檔案保留，可續傳</Mono>
+      {:else if phase === 'done' && stopped}<Mono style="font-size:11px;">{$t('■ 已停止 · 已校驗檔案保留，可續傳')}</Mono>
       {:else if phase === 'done' && card && card !== 'done'}<Mono style="font-size:11px;" class="errtext">{statusLine(card, renamePending)}</Mono>
-      {:else if phase === 'done'}<Mono style="font-size:11px;" class={anyFailed ? 'errtext' : ''}>{anyFailed ? `✗ 轉存有失敗 (exit ${doneCode})` : `✓ 轉存完成 (exit ${doneCode})`}</Mono>{/if}
+      {:else if phase === 'done'}<Mono style="font-size:11px;" class={anyFailed ? 'errtext' : ''}>{anyFailed ? $t('✗ 轉存有失敗 (exit {code})', { code: doneCode }) : $t('✓ 轉存完成 (exit {code})', { code: doneCode })}</Mono>{/if}
       <div class="grow"></div>
       {#if phase === 'done' && renamePending}
-        <button class="ak-btn" on:click={() => (renameOpen = true)}>處理同名衝突（{renamePending}）</button>
+        <button class="ak-btn" on:click={() => (renameOpen = true)}>{$t('處理同名衝突（{n}）', { n: renamePending })}</button>
       {/if}
       {#if phase === 'done' && !anyFailed}
-        <button class="ak-btn" on:click={ingestNext}>接著 ingest →</button>
+        <button class="ak-btn" on:click={ingestNext}>{$t('接著 ingest →')}</button>
       {/if}
       {#if phase === 'running'}
-        <button class="ak-btn stopbtn" on:click={stopRun}>停止</button>
+        <button class="ak-btn stopbtn" on:click={stopRun}>{$t('停止')}</button>
       {:else}
         <button class="ak-btn" on:click={() => push('/')}>{phase === 'done' ? 'Done' : 'Cancel'}</button>
       {/if}
       <!-- Disabled only while a copy is actually in flight. Every other refusal
            is a toast naming what is missing, so the button is never mutely dead. -->
       <button class="ak-btn ak-btn--primary" on:click={doRun} disabled={phase === 'running'}
-              title="開始複製到所有目的地">{phase === 'running' ? 'copying…' : (stopped && phase === 'done' ? 'Resume →' : 'Run offload →')}</button>
+              title={$t('開始複製到所有目的地')}>{phase === 'running' ? 'copying…' : (stopped && phase === 'done' ? 'Resume →' : 'Run offload →')}</button>
     </div>
   </div>
 </div>
