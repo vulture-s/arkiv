@@ -18,6 +18,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
+  import { localePref, t } from '../lib/i18n.js'
 
   import { VERSION } from '../lib/version.js'
   import { describeTier, readLicenceFile, rejectReason } from '../lib/licenceView.js'
@@ -37,6 +38,8 @@
     ['system', 'System · about'],
   ]
   const themeOpts = [['dark', 'Dark'], ['light', 'Light'], ['system', 'System']]
+  // Language names stay in their own language (a user who can't read the current UI still finds theirs).
+  const localeOpts = [['system', null], ['zh-TW', '繁體中文'], ['en', 'English']] // i18n-ignore
 
   // Transcription engines (brick 4, PR #77) — real whisper quality presets +
   // forced-language set. We display the available options + current default; the
@@ -378,11 +381,20 @@
                 </div>
               </div>
               <div class="frow">
+                <Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">{$t('語言')}</Mono>
+                <div class="seg">
+                  {#each localeOpts as [id, label], i}
+                    {#if i > 0}<div class="segsep"></div>{/if}
+                    <button class="segbtn" class:on={$localePref === id} on:click={() => localePref.set(id)}>{label ?? $t('跟隨系統')}</button>
+                  {/each}
+                </div>
+              </div>
+              <div class="frow">
                 <Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">UI scale</Mono>
                 <div class="scalectl">
                   <input class="scalerange" type="range" min={SCALE_MIN} max={SCALE_MAX} step="0.05" bind:value={$uiScale} />
                   <Mono style="font-size:11px;color:var(--ink);min-width:38px;">{Math.round($uiScale * 100)}%</Mono>
-                  <button class="ak-btn" on:click={() => uiScale.set(1)} disabled={$uiScale === 1}>重設</button>
+                  <button class="ak-btn" on:click={() => uiScale.set(1)} disabled={$uiScale === 1}>{$t('重設')}</button>
                 </div>
               </div>
               <div class="frow disabled">
