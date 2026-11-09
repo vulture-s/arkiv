@@ -9,6 +9,8 @@
 // written. Claiming "~/Downloads/" would be a guess, so we don't.
 
 // 1536 → "1.5 KB". Binary units (what Finder/Explorer-ish sizes read as).
+import { tr } from './i18n.js'
+
 export function formatBytes(n) {
   if (typeof n !== 'number' || !isFinite(n) || n < 0) return null
   if (n < 1024) return `${n} B`
@@ -23,8 +25,8 @@ export function formatBytes(n) {
 // called out because a 0-byte export is almost always a backend-side problem.
 export function downloadedMsg(filename, size, note = '') {
   const s = formatBytes(size)
-  let msg = `已下載 ${filename}`
-  if (s) msg += size === 0 ? '（0 B · 空檔案）' : `（${s}）`
+  let msg = tr('已下載 {filename}', { filename })
+  if (s) msg += size === 0 ? tr('（0 B · 空檔案）') : tr('（{size}）', { size: s })
   if (note) msg += ` · ${note}`
   return msg
 }

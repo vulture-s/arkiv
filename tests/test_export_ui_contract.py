@@ -108,7 +108,12 @@ def test_trimmed_txt_is_the_segment_text_not_the_polished_transcript(fastapi_cli
 def test_the_tooltip_says_so():
     """The asymmetry above is invisible in the UI unless the button explains it."""
     src = (_FRONTEND / "lib" / "Inspector.svelte").read_text(encoding="utf-8")
-    m = re.search(r"const EXPORT_TITLES = \{(.*?)\n  \}", src, re.S)
+    # `$:` since #581: the titles go through $t() so they follow the UI language.
+    m = re.search(r"(?:const|\$:) EXPORT_TITLES = \{(.*?)\n  \}", src, re.S)
     assert m, "EXPORT_TITLES not found"
     assert "txt:" in m.group(1)
     assert "✂" in m.group(1), "the tooltip must mention the trim case, not just say '純文字'"
+    # …and so must the English tooltip (the zh text is the dictionary key).
+    en = (_FRONTEND / "lib" / "i18n" / "en" / "ingest.js").read_text(encoding="utf-8")
+    line = next(l for l in en.splitlines() if "逐字稿純文字" in l)
+    assert line.count("✂") >= 2, "the English tooltip dropped the trim case"

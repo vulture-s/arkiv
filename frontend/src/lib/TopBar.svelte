@@ -6,6 +6,7 @@
   import ArkivLogo from './ArkivLogo.svelte'
   import Mono from './Mono.svelte'
   import { cycleTheme, themePref } from './prefs.js'
+  import { t } from './i18n.js'
   export let crossProject = false
 
   let query = ''
@@ -41,7 +42,7 @@
     <Mono dim style="font-size:11px;">⌕</Mono>
     <input
       class="ak-input searchinput"
-      placeholder={'搜尋媒體… "格爾木氧氣"、camera:a7s3、tag:cycling、who:小明、lang:zh'}
+      placeholder={$t('搜尋媒體… "格爾木氧氣"、camera:a7s3、tag:cycling、who:小明、lang:zh')}
       bind:this={searchEl}
       bind:value={query}
       on:keydown={(e) => e.key === 'Enter' && runSearch()}
@@ -54,7 +55,7 @@
 
   <div class="actions">
     <button class="ak-btn ak-btn--primary" on:click={() => push('/ingest-setup')}>+ Ingest</button>
-    <button class="ak-btn" on:click={() => push('/chat-live')} title="AI chat · 問你的素材庫">Chat</button>
+    <button class="ak-btn" on:click={() => push('/chat-live')} title={$t('AI chat · 問你的素材庫')}>Chat</button>
     <button class="ak-btn" on:click={() => push('/offload')} title="DIT offload · card → backup">DIT</button>
     <div class="vrule"></div>
     <button class="ak-btn" title={`theme · ${$themePref}`} on:click={cycleTheme}>◐</button>

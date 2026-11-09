@@ -8,6 +8,8 @@
 // sidebar stays the read-only list it always was.
 
 /** True only inside the desktop shell. */
+import { tr } from './i18n.js'
+
 export function canSwitchLibrary() {
   return typeof window !== 'undefined' && !!window.__TAURI__?.core?.invoke
 }
@@ -22,26 +24,29 @@ export async function libraryState() {
  *  the new backend, so the promise may never resolve; on refusal it rejects with
  *  a human-readable reason (busy, missing folder, new backend did not start). */
 export async function switchLibrary(path) {
-  if (!canSwitchLibrary()) throw new Error('只有桌面 App 能切換素材庫')
+  if (!canSwitchLibrary()) throw new Error(tr('只有桌面 App 能切換素材庫'))
   return window.__TAURI__.core.invoke('switch_library', { path })
 }
 
+// Thunks so each label is translated when the message is built, not at module load.
 const JOB_LABELS = {
-  ingest: '匯入',
-  offload: '卸載（DIT 拷卡）',
-  embed_rebuild: '重建語意索引',
-  retranscribe: '重新轉錄',
-  proxy_build: '產生 proxy',
-  editor_proxy_build: '產生剪輯 proxy',
-  sample_seed: '載入範例片',
-  model_pull: '下載 AI 模型',
+  ingest: () => tr('匯入'),
+  offload: () => tr('卸載（DIT 拷卡）'),
+  embed_rebuild: () => tr('重建語意索引'),
+  retranscribe: () => tr('重新轉錄'),
+  proxy_build: () => tr('產生 proxy'),
+  editor_proxy_build: () => tr('產生剪輯 proxy'),
+  sample_seed: () => tr('載入範例片'),
+  model_pull: () => tr('下載 AI 模型'),
 }
 
 /** /api/library/busy → the sentence shown instead of switching. null = not busy. */
 export function busyMessage(busy) {
   if (!busy || !busy.busy) return null
-  const names = (busy.jobs || []).map((j) => JOB_LABELS[j] || j)
-  return `${names.join('、') || '有工作'}還在進行，等它完成再切換素材庫（切換會重啟後端，進行中的工作會被中斷）。`
+  const names = (busy.jobs || []).map((j) => (Object.prototype.hasOwnProperty.call(JOB_LABELS, j) ? JOB_LABELS[j]() : j))
+  return tr('{jobs}還在進行，等它完成再切換素材庫（切換會重啟後端，進行中的工作會被中斷）。', {
+    jobs: names.join(tr('、')) || tr('有工作'),
+  })
 }
 
 const norm = (p) => String(p || '').replace(/[\\/]+$/, '').toLowerCase()
@@ -49,7 +54,7 @@ const norm = (p) => String(p || '').replace(/[\\/]+$/, '').toLowerCase()
 /** Last path segment, for both separators. */
 export function baseName(path) {
   const parts = String(path || '').split(/[\\/]+/).filter(Boolean)
-  return parts.length ? parts[parts.length - 1] : '素材庫'
+  return parts.length ? parts[parts.length - 1] : tr('素材庫')
 }
 
 /** `base`, or `base 2`, `base 3`… — the registry refuses duplicate names (409). */
@@ -81,7 +86,7 @@ export function libraryRows({ registryProjects, stats, projectName, libState }) 
     const known = out.some((r) => r.path && norm(r.path) === norm(libState.default))
     const openIsDefault = norm(libState.active) === norm(libState.default)
     if (!known && !openIsDefault) {
-      out.push({ id: 'builtin', name: '內建素材庫', count: null, active: false, path: libState.default })
+      out.push({ id: 'builtin', name: tr('內建素材庫'), count: null, active: false, path: libState.default })
     }
   }
   return out

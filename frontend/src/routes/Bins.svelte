@@ -15,6 +15,7 @@
   import { pushToast } from '../lib/toast.js'
   import { createCopyTracker } from '../lib/binCopy.js'
   import { resolvedTheme } from '../lib/prefs.js'
+  import { t } from '../lib/i18n.js'
 
   $: theme = $resolvedTheme
   let bins = []
@@ -24,23 +25,23 @@
   let newName = ''
 
   // status → { label, sev }. sev: ok | warn | bad. Drives the badge colour.
-  const STATUS = {
+  $: STATUS = {
     ok: { label: '✓', sev: 'ok' },
-    project_unregistered: { label: '未登記', sev: 'warn' },
-    db_missing: { label: '庫無索引', sev: 'warn' },
-    chroma_missing: { label: '庫無向量', sev: 'warn' },
-    nas_unmounted: { label: '庫離線', sev: 'warn' },
-    path_not_found: { label: '庫不存在', sev: 'bad' },
-    inaccessible: { label: '無法存取', sev: 'warn' },
-    timeout: { label: '逾時', sev: 'warn' },
-    row_missing: { label: '已從庫刪除', sev: 'bad' },
+    project_unregistered: { label: $t('未登記'), sev: 'warn' },
+    db_missing: { label: $t('庫無索引'), sev: 'warn' },
+    chroma_missing: { label: $t('庫無向量'), sev: 'warn' },
+    nas_unmounted: { label: $t('庫離線'), sev: 'warn' },
+    path_not_found: { label: $t('庫不存在'), sev: 'bad' },
+    inaccessible: { label: $t('無法存取'), sev: 'warn' },
+    timeout: { label: $t('逾時'), sev: 'warn' },
+    row_missing: { label: $t('已從庫刪除'), sev: 'bad' },
     // 這個 id 現在是另一支素材了（SQLite 會把刪掉的 id 發給下一次匯入）。
     // 是壞的一種，不是「找不到」——標成 bad，並在 title 說清楚。
-    id_reused: { label: '已換成別支', sev: 'bad' },
-    file_missing: { label: '檔案不在', sev: 'bad' },
-    error: { label: '錯誤', sev: 'warn' },
+    id_reused: { label: $t('已換成別支'), sev: 'bad' },
+    file_missing: { label: $t('檔案不在'), sev: 'bad' },
+    error: { label: $t('錯誤'), sev: 'warn' },
   }
-  const badge = (s) => STATUS[s] || { label: s || '?', sev: 'warn' }
+  $: badge = (s) => STATUS[s] || { label: s || '?', sev: 'warn' }
 
   // group a bin's items by project_name for display
   $: groups = (() => {
@@ -59,7 +60,7 @@
       bins = r.bins || []
       if (!activeId && bins.length) select(bins[0].id)
       else if (activeId && !bins.find((b) => b.id === activeId)) { activeId = null; detail = null }
-    } catch (e) { pushToast('讀取精選集失敗: ' + e.message, 'error') }
+    } catch (e) { pushToast($t('讀取精選集失敗: {msg}', { msg: e.message }), 'error') }
   }
 
   async function select(id) {
@@ -74,7 +75,7 @@
       // wrong bin). Mirrors MainLive.fetchDetail's guard.
       if (activeId === id) detail = d
     } catch (e) {
-      if (activeId === id) { pushToast('讀取精選集失敗: ' + e.message, 'error'); detail = null }
+      if (activeId === id) { pushToast($t('讀取精選集失敗: {msg}', { msg: e.message }), 'error'); detail = null }
     }
     if (activeId === id) loading = false
   }
@@ -87,8 +88,8 @@
       newName = ''
       await loadBins()
       select(b.id)
-      pushToast('已建立精選集「' + name + '」')
-    } catch (e) { pushToast('建立失敗: ' + e.message, 'error') }
+      pushToast($t('已建立精選集「{name}」', { name }))
+    } catch (e) { pushToast($t('建立失敗: {msg}', { msg: e.message }), 'error') }
   }
 
   async function removeItem(it) {
@@ -101,7 +102,7 @@
       const d = await api.removeBinItem(id, it.project_name, it.media_id)
       if (activeId === id) detail = d
       loadBins() // refresh counts
-    } catch (e) { pushToast('移除失敗: ' + e.message, 'error') }
+    } catch (e) { pushToast($t('移除失敗: {msg}', { msg: e.message }), 'error') }
   }
 
   // ── copy-into-project dialog ──
@@ -140,17 +141,17 @@
   async function runCopy() {
     const body = { mode: copyMode, create_new: destKind === 'new', skip_vision: fastMode, no_embed: fastMode }
     if (destKind === 'new') {
-      if (!destPath.trim()) { pushToast('請填新專案路徑', 'error'); return }
+      if (!destPath.trim()) { pushToast($t('請填新專案路徑'), 'error'); return }
       body.dest = destPath.trim()
       if (destName.trim()) body.dest_name = destName.trim()
     } else {
-      if (!existingProj) { pushToast('請選目的專案', 'error'); return }
+      if (!existingProj) { pushToast($t('請選目的專案'), 'error'); return }
       body.dest = existingProj
     }
     // round-5 #35 (codex): copy the bin whose detail is OPEN (detail.id), not
     // whichever bin happens to be active at click time.
     const binId = detail && detail.id
-    if (!binId) { pushToast('請先選一個精選集', 'error'); return }
+    if (!binId) { pushToast($t('請先選一個精選集'), 'error'); return }
     copyRunning = true; copyLog = []; copySummary = null
     copyTracker = createCopyTracker()
     try {
@@ -172,7 +173,7 @@
       const out = copyTracker.outcome()
       pushToast(out.msg, out.kind)
       loadBins(); select(binId)
-    } catch (e) { pushToast('複製失敗: ' + e.message, 'error') }
+    } catch (e) { pushToast($t('複製失敗: {msg}', { msg: e.message }), 'error') }
     copyRunning = false
   }
 
@@ -189,18 +190,18 @@
       await api.renameBin(binId, name)
       renaming = false
       await loadBins(); await select(binId)
-      pushToast('已改名')
-    } catch (e) { pushToast('改名失敗: ' + e.message, 'error') }
+      pushToast($t('已改名'))
+    } catch (e) { pushToast($t('改名失敗: {msg}', { msg: e.message }), 'error') }
   }
 
   async function del(id, name) {
-    if (!confirm(`刪除精選集「${name}」？（只刪清單，不動任何原始素材）`)) return
+    if (!confirm($t('刪除精選集「{name}」？（只刪清單，不動任何原始素材）', { name }))) return
     try {
       await api.deleteBin(id)
       if (activeId === id) { activeId = null; detail = null }
       await loadBins()
-      pushToast('已刪除精選集')
-    } catch (e) { pushToast('刪除失敗: ' + e.message, 'error') }
+      pushToast($t('已刪除精選集'))
+    } catch (e) { pushToast($t('刪除失敗: {msg}', { msg: e.message }), 'error') }
   }
 
   onMount(loadBins)
@@ -209,18 +210,18 @@
 <div class="artboard" data-theme={theme}>
   <div class="topbar">
     <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">精選集</Mono>
+    <Mono dim style="font-size:10px;">{$t('精選集')}</Mono>
     <div class="grow"></div>
-    <a class="ak-btn" href="#/search-live">⌕ 搜尋加片</a>
+    <a class="ak-btn" href="#/search-live">{$t('⌕ 搜尋加片')}</a>
     <a class="ak-btn" href="#/main-live">← back to grid</a>
   </div>
 
   <div class="body">
     <!-- left: bin list + create -->
     <aside class="side">
-      <Eyebrow style="margin-bottom:10px;">精選集 · 跨庫引用</Eyebrow>
+      <Eyebrow style="margin-bottom:10px;">{$t('精選集 · 跨庫引用')}</Eyebrow>
       <div class="createrow">
-        <input class="ak-input newname" placeholder="新精選集名稱…" bind:value={newName}
+        <input class="ak-input newname" placeholder={$t('新精選集名稱…')} bind:value={newName}
                on:keydown={(e) => e.key === 'Enter' && create()} />
         <button class="ak-btn" on:click={create}>＋</button>
       </div>
@@ -232,7 +233,7 @@
           </button>
         {/each}
         {#if !bins.length}
-          <Mono dim style="font-size:10.5px;display:block;padding:8px 2px;">尚無精選集 — 上方新建，或到搜尋頁把片加入</Mono>
+          <Mono dim style="font-size:10.5px;display:block;padding:8px 2px;">{$t('尚無精選集 — 上方新建，或到搜尋頁把片加入')}</Mono>
         {/if}
       </div>
     </aside>
@@ -240,7 +241,7 @@
     <!-- right: active bin detail -->
     <main class="detail">
       {#if !detail}
-        <div class="empty">選一個精選集，或先建立一個</div>
+        <div class="empty">{$t('選一個精選集，或先建立一個')}</div>
       {:else}
         <div class="dhead">
           {#if renaming}
@@ -248,30 +249,30 @@
             <!-- svelte-ignore a11y-autofocus -->
             <input class="ak-input renameinput" bind:value={renameVal} autofocus
                    on:keydown={(e) => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') renaming = false }} />
-            <button class="ak-btn" on:click={saveRename}>存</button>
+            <button class="ak-btn" on:click={saveRename}>{$t('存')}</button>
           {:else}
             <div class="ak-display dname">{detail.name}</div>
-            <button class="ak-btn renamebtn" title="改名" on:click={startRename}>✎</button>
+            <button class="ak-btn renamebtn" title={$t('改名')} on:click={startRename}>✎</button>
           {/if}
-          <Mono dim style="font-size:10.5px;">{detail.reachable}/{detail.item_count} 可達</Mono>
+          <Mono dim style="font-size:10.5px;">{$t('{reachable}/{total} 可達', { reachable: detail.reachable, total: detail.item_count })}</Mono>
           <div class="grow"></div>
           {#if detail.item_count}
-            <button class="ak-btn ak-btn--primary" on:click={openCopy}>複製進新案 →</button>
+            <button class="ak-btn ak-btn--primary" on:click={openCopy}>{$t('複製進新案 →')}</button>
           {/if}
-          <button class="ak-btn danger" on:click={() => del(detail.id, detail.name)}>刪除精選集</button>
+          <button class="ak-btn danger" on:click={() => del(detail.id, detail.name)}>{$t('刪除精選集')}</button>
         </div>
 
         {#if copyOpen}
           <div class="copypanel">
             <div class="cprow">
-              <Mono dim style="font-size:10px;letter-spacing:0.08em;">目的地</Mono>
-              <label class="radio"><input type="radio" bind:group={destKind} value="new" /> 新專案</label>
-              <label class="radio"><input type="radio" bind:group={destKind} value="existing" /> 現有專案</label>
+              <Mono dim style="font-size:10px;letter-spacing:0.08em;">{$t('目的地')}</Mono>
+              <label class="radio"><input type="radio" bind:group={destKind} value="new" /> {$t('新專案')}</label>
+              <label class="radio"><input type="radio" bind:group={destKind} value="existing" /> {$t('現有專案')}</label>
             </div>
             {#if destKind === 'new'}
               <div class="cprow">
-                <input class="ak-input" style="flex:1" placeholder="新專案資料夾路徑（例 /Volumes/NAS/新案）" bind:value={destPath} />
-                <input class="ak-input" style="flex:0 1 160px" placeholder="專案名稱（選填）" bind:value={destName} />
+                <input class="ak-input" style="flex:1" placeholder={$t('新專案資料夾路徑（例 /Volumes/NAS/新案）')} bind:value={destPath} />
+                <input class="ak-input" style="flex:0 1 160px" placeholder={$t('專案名稱（選填）')} bind:value={destName} />
               </div>
             {:else}
               <div class="cprow">
@@ -281,22 +282,22 @@
               </div>
             {/if}
             <div class="cprow">
-              <Mono dim style="font-size:10px;letter-spacing:0.08em;">方式</Mono>
-              <label class="radio" title="新案索引舊庫原始檔路徑，不搬 bytes（原檔不動、省空間；舊庫離線則讀不到）">
-                <input type="radio" bind:group={copyMode} value="reference" /> 索引引用（原檔不動）
+              <Mono dim style="font-size:10px;letter-spacing:0.08em;">{$t('方式')}</Mono>
+              <label class="radio" title={$t('新案索引舊庫原始檔路徑，不搬 bytes（原檔不動、省空間；舊庫離線則讀不到）')}>
+                <input type="radio" bind:group={copyMode} value="reference" /> {$t('索引引用（原檔不動）')}
               </label>
-              <label class="radio" title="驗證複製 bytes 進新案（自足可攜、防舊庫離線；佔額外空間）">
-                <input type="radio" bind:group={copyMode} value="copy" /> 實體複製 bytes
+              <label class="radio" title={$t('驗證複製 bytes 進新案（自足可攜、防舊庫離線；佔額外空間）')}>
+                <input type="radio" bind:group={copyMode} value="copy" /> {$t('實體複製 bytes')}
               </label>
             </div>
             <div class="cprow">
-              <label class="radio" title="略過 vision/embedding 重分析（來源已分析過，較快；新案暫無語意搜尋直到補跑）">
-                <input type="checkbox" bind:checked={fastMode} /> 快速（略過重分析）
+              <label class="radio" title={$t('略過 vision/embedding 重分析（來源已分析過，較快；新案暫無語意搜尋直到補跑）')}>
+                <input type="checkbox" bind:checked={fastMode} /> {$t('快速（略過重分析）')}
               </label>
               <div class="grow"></div>
-              <button class="ak-btn" on:click={() => (copyOpen = false)} disabled={copyRunning}>取消</button>
+              <button class="ak-btn" on:click={() => (copyOpen = false)} disabled={copyRunning}>{$t('取消')}</button>
               <button class="ak-btn ak-btn--primary" on:click={runCopy} disabled={copyRunning}>
-                {copyRunning ? '複製中…' : '開始複製'}
+                {copyRunning ? $t('複製中…') : $t('開始複製')}
               </button>
             </div>
             {#if copyLog.length || copySummary}
@@ -306,12 +307,12 @@
             {/if}
             {#if copySummary}
               <div class="cpsummary">
-                <Mono style="font-size:11px;font-weight:600;">完成 → {copySummary.dest}：複製 {copySummary.copied} 支（{copySummary.mode === 'copy' ? '實體複製' : '索引引用'}）</Mono>
+                <Mono style="font-size:11px;font-weight:600;">{$t('完成 → {dest}：複製 {n} 支（{mode}）', { dest: copySummary.dest, n: copySummary.copied, mode: copySummary.mode === 'copy' ? $t('實體複製') : $t('索引引用') })}</Mono>
                 {#if copySummary.index_skipped_busy}
-                  <Mono style="font-size:10px;font-weight:600;">✗ 未索引：當時已有匯入任務進行中，檔案已就位但目的專案還搜不到 — 請稍後對目的專案手動 ingest</Mono>
+                  <Mono style="font-size:10px;font-weight:600;">{$t('✗ 未索引：當時已有匯入任務進行中，檔案已就位但目的專案還搜不到 — 請稍後對目的專案手動 ingest')}</Mono>
                 {/if}
                 {#if copySummary.skipped.length}
-                  <Mono style="font-size:10px;color:var(--cyan);">略過 {copySummary.skipped.length}：{copySummary.skipped.map((s) => s.project_name + '#' + s.media_id + '(' + s.status + ')').join('、')}</Mono>
+                  <Mono style="font-size:10px;color:var(--cyan);">{$t('略過 {n}：{list}', { n: copySummary.skipped.length, list: copySummary.skipped.map((s) => s.project_name + '#' + s.media_id + '(' + s.status + ')').join($t('、')) })}</Mono>
                 {/if}
               </div>
             {/if}
@@ -319,9 +320,9 @@
         {/if}
 
         {#if loading}
-          <Mono dim style="font-size:10.5px;">載入中…</Mono>
+          <Mono dim style="font-size:10.5px;">{$t('載入中…')}</Mono>
         {:else if !detail.item_count}
-          <div class="empty">這個精選集還沒有片 — 到 <a href="#/search-live">搜尋頁</a> 選片「加入精選集」</div>
+          <div class="empty">{$t('這個精選集還沒有片 — 到')} <a href="#/search-live">{$t('搜尋頁')}</a> {$t('選片「加入精選集」')}</div>
         {:else}
           {#each groups as g (g.name)}
             <section class="rgroup">
@@ -330,7 +331,7 @@
                 <div class="ak-display gproj">{g.name}</div>
                 <Mono dim style="font-size:10.5px;">{g.items.length}</Mono>
                 <div class="grow"></div>
-                <Mono dim style="font-size:9.5px;letter-spacing:0.08em;" title="結果在其他專案的資料庫 · 唯讀，無法在此開啟/播放">唯讀 · 跨庫</Mono>
+                <Mono dim style="font-size:9.5px;letter-spacing:0.08em;" title={$t('結果在其他專案的資料庫 · 唯讀，無法在此開啟/播放')}>{$t('唯讀 · 跨庫')}</Mono>
               </div>
               <div class="rows">
                 {#each g.items as it (it.project_name + ':' + it.media_id)}
@@ -343,11 +344,11 @@
                     <div class="rbadge">
                       <span class="badge {bd.sev}"
                             title={it.status === 'id_reused'
-                              ? `這個編號現在指到另一支素材（當初加入的是 ${it.filename || '?'}）`
+                              ? $t('這個編號現在指到另一支素材（當初加入的是 {file}）', { file: it.filename || '?' })
                               : it.status}>{bd.label}</span>
                     </div>
                     <div class="raction">
-                      <button class="ak-btn xbtn" title="從精選集移除（不動原檔）" on:click={() => removeItem(it)}>×</button>
+                      <button class="ak-btn xbtn" title={$t('從精選集移除（不動原檔）')} on:click={() => removeItem(it)}>×</button>
                     </div>
                   </div>
                 {/each}

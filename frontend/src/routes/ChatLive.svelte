@@ -13,6 +13,7 @@
   import { resolvedTheme } from '../lib/prefs.js'
   import { pushToast } from '../lib/toast.js'
   import { createExportGuard, downloadedMsg } from '../lib/exportFeedback.js'
+  import { t } from '../lib/i18n.js'
 
   $: theme = $resolvedTheme
   let messages = [] // {role:'user'|'assistant', text, intent?, scenes?:[{id,name,thumb}]}
@@ -59,7 +60,7 @@
       messages = rebuilt
       scrollDown()
     } catch (e) {
-      err = e.status === 404 ? '找不到這個對話' : e.message
+      err = e.status === 404 ? $t('找不到這個對話') : e.message
     }
   }
 
@@ -71,7 +72,7 @@
   }
 
   // Honest phrasing — chat finds candidate clips, it does NOT cut a final video.
-  const suggestions = ['找生肉切割的鏡頭', '找店內空景的畫面', '哪些素材有餐廳']
+  const suggestions = ['找生肉切割的鏡頭', '找店內空景的畫面', '哪些素材有餐廳'] // i18n-ignore sample queries sent to the chat backend as-is
   const EXPORTS = ['edl', 'fcpxml', 'srt']
   // Authenticated download — a plain <a href> can't carry the Bearer token, so
   // exports would 401 on a tokened backend (Codex review P2 pattern).
@@ -86,7 +87,7 @@
         pushToast(downloadedMsg(r.filename, r.size))
       } catch (e) {
         console.error('export failed', e)
-        pushToast(`${fmt.toUpperCase()} 匯出失敗: ${e.message}`, 'error')
+        pushToast($t('{fmt} 匯出失敗: {error}', { fmt: fmt.toUpperCase(), error: e.message }), 'error')
       }
     })
   }
@@ -163,9 +164,9 @@
       ]
     } catch (e) {
       if (e.name === 'AbortError') {
-        messages = [...messages, { role: 'assistant', text: '（已中斷）', error: true }]
+        messages = [...messages, { role: 'assistant', text: $t('（已中斷）'), error: true }]
       } else {
-        err = e.status === 401 ? '需要 chat_write token（tailnet）— 本機 loopback 可直接用' : e.message
+        err = e.status === 401 ? $t('需要 chat_write token（tailnet）— 本機 loopback 可直接用') : e.message
         messages = [...messages, { role: 'assistant', text: `⚠ ${err}`, error: true }]
       }
     } finally {
@@ -226,24 +227,24 @@
          everywhere it works. The label is dynamic because Esc genuinely does two
          different things here: a static "返回素材庫" would be a lie mid-answer,
          when the key aborts instead of navigating. -->
-    <button class="esc" on:click={() => (busy ? abort() : push('/main-live'))}>ESC · {busy ? '中斷回覆' : '返回素材庫'}</button>
+    <button class="esc" on:click={() => (busy ? abort() : push('/main-live'))}>ESC · {busy ? $t('中斷回覆') : $t('返回素材庫')}</button>
   </div>
 
   <div class="body">
     <aside class="convs">
       <div class="convhead">
-        <Eyebrow>對話紀錄</Eyebrow>
-        <button class="ak-btn newchat" on:click={newChat} disabled={busy}>＋ 新對話</button>
+        <Eyebrow>{$t('對話紀錄')}</Eyebrow>
+        <button class="ak-btn newchat" on:click={newChat} disabled={busy}>＋ {$t('新對話')}</button>
       </div>
       <div class="convlist">
         {#each conversations as c (c.id)}
           <button class="convitem" class:active={c.id === convId} on:click={() => openConversation(c.id)} disabled={busy}>
-            <span class="convtitle">{c.title || '未命名對話'}</span>
+            <span class="convtitle">{c.title || $t('未命名對話')}</span>
             <Mono dim style="font-size:9px;letter-spacing:0.04em;">{fmtTime(c.updated_at)}</Mono>
           </button>
         {/each}
         {#if conversations.length === 0}
-          <Mono dim style="font-size:10.5px;padding:8px 2px;display:block;">尚無紀錄</Mono>
+          <Mono dim style="font-size:10.5px;padding:8px 2px;display:block;">{$t('尚無紀錄')}</Mono>
         {/if}
       </div>
     </aside>
@@ -253,9 +254,9 @@
       {#if messages.length === 0}
         <div class="empty">
           <Eyebrow>arkiv chat</Eyebrow>
-          <div class="ak-display emptytitle">問你的素材庫。</div>
+          <div class="ak-display emptytitle">{$t('問你的素材庫。')}</div>
           <Mono dim style="font-size:12px;line-height:1.6;max-width:440px;">
-            用中文問。例如「幫我把生肉切割的鏡頭剪成一段」→ 自動分類意圖 + 語意搜尋 + 回答 + 列出符合的片段。
+            {$t('用中文問。例如「幫我把生肉切割的鏡頭剪成一段」→ 自動分類意圖 + 語意搜尋 + 回答 + 列出符合的片段。')}
           </Mono>
           <div class="suggest">
             {#each suggestions as s}
@@ -272,11 +273,11 @@
           </Mono>
           <div class="text">{m.text}</div>
           {#if m.scenes && m.scenes.length}
-            <Mono dim style="font-size:9px;letter-spacing:0.1em;margin-top:4px;display:block;">候選素材 · {m.scenes.length} 段 · 可導出 EDL/FCPXML/SRT 到 Resolve 剪</Mono>
+            <Mono dim style="font-size:9px;letter-spacing:0.1em;margin-top:4px;display:block;">{$t('候選素材 · {n} 段 · 可導出 EDL/FCPXML/SRT 到 Resolve 剪', { n: m.scenes.length })}</Mono>
             <div class="scenes">
               {#each m.scenes as sc (sc.id)}
                 <div class="scene">
-                  <a class="scenelink" href={`#/main-live?ids=${m.scenes.map((s) => s.id).join(',')}&sel=${sc.id}`} title="在素材庫開啟（grid 過濾成這批相關素材）">
+                  <a class="scenelink" href={`#/main-live?ids=${m.scenes.map((s) => s.id).join(',')}&sel=${sc.id}`} title={$t('在素材庫開啟（grid 過濾成這批相關素材）')}>
                     <div class="scenethumb">
                       {#if sc.thumb}<img src={sc.thumb} alt={sc.name} loading="lazy" />{/if}
                     </div>
@@ -297,19 +298,19 @@
       {/each}
 
       {#if busy}
-        <div class="msg assistant"><Mono dim style="font-size:11px;color:var(--cyan);">● 生成中…　<span style="opacity:0.6">Esc 中斷</span></Mono></div>
+        <div class="msg assistant"><Mono dim style="font-size:11px;color:var(--cyan);">● {$t('生成中…')}　<span style="opacity:0.6">{$t('Esc 中斷')}</span></Mono></div>
       {/if}
     </div>
 
     <div class="composer">
       <input
         class="ak-input chatinput"
-        placeholder="問你的素材庫…（Enter 送出）"
+        placeholder={$t('問你的素材庫…（Enter 送出）')}
         bind:value={input}
         on:keydown={onKey}
         disabled={busy}
       />
-      <button class="ak-btn ak-btn--primary" on:click={() => send()} disabled={busy || !input.trim()}>送出 →</button>
+      <button class="ak-btn ak-btn--primary" on:click={() => send()} disabled={busy || !input.trim()}>{$t('送出 →')}</button>
     </div>
     </div>
   </div>

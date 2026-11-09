@@ -16,6 +16,7 @@
   import { pushToast } from '../lib/toast.js'
   import { resolvedTheme } from '../lib/prefs.js'
   import { resultHref, fmtMatchTime } from '../lib/matchTime.js'
+  import { t } from '../lib/i18n.js'
 
   $: theme = $resolvedTheme
   let query = ''
@@ -31,7 +32,7 @@
   $: shown = groups.reduce((a, g) => a + g.items.length, 0)
   // Derived from the project registry when available; neutral label otherwise,
   // so results outside the demo project aren't mislabeled (Codex review P3).
-  let projectName = '目前專案'
+  let projectName = $t('目前專案')
 
   // Cross-project federation. Off = current project only (/api/media). On = fan out
   // read-only across the registry (/api/search/all). Federation errors (a stalled
@@ -75,13 +76,13 @@
         await loadBins()
         targetBinId = binId
       }
-      if (!binId) { pushToast('先選一個精選集或輸入新名稱', 'error'); return }
+      if (!binId) { pushToast($t('先選一個精選集或輸入新名稱'), 'error'); return }
       const r = await api.addBinItems(binId, picks)
-      const name = (binList.find((b) => b.id === binId) || {}).name || '精選集'
-      pushToast(`已加入「${name}」（共 ${r.item_count} 支）`)
+      const name = (binList.find((b) => b.id === binId) || {}).name || $t('精選集')
+      pushToast($t('已加入「{name}」（共 {n} 支）', { name, n: r.item_count }))
       clearPicks()
       loadBins()
-    } catch (e) { pushToast('加入精選集失敗: ' + e.message, 'error') }
+    } catch (e) { pushToast($t('加入精選集失敗: {error}', { error: e.message }), 'error') }
   }
 
   // Media-type facet — wired to /api/media?media_type= (real backend filter; audit
@@ -198,7 +199,7 @@
       dur: fmtDur(it.duration_s),
       score: typeof it.score === 'number' ? it.score : null,
       matchType: it.match_type || null,
-      project_name: it.project_name || '（未命名專案）',
+      project_name: it.project_name || $t('（未命名專案）'),
       excerpt: it.excerpt || '',
       lang: it.lang || '',
       thumb: null, // cross-project: this server can't serve another project's thumbs
@@ -306,31 +307,31 @@
     <Mono dim style="font-size:10px;">live</Mono>
     <div class="grow"></div>
     <a class="ak-btn" href="#/query-live">⊞ query builder</a>
-    <a class="ak-btn" href="#/bins">★ 精選集</a>
+    <a class="ak-btn" href="#/bins">★ {$t('精選集')}</a>
     <a class="ak-btn" href="#/main-live">← back to grid</a>
   </div>
 
   <div class="main">
     <div class="hero">
       <Eyebrow style="margin-bottom:10px;">
-        Search · 語意 + 關鍵字（{crossProject ? '跨專案聯邦' : 'current project'}）
+        Search · {$t('語意 + 關鍵字（{scope}）', { scope: crossProject ? $t('跨專案聯邦') : 'current project' })}
       </Eyebrow>
       <div class="queryrow">
         <Mono dim style="font-size:26px;font-weight:400;">⌕</Mono>
         <input
           class="ak-input query"
-          placeholder="用一句話描述你要的鏡頭… 試 生肉特寫 / 吧檯空景 / 切割"
+          placeholder={$t('用一句話描述你要的鏡頭… 試 生肉特寫 / 吧檯空景 / 切割')}
           bind:value={query}
           on:keydown={(e) => e.key === 'Enter' && runSearch()}
         />
-        <button class="ak-btn" on:click={runSearch}>搜尋</button>
+        <button class="ak-btn" on:click={runSearch}>{$t('搜尋')}</button>
       </div>
       <div class="facets">
         {#each FACETS as f}
           <button
             class="facet" class:active={!crossProject && mediaType === f.key}
             disabled={crossProject}
-            title={crossProject ? '跨專案搜尋不支援媒體類型過濾' : ''}
+            title={crossProject ? $t('跨專案搜尋不支援媒體類型過濾') : ''}
             on:click={() => setType(f.key)}
           >
             {f.label}{#if counts[f.key] != null} · {counts[f.key]}{/if}
@@ -339,26 +340,26 @@
         <div class="fvrule"></div>
         <button
           class="facet" class:active={!crossProject}
-          title="只搜尋目前開啟的專案"
+          title={$t('只搜尋目前開啟的專案')}
           on:click={() => setCrossProject(false)}
         >Current only</button>
         <button
           class="facet" class:active={crossProject}
-          title="跨專案聯邦搜尋 · 讀取 ~/.arkiv-projects.json 登記的所有專案（在設定新增）"
+          title={$t('跨專案聯邦搜尋 · 讀取 ~/.arkiv-projects.json 登記的所有專案（在設定新增）')}
           on:click={() => setCrossProject(true)}
         >All projects{#if projectCount} · {projectCount}{/if}</button>
         <div class="fvrule"></div>
         {#if state === 'ok'}
           <Mono dim style="font-size:10.5px;">
             {total} matches · {elapsedMs}ms
-            {#if crossProject}· {projectsQueried - projectsFailed}/{projectsQueried} 專案{:else}· semantic + lexical{/if}
+            {#if crossProject}{$t('· {ok}/{n} 專案', { ok: projectsQueried - projectsFailed, n: projectsQueried })}{:else}· semantic + lexical{/if}
           </Mono>
         {:else if state === 'loading'}
           <Mono dim style="font-size:10.5px;">searching…</Mono>
         {:else if state === 'error'}
           <Mono style="font-size:10.5px;color:var(--cyan);">ERROR: {err}</Mono>
         {:else}
-          <Mono dim style="font-size:10.5px;">輸入查詢後按 Enter</Mono>
+          <Mono dim style="font-size:10.5px;">{$t('輸入查詢後按 Enter')}</Mono>
         {/if}
       </div>
     </div>
@@ -366,13 +367,13 @@
     <div class="results">
       {#if crossProject && state === 'ok' && projectsQueried === 0}
         <div class="emptyresult">
-          尚未登記任何專案 — 到 <a href="#/settings">設定 → 跨庫專案</a> 新增要一起搜尋的素材庫
+          {$t('尚未登記任何專案 — 到')} <a href="#/settings">{$t('設定 → 跨庫專案')}</a> {$t('新增要一起搜尋的素材庫')}
         </div>
       {/if}
 
       {#if crossProject && fedErrors.length}
         <div class="fedbanner">
-          <Mono style="font-size:10px;letter-spacing:0.08em;color:var(--cyan);">⚠ {fedErrors.length} 專案查詢失敗</Mono>
+          <Mono style="font-size:10px;letter-spacing:0.08em;color:var(--cyan);">⚠ {$t('{n} 專案查詢失敗', { n: fedErrors.length })}</Mono>
           {#each fedErrors as e}
             <Mono dim style="font-size:10px;">· {e.project_name || e.project_path || '?'}: {e.error}</Mono>
           {/each}
@@ -381,21 +382,21 @@
 
       {#if crossProject && picks.length}
         <div class="pickbar">
-          <Mono style="font-size:11px;font-weight:500;">已選 {picks.length} 支 →</Mono>
+          <Mono style="font-size:11px;font-weight:500;">{$t('已選 {n} 支 →', { n: picks.length })}</Mono>
           <select class="ak-input binsel" bind:value={targetBinId}>
-            <option value="">選精選集…</option>
+            <option value="">{$t('選精選集…')}</option>
             {#each binList as b}<option value={b.id}>{b.name}（{b.item_count}）</option>{/each}
           </select>
-          <Mono dim style="font-size:10px;">或</Mono>
-          <input class="ak-input newbin" placeholder="新精選集名稱…" bind:value={newBinName}
+          <Mono dim style="font-size:10px;">{$t('或')}</Mono>
+          <input class="ak-input newbin" placeholder={$t('新精選集名稱…')} bind:value={newBinName}
                  on:keydown={(e) => e.key === 'Enter' && addPicksToBin()} />
-          <button class="ak-btn ak-btn--primary" on:click={addPicksToBin}>加入精選集</button>
-          <button class="ak-btn" on:click={clearPicks}>清除</button>
+          <button class="ak-btn ak-btn--primary" on:click={addPicksToBin}>{$t('加入精選集')}</button>
+          <button class="ak-btn" on:click={clearPicks}>{$t('清除')}</button>
         </div>
       {/if}
 
       {#if state === 'ok' && shown === 0 && !(crossProject && projectsQueried === 0)}
-        <div class="emptyresult">沒有符合「{query}」的素材</div>
+        <div class="emptyresult">{$t('沒有符合「{query}」的素材', { query })}</div>
       {:else if shown}
         {#each groups as g (g.name)}
           <section class="rgroup">
@@ -407,7 +408,7 @@
               {#if g.live}
                 <Mono dim style="font-size:9.5px;letter-spacing:0.08em;">● LIVE</Mono>
               {:else}
-                <Mono dim style="font-size:9.5px;letter-spacing:0.08em;" title="結果在其他專案的資料庫 · 唯讀，無法在此開啟/播放">唯讀 · 跨庫</Mono>
+                <Mono dim style="font-size:9.5px;letter-spacing:0.08em;" title={$t('結果在其他專案的資料庫 · 唯讀，無法在此開啟/播放')}>{$t('唯讀 · 跨庫')}</Mono>
               {/if}
             </div>
 
@@ -427,7 +428,7 @@
                     {/if}
                     {#if !g.openable}
                       <!-- federated rows are read-only but pickable → 精選集 -->
-                      <label class="pickbox" title="選取加入精選集">
+                      <label class="pickbox" title={$t('選取加入精選集')}>
                         <input type="checkbox" checked={pickKeys.has(g.name + ':' + r.id)}
                                on:change={() => togglePick(g.name, r.id, r.name)} />
                       </label>
@@ -442,11 +443,11 @@
                         {#if !g.openable && r.lang}<span class="rtag">{r.lang}</span>{/if}
                       </div>
                     </div>
-                    {#if r.excerpt}<div class="snippet">{#if r.matchStart != null && r.matchStart >= 1}<span class="mtime" title="開啟後跳到這個時間點">▶ {fmtMatchTime(r.matchStart)}</span>{/if}{p.b}<span class="mark">{p.m}</span>{p.a}</div>{/if}
+                    {#if r.excerpt}<div class="snippet">{#if r.matchStart != null && r.matchStart >= 1}<span class="mtime" title={$t('開啟後跳到這個時間點')}>▶ {fmtMatchTime(r.matchStart)}</span>{/if}{p.b}<span class="mark">{p.m}</span>{p.a}</div>{/if}
                   </div>
                    <div class="rscore">
                     {#if r.matchType}
-                      <Mono dim style="font-size:9px;display:block;letter-spacing:0.06em;{r.matchType === 'semantic' ? 'color:var(--ink-2);' : 'color:var(--cyan);'}">{r.matchType === 'semantic' ? '語意' : '關鍵字'}</Mono>
+                      <Mono dim style="font-size:9px;display:block;letter-spacing:0.06em;{r.matchType === 'semantic' ? 'color:var(--ink-2);' : 'color:var(--cyan);'}">{r.matchType === 'semantic' ? $t('語意') : $t('關鍵字')}</Mono>
                     {/if}
                     {#if r.score != null}
                       <Mono style="font-size:13px;font-weight:600;color:var(--ink);">{r.score.toFixed(2)}</Mono>
@@ -465,7 +466,7 @@
 
       {#if state === 'ok' && shown < total}
         <div class="loadmorewrap">
-          <button class="ak-btn" on:click={loadMore}>顯示更多（{shown}/{total}）</button>
+          <button class="ak-btn" on:click={loadMore}>{$t('顯示更多（{shown}/{total}）', { shown, total })}</button>
         </div>
       {/if}
     </div>

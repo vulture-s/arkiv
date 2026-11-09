@@ -7,6 +7,7 @@
 // Offload view makes off that: open the dialog, prefill the names, and — the
 // part that protects footage — whether the card may read as done. Only "done"
 // (every clip on every drive, verified, with a manifest) is formattable.
+import { tr } from './i18n.js'
 
 const flatten = (summary) =>
   Object.values(summary || {}).flatMap((s) => (s && Array.isArray(s.needs_rename) ? s.needs_rename : []))
@@ -31,10 +32,10 @@ export const canFormat = (status) => status === 'done'
 
 export function statusLine(status, pending = 0) {
   switch (status) {
-    case 'done': return '✓ 轉存完成 · 全部校驗通過'
-    case 'needs_rename': return `⚠ ${pending} 支同名衝突待改名 — 卡片尚未完整備份，請勿格式化`
-    case 'incomplete': return '✗ 有檔案未備份（已跳過）— 卡片尚未完整備份，請勿格式化'
-    default: return '✗ 轉存有失敗 — 請勿格式化'
+    case 'done': return tr('✓ 轉存完成 · 全部校驗通過')
+    case 'needs_rename': return tr('⚠ {n} 支同名衝突待改名 — 卡片尚未完整備份，請勿格式化', { n: pending })
+    case 'incomplete': return tr('✗ 有檔案未備份（已跳過）— 卡片尚未完整備份，請勿格式化')
+    default: return tr('✗ 轉存有失敗 — 請勿格式化')
   }
 }
 
@@ -43,13 +44,13 @@ export function statusLine(status, pending = 0) {
 const BAD = /[\\/:*?"<>|\x00-\x1f\x7f]/
 export function checkNewName(name) {
   const n = String(name ?? '')
-  if (!n.trim()) return '檔名不能空白'
-  if (n !== n.trim()) return '檔名前後不能有空白'
-  if (BAD.test(n)) return '只能是檔名，不能含 / \\ : * ? " < > | 等字元'
-  if (n.startsWith('.')) return '檔名不能以 . 開頭'
+  if (!n.trim()) return tr('檔名不能空白')
+  if (n !== n.trim()) return tr('檔名前後不能有空白')
+  if (BAD.test(n)) return tr('只能是檔名，不能含 / \\ : * ? " < > | 等字元')
+  if (n.startsWith('.')) return tr('檔名不能以 . 開頭')
   const low = n.toLowerCase()
-  if (low.endsWith('.partial') || low.endsWith('.mhl') || low === 'ascmhl') return '這個副檔名保留給轉存流程'
-  if (new TextEncoder().encode(n).length > 255) return '檔名太長'
+  if (low.endsWith('.partial') || low.endsWith('.mhl') || low === 'ascmhl') return tr('這個副檔名保留給轉存流程')
+  if (new TextEncoder().encode(n).length > 255) return tr('檔名太長')
   return ''
 }
 
@@ -60,7 +61,7 @@ export function applyResolveResult(rows, row, result) {
     if (r.dst !== row.dst || r.rel !== row.rel) return r
     if (fileStatus === 'verified') return { ...r, state: 'renamed', error: '', dst_rel: result.file.dst_rel }
     if (fileStatus === 'skipped_unbacked') return { ...r, state: 'skipped', error: '' }
-    return { ...r, state: 'error', error: result?.file?.error || '補拷失敗' }
+    return { ...r, state: 'error', error: result?.file?.error || tr('補拷失敗') }
   })
   return { rows: next, status: result?.status || 'failed', summary: result?.summary }
 }

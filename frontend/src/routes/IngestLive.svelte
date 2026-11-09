@@ -25,6 +25,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
+  import { t } from '../lib/i18n.js'
 
   $: theme = $resolvedTheme
   const BASE = import.meta.env?.VITE_API_URL ?? ''
@@ -159,8 +160,8 @@
       } else if (msg.type === 'halted') {
         halted = msg
         pushLog(msg.reason === 'stall'
-          ? `HALTED · 已 ${Math.round(msg.idle_s / 60)} 分鐘沒有進度（門檻 ${Math.round(msg.stall_s / 60)} 分）`
-          : `HALTED · 已跑 ${Math.round(msg.elapsed_s / 60)} 分，超過上限 ${Math.round(msg.budget_s / 60)} 分`)
+          ? $t('HALTED · 已 {idle} 分鐘沒有進度（門檻 {stall} 分）', { idle: Math.round(msg.idle_s / 60), stall: Math.round(msg.stall_s / 60) })
+          : $t('HALTED · 已跑 {elapsed} 分，超過上限 {budget} 分', { elapsed: Math.round(msg.elapsed_s / 60), budget: Math.round(msg.budget_s / 60) }))
       } else if (msg.type === 'complete') {
         complete = { ok: msg.ok, skipped: msg.skipped, failed: msg.failed }
         busy = false
@@ -174,7 +175,7 @@
   }
 
   async function trigger() {
-    if (!path.trim()) { err = '請填要 ingest 的資料夾路徑'; return }
+    if (!path.trim()) { err = $t('請填要 ingest 的資料夾路徑'); return }
     err = ''
     busy = true
     files = {}
@@ -201,7 +202,7 @@
     rebuilding = true
     try {
       const res = await api.rebuildEmbedIndex()
-      pushLog(res.message || '重建向量索引：已排入背景')
+      pushLog(res.message || $t('重建向量索引：已排入背景'))
     } catch (e) {
       err = e.message
     } finally {
@@ -339,16 +340,16 @@
           <div class="herobig">
             <div class="ak-display bignum quiet">—</div>
             <div class="trigger">
-              <input class="ak-input pathinput" placeholder="ingest 資料夾路徑（例 ~/Desktop/Test）" bind:value={path} disabled={busy} />
+              <input class="ak-input pathinput" placeholder={$t('ingest 資料夾路徑（例 ~/Desktop/Test）')} bind:value={path} disabled={busy} />
               <div class="triggerrow">
                 <input class="ak-input limitinput" type="number" min="0" bind:value={limit} disabled={busy} title="limit (0=all)" />
                 <button class="ak-btn ak-btn--primary" on:click={trigger} disabled={busy || conn !== 'open'}>{busy ? 'running…' : 'Start ingest →'}</button>
-                <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title="重建 ChromaDB 向量索引（背景執行）">{rebuilding ? '排入中…' : '重建索引'}</button>
+                <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title={$t('重建 ChromaDB 向量索引（背景執行）')}>{rebuilding ? $t('排入中…') : $t('重建索引')}</button>
               </div>
               {#if embedStatus && (embedStatus.stale_media || embedStatus.unindexed_media)}
                 <!-- Stale = text/tags changed after embedding; search on those clips is
                      out of date until the next ingest or a rebuild. -->
-                <Mono style="font-size:11px;color:var(--quiet);margin-top:6px;display:block;">索引：{embedStatus.stale_media} 支內容已變更待更新 · {embedStatus.unindexed_media} 支尚未索引</Mono>
+                <Mono style="font-size:11px;color:var(--quiet);margin-top:6px;display:block;">{$t('索引：{stale} 支內容已變更待更新 · {unindexed} 支尚未索引', { stale: embedStatus.stale_media, unindexed: embedStatus.unindexed_media })}</Mono>
               {/if}
             </div>
           </div>
@@ -362,20 +363,18 @@
           <div class="haltbox" role="alert">
             <div class="halthead">
               <Mono style="font-size:11px;font-weight:600;">
-                {halted.reason === 'stall' ? '匯入已停止 · 研判卡住' : '匯入已停止 · 超過預估上限'}
+                {halted.reason === 'stall' ? $t('匯入已停止 · 研判卡住') : $t('匯入已停止 · 超過預估上限')}
               </Mono>
             </div>
             <Mono dim style="font-size:10.5px;line-height:1.65;display:block;">
               {#if halted.reason === 'stall'}
-                已 {Math.round((halted.idle_s || 0) / 60)} 分鐘沒有任何進度輸出（門檻
-                {Math.round((halted.stall_s || 0) / 60)} 分鐘），整個處理程序已被停止。
-                可能是 ffmpeg 或視覺模型沒有回應 —— 先確認 ollama 還活著再重跑。
+                {$t('已 {idle} 分鐘沒有任何進度輸出（門檻 {stall} 分鐘），整個處理程序已被停止。', { idle: Math.round((halted.idle_s || 0) / 60), stall: Math.round((halted.stall_s || 0) / 60) })}
+                {$t('可能是 ffmpeg 或視覺模型沒有回應 —— 先確認 ollama 還活著再重跑。')}
               {:else}
-                已跑 {Math.round((halted.elapsed_s || 0) / 60)} 分鐘，超過本次的上限
-                {Math.round((halted.budget_s || 0) / 60)} 分鐘。它當時仍在輸出進度，
-                所以多半只是估值偏低而不是卡住。
+                {$t('已跑 {elapsed} 分鐘，超過本次的上限 {budget} 分鐘。它當時仍在輸出進度，', { elapsed: Math.round((halted.elapsed_s || 0) / 60), budget: Math.round((halted.budget_s || 0) / 60) })}
+                {$t('所以多半只是估值偏低而不是卡住。')}
               {/if}
-              <br/><b>已完成的素材都已寫進素材庫，重跑會從中斷處接續。</b>
+              <br/><b>{$t('已完成的素材都已寫進素材庫，重跑會從中斷處接續。')}</b>
             </Mono>
           </div>
         {/if}
@@ -400,7 +399,7 @@
           {#if startedAt}<Mono dim style="font-size:10.5px;">{rows.length} of {total} started</Mono>{/if}
         </div>
         {#if rows.length === 0}
-          <div class="empty"><Mono dim>等待 ingest 觸發…（填路徑按 Start，或用 New ingest）</Mono></div>
+          <div class="empty"><Mono dim>{$t('等待 ingest 觸發…（填路徑按 Start，或用 New ingest）')}</Mono></div>
         {:else}
           <div class="qrow qheadrow" style="grid-template-columns:{cols};">
             {#each ['FILE', 'PROBE', 'TRANSCRIBE', 'TAG', 'PROGRESS'] as h}<Mono dim style="font-size:9.5px;letter-spacing:0.1em;">{h}</Mono>{/each}

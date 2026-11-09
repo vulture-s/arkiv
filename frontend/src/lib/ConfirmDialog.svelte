@@ -2,11 +2,12 @@
      Backdrop click cancels (unless busy). danger=true paints the confirm button red. -->
 <script>
   import { createEventDispatcher } from 'svelte'
+  import { t } from './i18n.js'
   export let open = false
-  export let title = '確認'
+  export let title = null // null → localized 確認
   export let message = ''
-  export let confirmLabel = '確認'
-  export let cancelLabel = '取消'
+  export let confirmLabel = null // null → localized 確認
+  export let cancelLabel = null // null → localized 取消
   export let busy = false
   export let danger = false
   const dispatch = createEventDispatcher()
@@ -33,15 +34,15 @@
       on:click|stopPropagation
       on:keydown={(e) => e.stopPropagation()}
     >
-      <div class="title">{title}</div>
+      <div class="title">{title ?? $t('確認')}</div>
       {#if message}<div class="msg">{message}</div>{/if}
       <div class="actions">
-        <button class="ak-btn" on:click={() => dispatch('cancel')} disabled={busy}>{cancelLabel}</button>
+        <button class="ak-btn" on:click={() => dispatch('cancel')} disabled={busy}>{cancelLabel ?? $t('取消')}</button>
         <button
           class="ak-btn {danger ? 'danger' : 'primary'}"
           on:click={() => dispatch('confirm')}
           disabled={busy}
-        >{busy ? '處理中…' : confirmLabel}</button>
+        >{busy ? $t('處理中…') : (confirmLabel ?? $t('確認'))}</button>
       </div>
     </div>
   </div>

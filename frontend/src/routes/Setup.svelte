@@ -11,6 +11,7 @@
   import * as api from '../lib/api.js'
   import { pushToast } from '../lib/toast.js'
   import { modelRows, blockers, pullLine } from '../lib/setupWizard.js'
+  import { t } from '../lib/i18n.js'
 
   let setup = null
   let error = null
@@ -45,7 +46,7 @@
   async function startPull() {
     try {
       const r = await api.setupPull({})
-      if (!r.queued) return pushToast(r.message || '所有模型都已就緒')
+      if (!r.queued) return pushToast(r.message || $t('所有模型都已就緒'))
       pulling = true
       timer = setInterval(poll, 1500)
       poll()
@@ -76,9 +77,9 @@
   $: pullItems = setup?.pull?.items || []
   $: itemFor = (name) => pullItems.find((i) => i.name === name)
   $: steps = [
-    { n: 1, title: '檢查這台電腦', sub: '硬體、轉錄裝置、ffmpeg' },
-    { n: 2, title: '下載 AI 模型', sub: missing.length ? `還缺 ${missing.length} 個` : '都已就緒' },
-    { n: 3, title: '加入素材', sub: '選資料夾、開始匯入' },
+    { n: 1, title: $t('檢查這台電腦'), sub: $t('硬體、轉錄裝置、ffmpeg') },
+    { n: 2, title: $t('下載 AI 模型'), sub: missing.length ? $t('還缺 {n} 個', { n: missing.length }) : $t('都已就緒') },
+    { n: 3, title: $t('加入素材'), sub: $t('選資料夾、開始匯入') },
   ].map((s) => ({ ...s, status: s.n < step ? 'done' : s.n === step ? 'active' : 'pending' }))
 </script>
 
@@ -86,7 +87,7 @@
   <div class="topbar">
     <ArkivLogo size={16} /><Mono dim style="font-size:11px;">first run · setup</Mono>
     <div class="grow"></div>
-    <button class="ak-btn" on:click={() => finish(true)}>略過，直接開始</button>
+    <button class="ak-btn" on:click={() => finish(true)}>{$t('略過，直接開始')}</button>
   </div>
 
   <div class="body">
@@ -105,42 +106,42 @@
         {/each}
       </div>
       <div class="grow"></div>
-      <div class="stepnote"><Mono dim style="font-size:10.5px;line-height:1.6;">全部在這台電腦上執行。只會下載模型，你的素材不會上傳到任何地方。</Mono></div>
+      <div class="stepnote"><Mono dim style="font-size:10.5px;line-height:1.6;">{$t('全部在這台電腦上執行。只會下載模型，你的素材不會上傳到任何地方。')}</Mono></div>
     </div>
 
     <div class="detail">
       {#if error}
-        <Mono>讀不到設定狀態：{error}</Mono>
-        <button class="ak-btn" style="margin-top:12px;" on:click={refresh}>重試</button>
+        <Mono>{$t('讀不到設定狀態：{error}', { error })}</Mono>
+        <button class="ak-btn" style="margin-top:12px;" on:click={refresh}>{$t('重試')}</button>
       {:else if !setup}
-        <Mono dim>檢查中…</Mono>
+        <Mono dim>{$t('檢查中…')}</Mono>
       {:else if step === 1}
-        <Eyebrow style="margin-bottom:10px;">Step 1 · 這台電腦</Eyebrow>
-        <div class="ak-display big">先看看你的<br />硬體。</div>
+        <Eyebrow style="margin-bottom:10px;">Step 1 · {$t('這台電腦')}</Eyebrow>
+        <div class="ak-display big">{$t('先看看你的')}<br />{$t('硬體。')}</div>
         <div class="grid2">
-          <Mono dim>系統</Mono><Mono>{hw.os} · {hw.arch}</Mono>
-          <Mono dim>處理器</Mono><Mono>{hw.cpu} · {hw.cores} 核</Mono>
-          <Mono dim>記憶體</Mono><Mono>{hw.ram_gb != null ? `${hw.ram_gb} GB` : '不明'}</Mono>
-          <Mono dim>顯示卡</Mono><Mono>{hw.gpu ? `${hw.gpu.name}${hw.gpu.vram_gb && !hw.apple_silicon ? ` · ${hw.gpu.vram_gb} GB` : ''}` : '沒有偵測到獨立顯示卡'}</Mono>
-          <Mono dim>轉錄裝置</Mono><Mono>{setup.transcribe.label}{setup.transcribe.note ? ` — ${setup.transcribe.note}` : ''}</Mono>
-          <Mono dim>ffmpeg</Mono><Mono>{setup.ffmpeg ? '已安裝' : '沒有'}</Mono>
+          <Mono dim>{$t('系統')}</Mono><Mono>{hw.os} · {hw.arch}</Mono>
+          <Mono dim>{$t('處理器')}</Mono><Mono>{hw.cpu} · {$t('{n} 核', { n: hw.cores })}</Mono>
+          <Mono dim>{$t('記憶體')}</Mono><Mono>{hw.ram_gb != null ? `${hw.ram_gb} GB` : $t('不明')}</Mono>
+          <Mono dim>{$t('顯示卡')}</Mono><Mono>{hw.gpu ? `${hw.gpu.name}${hw.gpu.vram_gb && !hw.apple_silicon ? ` · ${hw.gpu.vram_gb} GB` : ''}` : $t('沒有偵測到獨立顯示卡')}</Mono>
+          <Mono dim>{$t('轉錄裝置')}</Mono><Mono>{setup.transcribe.label}{setup.transcribe.note ? ` — ${setup.transcribe.note}` : ''}</Mono>
+          <Mono dim>ffmpeg</Mono><Mono>{setup.ffmpeg ? $t('已安裝') : $t('沒有')}</Mono>
         </div>
         {#if problems.length}
           <div class="warn">
             {#each problems as p}<Mono style="display:block;">◇ {p}</Mono>{/each}
-            <button class="ak-btn" style="margin-top:10px;" on:click={refresh}>處理好了，重新檢查</button>
+            <button class="ak-btn" style="margin-top:10px;" on:click={refresh}>{$t('處理好了，重新檢查')}</button>
           </div>
         {/if}
         <div class="grow"></div>
-        <div class="nav"><button class="ak-btn primary" on:click={() => (step = 2)}>下一步：AI 模型</button></div>
+        <div class="nav"><button class="ak-btn primary" on:click={() => (step = 2)}>{$t('下一步：AI 模型')}</button></div>
       {:else if step === 2}
-        <Eyebrow style="margin-bottom:10px;">Step 2 · AI 模型</Eyebrow>
-        <div class="ak-display big">在本機跑的<br />模型。</div>
+        <Eyebrow style="margin-bottom:10px;">Step 2 · {$t('AI 模型')}</Eyebrow>
+        <div class="ak-display big">{$t('在本機跑的')}<br />{$t('模型。')}</div>
         {#if !setup.ollama.running}
           <div class="warn">
-            <Mono style="display:block;">◇ Ollama 沒有在執行。畫面描述、語意搜尋與對話需要它——到 ollama.com 下載安裝並打開，再按重新檢查。</Mono>
-            <Mono dim style="display:block;margin-top:4px;">沒有 Ollama 也能匯入與轉錄，只是少了這三項。</Mono>
-            <button class="ak-btn" style="margin-top:10px;" on:click={refresh}>重新檢查</button>
+            <Mono style="display:block;">◇ {$t('Ollama 沒有在執行。畫面描述、語意搜尋與對話需要它——到 ollama.com 下載安裝並打開，再按重新檢查。')}</Mono>
+            <Mono dim style="display:block;margin-top:4px;">{$t('沒有 Ollama 也能匯入與轉錄，只是少了這三項。')}</Mono>
+            <button class="ak-btn" style="margin-top:10px;" on:click={refresh}>{$t('重新檢查')}</button>
           </div>
         {/if}
         <div class="models">
@@ -149,35 +150,35 @@
               <Eyebrow>{r.label}</Eyebrow>
               <div class="mname">{r.name}</div>
               <Mono dim style="font-size:11px;">
-                {#if r.present}已下載{:else if itemFor(r.name)}{pullLine(itemFor(r.name))}{:else}未下載 · {r.size}{/if}
+                {#if r.present}{$t('已下載')}{:else if itemFor(r.name)}{pullLine(itemFor(r.name))}{:else}{$t('未下載')} · {r.size}{/if}
               </Mono>
             </div>
           {/each}
         </div>
         <div class="dlbox">
           {#if missing.length}
-            <Mono>還缺 {missing.length} 個模型。可以現在下載，或等第一次匯入時再自動下載。</Mono>
+            <Mono>{$t('還缺 {n} 個模型。可以現在下載，或等第一次匯入時再自動下載。', { n: missing.length })}</Mono>
             <div class="grow"></div>
-            <button class="ak-btn primary" disabled={pulling} on:click={startPull}>{pulling ? '下載中…' : '現在下載'}</button>
-            <button class="ak-btn" on:click={() => (step = 3)}>等匯入時再下載</button>
+            <button class="ak-btn primary" disabled={pulling} on:click={startPull}>{pulling ? $t('下載中…') : $t('現在下載')}</button>
+            <button class="ak-btn" on:click={() => (step = 3)}>{$t('等匯入時再下載')}</button>
           {:else}
-            <Mono>模型都已就緒。</Mono>
+            <Mono>{$t('模型都已就緒。')}</Mono>
             <div class="grow"></div>
-            <button class="ak-btn primary" on:click={() => (step = 3)}>下一步：加入素材</button>
+            <button class="ak-btn primary" on:click={() => (step = 3)}>{$t('下一步：加入素材')}</button>
           {/if}
         </div>
         <div class="grow"></div>
-        <Mono dim style="font-size:10.5px;margin-top:16px;">想換模型：設定 → 系統。下載可以關掉這頁繼續在背景跑。</Mono>
+        <Mono dim style="font-size:10.5px;margin-top:16px;">{$t('想換模型：設定 → 系統。下載可以關掉這頁繼續在背景跑。')}</Mono>
       {:else}
-        <Eyebrow style="margin-bottom:10px;">Step 3 · 加入素材</Eyebrow>
-        <div class="ak-display big">指給 arkiv<br />看你的素材。</div>
+        <Eyebrow style="margin-bottom:10px;">Step 3 · {$t('加入素材')}</Eyebrow>
+        <div class="ak-display big">{$t('指給 arkiv')}<br />{$t('看你的素材。')}</div>
         <Mono dim style="font-size:13px;margin-top:14px;line-height:1.65;max-width:640px;display:block;">
-          arkiv 不會搬動或複製你的檔案，只在原地建索引。NAS 上的資料夾請先在 Finder／檔案總管連上，再到匯入畫面選它。
+          {$t('arkiv 不會搬動或複製你的檔案，只在原地建索引。NAS 上的資料夾請先在 Finder／檔案總管連上，再到匯入畫面選它。')}
         </Mono>
         <div class="grow"></div>
         <div class="nav">
-          <button class="ak-btn" on:click={() => finish(true)}>先看範例片</button>
-          <button class="ak-btn primary" on:click={() => finish(false)}>前往匯入</button>
+          <button class="ak-btn" on:click={() => finish(true)}>{$t('先看範例片')}</button>
+          <button class="ak-btn primary" on:click={() => finish(false)}>{$t('前往匯入')}</button>
         </div>
       {/if}
     </div>

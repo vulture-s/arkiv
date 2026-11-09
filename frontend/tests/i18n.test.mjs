@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 
 import { translate, resolveLocale } from '../src/lib/i18n.js'
 import en, { FRAGMENTS } from '../src/lib/i18n/en/index.js'
-import { liveFiles, scan } from './i18nScan.mjs'
+import { liveFiles, scan, scanText } from './i18nScan.mjs'
 
 const BASELINE_URL = new URL('./i18n-baseline.json', import.meta.url)
 const baseline = JSON.parse(readFileSync(BASELINE_URL, 'utf8'))
@@ -38,6 +38,23 @@ test('fragments: no conflicting duplicates; values are English with the same pla
       assert.deepEqual(placeholders(v), placeholders(k), `placeholder mismatch for 「${k}」 (${name})`)
     }
   }
+})
+
+test('scanner: sees unwrapped Chinese, skips comments/wrapped/ignored — and a comment mentioning /* does not hide the rest', () => {
+  const src = [
+    "// routes live under /_design/* (mock artboards)",
+    "<b>{$t('已包')}</b>",
+    "<!-- 註解裡的中文 -->",
+    "const x = '還沒包'",
+    "/* 區塊",
+    "   註解 */",
+    "const y = tr('也包了', { n })",
+    "const z = '刻意留中文' // i18n-ignore sample data",
+    "<span>畫面上的字</span>",
+  ].join('\n')
+  const { keys, raw } = scanText(src)
+  assert.deepEqual(keys.map((k) => k.key), ['已包', '也包了'])
+  assert.deepEqual(raw.map((r) => r.line), [4, 9])
 })
 
 test('every wrapped key is a plain literal with an English entry', () => {

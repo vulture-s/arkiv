@@ -6,12 +6,14 @@
 //   res: GET /api/corrections body ({rules, load_error}) or null
 //   err: the thrown error, or null
 // → { rules, canSave, msg }
+import { tr } from './i18n.js'
+
 export function vocabLoadState(res, err) {
   if (err) {
     return {
       rules: [],
       canSave: false,
-      msg: `字典讀取失敗，為避免覆蓋既有規則，暫停儲存 — 重新整理後再試（${err.message || err}）`,
+      msg: tr('字典讀取失敗，為避免覆蓋既有規則，暫停儲存 — 重新整理後再試（{err}）', { err: err.message || err }),
     }
   }
   const rules = (res && res.rules) || []
@@ -19,7 +21,7 @@ export function vocabLoadState(res, err) {
     return {
       rules,
       canSave: true,
-      msg: `⚠ ${res.load_error} — 畫面上不是原本的規則；儲存會改寫字典，舊檔會留成 corrections.json.bak，無法解析的原檔另存 corrections.json.corrupt-<時間>（之後再存也不會被蓋掉）`,
+      msg: tr('⚠ {err} — 畫面上不是原本的規則；儲存會改寫字典，舊檔會留成 corrections.json.bak，無法解析的原檔另存 corrections.json.corrupt-<時間>（之後再存也不會被蓋掉）', { err: res.load_error }),
     }
   }
   return { rules, canSave: true, msg: '' }

@@ -12,9 +12,11 @@
 // segments (no stored segment contains that string, so it would be a rule that
 // can never fire on the text the user was looking at).
 
+import { tr } from './i18n.js'
+
 export const MAX_FROM = 120
 export const MAX_TO = 200
-const CROSS = '選取跨了兩段以上 —— 一次只能校正同一段裡的字'
+const CROSS = () => tr('選取跨了兩段以上 —— 一次只能校正同一段裡的字')
 
 // sel: { startSeg, endSeg, text, segText }
 //   startSeg / endSeg — segment index of each end of the selection, or null when
@@ -32,28 +34,28 @@ export function selectionToFrom(sel) {
     // One end landed outside the text spans. If the selection spans a line
     // break it ran into another segment; otherwise it grabbed the timecode.
     if (/[\r\n]/.test(raw.trim())) {
-      return { ok: false, reason: CROSS }
+      return { ok: false, reason: CROSS() }
     }
-    return { ok: false, reason: '請只選取逐字稿文字（不要包含時間碼）' }
+    return { ok: false, reason: tr('請只選取逐字稿文字（不要包含時間碼）') }
   }
   if (startSeg !== endSeg) {
-    return { ok: false, reason: CROSS }
+    return { ok: false, reason: CROSS() }
   }
   // Selections pick up stray whitespace/newlines at the edges (double-click on a
   // word followed by a space, triple-click a line). Trim them; anything inside
   // is kept verbatim because the rule matches literally.
   const from = raw.replace(/^\s+|\s+$/g, '')
   if (/[\r\n]/.test(from)) {
-    return { ok: false, reason: CROSS }
+    return { ok: false, reason: CROSS() }
   }
   if (typeof sel.segText === 'string' && !sel.segText.includes(from)) {
     // Defensive: the DOM said one segment but the string isn't in it (e.g. the
     // segment re-rendered under the selection). Sending it would teach a rule
     // that matches nothing the user can see.
-    return { ok: false, reason: '選取的文字不在這一段裡，請重新選取' }
+    return { ok: false, reason: tr('選取的文字不在這一段裡，請重新選取') }
   }
   if (from.length > MAX_FROM) {
-    return { ok: false, reason: `選取太長（${from.length} 字）—— 校正請選一個詞或一小段，最多 ${MAX_FROM} 字` }
+    return { ok: false, reason: tr('選取太長（{n} 字）—— 校正請選一個詞或一小段，最多 {max} 字', { n: from.length, max: MAX_FROM }) }
   }
   return { ok: true, from, seg: startSeg }
 }
@@ -62,10 +64,10 @@ export function selectionToFrom(sel) {
 export function validateCorrection(from, to) {
   const f = typeof from === 'string' ? from.trim() : ''
   const t = typeof to === 'string' ? to.trim() : ''
-  if (!f) return { ok: false, reason: '沒有要校正的文字' }
-  if (!t) return { ok: false, reason: '請輸入正確寫法' }
-  if (t === f) return { ok: false, reason: '正確寫法跟原文一樣' }
-  if (t.length > MAX_TO) return { ok: false, reason: `正確寫法太長（最多 ${MAX_TO} 字）` }
+  if (!f) return { ok: false, reason: tr('沒有要校正的文字') }
+  if (!t) return { ok: false, reason: tr('請輸入正確寫法') }
+  if (t === f) return { ok: false, reason: tr('正確寫法跟原文一樣') }
+  if (t.length > MAX_TO) return { ok: false, reason: tr('正確寫法太長（最多 {max} 字）', { max: MAX_TO }) }
   return { ok: true, from: f, to: t }
 }
 
@@ -73,15 +75,15 @@ export function validateCorrection(from, to) {
 // res: { rule:{from,to}, created, hotword, applied?:{media_updated,total_hits} }
 export function describeLearn(res, applyRequested) {
   const r = (res && res.rule) || {}
-  const parts = [`已學會「${r.from}」→「${r.to}」${res && res.created === false ? '（更新既有規則）' : ''}`]
-  if (res && res.hotword) parts.push('已加入下次轉錄的熱詞')
+  const parts = [tr('已學會「{from}」→「{to}」', { from: r.from, to: r.to }) + (res && res.created === false ? tr('（更新既有規則）') : '')]
+  if (res && res.hotword) parts.push(tr('已加入下次轉錄的熱詞'))
   if (applyRequested) {
     const a = res && res.applied
-    if (!a) parts.push('（未回報改寫結果）')
-    else if (!a.media_updated) parts.push('本專案逐字稿沒有命中，未改寫')
-    else parts.push(`已改寫 ${a.media_updated} 支素材、${a.total_hits} 處（可在 設定 → 批次套用 還原）`)
+    if (!a) parts.push(tr('（未回報改寫結果）'))
+    else if (!a.media_updated) parts.push(tr('本專案逐字稿沒有命中，未改寫'))
+    else parts.push(tr('已改寫 {n} 支素材、{hits} 處（可在 設定 → 批次套用 還原）', { n: a.media_updated, hits: a.total_hits }))
   } else {
-    parts.push('未改寫既有逐字稿')
+    parts.push(tr('未改寫既有逐字稿'))
   }
-  return parts.join('；')
+  return parts.join(tr('；'))
 }

@@ -49,13 +49,13 @@ export function keyAction(e) {
   }
 }
 
-/** The hint row shown above the waveform: [keys, what it does]. */
+/** The hint row shown above the waveform: [keys, what it does]. Labels are i18n keys — translated where rendered (Inspector `$t(what)`). */
 export const KEY_HINTS = [
-  ['Space', '播放'],
-  ['J K L', '倒轉／停／快轉'],
-  ['← →', '逐格'],
-  ['I O', '設 IN／OUT'],
-  ['⇧I ⇧O', '跳到 IN／OUT'],
-  ['/', '播 IN→OUT'],
-  ['⌥X', '清除'],
+  ['Space', '播放'], // i18n-ignore key, translated at render in Inspector
+  ['J K L', '倒轉／停／快轉'], // i18n-ignore key, translated at render in Inspector
+  ['← →', '逐格'], // i18n-ignore key, translated at render in Inspector
+  ['I O', '設 IN／OUT'], // i18n-ignore key, translated at render in Inspector
+  ['⇧I ⇧O', '跳到 IN／OUT'], // i18n-ignore key, translated at render in Inspector
+  ['/', '播 IN→OUT'], // i18n-ignore key, translated at render in Inspector
+  ['⌥X', '清除'], // i18n-ignore key, translated at render in Inspector
 ]

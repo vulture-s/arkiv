@@ -33,6 +33,7 @@
   import { parseStartParam } from '../lib/matchTime.js'
   import { createIdentityNamesLoader } from '../lib/identityNames.js'
   import { rateMany } from '../lib/bulkRating.js'
+  import { t } from '../lib/i18n.js'
   import { POOL_SORTS, loadPoolSort, savePoolSort, nextColumnSort, columnArrow } from '../lib/poolSort.js'
 
   $: theme = $resolvedTheme
@@ -173,7 +174,7 @@
     try { binList = (await api.getBins()).bins || [] } catch (e) { /* none yet */ }
   }
   async function addPicksToBin() {
-    if (!projectRegName) { pushToast('本專案未登記，無法加入精選集 — 先到設定登記', 'error'); return }
+    if (!projectRegName) { pushToast($t('本專案未登記，無法加入精選集 — 先到設定登記'), 'error'); return }
     const byId = new Map((items || []).map((m) => [m.id, m]))
     const refs = picked.map((id) => ({
       project_name: projectRegName,
@@ -188,12 +189,12 @@
         const b = await api.createBin(newBinName.trim())
         binId = b.id; newBinName = ''; await loadBins(); targetBinId = binId
       }
-      if (!binId) { pushToast('先選一個精選集或輸入新名稱', 'error'); return }
+      if (!binId) { pushToast($t('先選一個精選集或輸入新名稱'), 'error'); return }
       const r = await api.addBinItems(binId, refs)
-      const name = (binList.find((b) => b.id === binId) || {}).name || '精選集'
-      pushToast(`已加入「${name}」（共 ${r.item_count} 支）`)
+      const name = (binList.find((b) => b.id === binId) || {}).name || $t('精選集')
+      pushToast($t('已加入「{name}」（共 {n} 支）', { name, n: r.item_count }))
       clearPicks(); loadBins()
-    } catch (e) { pushToast('加入精選集失敗: ' + e.message, 'error') }
+    } catch (e) { pushToast($t('加入精選集失敗: {error}', { error: e.message }), 'error') }
   }
   const EXPORT_FMTS = ['edl', 'fcpxml', 'srt']
   // One export in flight at a time; exportBusy = the running key (e.g.
@@ -206,9 +207,9 @@
     return exportGuard.run(`timeline:${fmt}`, async () => {
       try {
         const r = await api.downloadFile(api.exportTimelinePath(picked, fmt), `arkiv-timeline.${fmt}`)
-        pushToast(downloadedMsg(r.filename, r.size, `時間軸 ${n} 支`))
+        pushToast(downloadedMsg(r.filename, r.size, $t('時間軸 {n} 支', { n })))
       } catch (e) {
-        pushToast(`時間軸 ${fmt.toUpperCase()} 匯出失敗: ${e.message}`, 'error')
+        pushToast($t('時間軸 {fmt} 匯出失敗: {error}', { fmt: fmt.toUpperCase(), error: e.message }), 'error')
       }
     })
   }
@@ -218,9 +219,9 @@
     return exportGuard.run(ids ? 'csv:picked' : 'csv:all', async () => {
       try {
         const r = await api.downloadFile(api.metadataCsvPath(ids), 'arkiv_davinci_metadata.csv')
-        pushToast(downloadedMsg(r.filename, r.size, ids ? `中繼資料 ${ids.length} 支` : '中繼資料 · 全庫'))
+        pushToast(downloadedMsg(r.filename, r.size, ids ? $t('中繼資料 {n} 支', { n: ids.length }) : $t('中繼資料 · 全庫')))
       } catch (e) {
-        pushToast(`CSV 匯出失敗: ${e.message}`, 'error')
+        pushToast($t('CSV 匯出失敗: {error}', { error: e.message }), 'error')
       }
     })
   }
@@ -237,7 +238,7 @@
   }
   function askDeleteBulk() {
     if (!picked.length) return
-    confirmDel = { kind: 'bulk', ids: [...picked], label: `${picked.length} 支素材` }
+    confirmDel = { kind: 'bulk', ids: [...picked], label: $t('{n} 支素材', { n: picked.length }) }
   }
   async function confirmDelete() {
     if (!confirmDel) return
@@ -259,7 +260,7 @@
       clearPicks()
       confirmDel = null
     } catch (e) {
-      pushToast(`刪除失敗: ${e.message}`, 'error')
+      pushToast($t('刪除失敗: {error}', { error: e.message }), 'error')
       confirmDel = null
     } finally {
       delBusy = false
@@ -284,7 +285,7 @@
         const r = await api.downloadFile(path, file)
         pushToast(downloadedMsg(r.filename, r.size))
       } catch (e) {
-        pushToast(`${fmt.toUpperCase()} 匯出失敗: ${e.message}`, 'error')
+        pushToast($t('{fmt} 匯出失敗: {error}', { fmt: fmt.toUpperCase(), error: e.message }), 'error')
       }
     })
   }
@@ -294,8 +295,8 @@
       try {
         const r = await api.getChapters(id, format)
         const d = api.downloadText(r.chapters || '', `${_stem(id, name)}.chapters.txt`)
-        pushToast(downloadedMsg(d.filename, d.size, '章節'))
-      } catch (e) { pushToast(`章節匯出失敗: ${e.message}`, 'error') }
+        pushToast(downloadedMsg(d.filename, d.size, $t('章節')))
+      } catch (e) { pushToast($t('章節匯出失敗: {error}', { error: e.message }), 'error') }
     })
   }
   function exportRemotion(id, name, trim = null) {
@@ -304,11 +305,11 @@
         const r = await api.getRemotionProps(id, undefined, trim)
         const d = api.downloadText(JSON.stringify(r, null, 2), `${_stem(id, name)}.remotion.json`, 'application/json')
         pushToast(downloadedMsg(d.filename, d.size, 'Remotion props'))
-      } catch (e) { pushToast(`Remotion 匯出失敗: ${e.message}`, 'error') }
+      } catch (e) { pushToast($t('Remotion 匯出失敗: {error}', { error: e.message }), 'error') }
     })
   }
   async function revealFile(path, mediaId = null) {
-    try { await api.openFile(path, true, undefined, mediaId) } catch (e) { pushToast(`在 Finder 顯示失敗: ${e.message}`, 'error') }
+    try { await api.openFile(path, true, undefined, mediaId) } catch (e) { pushToast($t('在 Finder 顯示失敗: {error}', { error: e.message }), 'error') }
   }
 
   // Poll /api/health, distinguishing deps-missing (503, immediate) from a still-
@@ -337,7 +338,7 @@
       if (r.queued === 0) { await load(); return } // already loaded
       await pollSeed()
     } catch (e) {
-      pushToast(e.status === 409 ? '有匯入任務進行中，稍後再試' : '載入失敗: ' + e.message, 'error')
+      pushToast(e.status === 409 ? $t('有匯入任務進行中，稍後再試') : $t('載入失敗: {error}', { error: e.message }), 'error')
     } finally { seeding = false }
   }
 
@@ -346,10 +347,10 @@
     removingSample = true
     try {
       await api.removeSample()
-      pushToast('已移除範例素材')
+      pushToast($t('已移除範例素材'))
       await load()
     } catch (e) {
-      pushToast('移除失敗: ' + e.message, 'error')
+      pushToast($t('移除失敗: {error}', { error: e.message }), 'error')
     } finally { removingSample = false }
   }
 
@@ -360,11 +361,11 @@
       let s = null
       try { s = await api.getSeedStatus() } catch { /* transient */ }
       if (s && !s.running) {
-        if (s.ok) { pushToast('sample library ready — 試搜 "llama"'); await load() }
-        else { pushToast('載入失敗 — 見 Settings → System', 'error') }
+        if (s.ok) { pushToast($t('sample library ready — 試搜 "llama"')); await load() }
+        else { pushToast($t('載入失敗 — 見 Settings → System'), 'error') }
         return
       }
-      if (Date.now() - t0 > 20 * 60 * 1000) { pushToast('sample 載入逾時', 'error'); return }
+      if (Date.now() - t0 > 20 * 60 * 1000) { pushToast($t('sample 載入逾時'), 'error'); return }
     }
   }
 
@@ -375,7 +376,7 @@
   function applyShotYearFacets(f) {
     if (f && f._error) {
       liveShotYears = null
-      pushToast(`拍攝年份讀取失敗: ${f._error}`, 'error')
+      pushToast($t('拍攝年份讀取失敗: {error}', { error: f._error }), 'error')
       return
     }
     liveShotYears = shotYearRows(f)
@@ -399,7 +400,7 @@
     // hung entitlements request must not keep the pool on "loading…".
     fetchSidecar(api.getEntitlements).then((ent) => viewGen.apply(gen, () => { entitlement = ent }))
     try {
-      const [s, m, t, c, si, f, pr] = await Promise.all([
+      const [s, m, tagRows, c, si, f, pr] = await Promise.all([
         api.getStats(),
         api.getMedia(mediaParams({ limit: PAGE, ...shotArgs() })),
         api.getTags(), api.getCollections(),
@@ -419,7 +420,7 @@
         items = (m.items || []).map(toCard)
         total = m.total ?? items.length
         moreParams = mediaParams({ limit: PAGE, ...shotArgs() })
-        liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
+        liveTags = (tagRows || []).map((x) => ({ name: x.name, count: x.count }))
         liveCollections = (c?.collections || []).map((col) => ({
           key: col.key, title: col.title, count: col.count,
           items: col.items || [], // full member items (id/filename/thumb/duration_s/score)
@@ -457,7 +458,7 @@
         total = r.total ?? total
       })
     } catch (e) {
-      if (viewGen.isCurrent(gen)) pushToast(`載入更多失敗: ${e.message}`, 'error')
+      if (viewGen.isCurrent(gen)) pushToast($t('載入更多失敗: {error}', { error: e.message }), 'error')
     } finally {
       // Outside the guard on purpose: the spinner belongs to this component, not to
       // the view, and leaving it stuck true would disable the button for good.
@@ -603,7 +604,7 @@
         ['Unrated', stats.rating?.unrated ?? 0],
       ]
     : null
-  $: projectName = (stats && stats.project) || '素材庫'
+  $: projectName = (stats && stats.project) || $t('素材庫')
   // The sidebar's Projects list is the REGISTRY (~/.arkiv-projects.json), not the
   // open library. It used to be a single hardcoded row naming whatever library was
   // open, which meant a project you added in Settings never appeared here and the
@@ -627,11 +628,11 @@
       if (msg) return pushToast(msg, 'error')
     } catch { /* the shell checks again before it stops anything */ }
     switching = true
-    pushToast(`切換到「${p.name}」…（後端重新啟動，約 10–30 秒）`)
+    pushToast($t('切換到「{name}」…（後端重新啟動，約 10–30 秒）', { name: p.name }))
     try {
       await switchLibrary(p.path)
     } catch (e) {
-      pushToast(`沒有切換：${e?.message || e}`, 'error')
+      pushToast($t('沒有切換：{error}', { error: e?.message || e }), 'error')
     } finally {
       switching = false
     }
@@ -739,7 +740,7 @@
       // Load the sidebar data (stats/tags/collections) too — otherwise the
       // deep-link path leaves stats=null and the whole sidebar (projects + pools)
       // silently falls back to mock data. Grid items come from the ?ids= subset.
-      const [s, m, t, c, f] = await Promise.all([
+      const [s, m, tagRows, c, f] = await Promise.all([
         api.getStats(), api.getMedia({ ids, limit: PAGE }), api.getTags(), api.getCollections(),
         // The year section is sidebar data like tags and collections, so it belongs
         // on this path too — otherwise arriving from chat silently loses the time
@@ -754,7 +755,7 @@
         // A deep-link ?ids= subset is exactly the returned rows — no further pages.
         total = items.length
         moreParams = null
-        liveTags = (t || []).map((x) => ({ name: x.name, count: x.count }))
+        liveTags = (tagRows || []).map((x) => ({ name: x.name, count: x.count }))
         liveCollections = (c?.collections || []).map((col) => ({
           key: col.key, title: col.title, count: col.count, items: col.items || [],
         }))
@@ -774,8 +775,8 @@
   async function selectFromParam() {
     const sel = readSelParam()
     if (sel == null) return
-    const t = parseStartParam(readHashParam('t'))
-    startAt = t == null ? null : { id: sel, t }
+    const startT = parseStartParam(readHashParam('t'))
+    startAt = startT == null ? null : { id: sel, t: startT }
     if (items.find((m) => m.id === sel)) { selectedId = sel; return }
     // Prepending into whatever view is current: if the user moved on while the detail
     // fetch was in flight, this would splice an unrelated clip into the new grid.
@@ -813,7 +814,7 @@
   async function importLutLive(file) {
     const r = await api.importLut(file)
     await loadColorProfiles()
-    pushToast(`已匯入 LUT：${file.name}`)
+    pushToast($t('已匯入 LUT：{name}', { name: file.name }))
     return r.id
   }
   onMount(async () => {
@@ -908,7 +909,7 @@
     try {
       await api.activateTranscript(selected.id, lang)
       await Promise.all([fetchDetail(selected.id), fetchTranscripts(selected.id)])
-    } catch (e) { pushToast(`切換主要語言失敗: ${e.message}`, 'error') }  // round-5 #43
+    } catch (e) { pushToast($t('切換主要語言失敗: {error}', { error: e.message }), 'error') }  // round-5 #43
   }
 
   // 選字 → 校正: teach the project dictionary one correction (POST
@@ -921,7 +922,7 @@
     try {
       res = await api.learnCorrection({ from, to }, apply)
     } catch (e) {
-      pushToast(`校正失敗: ${e.message}`, 'error')
+      pushToast($t('校正失敗: {error}', { error: e.message }), 'error')
       throw e
     }
     pushToast(describeLearn(res, apply), 'ok', 6000)
@@ -957,11 +958,11 @@
   $: detailLive = detail && detail.id === (selected && selected.id) ? detail : null
   // G2: language tabs + the segments of whichever language is being viewed.
   $: tdLive = transcriptsData && transcriptsId === (selected && selected.id) ? transcriptsData : null
-  $: transcriptLangs = tdLive ? tdLive.transcripts.map((t) => ({ lang: t.lang, active: !!t.active })) : null
+  $: transcriptLangs = tdLive ? tdLive.transcripts.map((tx) => ({ lang: tx.lang, active: !!tx.active })) : null
   // transcript: show the viewed language's segments_json when tabs are loaded,
   // else fall back to the live detail's active transcript.
   $: _viewedRow = (tdLive && viewLang)
-    ? (tdLive.transcripts.find((t) => t.lang === viewLang) || null)
+    ? (tdLive.transcripts.find((tx) => tx.lang === viewLang) || null)
     : null
   $: _displaySegs = (tdLive && viewLang)
     ? (parseJson((_viewedRow || {}).segments_json) || [])
@@ -1024,7 +1025,7 @@
       const r = await api.addTag(id, n)
       if (detail && detail.id === id) detail = { ...detail, tags: r.tags }
     } catch (e) {
-      pushToast(`加標籤失敗: ${e.message}`, 'error')  // round-5 #43
+      pushToast($t('加標籤失敗: {error}', { error: e.message }), 'error')  // round-5 #43
     }
   }
   async function removeTag(name) {
@@ -1033,14 +1034,14 @@
     const prev = detail && detail.id === id ? detail.tags : null
     // optimistic: drop it immediately, reconcile (or revert) when the call lands
     if (detail && detail.id === id) {
-      detail = { ...detail, tags: (detail.tags || []).filter((t) => t.name !== name) }
+      detail = { ...detail, tags: (detail.tags || []).filter((tg) => tg.name !== name) }
     }
     try {
       const r = await api.removeTag(id, name)
       if (detail && detail.id === id) detail = { ...detail, tags: r.tags }
     } catch (e) {
       if (detail && detail.id === id && prev) detail = { ...detail, tags: prev }
-      pushToast(`刪標籤失敗: ${e.message}`, 'error')  // round-5 #43 — was a silent revert
+      pushToast($t('刪標籤失敗: {error}', { error: e.message }), 'error')  // round-5 #43 — was a silent revert
     }
   }
 
@@ -1075,11 +1076,11 @@
     try {
       const r = await api.addIdentity(id, { name, ...(range || {}) })
       if (identitiesId === id) identities = r.identities
-      pushToast(`已標註：${r.identity.name}`)
+      pushToast($t('已標註：{name}', { name: r.identity.name }))
       fetchIdentityNames()
       return true
     } catch (e) {
-      pushToast(`標人物失敗: ${e.message}`, 'error')
+      pushToast($t('標人物失敗: {error}', { error: e.message }), 'error')
       return false
     }
   }
@@ -1089,10 +1090,10 @@
     try {
       const r = await api.removeIdentity(id, identityId)
       if (identitiesId === id) identities = r.identities
-      pushToast('已移除人物標註')
+      pushToast($t('已移除人物標註'))
       fetchIdentityNames()
     } catch (e) {
-      pushToast(`移除人物失敗: ${e.message}`, 'error')
+      pushToast($t('移除人物失敗: {error}', { error: e.message }), 'error')
     }
   }
 
@@ -1101,9 +1102,10 @@
 
   // Stage labels, not a progress bar: whisper decoding is a single opaque call and
   // a percentage would be invented. Naming the stage is the honest version.
+  // Thunks so the label follows the UI language at the moment it is shown.
   const TRANSCRIBE_STAGES = {
-    queued: '排隊中', extracting: '抽音軌', vad: '偵測語音',
-    decoding: '辨識中', polishing: '潤稿中', diarizing: '分辨語者',
+    queued: () => $t('排隊中'), extracting: () => $t('抽音軌'), vad: () => $t('偵測語音'),
+    decoding: () => $t('辨識中'), polishing: () => $t('潤稿中'), diarizing: () => $t('分辨語者'),
   }
 
   // Poll `endpoint` every second and show `labels[stage]`. Shared by the two
@@ -1115,7 +1117,7 @@
       if (!alive) return
       try {
         const s = await endpoint(id)
-        if (alive && s && s.state === 'running' && labels[s.stage]) reProgress = labels[s.stage]
+        if (alive && s && s.state === 'running' && Object.prototype.hasOwnProperty.call(labels, s.stage)) reProgress = labels[s.stage]()
       } catch (_) {}
       if (alive) timer = setTimeout(tick, 1000)
     }
@@ -1137,7 +1139,7 @@
       try {
         const s = await api.retryVisionStatus(id)
         if (alive && s && s.state === 'running' && s.total) {
-          const phase = s.phase === 'fallback' ? '備援 ' : ''
+          const phase = s.phase === 'fallback' ? $t('備援 ') : ''
           reProgress = `${phase}${s.done || 0}/${s.total}`
         }
       } catch (_) {}
@@ -1155,7 +1157,7 @@
   // throws bubble up to the inspector's catch. Refetch detail on success so the
   // transcript / vision / tags reflect the new run.
   async function reprocess(action, opts = {}) {
-    if (!selected) return { ok: false, message: '未選取素材' }
+    if (!selected) return { ok: false, message: $t('未選取素材') }
     const id = selected.id
     if (action === 'retranscribe') {
       const stopPolling = pollStage(id, api.retranscribeStatus, TRANSCRIBE_STAGES)
@@ -1167,7 +1169,7 @@
       }
       if (detailId === id) await fetchDetail(id)
       await fetchTranscripts(id)  // G2: surface the (possibly new) language as a tab
-      return { ok: r.ok, message: `轉錄完成 · ${r.transcript_length} 字 · ${r.language}` }
+      return { ok: r.ok, message: $t('轉錄完成 · {chars} 字 · {lang}', { chars: r.transcript_length, lang: r.language }) }
     }
     if (action === 'retry-vision') {
       // Poll for progress while the POST is still open. The request contract is
@@ -1182,18 +1184,18 @@
       if (detailId === id) await fetchDetail(id)
       return {
         ok: r.ok,
-        message: r.message || `視覺補上 ${r.patched}/${r.total_frames} 幀，剩 ${r.still_empty}`,
+        message: r.message || $t('視覺補上 {patched}/{total} 幀，剩 {left}', { patched: r.patched, total: r.total_frames, left: r.still_empty }),
       }
     }
     if (action === 'reingest') {
       const r = await api.reingest(id)
       if (detailId === id) await fetchDetail(id)
-      return { ok: r.ok, message: r.ok ? '完整重建完成' : '重建失敗（見後端 log）' }
+      return { ok: r.ok, message: r.ok ? $t('完整重建完成') : $t('重建失敗（見後端 log）') }
     }
     if (action === 'proxy') {
       // background build — returns immediately, no detail change to refetch
       const r = await api.buildProxyOne(id)
-      return { ok: true, message: r.message || '已排入 proxy 生成（背景）' }
+      return { ok: true, message: r.message || $t('已排入 proxy 生成（背景）') }
     }
     if (action === 'editor-proxy') {
       // ProRes into <source dir>/Proxy/ for the NLE. The POST only queues, so wait
@@ -1214,13 +1216,13 @@
       }
       reProgress = ''
       const res = s && (s.results || []).find((x) => x.media_id === id)
-      if (!s || s.running || !res) return { ok: false, message: '仍在背景生成中，稍後再看 Proxy/ 資料夾' }
-      if (res.status === 'created') return { ok: true, message: `已寫入 ${res.path}` }
-      if (res.status === 'exists') return { ok: true, message: `Proxy/ 已有同名檔，未覆蓋：${res.path}` }
-      if (res.status === 'skipped') return { ok: false, message: '不是影片，略過' }
-      return { ok: false, message: `失敗：${res.reason || '見後端 log'}` }
+      if (!s || s.running || !res) return { ok: false, message: $t('仍在背景生成中，稍後再看 Proxy/ 資料夾') }
+      if (res.status === 'created') return { ok: true, message: $t('已寫入 {path}', { path: res.path }) }
+      if (res.status === 'exists') return { ok: true, message: $t('Proxy/ 已有同名檔，未覆蓋：{path}', { path: res.path }) }
+      if (res.status === 'skipped') return { ok: false, message: $t('不是影片，略過') }
+      return { ok: false, message: $t('失敗：{reason}', { reason: res.reason || $t('見後端 log') }) }
     }
-    return { ok: false, message: `未知動作: ${action}` }
+    return { ok: false, message: $t('未知動作: {action}', { action }) }
   }
 
   // C — rating write. UI value → backend value (db.set_rating: good/ng/review/None).
@@ -1240,7 +1242,7 @@
     } catch (e) {
       // revert on failure
       items = items.map((m) => (m.id === id ? { ...m, rating: prev } : m))
-      pushToast(`rating 寫入失敗: ${e.message}`, 'error')  // round-5 #43 — was a silent revert
+      pushToast($t('rating 寫入失敗: {error}', { error: e.message }), 'error')  // round-5 #43 — was a silent revert
     }
   }
 
@@ -1259,15 +1261,16 @@
       if (failed.length) {
         const bad = new Set(failed.map((f) => f.id))
         items = items.map((m) => (bad.has(m.id) && prev.has(m.id) ? { ...m, rating: prev.get(m.id) } : m))
-        pushToast(`rating 寫入失敗 ${failed.length}/${ids.length} 支: ${failed[0].error}`, 'error')
+        pushToast($t('rating 寫入失敗 {failed}/{n} 支: {error}', { failed: failed.length, n: ids.length, error: failed[0].error }), 'error')
       } else {
-        pushToast(`已將 ${ids.length} 支設為 ${RATE_LABELS[uiRating]}`)
+        pushToast($t('已將 {n} 支設為 {label}', { n: ids.length, label: rateLabel(uiRating) }))
       }
     } finally {
       bulkRateBusy = false
     }
   }
-  const RATE_LABELS = { good: 'GOOD', rev: 'REVIEW', ng: 'N·G', none: '未評分' }
+  const RATE_LABELS = { good: 'GOOD', rev: 'REVIEW', ng: 'N·G' }
+  const rateLabel = (r) => (r === 'none' ? $t('未評分') : RATE_LABELS[r])
 
   // Persist the inspector's IN/OUT marks (debounced upstream in the inspector).
   // Optimistically fold into the local detail so re-opening the clip restores the
@@ -1277,7 +1280,7 @@
     try {
       await api.setInOut(id, inS ?? null, outS ?? null)
     } catch (e) {
-      pushToast(`IN/OUT 寫入失敗: ${e.message}`, 'error')
+      pushToast($t('IN/OUT 寫入失敗: {error}', { error: e.message }), 'error')
     }
   }
 </script>
@@ -1293,7 +1296,7 @@
           <div class="proj">
             <div class="ak-display projtitle">{projectName}</div>
             <Mono dim style="font-size:11px;margin-top:5px;letter-spacing:0.04em;white-space:nowrap;">
-              {#if stats && subsetTotal !== null}{subsetTotal} / {stats.total} items · 篩選中{:else if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB · live{:else}loading…{/if}
+              {#if stats && subsetTotal !== null}{subsetTotal} / {stats.total} items · {$t('篩選中')}{:else if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB · live{:else}loading…{/if}
             </Mono>
           </div>
           <FilterRow bind:activeFilter bind:activeRating />
@@ -1302,21 +1305,21 @@
         <div class="tr-sub">
           <input
             class="ak-input livesearch"
-            placeholder="搜尋（語意 + 關鍵字）…"
+            placeholder={$t('搜尋（語意 + 關鍵字）…')}
             bind:value={query}
             on:keydown={(e) => e.key === 'Enter' && runSearch()}
           />
           <a
             class="ak-btn tbtn"
             href={query.trim() ? `#/search-live?q=${encodeURIComponent(query.trim())}` : '#/search-live'}
-            title="排名檢視（score + 摘要）"
-          >排名 →</a>
+            title={$t('排名檢視（score + 摘要）')}
+          >{$t('排名 →')}</a>
           <div class="tr-end">
           <!-- List view sorts from its column headers; the grid has none, so it keeps the menu. -->
           {#if view !== 'list'}
             <select class="ak-input poolsort" bind:value={poolSort} on:change={onPoolSortChange}
-                    title="排序（搜尋結果依相關度；沒有拍攝日期的排最後）" aria-label="排序">
-              {#each POOL_SORTS as [key, label]}<option value={key}>{label}</option>{/each}
+                    title={$t('排序（搜尋結果依相關度；沒有拍攝日期的排最後）')} aria-label={$t('排序')}>
+              {#each POOL_SORTS as [key, label]}<option value={key}>{$t(label)}</option>{/each}
             </select>
           {/if}
           <button
@@ -1324,48 +1327,48 @@
             on:click={() => exportMetadataCsv(null)}
             disabled={!!exportBusy}
             aria-busy={exportBusy === 'csv:all'}
-            title="匯出整庫 metadata CSV（DaVinci Resolve）"
+            title={$t('匯出整庫 metadata CSV（DaVinci Resolve）')}
           >{exportBusy === 'csv:all' ? 'CSV …' : 'CSV ↓'}</button>
-          <button class="ak-btn tbtn" on:click={() => (trashOpen = true)} title="回收桶（已刪除、可還原）">回收桶</button>
+          <button class="ak-btn tbtn" on:click={() => (trashOpen = true)} title={$t('回收桶（已刪除、可還原）')}>{$t('回收桶')}</button>
           </div>
         </div>
       </div>
 
       {#if picked.length}
         <div class="exportbar">
-          <Mono style="font-size:11px;letter-spacing:0.04em;">已選 {picked.length} 支</Mono>
+          <Mono style="font-size:11px;letter-spacing:0.04em;">{$t('已選 {n} 支', { n: picked.length })}</Mono>
           <div class="expbtns">
-            <span class="barlabel">評分</span>
+            <span class="barlabel">{$t('評分')}</span>
             {#each ['good', 'rev', 'ng', 'none'] as r}
               <button class="ak-btn expbtn" on:click={() => rateBulk(r)} disabled={bulkRateBusy}
-                      title={r === 'none' ? '清除所選的評分' : `所選全部設為 ${RATE_LABELS[r]}`}
+                      title={r === 'none' ? $t('清除所選的評分') : $t('所選全部設為 {label}', { label: rateLabel(r) })}
               >{r === 'none' ? '—' : RATE_LABELS[r]}</button>
             {/each}
             <div class="barvrule"></div>
-            <span class="barlabel">時間軸</span>
+            <span class="barlabel">{$t('時間軸')}</span>
             {#each EXPORT_FMTS as fmt}
               <button class="ak-btn expbtn" on:click={() => exportTimeline(fmt)}
                       disabled={!!exportBusy} aria-busy={exportBusy === `timeline:${fmt}`}
               >{fmt.toUpperCase()}{exportBusy === `timeline:${fmt}` ? ' …' : ''}</button>
             {/each}
-            <button class="ak-btn expbtn" on:click={() => exportMetadataCsv(picked)} title="匯出所選 metadata CSV"
+            <button class="ak-btn expbtn" on:click={() => exportMetadataCsv(picked)} title={$t('匯出所選 metadata CSV')}
                     disabled={!!exportBusy} aria-busy={exportBusy === 'csv:picked'}
             >CSV{exportBusy === 'csv:picked' ? ' …' : ''}</button>
             <div class="barvrule"></div>
-            <span class="barlabel">精選集</span>
+            <span class="barlabel">{$t('精選集')}</span>
             <select class="ak-input binsel" bind:value={targetBinId} disabled={!projectRegName}
-                    title={projectRegName ? '' : '本專案未登記，無法加入精選集'}>
-              <option value="">選精選集…</option>
+                    title={projectRegName ? '' : $t('本專案未登記，無法加入精選集')}>
+              <option value="">{$t('選精選集…')}</option>
               {#each binList as b}<option value={b.id}>{b.name}（{b.item_count}）</option>{/each}
             </select>
-            <input class="ak-input binnew" placeholder="新精選集…" bind:value={newBinName} disabled={!projectRegName}
+            <input class="ak-input binnew" placeholder={$t('新精選集…')} bind:value={newBinName} disabled={!projectRegName}
                    on:keydown={(e) => e.key === 'Enter' && addPicksToBin()} />
             <button class="ak-btn expbtn" on:click={addPicksToBin} disabled={!projectRegName}
-                    title={projectRegName ? '加入跨庫精選集' : '本專案未登記（設定→跨庫專案）'}>加入精選集</button>
-            <a class="ak-btn expbtn" href="#/bins" title="檢視精選集">★</a>
+                    title={projectRegName ? $t('加入跨庫精選集') : $t('本專案未登記（設定→跨庫專案）')}>{$t('加入精選集')}</button>
+            <a class="ak-btn expbtn" href="#/bins" title={$t('檢視精選集')}>★</a>
             <div class="barvrule"></div>
-            <button class="ak-btn expbtn danger" on:click={askDeleteBulk} title="刪除所選（移至回收桶，可還原）">刪除</button>
-            <button class="ak-btn expbtn clear" on:click={clearPicks}>清除</button>
+            <button class="ak-btn expbtn danger" on:click={askDeleteBulk} title={$t('刪除所選（移至回收桶，可還原）')}>{$t('刪除')}</button>
+            <button class="ak-btn expbtn clear" on:click={clearPicks}>{$t('清除')}</button>
           </div>
         </div>
       {/if}
@@ -1373,9 +1376,9 @@
       <div class="gridwrap">
         {#if sampleInfo?.loaded && stats?.total}
           <div class="samplebar">
-            <Mono dim>範例素材 · {sampleInfo.media_ids?.length || 4} 支 CC-BY 示範片 — 換成你自己的素材時可移除</Mono>
+            <Mono dim>{$t('範例素材 · {n} 支 CC-BY 示範片 — 換成你自己的素材時可移除', { n: sampleInfo.media_ids?.length || 4 })}</Mono>
             <button class="ak-btn sm" on:click={removeSampleAction} disabled={removingSample}>
-              {removingSample ? '移除中…' : '移除範例'}
+              {removingSample ? $t('移除中…') : $t('移除範例')}
             </button>
           </div>
         {/if}
@@ -1384,13 +1387,13 @@
         {:else if readyState === 'unreachable'}
           <div class="msg readypanel">
             <Eyebrow>◇ BACKEND UNREACHABLE</Eyebrow>
-            <Mono dim>後端沒有回應 — 伺服器還在啟動、或還沒開。</Mono>
+            <Mono dim>{$t('後端沒有回應 — 伺服器還在啟動、或還沒開。')}</Mono>
             <div class="readyactions"><button class="ak-btn" on:click={load}>Retry</button></div>
           </div>
         {:else if readyState === 'notready' && !stats?.total}
           <div class="msg readypanel">
             <Eyebrow>◇ SETUP INCOMPLETE</Eyebrow>
-            <Mono dim>arkiv 需要這些才能索引 / 搜尋：</Mono>
+            <Mono dim>{$t('arkiv 需要這些才能索引 / 搜尋：')}</Mono>
             <ul class="checklist">
               {#each Object.entries(health?.checks || {}) as [name, c]}
                 {#if !c.ok}
@@ -1408,26 +1411,26 @@
         {:else if readyState === 'ready' && stats?.total === 0}
           <div class="msg readypanel">
             <Eyebrow>Library is empty</Eyebrow>
-            <Mono dim>打一句中文或英文，五年素材唰跳出 — 先載個範例庫試搜。</Mono>
+            <Mono dim>{$t('打一句中文或英文，五年素材唰跳出 — 先載個範例庫試搜。')}</Mono>
             <div class="readyactions">
               <button class="ak-btn" on:click={onSeed} disabled={seeding}>{seeding ? 'Loading…' : 'Load sample library'}</button>
               <a class="ak-btn" href="#/ingest-setup">or ingest your footage</a>
             </div>
           </div>
         {:else if visible.length === 0}
-          <div class="msg"><Eyebrow>No media</Eyebrow><Mono dim>清搜尋或篩選。</Mono></div>
+          <div class="msg"><Eyebrow>No media</Eyebrow><Mono dim>{$t('清搜尋或篩選。')}</Mono></div>
         {:else if view === 'list'}
           <table class="medialist" class:picking={picked.length > 0}>
             <thead>
               <tr>
                 <th class="c-thumb"></th>
-                <th class="c-name"><button class="sorth" class:on={columnArrow('name', poolSort)} on:click={() => sortByColumn('name')} title="依檔名排序（再按一次反向）">檔名<span class="arrow">{columnArrow('name', poolSort)}</span></button></th>
-                <th><button class="sorth" class:on={columnArrow('rating', poolSort)} on:click={() => sortByColumn('rating')} title="依評分排序（Good → Review → N·G → 未評）">評分<span class="arrow">{columnArrow('rating', poolSort)}</span></button></th>
-                <th>解析度</th>
-                <th><button class="sorth" class:on={columnArrow('duration', poolSort)} on:click={() => sortByColumn('duration')} title="依時長排序（再按一次反向）">時長<span class="arrow">{columnArrow('duration', poolSort)}</span></button></th>
-                <th><button class="sorth" class:on={columnArrow('size', poolSort)} on:click={() => sortByColumn('size')} title="依容量排序（再按一次反向）">容量<span class="arrow">{columnArrow('size', poolSort)}</span></button></th>
-                <th><button class="sorth" class:on={columnArrow('shot', poolSort)} on:click={() => sortByColumn('shot')} title="依拍攝日期排序（再按一次反向；沒有拍攝日期的排最後）">拍攝日期<span class="arrow">{columnArrow('shot', poolSort)}</span></button></th>
-                <th><button class="sorth" class:on={columnArrow('date', poolSort)} on:click={() => sortByColumn('date')} title="依匯入日期排序（再按一次反向）">匯入日期<span class="arrow">{columnArrow('date', poolSort)}</span></button></th>
+                <th class="c-name"><button class="sorth" class:on={columnArrow('name', poolSort)} on:click={() => sortByColumn('name')} title={$t('依檔名排序（再按一次反向）')}>{$t('檔名')}<span class="arrow">{columnArrow('name', poolSort)}</span></button></th>
+                <th><button class="sorth" class:on={columnArrow('rating', poolSort)} on:click={() => sortByColumn('rating')} title={$t('依評分排序（Good → Review → N·G → 未評）')}>{$t('評分')}<span class="arrow">{columnArrow('rating', poolSort)}</span></button></th>
+                <th>{$t('解析度')}</th>
+                <th><button class="sorth" class:on={columnArrow('duration', poolSort)} on:click={() => sortByColumn('duration')} title={$t('依時長排序（再按一次反向）')}>{$t('時長')}<span class="arrow">{columnArrow('duration', poolSort)}</span></button></th>
+                <th><button class="sorth" class:on={columnArrow('size', poolSort)} on:click={() => sortByColumn('size')} title={$t('依容量排序（再按一次反向）')}>{$t('容量')}<span class="arrow">{columnArrow('size', poolSort)}</span></button></th>
+                <th><button class="sorth" class:on={columnArrow('shot', poolSort)} on:click={() => sortByColumn('shot')} title={$t('依拍攝日期排序（再按一次反向；沒有拍攝日期的排最後）')}>{$t('拍攝日期')}<span class="arrow">{columnArrow('shot', poolSort)}</span></button></th>
+                <th><button class="sorth" class:on={columnArrow('date', poolSort)} on:click={() => sortByColumn('date')} title={$t('依匯入日期排序（再按一次反向）')}>{$t('匯入日期')}<span class="arrow">{columnArrow('date', poolSort)}</span></button></th>
               </tr>
             </thead>
             <tbody>
@@ -1481,9 +1484,9 @@
 
         {#if state === 'ok' && moreParams && items.length < total}
           <div class="loadmore">
-            <Mono dim>顯示 {items.length} / {total} 支</Mono>
+            <Mono dim>{$t('顯示 {shown} / {total} 支', { shown: items.length, total })}</Mono>
             <button class="ak-btn" on:click={loadMore} disabled={loadingMore}>
-              {loadingMore ? '載入中…' : `載入更多 (+${Math.min(PAGE, total - items.length)})`}
+              {loadingMore ? $t('載入中…') : $t('載入更多 (+{n})', { n: Math.min(PAGE, total - items.length) })}
             </button>
           </div>
         {/if}
@@ -1543,11 +1546,13 @@
 
   <ConfirmDialog
     open={!!confirmDel}
-    title={confirmDel ? (confirmDel.kind === 'bulk' ? '刪除所選素材' : '刪除素材') : '確認'}
+    title={confirmDel ? (confirmDel.kind === 'bulk' ? $t('刪除所選素材') : $t('刪除素材')) : $t('確認')}
     message={confirmDel
-      ? `確定要將「${confirmDel.label}」移至回收桶嗎？\n原始檔會保留 30 天，可從回收桶還原；\n但標籤、評分／備註、IN/OUT、手改逐字稿不會隨還原回來。`
+      ? $t('確定要將「{label}」移至回收桶嗎？', { label: confirmDel.label }) + '\n' +
+        $t('原始檔會保留 30 天，可從回收桶還原；') + '\n' +
+        $t('但標籤、評分／備註、IN/OUT、手改逐字稿不會隨還原回來。')
       : ''}
-    confirmLabel="移至回收桶"
+    confirmLabel={$t('移至回收桶')}
     danger={true}
     busy={delBusy}
     on:confirm={confirmDelete}

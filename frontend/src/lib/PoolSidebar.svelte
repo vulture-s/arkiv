@@ -4,6 +4,7 @@
   import Mono from './Mono.svelte'
   import { PROJECTS, TAGS } from './mockData.js'
   import { DAY_CAP } from './shotYear.js'
+  import { t } from './i18n.js'
   // Live overrides — all default to mock so mock screens stay byte-identical.
   // `live` turns the mock fallback OFF: the product passes it, so while the real data
   // is still loading the sidebar is empty instead of showing the design mock's
@@ -49,10 +50,10 @@
   $: tierLine = !entitlement
     ? null
     : entitlement.grandfathered
-      ? '此安裝永久解除專案上限'
+      ? $t('此安裝永久解除專案上限')
       : entitlement.pro
-        ? 'Pro · 無限專案'
-        : `${entitlement.projects_used} / ${entitlement.free_project_limit} 個免費專案`
+        ? $t('Pro · 無限專案')
+        : $t('{used} / {limit} 個免費專案', { used: entitlement.projects_used, limit: entitlement.free_project_limit })
   $: pools = livePools ?? (live ? [] : MOCK_POOLS)
   $: tags = liveTags ?? (live ? [] : TAGS)
   // Cap the cloud so a long tail (74+ on a real library) doesn't bury the useful
@@ -91,7 +92,7 @@
       {#each projects as p (p.id)}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
         <div class="proj" class:active={p.active} class:switchable={onProject && !p.active && p.path && !switching}
-          title={onProject && !p.active && p.path ? `切換到「${p.name}」` : ''}
+          title={onProject && !p.active && p.path ? $t('切換到「{name}」', { name: p.name }) : ''}
           style="opacity:{p.health ? 0.6 : 1};"
           on:click={() => onProject && !p.active && p.path && onProject(p)}>
           <div class="projrow">
@@ -106,7 +107,7 @@
         </div>
       {/each}
       {#if onAddLibrary}
-        <button class="addlib" disabled={switching} on:click={onAddLibrary}>＋ 新增素材庫</button>
+        <button class="addlib" disabled={switching} on:click={onAddLibrary}>{$t('＋ 新增素材庫')}</button>
       {/if}
     </div>
   </section>
@@ -127,7 +128,7 @@
 
   {#if liveShotYears && liveShotYears.length}
     <section>
-      <Eyebrow style="margin-bottom:10px;">Shoot date · 拍攝日</Eyebrow>
+      <Eyebrow style="margin-bottom:10px;">{$t('Shoot date · 拍攝日')}</Eyebrow>
       <div class="col">
         {#each liveShotYears as y (y.year)}
           <!-- Picking a year both filters to it and opens its days: one affordance,
@@ -137,7 +138,7 @@
           <div class="poolrow yearrow" class:activeyear={activeShotYear === y.year}
             on:click={() => onShotYear && onShotYear(y.year)}>
             <span class="ellip">
-              {#if y.days.length}<span class="caret">{activeShotYear === y.year ? '▾' : '▸'}</span>{/if}{y.label}
+              {#if y.days.length}<span class="caret">{activeShotYear === y.year ? '▾' : '▸'}</span>{/if}{$t(y.label)}
             </span>
             <Mono dim style="font-size:10px;flex:0 0 auto;">{y.count}</Mono>
           </div>
@@ -153,7 +154,7 @@
             {#if y.days.length > DAY_CAP}
               <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
               <span class="moretag daymore" on:click={() => (showAllDays = !showAllDays)}>
-                {showAllDays ? '收合' : `+${y.days.length - DAY_CAP} 更多`}
+                {showAllDays ? $t('收合') : $t('+{n} 更多', { n: y.days.length - DAY_CAP })}
               </span>
             {/if}
           {/if}
@@ -164,7 +165,7 @@
 
   {#if liveCameras && liveCameras.length}
     <section>
-      <Eyebrow style="margin-bottom:10px;">Cameras · 機型</Eyebrow>
+      <Eyebrow style="margin-bottom:10px;">{$t('Cameras · 機型')}</Eyebrow>
       <div class="col">
         {#each liveCameras as c (c.model)}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
@@ -194,7 +195,7 @@
       {#if liveCollections.length > COLLECTION_CAP}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
         <span class="moretag" on:click={() => (showAllCollections = !showAllCollections)}>
-          {showAllCollections ? '收合' : `+${liveCollections.length - COLLECTION_CAP} 更多`}
+          {showAllCollections ? $t('收合') : $t('+{n} 更多', { n: liveCollections.length - COLLECTION_CAP })}
         </span>
       {/if}
     </section>
@@ -202,7 +203,7 @@
 
   {#if liveBins && liveBins.length}
     <section>
-      <Eyebrow style="margin-bottom:10px;">精選集 · 跨庫</Eyebrow>
+      <Eyebrow style="margin-bottom:10px;">{$t('精選集 · 跨庫')}</Eyebrow>
       <div class="col">
         {#each liveBins as bn (bn.id)}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
@@ -218,17 +219,17 @@
   <section class="tagsec">
     <Eyebrow style="margin-bottom:10px;">Tags · auto · {tags.length}</Eyebrow>
     <div class="tags">
-      {#each visibleTags as t (t.name)}
+      {#each visibleTags as tag (tag.name)}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-        <span class="tag" class:clickable={onTag} class:folded={t.aliases && t.aliases.length}
-          title={t.aliases && t.aliases.length ? `含別名：${t.aliases.join('、')}` : null}
-          on:click={() => onTag && onTag(t.name)}>{t.name} <span class="tagcount">{t.count}</span></span>
+        <span class="tag" class:clickable={onTag} class:folded={tag.aliases && tag.aliases.length}
+          title={tag.aliases && tag.aliases.length ? $t('含別名：{aliases}', { aliases: tag.aliases.join($t('、')) }) : null}
+          on:click={() => onTag && onTag(tag.name)}>{tag.name} <span class="tagcount">{tag.count}</span></span>
       {/each}
     </div>
     {#if tags.length > TAG_CAP}
       <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
       <span class="moretag" on:click={() => (showAllTags = !showAllTags)}>
-        {showAllTags ? '收合' : `+${tags.length - TAG_CAP} 更多`}
+        {showAllTags ? $t('收合') : $t('+{n} 更多', { n: tags.length - TAG_CAP })}
       </span>
     {/if}
   </section>

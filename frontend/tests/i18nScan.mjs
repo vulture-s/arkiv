@@ -34,18 +34,26 @@ export function liveFiles() {
 
 // → { keys: [{key, line}], raw: [{line, text}] }
 export function scan(rel) {
+  return scanText(readFileSync(join(SRC, rel), 'utf8'))
+}
+
+export function scanText(text) {
   const keys = []
   const raw = []
   let inHtmlComment = false
   let inBlockComment = false
-  readFileSync(join(SRC, rel), 'utf8').split('\n').forEach((orig, i) => {
+  text.split('\n').forEach((orig, i) => {
     let s = orig
     if (inHtmlComment) { const e = s.indexOf('-->'); if (e < 0) return; s = s.slice(e + 3); inHtmlComment = false }
     if (inBlockComment) { const e = s.indexOf('*/'); if (e < 0) return; s = s.slice(e + 2); inBlockComment = false }
     s = s.replace(/<!--.*?-->/g, '').replace(/\/\*.*?\*\//g, '')
-    if (s.includes('<!--')) { s = s.slice(0, s.indexOf('<!--')); inHtmlComment = true }
-    if (s.includes('/*')) { s = s.slice(0, s.indexOf('/*')); inBlockComment = true }
+    // `//` comments first: a line comment that merely mentions `/_design/*` must not
+    // open a block comment and hide every following line from the scan.
     s = s.replace(/(^|[^:'"`])\/\/.*$/, '$1')
+    if (s.includes('<!--')) { s = s.slice(0, s.indexOf('<!--')); inHtmlComment = true }
+    // A block comment opens only at a token boundary — not inside a glob/path like '*/*.mov'.
+    const bc = s.search(/(^|[\s;{(,=])\/\*/)
+    if (bc >= 0) { s = s.slice(0, bc); inBlockComment = true }
     if (/^\s*\*/.test(s)) return
     s = s.replace(CALL, (m, q, key) => { keys.push({ key: key.replace(/\\(['"`\\])/g, '$1'), line: i + 1, q }); return '' })
     if (orig.includes('i18n-ignore')) return

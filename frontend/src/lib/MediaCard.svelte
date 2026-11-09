@@ -7,6 +7,7 @@
   import CornerTick from './CornerTick.svelte'
   import { prepare, startDragOut } from './dragOut.js'
   import { pushToast } from './toast.js'
+  import { t } from './i18n.js'
   export let m
   export let theme = 'dark'
   export let selected = false
@@ -29,14 +30,14 @@
     e.preventDefault()
     if (!startDragOut(m.id, null, imgEl)) {
       prepare(m.id)
-        .then(() => pushToast('準備好了，再拖一次'))
+        .then(() => pushToast($t('準備好了，再拖一次')))
         .catch((err) => pushToast(err?.message || String(err), 'error'))
     }
   }
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-<div class="card" class:selected class:hover draggable={dragOut ? "true" : undefined} title={dragOut ? "可拖到剪輯軟體或 Finder" : undefined}
+<div class="card" class:selected class:hover draggable={dragOut ? "true" : undefined} title={dragOut ? $t('可拖到剪輯軟體或 Finder') : undefined}
   on:click on:mouseenter on:mouseenter={onEnter} on:mouseleave on:dragstart={onDragStart}>
   <div class="thumbarea">
     {#if thumbUrl && !imgFailed}
@@ -50,7 +51,7 @@
       <div
         class="pick"
         class:on={checked}
-        title="加入匯出選取"
+        title={$t('加入匯出選取')}
         on:click|stopPropagation={() => dispatch('toggle', m.id)}
       >{checked ? '✓' : ''}</div>
     {/if}

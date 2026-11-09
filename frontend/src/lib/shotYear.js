@@ -10,7 +10,10 @@
 // directions, and a typo in either makes the bucket click through to an empty grid
 // while both halves still look correct in isolation.
 export const UNKNOWN_SHOT_YEAR = 'unknown'
-export const UNKNOWN_SHOT_YEAR_LABEL = '未知日期'
+// An i18n key (#581): the sidebar renders row labels with $t(label); `t` only
+// marks it for the coverage scan, so the value stays the zh-TW source string.
+const t = (s) => s
+export const UNKNOWN_SHOT_YEAR_LABEL = t('未知日期')
 
 // A year can hold hundreds of shoot days. Uncapped, expanding one pushes Storage off
 // the bottom of the sidebar — the same problem the tag cloud and the collection list

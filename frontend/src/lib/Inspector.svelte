@@ -13,6 +13,7 @@
   import { identityRange, suggestNames, formatIdentityRange, nameKeyStep } from './identities.js'
   import { canDragOut, prepare, ready, startDragOut, sourceKey } from './dragOut.js'
   import { keyAction, shuttleNext, KEY_HINTS } from './transport.js'
+  import { t } from './i18n.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -173,7 +174,7 @@
       .then((src) => {
         if (!current()) return
         dragState = 'ready'
-        dragMsg = src.keyframe_cut ? '從最近的關鍵格開始切，開頭可能多幾格' : ''
+        dragMsg = src.keyframe_cut ? $t('從最近的關鍵格開始切，開頭可能多幾格') : ''
       })
       .catch((e) => { if (current()) { dragState = 'error'; dragMsg = e?.message || String(e) } })
   }
@@ -530,7 +531,7 @@
       if (lutRenderer && lutFor === id) lutRenderer.setLut(cube)
     } catch (e) {
       cubeCache.delete(id)
-      lutErr = 'LUT 載入失敗：' + ((e && e.message) || e)
+      lutErr = $t('LUT 載入失敗：{err}', { err: (e && e.message) || e })
       _dropLut()
     }
   }
@@ -630,14 +631,14 @@
     try {
       const opts = action === 'retranscribe' ? { language: reLang || 'zh' } : {}
       const r = await onReprocess(action, opts)
-      reMsg = (r && r.message) || '完成'
+      reMsg = (r && r.message) || $t('完成')
     } catch (e) {
-      reMsg = `失敗: ${(e && e.message) || e}`
+      reMsg = $t('失敗: {err}', { err: (e && e.message) || e })
     } finally {
       reBusy = null
     }
   }
-  const RE_LANGS = [{ code: 'zh', label: '中文' }, { code: 'en', label: 'English' }]
+  $: RE_LANGS = [{ code: 'zh', label: $t('中文') }, { code: 'en', label: 'English' }]
   $: langOpts = languages && languages.length ? languages : RE_LANGS
   const EXPORT_FMTS = ['edl', 'fcpxml', 'srt', 'vtt', 'txt']
   // The server has served .txt since Phase 12; only the button was missing, so the
@@ -645,46 +646,46 @@
   // the UI. The trim note is not padding: without ✂ the file is the LLM-polished
   // transcript, with ✂ it is the raw Whisper segment text inside the window —
   // those are not the same document.
-  const EXPORT_TITLES = {
-    txt: '逐字稿純文字（完整標點）。設了 ✂ 範圍時輸出的是該範圍內的 segment 原文，未經潤稿',
+  $: EXPORT_TITLES = {
+    txt: $t('逐字稿純文字（完整標點）。設了 ✂ 範圍時輸出的是該範圍內的 segment 原文，未經潤稿'),
   }
   // B13: CMX3600 only knows 23.976/24/25/29.97/30. media.fps arrives rounded
   // (MainLive), so 24/25/30 cover the NTSC rates too. Off-spec clips still export
   // (the server adds a WARNING comment to the EDL) — this just says so up front.
   $: edlOffSpec = media && typeof media.fps === 'number' && media.fps > 0 && ![24, 25, 30].includes(media.fps)
-  $: edlTitle = edlOffSpec ? `EDL 規格（CMX3600）不支援 ${media.fps}p，Resolve conform 時 TC 可能對不上，建議改用 FCPXML` : ''
+  $: edlTitle = edlOffSpec ? $t('EDL 規格（CMX3600）不支援 {fps}p，Resolve conform 時 TC 可能對不上，建議改用 FCPXML', { fps: media.fps }) : ''
 
   // 8.2i: same FCPXML, but its markers come from the transcript segments (who
   // said what, when) instead of the scene frames. Resolve: marker name = the
   // line (≤60 chars), marker notes = the full text. Honours ✂ like the others.
-  const TRANSCRIPT_MARKERS_TITLE =
-    'FCPXML，marker 來源改成逐字稿：每段話一個 marker（名稱＝前 60 字，備註＝全文）。設了 ✂ 只輸出範圍內的段落'
+  $: TRANSCRIPT_MARKERS_TITLE =
+    $t('FCPXML，marker 來源改成逐字稿：每段話一個 marker（名稱＝前 60 字，備註＝全文）。設了 ✂ 只輸出範圍內的段落')
 
   const MOCK_TRANSCRIPT = [
-    ['00:05', '我們從上海一路騎到拉薩，第十七天。', false],
-    ['00:12', '中間最難的是格爾木到沱沱河那段。', true],
-    ['00:24', '氧氣比想像中還少，海拔 4800。', false],
-    ['00:36', '車架被打到變形，但人沒事。', false],
+    ['00:05', '我們從上海一路騎到拉薩，第十七天。', false], // i18n-ignore design-mock sample transcript (live=false only)
+    ['00:12', '中間最難的是格爾木到沱沱河那段。', true], // i18n-ignore design-mock sample transcript (live=false only)
+    ['00:24', '氧氣比想像中還少，海拔 4800。', false], // i18n-ignore design-mock sample transcript (live=false only)
+    ['00:36', '車架被打到變形，但人沒事。', false], // i18n-ignore design-mock sample transcript (live=false only)
   ]
   // `live` (set by the real product) makes empty states HONEST — an empty
   // transcript shows 「無語音」, an absent path shows the filename — instead of the
-  // design-mock placeholders. The /_design/* mock screens leave live=false so they
+  // design-mock placeholders. The /_design/ mock screens leave live=false so they
   // stay populated for reference.
   export let live = false
   $: lines = live ? (transcriptLines ?? []) : (transcriptLines ?? MOCK_TRANSCRIPT)
   // 語氣詞 readout, appended to the segment count rather than given its own row —
   // it is a footnote on the transcript, not a headline about the clip.
   $: particleLabel = particleStat
-    ? ` · 語氣 ${particleStat.count}` +
+    ? $t(' · 語氣 {n}', { n: particleStat.count }) +
       (particleStat.density != null ? ` · ${particleStat.density.toFixed(1)}%` : '')
     : ''
   $: particleTitle = !particleStat
     ? undefined
     : particleStat.density != null
-      ? '語氣詞密度：每 100 字裡的語氣詞（啦齁嘛蛤欸咧吼唷呴）。' +
-        '高＝保留了口說語氣，低＝被整理成書面語。' +
-        '這是相對指標 —— 比同一段聲音的兩份逐字稿有意義；跨片比較比到的是講話的人，不是引擎。'
-      : '這份逐字稿太短，百分比會被單一個字左右，所以只給個數。'
+      ? $t('語氣詞密度：每 100 字裡的語氣詞（啦齁嘛蛤欸咧吼唷呴）。') +
+        $t('高＝保留了口說語氣，低＝被整理成書面語。') +
+        $t('這是相對指標 —— 比同一段聲音的兩份逐字稿有意義；跨片比較比到的是講話的人，不是引擎。')
+      : $t('這份逐字稿太短，百分比會被單一個字左右，所以只給個數。')
   $: pathStr = live
     ? (pathLabel ?? media.name)
     : (pathLabel ?? `/vol/nas01/bicycle-diaries/raw/${media.name}`)
@@ -823,7 +824,7 @@
         <Mono dim style="font-size:11px;">{playbackFailureMessage(videoDiag)}</Mono>
         {#if onReprocess && proxyButtonLabel(videoDiag)}
           <button class="ak-btn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
-            {reBusy === 'proxy' ? '排入中…' : proxyButtonLabel(videoDiag)}
+            {reBusy === 'proxy' ? $t('排入中…') : proxyButtonLabel(videoDiag)}
           </button>
         {/if}
       </div>
@@ -832,13 +833,13 @@
       <video bind:this={playerEl} on:timeupdate={onTimeUpdate} on:loadedmetadata={onLoadedMeta} on:error={onVideoError} class="previmg" controls playsinline preload="metadata" poster={thumbUrl || undefined} src={videoSrc}></video>
       {#if lutShown}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-        <canvas bind:this={lutCanvas} class="lutcanvas" on:click={lutTogglePlay} title="點擊播放／暫停（空白鍵）"></canvas>
+        <canvas bind:this={lutCanvas} class="lutcanvas" on:click={lutTogglePlay} title={$t('點擊播放／暫停（空白鍵）')}></canvas>
         <!-- The canvas hides the native control bar, scrubber included, so it gets
              its own. Only while the canvas is up: without it the native bar works. -->
         <div class="scrubbar">
           <Mono style="font-size:10.5px;color:#f3f2ee;">{fmtScrub(playProgress * mediaDuration)}</Mono>
           <!-- svelte-ignore a11y-no-static-element-interactions -->
-          <div class="scrubtrack" class:dragging={scrubbing} title="拖動時間軸"
+          <div class="scrubtrack" class:dragging={scrubbing} title={$t('拖動時間軸')}
             on:pointerdown={onScrubDown} on:pointermove={onScrubMove}
             on:pointerup={onScrubUp} on:pointercancel={onScrubUp}>
             <div class="scrubfill" style="width:{playProgress * 100}%"></div>
@@ -850,8 +851,8 @@
       {#if lutApplies}
         <div class="lutpill">
           <button class="ak-btn lutbtn" class:on={lutOn && !lutErr} on:click={() => { lutOn = !lutOn; lutErr = '' }}
-            title={lutOn ? '顯示原始 log 畫面' : '套用色彩設定檔'}>{lutOn && !lutErr ? 'LUT ●' : 'LOG ○'}</button>
-          {#if lutShown}<button class="ak-btn lutbtn" on:click={lutTogglePlay} title="播放／暫停（空白鍵）">▶︎❚❚</button>{/if}
+            title={lutOn ? $t('顯示原始 log 畫面') : $t('套用色彩設定檔')}>{lutOn && !lutErr ? 'LUT ●' : 'LOG ○'}</button>
+          {#if lutShown}<button class="ak-btn lutbtn" on:click={lutTogglePlay} title={$t('播放／暫停（空白鍵）')}>▶︎❚❚</button>{/if}
         </div>
       {/if}
     {:else if useAudio}
@@ -906,7 +907,7 @@
         <button class="ak-btn exp" title={TRANSCRIPT_MARKERS_TITLE}
                 disabled={!!exportBusy} aria-busy={exportBusy === 'clip:fcpxml.transcript'}
                 on:click={() => onExport('fcpxml', { ...(trimArgs || {}), markers: 'transcript' })}
-        >字幕 MARKER{trimArgs ? ' ✂' : ''}{exportBusy === 'clip:fcpxml.transcript' ? ' …' : ''}</button>
+        >{$t('字幕 MARKER')}{trimArgs ? ' ✂' : ''}{exportBusy === 'clip:fcpxml.transcript' ? ' …' : ''}</button>
       {:else}
         {#each EXPORT_FMTS as fmt}
           <button class="ak-btn exp">{fmt.toUpperCase()}</button>
@@ -915,19 +916,19 @@
     </div>
     {#if onChapters || onRemotion}
       <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-      <span class="moreexp" on:click={() => (showMore = !showMore)}>{showMore ? '成品輔助 ▴' : '更多 · 成品輔助 ▾'}</span>
+      <span class="moreexp" on:click={() => (showMore = !showMore)}>{showMore ? $t('成品輔助 ▴') : $t('更多 · 成品輔助 ▾')}</span>
       {#if showMore}
         <div class="exports sub">
-          {#if onChapters}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'chapters'} on:click={() => onChapters('youtube')} title="YouTube 章節文字（成品輔助，非 arkiv 核心）">YT 章節</button>{/if}
-          {#if onRemotion}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'remotion'} on:click={() => onRemotion(trimArgs)} title="Remotion 字幕 props（成品輔助，非 arkiv 核心）">Remotion{trimArgs ? ' ✂' : ''}{exportBusy === 'remotion' ? ' …' : ''}</button>{/if}
+          {#if onChapters}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'chapters'} on:click={() => onChapters('youtube')} title={$t('YouTube 章節文字（成品輔助，非 arkiv 核心）')}>{$t('YT 章節')}</button>{/if}
+          {#if onRemotion}<button class="ak-btn exp ghost" disabled={!!exportBusy} aria-busy={exportBusy === 'remotion'} on:click={() => onRemotion(trimArgs)} title={$t('Remotion 字幕 props（成品輔助，非 arkiv 核心）')}>Remotion{trimArgs ? ' ✂' : ''}{exportBusy === 'remotion' ? ' …' : ''}</button>{/if}
         </div>
       {/if}
     {/if}
     {#if onReveal}
-      <button class="ak-btn reveal" on:click={onReveal} title="在 Finder / 檔案總管中顯示原始檔">⊙ 在 Finder 顯示</button>
+      <button class="ak-btn reveal" on:click={onReveal} title={$t('在 Finder / 檔案總管中顯示原始檔')}>{$t('⊙ 在 Finder 顯示')}</button>
     {/if}
     {#if onDelete}
-      <button class="ak-btn del" on:click={onDelete} title="刪除素材（移至回收桶，可還原）">刪除素材</button>
+      <button class="ak-btn del" on:click={onDelete} title={$t('刪除素材（移至回收桶，可還原）')}>{$t('刪除素材')}</button>
     {/if}
   </div>
 
@@ -942,9 +943,9 @@
       {#if onSetColorProfile && media.kind !== 'audio'}
         <Mono dim>COLOR</Mono>
         <div class="cprow">
-          <select class="cpsel" value={colorProfile || ''} disabled={cpBusy} on:change={pickProfile} title="log 素材的色彩設定檔（縮圖、關鍵畫面、播放器套用）">
-            <option value="">未指定</option>
-            <option value="none">非 log（不套用）</option>
+          <select class="cpsel" value={colorProfile || ''} disabled={cpBusy} on:change={pickProfile} title={$t('log 素材的色彩設定檔（縮圖、關鍵畫面、播放器套用）')}>
+            <option value="">{$t('未指定')}</option>
+            <option value="none">{$t('非 log（不套用）')}</option>
             {#each vendors as v}
               <optgroup label={v}>
                 {#each colorProfiles.filter((p) => p.source === 'builtin' && p.vendor === v) as p}
@@ -953,11 +954,11 @@
               </optgroup>
             {/each}
             {#if userLuts.length}
-              <optgroup label="自訂 LUT">
+              <optgroup label={$t('自訂 LUT')}>
                 {#each userLuts as p}<option value={p.id}>{p.label}</option>{/each}
               </optgroup>
             {/if}
-            {#if onImportLut}<option value="__import">匯入 .cube…</option>{/if}
+            {#if onImportLut}<option value="__import">{$t('匯入 .cube…')}</option>{/if}
           </select>
           <input bind:this={lutFile} type="file" accept=".cube" style="display:none" on:change={importPicked} />
         </div>
@@ -975,8 +976,8 @@
             <Mono dim style="font-size:9.5px;letter-spacing:0.06em;">{autoCount} AUTO · {manualCount} MANUAL</Mono>
           {/if}
           {#if hasCanon}
-            <button class="tagtoggle" on:click={toggleTagView} title="原始 vision tags ⇄ LLM 精簡（語意去重）">
-              {useCanon ? '精簡' : '原始'} ⇄
+            <button class="tagtoggle" on:click={toggleTagView} title={$t('原始 vision tags ⇄ LLM 精簡（語意去重）')}>
+              {useCanon ? $t('精簡') : $t('原始')} ⇄
             </button>
           {/if}
         </div>
@@ -987,21 +988,21 @@
         </div>
       {:else if tags}
         <div class="tagrow">
-          {#each tags as t (t.name)}
-            <span class="tagchip" class:auto={t.source === 'auto'}>
-              <span class="tagname">{t.name}</span>
+          {#each tags as tag (tag.name)}
+            <span class="tagchip" class:auto={tag.source === 'auto'}>
+              <span class="tagname">{tag.name}</span>
               {#if onRemoveTag}
-                <button class="tagx" title="移除標籤" on:click={() => onRemoveTag(t.name)}>×</button>
+                <button class="tagx" title={$t('移除標籤')} on:click={() => onRemoveTag(tag.name)}>×</button>
               {/if}
             </span>
           {/each}
           {#if tags.length === 0}
-            <Mono dim style="font-size:10.5px;">（無標籤）</Mono>
+            <Mono dim style="font-size:10.5px;">{$t('（無標籤）')}</Mono>
           {/if}
         </div>
         {#if onAddTag}
           <form class="tagadd" on:submit|preventDefault={submitTag}>
-            <input class="ak-input taginput" placeholder="加標籤…" bind:value={tagInput} />
+            <input class="ak-input taginput" placeholder={$t('加標籤…')} bind:value={tagInput} />
             <button class="ak-btn tagaddbtn" type="submit" disabled={!tagInput.trim()}>＋</button>
           </form>
         {/if}
@@ -1012,38 +1013,38 @@
   {#if identities}
     <div class="block" data-testid="people-block">
       <div class="blockhead">
-        <Eyebrow>人物</Eyebrow>
-        <Mono dim style="font-size:9.5px;letter-spacing:0.06em;">人工標註 · {identities.length}</Mono>
+        <Eyebrow>{$t('人物')}</Eyebrow>
+        <Mono dim style="font-size:9.5px;letter-spacing:0.06em;">{$t('人工標註 · {n}', { n: identities.length })}</Mono>
       </div>
       <div class="people">
         {#each identities as p (p.id)}
           <div class="person">
             <span class="pname">{p.name}</span>
             {#if p.start_s != null && (useVideo || useAudio)}
-              <button class="ptime seek" title="跳到 {formatIdentityRange(p)} 起點" on:click={() => seekTo(p.start_s)}>{formatIdentityRange(p)}</button>
+              <button class="ptime seek" title={$t('跳到 {range} 起點', { range: formatIdentityRange(p) })} on:click={() => seekTo(p.start_s)}>{formatIdentityRange(p)}</button>
             {:else}
               <Mono dim style="font-size:10px;">{formatIdentityRange(p)}</Mono>
             {/if}
             {#if onRemoveIdentity}
-              <button class="tagx" title="移除人物標註" aria-label="移除 {p.name}" on:click={() => onRemoveIdentity(p.id)}>×</button>
+              <button class="tagx" title={$t('移除人物標註')} aria-label={$t('移除 {name}', { name: p.name })} on:click={() => onRemoveIdentity(p.id)}>×</button>
             {/if}
           </div>
         {/each}
         {#if identities.length === 0}
-          <Mono dim style="font-size:10.5px;">（尚未標註）</Mono>
+          <Mono dim style="font-size:10.5px;">{$t('（尚未標註）')}</Mono>
         {/if}
       </div>
       {#if onAddIdentity}
         {#if personOpen}
           <div class="personadd">
-            <Mono dim style="font-size:9.5px;">範圍：{formatIdentityRange(personRange)}{personRange.start_s == null ? '（未設 IN/OUT）' : '（IN/OUT）'}</Mono>
+            <Mono dim style="font-size:9.5px;">{$t('範圍：{range}', { range: formatIdentityRange(personRange) })}{personRange.start_s == null ? $t('（未設 IN/OUT）') : '（IN/OUT）'}</Mono>
             <div class="personrow">
-              <input class="ak-input taginput" placeholder="名字… Enter 送出 · Esc 取消" bind:this={personEl}
+              <input class="ak-input taginput" placeholder={$t('名字… Enter 送出 · Esc 取消')} bind:this={personEl}
                 bind:value={personInput} on:keydown={onPersonKey} disabled={personBusy}
                 role="combobox" aria-expanded={personSuggest.length > 0} aria-autocomplete="list" aria-controls="person-suggest" />
               <button class="ak-btn tagaddbtn" on:click={() => submitPerson(personHi >= 0 ? personSuggest[personHi] : personInput)}
                 disabled={personBusy || !personInput.trim() && personHi < 0}>＋</button>
-              <button class="ak-btn tagaddbtn" on:click={closePerson} title="取消（Esc）">取消</button>
+              <button class="ak-btn tagaddbtn" on:click={closePerson} title={$t('取消（Esc）')}>{$t('取消')}</button>
             </div>
             {#if personSuggest.length}
               <ul class="psuggest" id="person-suggest" role="listbox">
@@ -1057,8 +1058,8 @@
           </div>
         {:else}
           <button class="ak-btn personbtn" on:click={openPerson}
-            title={personRange.start_s == null ? '標註整支片出現的人物' : '標註 IN/OUT 範圍內出現的人物'}>
-            標人物{personRange.start_s == null ? '（整支片）' : `（${formatIdentityRange(personRange)}）`}
+            title={personRange.start_s == null ? $t('標註整支片出現的人物') : $t('標註 IN/OUT 範圍內出現的人物')}>
+            {$t('標人物')}{personRange.start_s == null ? $t('（整支片）') : `（${formatIdentityRange(personRange)}）`}
           </button>
         {/if}
       {/if}
@@ -1071,8 +1072,8 @@
       <Mono dim style="font-size:9.5px;">IN {_tcf(inSec)} · OUT {_tcf(outSec)}</Mono>
     </div>
     {#if useVideo || useAudio}
-      <div class="keyhints" aria-label="快捷鍵">
-        {#each KEY_HINTS as [k, what]}<span class="kh"><kbd>{k}</kbd>{what}</span>{/each}
+      <div class="keyhints" aria-label={$t('快捷鍵')}>
+        {#each KEY_HINTS as [k, what]}<span class="kh"><kbd>{k}</kbd>{$t(what)}</span>{/each}
       </div>
     {/if}
     <Waveform {peaks} progress={playProgress} {inFrac} {outFrac} on:seek={(e) => seekFraction(e.detail)} on:trim={onTrim} />
@@ -1080,8 +1081,8 @@
       <!-- frame-exact stepper: step one frame, mark at the exact frame boundary.
            The readout shows the frame rVFC confirms is actually on screen. -->
       <div class="frametools">
-        <button class="ak-btn fstep" on:click={() => stepFrame(-1)} title="上一格（,）">◂ 格</button>
-        <button class="ak-btn fstep" on:click={() => stepFrame(1)} title="下一格（.）">格 ▸</button>
+        <button class="ak-btn fstep" on:click={() => stepFrame(-1)} title={$t('上一格（,）')}>◂ {$t('格')}</button>
+        <button class="ak-btn fstep" on:click={() => stepFrame(1)} title={$t('下一格（.）')}>{$t('格')} ▸</button>
         <Mono dim style="font-size:9.5px;margin-left:6px;align-self:center;">
           f{curFrame} · {_tcf(curFrame / fps)} · {fps.toFixed(fps % 1 ? 3 : 0)}fps
         </Mono>
@@ -1089,12 +1090,12 @@
     {/if}
     {#if useVideo || useAudio}
       <div class="inout">
-        <button class="ak-btn io" on:click={setIn} title={frameExact ? '設 IN（貼齊目前影格 · i）' : '設 IN（目前播放位置 · i）'}>設 IN</button>
-        <button class="ak-btn io" on:click={setOut} title={frameExact ? '設 OUT（貼齊目前影格 · o）' : '設 OUT（目前播放位置 · o）'}>設 OUT</button>
+        <button class="ak-btn io" on:click={setIn} title={frameExact ? $t('設 IN（貼齊目前影格 · i）') : $t('設 IN（目前播放位置 · i）')}>{$t('設 IN')}</button>
+        <button class="ak-btn io" on:click={setOut} title={frameExact ? $t('設 OUT（貼齊目前影格 · o）') : $t('設 OUT（目前播放位置 · o）')}>{$t('設 OUT')}</button>
         {#if inSec != null || outSec != null}
-          <button class="ak-btn io clr" on:click={clearInOut} title="清除 IN/OUT">清除</button>
+          <button class="ak-btn io clr" on:click={clearInOut} title={$t('清除 IN/OUT')}>{$t('清除')}</button>
           <Mono dim style="font-size:9.5px;margin-left:auto;align-self:center;">
-            {#if frameExact && inSec != null && outSec != null}{secToFrame(outSec) - secToFrame(inSec)} 格{:else}匯出將套用此區間{/if}
+            {#if frameExact && inSec != null && outSec != null}{$t('{n} 格', { n: secToFrame(outSec) - secToFrame(inSec) })}{:else}{$t('匯出將套用此區間')}{/if}
           </Mono>
         {/if}
       </div>
@@ -1103,14 +1104,14 @@
       <div class="dragout">
         {#if dragState === 'ready'}
           <!-- svelte-ignore a11y-no-static-element-interactions -->
-          <div class="draghandle" draggable="true" on:dragstart={onDragHandle} title="拖到 DaVinci Resolve、Premiere 或 Finder">
+          <div class="draghandle" draggable="true" on:dragstart={onDragHandle} title={$t('拖到 DaVinci Resolve、Premiere 或 Finder')}>
             <img bind:this={dragImgEl} src={thumbUrl || ''} alt="" draggable="false" style="display:none;" />
-            ⇱ {dragTrim ? '拖出 IN/OUT 片段' : '拖出原始檔'}
+            ⇱ {dragTrim ? $t('拖出 IN/OUT 片段') : $t('拖出原始檔')}
           </div>
         {:else if dragState === 'preparing'}
-          <Mono dim style="font-size:10.5px;">{dragTrim ? '切 IN/OUT 片段中…' : '準備中…'}</Mono>
+          <Mono dim style="font-size:10.5px;">{dragTrim ? $t('切 IN/OUT 片段中…') : $t('準備中…')}</Mono>
         {:else if dragState === 'error'}
-          <button class="ak-btn" on:click={() => prepareDrag()}>重試拖出</button>
+          <button class="ak-btn" on:click={() => prepareDrag()}>{$t('重試拖出')}</button>
         {/if}
         {#if dragMsg}<Mono dim style="font-size:10px;display:block;margin-top:3px;">{dragMsg}</Mono>{/if}
       </div>
@@ -1120,7 +1121,7 @@
   <div class="block transcript">
     <div class="blockhead">
       <Eyebrow>Transcript</Eyebrow>
-      <Mono dim style="font-size:9.5px;" title={particleTitle}>{lines.length} 段{particleLabel}</Mono>
+      <Mono dim style="font-size:9.5px;" title={particleTitle}>{$t('{n} 段', { n: lines.length })}{particleLabel}</Mono>
     </div>
     {#if transcriptLangs && transcriptLangs.length}
       <div class="langtabs">
@@ -1128,19 +1129,19 @@
           <button
             class="langtab"
             class:on={lt.lang === viewLang}
-            title={lt.active ? '主要（被搜尋／匯出）' : '檢視此語言'}
+            title={lt.active ? $t('主要（被搜尋／匯出）') : $t('檢視此語言')}
             on:click={() => onViewLang && onViewLang(lt.lang)}
           >{(lt.lang || '?').toUpperCase()}{lt.active ? ' ●' : ''}</button>
         {/each}
         {#if onActivateLang && viewLang && transcriptLangs.find((l) => l.lang === viewLang && !l.active)}
-          <button class="langset" on:click={() => onActivateLang(viewLang)}>設為主要</button>
+          <button class="langset" on:click={() => onActivateLang(viewLang)}>{$t('設為主要')}</button>
         {/if}
       </div>
     {/if}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="lines" class:correctable={!!onCorrect} bind:this={linesEl} on:mouseup={onLinesMouseUp}>
       {#if lines.length === 0}
-        <Mono dim style="font-size:11px;">（無語音 · no speech detected）</Mono>
+        <Mono dim style="font-size:11px;">{$t('（無語音 · no speech detected）')}</Mono>
       {:else}
         {#each lines as [tc, text, hl, t], i}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
@@ -1153,29 +1154,29 @@
       {/if}
     </div>
     {#if onCorrect && lines.length}
-      <div class="corrhint">選取一段字（或雙擊一個詞）可校正錯字</div>
+      <div class="corrhint">{$t('選取一段字（或雙擊一個詞）可校正錯字')}</div>
     {/if}
     {#if corr}
       <div class="corrpop" class:form={corr.stage === 'form'} bind:this={corrEl}
         style={popStyle(corr)}>
         {#if corr.stage === 'chip'}
-          <button class="corrchip" on:click={openCorrForm} title="把這段字的正確寫法教給本專案">校正「{corr.from}」…</button>
+          <button class="corrchip" on:click={openCorrForm} title={$t('把這段字的正確寫法教給本專案')}>{$t('校正「{from}」…', { from: corr.from })}</button>
         {:else if corr.stage === 'refuse'}
           <div class="corrrefuse" role="status">{corr.reason}</div>
         {:else}
           <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-          <div class="corrform" role="dialog" aria-label="校正逐字稿" tabindex="-1" on:keydown={onCorrKey}>
-            <div class="corrfrom">原文 <b>{corr.from}</b></div>
+          <div class="corrform" role="dialog" aria-label={$t('校正逐字稿')} tabindex="-1" on:keydown={onCorrKey}>
+            <div class="corrfrom">{$t('原文')} <b>{corr.from}</b></div>
             <input class="corrinput" type="text" bind:value={corr.to} use:focusInput
-              disabled={corr.busy} aria-label="正確寫法" placeholder="正確寫法" />
+              disabled={corr.busy} aria-label={$t('正確寫法')} placeholder={$t('正確寫法')} />
             <label class="corrapply">
               <input type="checkbox" bind:checked={corr.apply} disabled={corr.busy} />
-              套用到本專案所有逐字稿
+              {$t('套用到本專案所有逐字稿')}
             </label>
             {#if corr.err}<div class="correrr" role="alert">{corr.err}</div>{/if}
             <div class="corractions">
-              <button class="ak-btn" on:click={closeCorr} disabled={corr.busy}>取消 · Esc</button>
-              <button class="ak-btn ak-btn--primary" on:click={submitCorr} disabled={corr.busy}>{corr.busy ? '處理中…' : '校正 · Enter'}</button>
+              <button class="ak-btn" on:click={closeCorr} disabled={corr.busy}>{$t('取消 · Esc')}</button>
+              <button class="ak-btn ak-btn--primary" on:click={submitCorr} disabled={corr.busy}>{corr.busy ? $t('處理中…') : $t('校正 · Enter')}</button>
             </div>
           </div>
         {/if}
@@ -1186,8 +1187,8 @@
   {#if frameScenes && frameScenes.length}
     <div class="block">
       <div class="blockhead">
-        <Eyebrow>場景時間軸 · qwen3-vl</Eyebrow>
-        <Mono dim style="font-size:9.5px;">{frameScenes.length} 場景</Mono>
+        <Eyebrow>{$t('場景時間軸 · qwen3-vl')}</Eyebrow>
+        <Mono dim style="font-size:9.5px;">{$t('{n} 場景', { n: frameScenes.length })}</Mono>
       </div>
       <div class="scenes">
         {#each frameScenes as sc, i}
@@ -1201,7 +1202,7 @@
                 {#if sc.content_type && sc.content_type !== 'Undefined'}<span class="chip">{sc.content_type}</span>{/if}
                 {#if sc.edit_position}<span class="chip pos">{sc.edit_position}</span>{/if}
                 {#if sc.atmosphere}<span class="chip dim">{sc.atmosphere}</span>{/if}
-                {#if sc.energy}<span class="chip dim">能量 {sc.energy}</span>{/if}
+                {#if sc.energy}<span class="chip dim">{$t('能量 {energy}', { energy: sc.energy })}</span>{/if}
               </div>
               {#if sc.description}<div class="scenedesc">{sc.description}</div>{/if}
               {#if sc.edit_reason}<div class="scenereason">▸ {sc.edit_reason}</div>{/if}
@@ -1231,32 +1232,32 @@
     <div class="block reproc">
       <Eyebrow style="margin-bottom:8px;">Reprocess</Eyebrow>
       <div class="reprow">
-        <select class="ak-input relang" bind:value={reLang} disabled={!!reBusy} title="重新轉錄語言">
+        <select class="ak-input relang" bind:value={reLang} disabled={!!reBusy} title={$t('重新轉錄語言')}>
           {#each langOpts as l}
             <option value={l.code}>{l.label || l.code}</option>
           {/each}
         </select>
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('retranscribe')}>
-          {reBusy === 'retranscribe' ? (reProgress ? `轉錄中… ${reProgress}` : '轉錄中…') : '重轉錄'}
+          {reBusy === 'retranscribe' ? (reProgress ? $t('轉錄中… {progress}', { progress: reProgress }) : $t('轉錄中…')) : $t('重轉錄')}
         </button>
       </div>
       <div class="reprow">
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('retry-vision')}>
-          {reBusy === 'retry-vision' ? (reProgress ? `分析中… ${reProgress}` : '分析中…') : '重試視覺'}
+          {reBusy === 'retry-vision' ? (reProgress ? $t('分析中… {progress}', { progress: reProgress }) : $t('分析中…')) : $t('重試視覺')}
         </button>
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('reingest')}>
-          {reBusy === 'reingest' ? '重建中…' : '完整重建'}
+          {reBusy === 'reingest' ? $t('重建中…') : $t('完整重建')}
         </button>
       </div>
       <div class="reprow">
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('proxy')}>
-          {reBusy === 'proxy' ? '排入中…' : '建立 proxy'}
+          {reBusy === 'proxy' ? $t('排入中…') : $t('建立 proxy')}
         </button>
         <!-- ProRes Proxy into <source dir>/Proxy/<name>.mov, with source TC and
              every audio track, so Resolve can relink it. Not the button above:
              that one is the 720p H.264 the browser plays. -->
-        <button class="ak-btn rebtn" disabled={!!reBusy} title="ProRes Proxy 寫到原始檔旁的 Proxy/，保留 TC 與全部音軌；不覆蓋既有檔" on:click={() => doReprocess('editor-proxy')}>
-          {reBusy === 'editor-proxy' ? (reProgress ? `生成中… ${reProgress}` : '生成中…') : '剪輯用 proxy'}
+        <button class="ak-btn rebtn" disabled={!!reBusy} title={$t('ProRes Proxy 寫到原始檔旁的 Proxy/，保留 TC 與全部音軌；不覆蓋既有檔')} on:click={() => doReprocess('editor-proxy')}>
+          {reBusy === 'editor-proxy' ? (reProgress ? $t('生成中… {progress}', { progress: reProgress }) : $t('生成中…')) : $t('剪輯用 proxy')}
         </button>
       </div>
       {#if reMsg}<Mono dim style="font-size:10px;line-height:1.45;display:block;">{reMsg}</Mono>{/if}
