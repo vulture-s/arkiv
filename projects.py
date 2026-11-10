@@ -29,7 +29,16 @@ class RegistryError(Exception):
 class PathAccessError(RegistryError):
     """The project path could not even be inspected (auth / permission / network
     error), as opposed to not existing. A RegistryError so callers that map those
-    to 400 keep doing so."""
+    to 400 keep doing so.
+
+    #634: keeps the OSError and action so the API can answer with
+    health.path_access_error (detail_key/params for the English UI) instead of
+    str(exc), which is the same Chinese text but untranslatable."""
+
+    def __init__(self, os_error: OSError, action: str = "加入") -> None:
+        self.os_error = os_error
+        self.action = action
+        super().__init__(path_access_message(os_error, action))
 
 
 class ProjectEntitlementError(RegistryError):
@@ -360,7 +369,7 @@ def add_project(name: str, path: str, tags: Optional[List[str]] = None) -> Proje
     try:
         present = project_path.exists()
     except OSError as exc:
-        raise PathAccessError(path_access_message(exc, "加入")) from exc
+        raise PathAccessError(exc, "加入") from exc
     if not present:
         raise RegistryError("project path not found: {0}".format(path))
 

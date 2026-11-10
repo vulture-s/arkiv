@@ -128,6 +128,10 @@ def _install_token_redaction_filter() -> None:
             logger.addFilter(_RedactTokenFilter())
 
 app = FastAPI(title="Media Asset Manager API", lifespan=_lifespan)
+# #634: ApiError bodies carry detail_key/detail_params next to detail so the
+# English UI can translate formatted messages (see apimsg.py).
+import apimsg as _apimsg
+_apimsg.install(app)
 # R5-25 / #51: web-security boundary guards live in webguard.py (a leaf service
 # module, no server state) so the coming APIRouter split can import them without
 # the router→server→router import cycle. `_ALLOWED_ORIGINS` is owned there (both

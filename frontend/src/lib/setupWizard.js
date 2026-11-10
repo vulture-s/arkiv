@@ -6,7 +6,7 @@
 // /api/setup/status; the page does the fetching.
 
 import { needsIngestHint } from './projectsFirstRun.js'
-import { tr } from './i18n.js'
+import { tr, apiText } from './i18n.js'
 
 /** Should opening the app land on the wizard? Only for a user who has not finished
  *  (or skipped) it AND whose library holds none of their own media — someone who
@@ -26,13 +26,13 @@ export function fmtBytes(n) {
 export function pullLine(item) {
   if (!item) return ''
   if (item.status === 'done') return tr('完成')
-  if (item.status === 'error') return tr('失敗：{msg}', { msg: item.message || tr('未知錯誤') })
+  if (item.status === 'error') return tr('失敗：{msg}', { msg: apiText(item) || tr('未知錯誤') })
   if (item.status === 'queued') return tr('排隊中')
   if (item.total) {
     const pct = Math.min(100, Math.round((100 * (item.completed || 0)) / item.total))
     return `${pct}% · ${fmtBytes(item.completed)} / ${fmtBytes(item.total)}`
   }
-  return item.completed ? tr('已下載 {size}', { size: fmtBytes(item.completed) }) : item.message || tr('下載中…')
+  return item.completed ? tr('已下載 {size}', { size: fmtBytes(item.completed) }) : apiText(item) || tr('下載中…')
 }
 
 /** The install command for ffmpeg on this OS (shown, never run). */

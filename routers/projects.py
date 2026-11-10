@@ -16,7 +16,7 @@ from pydantic import BaseModel, field_validator
 import config
 import projects as project_registry
 from auth import require_scopes
-from health import path_access_message
+from health import path_access_error
 from pathres import _basename_safe
 
 router = APIRouter()
@@ -129,12 +129,15 @@ def add_project(
         raise HTTPException(
             status_code=403, detail={"code": exc.code, "message": str(exc)}
         )
+    except project_registry.PathAccessError as exc:
+        # #634: same text as str(exc), plus the key/params the English UI needs.
+        raise path_access_error(400, exc.os_error, exc.action)
     except project_registry.RegistryError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except OSError as exc:
         # Backstop for any other look at the user's path (resolve, entitlement
         # probe) — an unreachable share is the user's to fix, not a server fault.
-        raise HTTPException(status_code=400, detail=path_access_message(exc, "加入"))
+        raise path_access_error(400, exc, "加入")
     return project.to_dict()
 
 

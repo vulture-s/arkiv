@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from apimsg import ApiError
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
@@ -28,7 +29,7 @@ import db
 import settings as settings_store
 import transcript_time
 from auth import require_scopes
-from health import path_access_message
+from health import path_access_error
 from export_builders import (
     _build_metadata_csv,
     _edl_comment,
@@ -131,7 +132,7 @@ def export_metadata_csv_to(
         dest = Path(raw_dest).expanduser().resolve()
         dest_is_dir = dest.is_dir()
     except OSError as exc:
-        raise HTTPException(400, path_access_message(exc, "匯出"))
+        raise path_access_error(400, exc, "匯出")
     if dest_is_dir or raw_dest.endswith(("/", "\\")):
         dest = dest / "arkiv-metadata.csv"
     _assert_export_dest_safe(dest)
@@ -185,9 +186,9 @@ def export_media(
     # frames (the default, unchanged) or the transcript's segments (8.2i).
     markers = (markers or "frames").lower()
     if markers not in MARKER_SOURCES:
-        raise HTTPException(422, "markers 必須是 {0}".format("/".join(MARKER_SOURCES)))
+        raise ApiError(422, "markers 必須是 {allowed}", allowed="/".join(MARKER_SOURCES))
     if markers != "frames" and fmt not in MARKER_FMTS:
-        raise HTTPException(422, "markers={0} 只適用於 {1}".format(markers, "/".join(MARKER_FMTS)))
+        raise ApiError(422, "markers={markers} 只適用於 {fmts}", markers=markers, fmts="/".join(MARKER_FMTS))
     rec = db.get_record_by_id(media_id)
     if not rec:
         raise HTTPException(404, "找不到")
@@ -402,7 +403,7 @@ def export_media(
             headers=_attachment_headers(stem, "fcpxml"),
         )
 
-    raise HTTPException(400, f"不支援的格式：{fmt}。請使用 srt/vtt/txt/edl/edl-markers/fcpxml")
+    raise ApiError(400, "不支援的格式：{fmt}。請使用 srt/vtt/txt/edl/edl-markers/fcpxml", fmt=fmt)
 
 
 class ExportToRequest(BaseModel):
@@ -541,7 +542,7 @@ def export_timeline(
     """
     fmt = (fmt or "").lower()
     if fmt not in ("edl", "srt", "fcpxml"):
-        raise HTTPException(400, f"批次匯出僅支援 edl / srt / fcpxml，收到：{fmt}")
+        raise ApiError(400, "批次匯出僅支援 edl / srt / fcpxml，收到：{fmt}", fmt=fmt)
 
     try:
         id_list = [int(x) for x in ids.split(",") if x.strip()]
@@ -564,7 +565,7 @@ def export_timeline(
     # A clip deleted/moved between selection and export would otherwise produce a
     # timeline missing a shot with no warning (Codex review P2).
     if missing:
-        raise HTTPException(404, f"找不到素材：{','.join(str(m) for m in missing)}")
+        raise ApiError(404, "找不到素材：{ids}", ids=",".join(str(m) for m in missing))
 
     tl_fps = recs[0].get("fps") or 30.0
     tl_is_df = _tc_is_drop(recs[0], tl_fps)

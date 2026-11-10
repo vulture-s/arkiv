@@ -25,7 +25,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
-  import { t } from '../lib/i18n.js'
+  import { t, apiText } from '../lib/i18n.js'
 
   $: theme = $resolvedTheme
   const BASE = import.meta.env?.VITE_API_URL ?? ''
@@ -202,7 +202,7 @@
     rebuilding = true
     try {
       const res = await api.rebuildEmbedIndex()
-      pushLog(res.message || $t('重建向量索引：已排入背景'))
+      pushLog(apiText(res) || $t('重建向量索引：已排入背景'))
     } catch (e) {
       err = e.message
     } finally {

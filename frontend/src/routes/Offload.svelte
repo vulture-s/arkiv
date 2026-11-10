@@ -25,7 +25,7 @@
   import { resolvedTheme } from '../lib/prefs.js'
   import { pickFolder, canPickFolder } from '../lib/pickFolder.js'
   import { pushToast } from '../lib/toast.js'
-  import { t } from '../lib/i18n.js'
+  import { t, apiErrorText } from '../lib/i18n.js'
   import OffloadRenameDialog from '../lib/OffloadRenameDialog.svelte'
   import {
     conflictsFromDone, shouldOpenRenameDialog, cardStatus, canFormat, statusLine, applyResolveResult,
@@ -147,7 +147,7 @@
       })
       phase = 'preview'
     } catch (e) {
-      err = e.body?.detail || e.message
+      err = apiErrorText(e)
       phase = 'idle'
     }
   }
@@ -224,7 +224,7 @@
         // not a failure — verified files are kept and re-Run continues from here.
         phase = 'done'; doneCode = doneCode ?? 130; err = ''
       } else {
-        err = e.body?.detail || e.message
+        err = apiErrorText(e)
         phase = 'done'; doneCode = doneCode ?? 1
       }
     } finally {
@@ -246,7 +246,7 @@
       doneCode = card === 'done' ? 0 : (doneCode || 3)
       if (card === 'done') { pushToast($t('同名衝突全部處理完 · 校驗通過'), 'ok'); renameOpen = false }
     } catch (e) {
-      const msg = e.body?.detail || e.message
+      const msg = apiErrorText(e)
       renameRows = renameRows.map((r) => (r.dst === row.dst && r.rel === row.rel ? { ...r, state: 'error', error: msg } : r))
     } finally {
       renameBusy = ''

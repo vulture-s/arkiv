@@ -11,7 +11,7 @@
   import * as api from '../lib/api.js'
   import { pushToast } from '../lib/toast.js'
   import { modelRows, blockers, pullLine } from '../lib/setupWizard.js'
-  import { t } from '../lib/i18n.js'
+  import { t, apiText } from '../lib/i18n.js'
 
   let setup = null
   let error = null
@@ -38,7 +38,7 @@
         timer = null
         pulling = false
         await refresh()
-        if (p.message && p.message !== 'done') pushToast(p.message, 'error')
+        if (p.message && p.message !== 'done') pushToast(apiText(p), 'error')
       }
     } catch { /* keep polling; a blip must not freeze the bar */ }
   }
@@ -46,7 +46,7 @@
   async function startPull() {
     try {
       const r = await api.setupPull({})
-      if (!r.queued) return pushToast(r.message || $t('所有模型都已就緒'))
+      if (!r.queued) return pushToast(apiText(r) || $t('所有模型都已就緒'))
       pulling = true
       timer = setInterval(poll, 1500)
       poll()

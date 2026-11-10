@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 
 from fastapi import HTTPException, Request
+from apimsg import ApiError
 
 import config
 
@@ -78,7 +79,7 @@ def _assert_export_dest_safe(dest: Path) -> None:
     """
     canonical = dest.resolve()
     if canonical.suffix.lower() not in _ALLOWED_EXPORT_EXTS:
-        raise HTTPException(403, f"不允許的匯出副檔名：{canonical.suffix}")
+        raise ApiError(403, "不允許的匯出副檔名：{ext}", ext=canonical.suffix)
     roots = _allowed_export_roots()
     for root in roots:
         try:
@@ -407,14 +408,18 @@ def ingest_forbidden_message(target) -> str:
     two things they can actually do. Deliberately does not list the resolved
     allowed roots (that leaks the home layout to anyone probing the boundary — the
     same reasoning as the export 403); the path echoed is the caller's own."""
-    return (
-        "這個資料夾不在 arkiv 允許匯入的位置：{0}\n"
+    return INGEST_FORBIDDEN_KEY.format(path=target)
+
+
+# #634: template behind ingest_forbidden_message (ApiError sends it as detail_key).
+INGEST_FORBIDDEN_KEY = (
+        "這個資料夾不在 arkiv 允許匯入的位置：{path}\n"
         "如果是 NAS／網路資料夾：在 Windows 上先把它對應成網路磁碟機（例如 Z:），"
         "或到 設定 → 匯入 → 額外允許的資料夾 加入這個路徑"
         "（Mac 上先在 Finder 連上伺服器，掛在 /Volumes 底下就能直接匯入）。\n"
         "預設允許：這個庫的資料夾、Desktop、Documents、Movies／Videos、Pictures、已連上的網路磁碟。"
         "進階：ARKIV_INGEST_ROOTS 環境變數可整份取代預設清單。"
-    ).format(target)
+)
 
 
 def _assert_ingest_path_safe(target: Path) -> None:
@@ -426,7 +431,7 @@ def _assert_ingest_path_safe(target: Path) -> None:
             return
         except ValueError:
             continue
-    raise HTTPException(403, ingest_forbidden_message(target))
+    raise ApiError(403, INGEST_FORBIDDEN_KEY, path=target)
 
 
 # ── same-site (CSRF) guard ───────────────────────────────────────────────────

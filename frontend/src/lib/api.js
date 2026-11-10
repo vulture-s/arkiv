@@ -11,6 +11,8 @@
 //   /api/media    → {items:[], total, search:bool}
 //   /api/tags     → []
 
+import { tr, apiText } from './i18n.js'
+
 const BASE = import.meta.env?.VITE_API_URL ?? ''
 
 let _token = null
@@ -49,10 +51,14 @@ class ApiError extends Error {
     // part a person should ever read. A refusal that renders as
     // `{"code":"project_limit",...}` tells the user less than the plain
     // sentence it contains, which defeats the reason the message exists.
+    // #634: shown in the UI language — a structured detail's message is looked
+    // up as-is, a plain detail through its detail_key/detail_params when sent.
     const human =
       detail && typeof detail === 'object' && typeof detail.message === 'string'
-        ? detail.message
-        : detail
+        ? tr(detail.message)
+        : typeof detail === 'string' && body && typeof body === 'object'
+          ? apiText(body, 'detail')
+          : detail
     const suffix = human
       ? `：${typeof human === 'string' ? human : JSON.stringify(human)}`
       : ''

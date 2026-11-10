@@ -7,7 +7,7 @@
 // span them — it never creates a library and never imports media. The real way
 // to start is + INGEST. These helpers decide when to say so, and translate the
 // backend's terse registry errors / health codes into sentences a user can act on.
-import { tr } from './i18n.js'
+import { tr, apiErrorText } from './i18n.js'
 
 /** Media the user brought in themselves: `total` minus the bundled sample clips
  *  (the server auto-seeds a fresh library with them, so total > 0 does NOT mean
@@ -59,8 +59,11 @@ export function addErrorMessage(err, name) {
   const d = err && err.body && typeof err.body === 'object' ? err.body.detail : null
   const msg = (d && typeof d === 'object' ? d.message : d) || (err && err.message) || ''
   if (status === 409) return tr('已經有叫「{name}」的專案了，換個名稱。', { name })
-  if (status === 403) return msg || tr('目前的方案不能再加入專案。')
+  // Matching runs on the raw text (English registry phrases); what is SHOWN
+  // goes through the dictionary (#634).
+  const shown = d ? apiErrorText(err) : msg
+  if (status === 403) return shown || tr('目前的方案不能再加入專案。')
   if (/project path not found/i.test(msg)) return tr('找不到這個資料夾。請確認路徑正確、NAS 已掛載。')
   if (/already registered/i.test(msg)) return tr('這個資料夾已經登記過了。')
-  return tr('加入失敗：{msg}', { msg: msg || tr('未知錯誤') })
+  return tr('加入失敗：{msg}', { msg: shown || tr('未知錯誤') })
 }

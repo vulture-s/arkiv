@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
+from apimsg import api_msg
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -226,7 +227,7 @@ def embed_rebuild(request: Request, background_tasks: BackgroundTasks, _tok: dic
     if not _embed_guard.acquire():  # audit M8: refuse concurrent rebuilds
         raise HTTPException(409, "向量索引重建已在進行中，請稍候")
     background_tasks.add_task(_rebuild_embeddings)
-    return {"message": f"開始重建向量索引（{total} 筆素材，背景執行）", "queued": total}
+    return {**api_msg("開始重建向量索引（{n} 筆素材，背景執行）", n=total), "queued": total}
 
 
 @router.get("/api/embed/status")

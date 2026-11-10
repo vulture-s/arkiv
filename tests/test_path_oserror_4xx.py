@@ -52,9 +52,15 @@ def refuse_marked_path(request, monkeypatch):
 
 def _assert_actionable(resp):
     assert resp.status_code == 400, resp.text
-    detail = resp.json()["detail"]
+    body = resp.json()
+    detail = body["detail"]
     assert "無法存取這個路徑" in detail
     assert "登入" in detail
+    # #634: and it is translatable — a str(exc) pass-through would drop these.
+    import health
+    assert body.get("detail_key") == health.PATH_ACCESS_KEY, body
+    assert body["detail_key"].format(**body["detail_params"]) == detail
+    assert body.get("detail_tr_params") == list(health.PATH_ACCESS_TR_PARAMS)
 
 
 def test_path_access_message_keeps_the_system_reason():

@@ -33,7 +33,7 @@
   import { parseStartParam } from '../lib/matchTime.js'
   import { createIdentityNamesLoader } from '../lib/identityNames.js'
   import { rateMany } from '../lib/bulkRating.js'
-  import { t } from '../lib/i18n.js'
+  import { t, apiText } from '../lib/i18n.js'
   import { POOL_SORTS, loadPoolSort, savePoolSort, nextColumnSort, columnArrow } from '../lib/poolSort.js'
 
   $: theme = $resolvedTheme
@@ -1184,7 +1184,7 @@
       if (detailId === id) await fetchDetail(id)
       return {
         ok: r.ok,
-        message: r.message || $t('視覺補上 {patched}/{total} 幀，剩 {left}', { patched: r.patched, total: r.total_frames, left: r.still_empty }),
+        message: apiText(r) || $t('視覺補上 {patched}/{total} 幀，剩 {left}', { patched: r.patched, total: r.total_frames, left: r.still_empty }),
       }
     }
     if (action === 'reingest') {
@@ -1195,7 +1195,7 @@
     if (action === 'proxy') {
       // background build — returns immediately, no detail change to refetch
       const r = await api.buildProxyOne(id)
-      return { ok: true, message: r.message || $t('已排入 proxy 生成（背景）') }
+      return { ok: true, message: apiText(r) || $t('已排入 proxy 生成（背景）') }
     }
     if (action === 'editor-proxy') {
       // ProRes into <source dir>/Proxy/ for the NLE. The POST only queues, so wait

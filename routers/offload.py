@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from apimsg import ApiError
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -20,7 +21,7 @@ import config
 import orphan_guard
 from auth import require_scopes
 from config import BASE_DIR
-from health import path_access_message
+from health import path_access_error
 from webguard import _assert_offload_dst_safe
 
 router = APIRouter()
@@ -89,7 +90,7 @@ def _user_src_exists(raw: str):
         src = Path(raw).expanduser().resolve()
         return src, src.exists()
     except OSError as exc:
-        raise HTTPException(400, path_access_message(exc, "轉存"))
+        raise path_access_error(400, exc, "轉存")
 
 
 @router.post("/api/offload/preview")
@@ -154,7 +155,7 @@ def offload_run(
     try:
         state_path = _offload_state_path(state_cwd, src, body.include_heic)
     except OSError as exc:  # unreadable card → a 400 the UI can show, not a 500
-        raise HTTPException(400, "無法讀取來源：{0}".format(exc))
+        raise ApiError(400, "無法讀取來源：{error}", error=exc)
     cmd += ["--resume", str(state_path)]
 
     # Single-flight per source (see _acquire_offload_slot): reject a second run over
@@ -246,7 +247,7 @@ def offload_resolve(
     try:
         state_path = _offload_state_path(state_cwd, src, body.include_heic)
     except OSError as exc:
-        raise HTTPException(400, "無法讀取來源：{0}".format(exc))
+        raise ApiError(400, "無法讀取來源：{error}", error=exc)
     if not state_path.exists():
         raise HTTPException(400, "找不到這張卡的轉存紀錄 — 請先跑一次 offload")
     slot_key = str(src)

@@ -6,8 +6,9 @@ import settings from './settings.js'
 import main from './main.js'
 import bins from './bins.js'
 import ingest from './ingest.js'
+import api from './api.js'
 
-export const FRAGMENTS = { core, settings, main, bins, ingest }
+export const FRAGMENTS = { core, settings, main, bins, ingest, api }
 
 const en = {}
 for (const frag of Object.values(FRAGMENTS)) Object.assign(en, frag)

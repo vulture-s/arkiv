@@ -18,7 +18,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
-  import { localePref, t } from '../lib/i18n.js'
+  import { localePref, t, apiText, apiErrorText } from '../lib/i18n.js'
 
   import { VERSION } from '../lib/version.js'
   import { describeTier, readLicenceFile, rejectReason } from '../lib/licenceView.js'
@@ -76,13 +76,13 @@
   async function saveSetting(values) {
     settingsBusy = true; settingsMsg = ''
     try { await api.putSettings(values); await loadSettings(); settingsMsg = $t('已儲存 ✓') }
-    catch (e) { settingsMsg = $t('儲存失敗：{msg}', { msg: e?.body?.detail || e.message }) }
+    catch (e) { settingsMsg = $t('儲存失敗：{msg}', { msg: apiErrorText(e) }) }
     finally { settingsBusy = false }
   }
   async function resetSettingKey(key) {
     settingsBusy = true; settingsMsg = ''
     try { await api.resetSetting(key); await loadSettings(); settingsMsg = $t('已重設為預設 ✓') }
-    catch (e) { settingsMsg = $t('重設失敗：{msg}', { msg: e?.body?.detail || e.message }) }
+    catch (e) { settingsMsg = $t('重設失敗：{msg}', { msg: apiErrorText(e) }) }
     finally { settingsBusy = false }
   }
 
@@ -208,7 +208,7 @@
     proxyMsg = ''
     try {
       const r = await api.buildProxies()
-      proxyMsg = r.message || $t('已排入 {n} 個', { n: r.queued })
+      proxyMsg = apiText(r) || $t('已排入 {n} 個', { n: r.queued })
       setTimeout(loadProxy, 2000)
       setTimeout(loadProxy, 8000)
     } catch (e) {
@@ -237,7 +237,7 @@
     cacheBusy = true; cacheMsg = ''
     try {
       const r = await api.clearCache(target)
-      cacheMsg = r.message || $t('已清除 {target}', { target })
+      cacheMsg = apiText(r) || $t('已清除 {target}', { target })
       setTimeout(loadCache, 800)
     } catch (e) { cacheMsg = $t('失敗: {msg}', { msg: e.message }) } finally { cacheBusy = false }
   }
@@ -326,7 +326,7 @@
     vocabMsg = ''
     try {
       const r = await api.retranscribeAll(true, retrLang || 'zh')
-      if (!r.queued) { vocabMsg = r.message || $t('沒有可重轉錄的素材'); return }
+      if (!r.queued) { vocabMsg = apiText(r) || $t('沒有可重轉錄的素材'); return }
       retr = { total: r.queued, done: 0, failed: 0, current: null, running: true, backup: null }
       pollRetr()
     } catch (e) { vocabMsg = e.status === 409 ? $t('批次重轉錄已在進行中') : $t('重轉錄失敗: {msg}', { msg: e.message }) }
