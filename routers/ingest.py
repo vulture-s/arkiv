@@ -28,6 +28,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from apimsg import ApiError, api_msg
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -40,7 +41,7 @@ import orphan_guard
 import settings as settings_store
 from auth import require_scopes
 from config import BASE_DIR
-from health import path_access_message
+from health import path_access_error
 from pathres import _display_path, _resolve_media_path
 from reqopts import _INGEST_LANGUAGES, _ingest_cmd_opts
 from state import _acquire_ingest_slot, _release_ingest_slot, ingest_ws
@@ -81,9 +82,9 @@ def _user_dir_or_400(raw: str, not_dir_msg: str) -> Path:
         target = Path(raw).expanduser().resolve()
         is_dir = target.is_dir()
     except OSError as exc:
-        raise HTTPException(400, path_access_message(exc, "匯入"))
+        raise path_access_error(400, exc, "匯入")
     if not is_dir:
-        raise HTTPException(400, not_dir_msg)
+        raise ApiError(400, not_dir_msg, path=raw)
     return target
 
 
@@ -354,14 +355,18 @@ def _ingest_limits(target: Path, limit: int = 0):
 
 
 def _timeout_detail(e) -> str:
+    return _timeout_error(e).detail
+
+
+def _timeout_error(e) -> "ApiError":
     mins = lambda s: int((s or 0) // 60)
     if getattr(e, "kind", None) == "stall":
-        return ("匯入停滯：已 {0} 分鐘沒有任何進度輸出（門檻 {1} 分鐘），"
-                "研判卡住，已停止整個處理程序。已完成的素材都已寫進素材庫，"
-                "重跑會從中斷處接續。").format(mins(e.idle), mins(e.timeout))
-    return ("匯入超過預估時間的上限（{0} 分鐘）並被停止 —— 它當時仍在輸出進度，"
-            "所以多半只是估值偏低而非卡住。已完成的素材都已寫進素材庫，"
-            "重跑會從中斷處接續。").format(mins(e.timeout))
+        return ApiError(504, "匯入停滯：已 {idle} 分鐘沒有任何進度輸出（門檻 {limit} 分鐘），"
+                        "研判卡住，已停止整個處理程序。已完成的素材都已寫進素材庫，"
+                        "重跑會從中斷處接續。", idle=mins(e.idle), limit=mins(e.timeout))
+    return ApiError(504, "匯入超過預估時間的上限（{limit} 分鐘）並被停止 —— 它當時仍在輸出進度，"
+                    "所以多半只是估值偏低而非卡住。已完成的素材都已寫進素材庫，"
+                    "重跑會從中斷處接續。", limit=mins(e.timeout))
 
 
 @router.post("/api/ingest")
@@ -415,7 +420,7 @@ def ingest_media(
     except proctree.TreeTimeout as e:
         # The two kinds need different words: "stalled" means go look at the box,
         # "over budget" means it was probably still working and can be resumed.
-        raise HTTPException(504, _timeout_detail(e))
+        raise _timeout_error(e)
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "匯入逾時")  # audit L11: was 200 + ok:false
     finally:
@@ -435,7 +440,7 @@ def reingest_media(
     if not Path(media_path).exists():
         # fable-audit 2026-07-12: don't leak the resolved absolute path in the
         # error body — surface the PROJECT_ROOT-relative/basename form (Phase 16.2).
-        raise HTTPException(400, f"找不到媒體檔案：{_display_path(rec.get('path') or '')}")
+        raise ApiError(400, "找不到媒體檔案：{path}", path=_display_path(rec.get('path') or ''))
     # G2/G7: a fresh ingest re-runs Whisper and overwrites media.transcript — which
     # would silently destroy a hand-corrected transcript (e.g. via the 9.6b
     # correction dictionary). Snapshot the current transcript into the per-language
@@ -520,9 +525,9 @@ def _save_upload_file(uf: UploadFile, dest: Path, max_bytes: int) -> None:
             if written > max_bytes:
                 out.close()
                 dest.unlink(missing_ok=True)
-                raise HTTPException(
-                    413,
-                    f"檔案超過上傳上限（{max_bytes // (1024 * 1024)} MB）：{getattr(uf, 'filename', '?')}",
+                raise ApiError(
+                    413, "檔案超過上傳上限（{mb} MB）：{name}",
+                    mb=max_bytes // (1024 * 1024), name=getattr(uf, 'filename', '?'),
                 )
             out.write(chunk)
 
@@ -552,10 +557,10 @@ async def ingest_upload(
             raw = uf.filename or ""
             name = PurePosixPath(raw).name
             if not name or name in (".", "..") or "/" in name or "\\" in name:
-                raise HTTPException(400, f"非法檔名：{raw}")
+                raise ApiError(400, "非法檔名：{name}", name=raw)
             ext = Path(name).suffix.lower()
             if ext not in MEDIA_EXTS:
-                raise HTTPException(400, f"不支援的檔案類型：{ext}（僅允許媒體格式）")
+                raise ApiError(400, "不支援的檔案類型：{ext}（僅允許媒體格式）", ext=ext)
             # Collision-safe name: never overwrite an existing file on disk, nor a
             # media row already indexed at this path. A same-name re-upload is
             # renamed (<stem>__<YYYYMMDD-HHMMSS><ext>) so both clips survive instead
@@ -575,7 +580,7 @@ async def ingest_upload(
             dest = upload_dir / cand
             # basename guarantees containment, but assert defensively
             if dest.resolve() != (upload_dir.resolve() / cand):
-                raise HTTPException(400, f"非法路徑：{raw}")
+                raise ApiError(400, "非法路徑：{path}", path=raw)
             await asyncio.to_thread(_save_upload_file, uf, dest, _UPLOAD_MAX_BYTES)
             saved.append(cand)
             if cand != name:
@@ -931,11 +936,11 @@ async def ingest_media_ws(
     could drive the ingest pipeline over an arbitrary directory (Codex-class
     finding from the overnight audit).
     """
-    target = _user_dir_or_400(body.path, f"路徑不是有效的目錄：{body.path}")
+    target = _user_dir_or_400(body.path, "路徑不是有效的目錄：{path}")
     _assert_ingest_path_safe(target)
     if not _acquire_ingest_slot():  # audit H3 — shared single-flight with REST ingest/reingest
         raise HTTPException(409, "已有匯入進行中，請等待完成後再試")
     task = asyncio.create_task(_run_ingest_with_ws(target, body.limit, _ingest_cmd_opts(body)))
     _ingest_ws_tasks.add(task)
     task.add_done_callback(_on_ingest_ws_done)
-    return {"ok": True, "message": "已開始匯入 — 連線 /ws/ingest 取得進度"}
+    return {"ok": True, **api_msg("已開始匯入 — 連線 /ws/ingest 取得進度")}

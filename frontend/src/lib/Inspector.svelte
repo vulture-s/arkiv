@@ -13,7 +13,7 @@
   import { identityRange, suggestNames, formatIdentityRange, nameKeyStep } from './identities.js'
   import { canDragOut, prepare, ready, startDragOut, sourceKey } from './dragOut.js'
   import { keyAction, shuttleNext, KEY_HINTS } from './transport.js'
-  import { t } from './i18n.js'
+  import { t, apiText } from './i18n.js'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -631,7 +631,7 @@
     try {
       const opts = action === 'retranscribe' ? { language: reLang || 'zh' } : {}
       const r = await onReprocess(action, opts)
-      reMsg = (r && r.message) || $t('完成')
+      reMsg = (r && apiText(r)) || $t('完成')
     } catch (e) {
       reMsg = $t('失敗: {err}', { err: (e && e.message) || e })
     } finally {

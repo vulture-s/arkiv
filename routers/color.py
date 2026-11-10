@@ -7,6 +7,7 @@ Imports auth + commands + color_profiles + ingest — no server import, no cycle
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from apimsg import ApiError
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, field_validator
 
@@ -86,7 +87,7 @@ def update_color_profile_batch(body: ColorProfileBatch, background: BackgroundTa
     if not body.ids:
         raise HTTPException(422, "ids 不可為空")
     if not color_profiles.is_known(body.color_profile):
-        raise HTTPException(422, "未知的色彩設定檔：{0}".format(body.color_profile))
+        raise ApiError(422, "未知的色彩設定檔：{profile}", profile=body.color_profile)
     done, missing = [], []
     for mid in body.ids:
         try:

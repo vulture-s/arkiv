@@ -60,11 +60,27 @@ def path_access_message(exc: OSError, action: str = "加入") -> str:
     language, already decoded to str) because it is what tells the user which
     of "wrong password" / "access denied" / "network name not found" they hit.
     """
+    return PATH_ACCESS_KEY.format(**path_access_params(exc, action))
+
+
+# #634: the template + params behind path_access_message, so the API can send
+# them alongside the formatted text (apimsg.ApiError) and the English UI can
+# translate it. `fm` and `action` are themselves dictionary words.
+PATH_ACCESS_KEY = (
+    "無法存取這個路徑（{reason}）。如果是網路磁碟，請先在{fm}開啟這個位置並登入，"
+    "再回來{action}。"
+)
+
+
+def path_access_params(exc: OSError, action: str = "加入") -> dict:
     reason = (getattr(exc, "strerror", None) or str(exc) or exc.__class__.__name__).strip()
-    return (
-        "無法存取這個路徑（{reason}）。如果是網路磁碟，請先在{fm}開啟這個位置並登入，"
-        "再回來{action}。"
-    ).format(reason=reason, fm=_file_manager_name(), action=action)
+    return {"reason": reason, "fm": _file_manager_name(), "action": action}
+
+
+def path_access_error(status_code: int, exc: OSError, action: str = "加入"):
+    """ApiError carrying path_access_message's text plus its key/params."""
+    from apimsg import ApiError
+    return ApiError(status_code, PATH_ACCESS_KEY, **path_access_params(exc, action))
 
 
 def check(name: str, ok: bool, detail: str = "", required: bool = True):

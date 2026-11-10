@@ -74,3 +74,27 @@ export const t = derived(locale, (l) => (s, params) => translate(l, s, params))
 export function tr(s, params) {
   return translate(get(locale), s, params)
 }
+
+// Backend API text (#634). The backend keeps sending the formatted zh-TW text
+// (old clients, MCP callers and contract tests see no change); when the text
+// had values in it, it ALSO sends the template as `<field>_key` and the values
+// as `<field>_params` (apimsg.py). A fixed sentence is looked up as-is, a
+// template is translated then filled; string params are looked up too, so a
+// word the backend passes in (an action verb such as 匯出) reads in the same
+// language, while a path or OS reason — never a dictionary key — stays verbatim.
+export function trApi(text, key, params) {
+  if (typeof key === 'string' && key) {
+    const p = params && typeof params === 'object'
+      ? Object.fromEntries(Object.entries(params).map(([k, v]) => [k, typeof v === 'string' ? tr(v) : v]))
+      : undefined
+    return tr(key, p)
+  }
+  return typeof text === 'string' ? tr(text) : text
+}
+
+// `apiText(res)` → res.message in the UI language; `apiText(body, 'detail')`
+// for an error body. Non-objects pass through.
+export function apiText(body, field = 'message') {
+  if (!body || typeof body !== 'object') return body
+  return trApi(body[field], body[field + '_key'], body[field + '_params'])
+}

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from apimsg import ApiError
 from pydantic import BaseModel
 
 import config
@@ -130,7 +131,7 @@ def drag_source(
             err = (r.stderr or "").strip()[:200]
             _unlink(tmp)
         else:
-            raise HTTPException(500, "子片段切不出來：{0}".format(err))
+            raise ApiError(500, "子片段切不出來：{error}", error=err)
         os.replace(str(tmp), str(dst))
     os.utime(str(dst), None)  # a re-drag keeps it out of the next sweep
     return {"path": str(dst), "kind": "subclip", "keyframe_cut": not accurate,

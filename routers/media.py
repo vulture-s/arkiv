@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from apimsg import ApiError
 from pydantic import BaseModel, field_validator, model_validator
 
 import commands
@@ -1004,7 +1005,7 @@ def retranscribe_media(
     if not Path(media_path).exists():
         # fable-audit 2026-07-12: don't leak the resolved absolute path in the
         # error body — surface the PROJECT_ROOT-relative/basename form (Phase 16.2).
-        raise HTTPException(400, f"找不到媒體檔案：{_display_path(rec.get('path') or '')}")
+        raise ApiError(400, "找不到媒體檔案：{path}", path=_display_path(rec.get('path') or ''))
     # The ingest slot (audit H3) exists to stop two whisper decodes running at
     # once — that is the OOM guard on a 16 GB box. Every batch path takes it;
     # this one never did. So starting a batch and then clicking one clip's
@@ -1027,7 +1028,7 @@ def retranscribe_media(
         # Extraction/transcription failed — leave the existing transcript untouched
         # rather than blanking it (audit H1/H2).
         transcribe_jobs.finish(media_id, state="error")
-        raise HTTPException(500, "retranscribe 失敗：{0}".format(e))
+        raise ApiError(500, "retranscribe 失敗：{error}", error=e)
     finally:
         # Released as soon as whisper is done: the DB writes below are milliseconds
         # and hold no model in memory, and keeping the slot across them would make

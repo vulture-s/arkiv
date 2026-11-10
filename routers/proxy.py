@@ -14,6 +14,7 @@ Imports auth + db + config + editor_proxy + webguard + pathres + state — no se
 from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from apimsg import api_msg
 from pydantic import BaseModel
 
 import config
@@ -63,7 +64,7 @@ def proxy_build(request: Request, background_tasks: BackgroundTasks, _tok: dict 
     if not _proxy_guard.acquire():
         raise HTTPException(409, "proxy 生成已在進行中，請稍候")
     background_tasks.add_task(_build_proxies_all, to_build)
-    return {"message": f"開始生成 {len(to_build)} 個 proxy（背景執行）", "queued": len(to_build)}
+    return {**api_msg("開始生成 {n} 個 proxy（背景執行）", n=len(to_build)), "queued": len(to_build)}
 
 
 @router.post("/api/proxy/build/{media_id}")
@@ -81,7 +82,7 @@ def proxy_build_one(media_id: int, request: Request, background_tasks: Backgroun
         return {"message": "proxy 已存在", "queued": 0, "media_id": media_id}
     background_tasks.add_task(_build_proxies, [{"id": media_id, "path": rec["path"]}])
     return {
-        "message": f"開始生成 proxy（背景執行）",
+        "message": "開始生成 proxy（背景執行）",
         "queued": 1,
         "media_id": media_id,
         "filename": rec.get("filename"),
@@ -155,7 +156,7 @@ def editor_proxy_build(body: EditorProxyBody, request: Request, background_tasks
     _editor_guard.reset_progress(running=True, total=len(ids), done=0, created=0,
                                  exists=0, failed=0, current=None, results=[])
     background_tasks.add_task(_build_editor_proxies, ids)
-    return {"message": "開始生成 {0} 個剪輯用 proxy（背景執行）".format(len(ids)), "queued": len(ids)}
+    return {**api_msg("開始生成 {n} 個剪輯用 proxy（背景執行）", n=len(ids)), "queued": len(ids)}
 
 
 def _build_editor_proxies(ids: list):

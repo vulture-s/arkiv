@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from apimsg import ApiError
 
 import config
 from auth import require_scopes
@@ -132,7 +133,7 @@ def clear_cache(
                 # silently reported as done.
                 shutil.rmtree(config.CHROMA_PATH)
             except OSError as exc:
-                raise HTTPException(500, "清除 chromadb 失敗：{0}".format(exc))
+                raise ApiError(500, "清除 chromadb 失敗：{error}", error=exc)
             cleared.append("chromadb")
         # #15: invalidate chromadb's in-process System cache so a subsequent rebuild
         # is actually served, instead of the cached (now-deleted) index all session.

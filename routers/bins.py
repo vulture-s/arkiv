@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from apimsg import ApiError
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
@@ -243,7 +244,7 @@ def copy_bin(bin_id: str, body: BinCopyRequest, _tok: dict = Depends(require_sco
                 proj = p
                 break
         if proj is None:
-            raise HTTPException(400, "找不到目的專案：{0}".format(body.dest))
+            raise ApiError(400, "找不到目的專案：{dest}", dest=body.dest)
         dest_root = Path(proj.path).expanduser().resolve(strict=False)
         dest_name = proj.name
 

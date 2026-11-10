@@ -23,6 +23,7 @@ from fastapi import (
     HTTPException,
     Request,
 )
+from apimsg import ApiError
 from pydantic import BaseModel, field_validator
 
 import corrections
@@ -94,8 +95,8 @@ def retranscribe_all(
     problems = mediaprobe.blocking(probe_result)
     usable = sum(1 for f in probe_result["files"] if f["verdict"] == mediaprobe.OK)
     if problems and usable == 0:
-        raise HTTPException(422, "這台機器讀不了這個庫的素材，批次不會有結果：\n"
-                                 + mediaprobe.format_report(probe_result))
+        raise ApiError(422, "這台機器讀不了這個庫的素材，批次不會有結果：\n{report}",
+                       report=mediaprobe.format_report(probe_result))
     if problems:
         _logging.getLogger(__name__).warning(
             "[retranscribe-all] 部分素材這台機器處理不了:\n%s",

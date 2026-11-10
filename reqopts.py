@@ -18,6 +18,7 @@ via a string annotation), so the pydantic model stays in server.py — no import
 of server needed, no cycle.
 """
 from fastapi import HTTPException
+from apimsg import ApiError
 
 import config
 
@@ -34,7 +35,7 @@ def _parse_ids_query(ids_query):
         try:
             parsed.append(int(raw))
         except ValueError:
-            raise HTTPException(400, f"無效的 media id: {raw!r}")
+            raise ApiError(400, "無效的 media id: {raw}", raw=repr(raw))
     return parsed  # may be [] if all entries were blank → caller treats as filter-with-no-rows
 
 

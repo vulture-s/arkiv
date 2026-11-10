@@ -149,7 +149,9 @@ def sample_prebuilt_load(
         reason = res.get("reason")
         if reason == "project-not-fresh":
             raise HTTPException(409, "專案已有內容，請改用重新索引的範例載入")
-        raise HTTPException(404, "找不到預建範例（尚未打包）" if reason == "artifact-missing" else str(reason))
+        if reason == "artifact-missing":
+            raise HTTPException(404, "找不到預建範例（尚未打包）")
+        raise HTTPException(404, str(reason))
     return res
 
 

@@ -22,7 +22,7 @@
 // test pins the range behaviour so swapping the response class cannot silently
 // turn this into a full download.
 
-import { tr } from './i18n.js'
+import { tr, apiText } from './i18n.js'
 
 export const CODEC = 'codec'            // the file is there and readable; the browser cannot decode it
 export const FORBIDDEN = 'forbidden'    // 401/403 — auth, not encoding
@@ -68,7 +68,7 @@ export async function diagnosePlaybackFailure(url, doFetch = fetch) {
       // #558: the library has proxies turned off, so the next ingest will NOT
       // build this one. The endpoint's own sentence says what to do instead.
       proxiesDisabled: !!(body && body.code === PROXIES_DISABLED),
-      message: (body && typeof body.message === 'string' && body.message) || null,
+      message: (body && typeof body.message === 'string' && apiText(body)) || null,
     }
   }
 

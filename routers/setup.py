@@ -16,6 +16,7 @@ import time
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from apimsg import api_msg
 from pydantic import BaseModel
 
 import config
@@ -100,7 +101,8 @@ def _run(items: List[dict]) -> None:
                 item["status"] = "error"
                 item["message"] = _friendly(e)
         failed = [i["name"] for i in items if i["status"] == "error"]
-        _pull.progress["message"] = ("有 {0} 個模型下載失敗".format(len(failed)) if failed else "done")
+        _pull.progress.update(api_msg("有 {n} 個模型下載失敗", n=len(failed)) if failed
+                              else {"message": "done", "message_key": None, "message_params": None})
     finally:
         _pull.progress["running"] = False
         _pull.release()
