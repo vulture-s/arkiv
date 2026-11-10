@@ -10,7 +10,7 @@
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Thumb from '../lib/Thumb.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
-  import { t } from '../lib/i18n.js'
+  import { t, apiErrorText } from '../lib/i18n.js'
 
   $: theme = $resolvedTheme
 
@@ -106,7 +106,7 @@
       state = 'ok'
     } catch (e) {
       state = 'error'
-      err = (e?.body?.detail) || e.message
+      err = apiErrorText(e)
     }
   }
 </script>

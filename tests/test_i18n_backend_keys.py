@@ -108,3 +108,30 @@ def test_path_access_error_matches_path_access_message():
     assert err.detail == health.path_access_message(exc, "匯出")
     assert err.key == health.PATH_ACCESS_KEY
     assert err.params["action"] == "匯出" and err.params["reason"] == "Permission denied"
+
+
+def test_only_marked_params_are_flagged_translatable():
+    # User data (a project literally named 匯出) carries no tr marker, so the UI
+    # shows it verbatim; the path-access words are marked.
+    plain = apimsg.ApiError(400, "找不到目的專案：{dest}", dest="匯出")
+    assert plain.tr_params == []
+    pa = health.path_access_error(400, OSError(13, "denied"), "匯出")
+    assert pa.tr_params == ["fm", "action"]
+    out = apimsg.api_msg("有 {n} 個模型下載失敗", n=2)
+    assert "message_tr_params" not in out
+    import pytest
+    with pytest.raises(ValueError):
+        apimsg.ApiError(400, "x{a}", tr_params=("b",), a=1)
+
+
+def test_path_access_error_body_marks_word_params():
+    app = FastAPI()
+    apimsg.install(app)
+
+    @app.get("/p")
+    def p():
+        raise health.path_access_error(400, OSError(13, "denied"), "加入")
+
+    body = TestClient(app).get("/p").json()
+    assert body["detail_tr_params"] == ["fm", "action"]
+    assert body["detail_key"].format(**body["detail_params"]) == body["detail"]

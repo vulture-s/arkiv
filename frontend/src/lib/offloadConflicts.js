@@ -61,7 +61,7 @@ export function applyResolveResult(rows, row, result) {
     if (r.dst !== row.dst || r.rel !== row.rel) return r
     if (fileStatus === 'verified') return { ...r, state: 'renamed', error: '', dst_rel: result.file.dst_rel }
     if (fileStatus === 'skipped_unbacked') return { ...r, state: 'skipped', error: '' }
-    return { ...r, state: 'error', error: result?.file?.error || tr('補拷失敗') }
+    return { ...r, state: 'error', error: (result?.file?.error && tr(result.file.error)) || tr('補拷失敗') }
   })
   return { rows: next, status: result?.status || 'failed', summary: result?.summary }
 }

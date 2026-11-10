@@ -29,7 +29,7 @@ export function createCopyTracker() {
         if (ev.status === 'start') return tr('▸ 索引 {n} 檔…', { n: ev.files })
         if (ev.status === 'busy') {
           problems.push(tr('未索引（已有匯入任務進行中，略過索引）')); busySkipped = true
-          return tr('✗ 略過索引：{reason}', { reason: ev.error || tr('已有匯入任務進行中') })
+          return tr('✗ 略過索引：{reason}', { reason: (ev.error && tr(ev.error)) || tr('已有匯入任務進行中') })
         }
         if (ev.status === 'done' && ev.code === 0) return tr('▸ 索引完成 (code 0)')
         problems.push(tr('索引失敗（code {code}）', { code: ev.code }))

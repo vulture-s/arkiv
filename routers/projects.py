@@ -129,6 +129,9 @@ def add_project(
         raise HTTPException(
             status_code=403, detail={"code": exc.code, "message": str(exc)}
         )
+    except project_registry.PathAccessError as exc:
+        # #634: same text as str(exc), plus the key/params the English UI needs.
+        raise path_access_error(400, exc.os_error, exc.action)
     except project_registry.RegistryError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except OSError as exc:

@@ -11,8 +11,13 @@ list is extracted from the code rather than maintained by hand:
     _user_dir_or_400 (templates passed through a variable)
   * EXTRA below — fixed sentences returned from a helper (no structural marker)
 
-`remaining` counts the CJK details still built by f-string / .format / +
-inside a plain HTTPException — the frontend cannot translate those yet.
+`remaining` counts text the frontend cannot translate yet:
+  * CJK details built by f-string / .format / + inside a plain HTTPException;
+  * any other `raise SomeError(<formatted CJK>)` — its str(exc) tends to reach
+    an HTTPException(detail=str(exc)) in a router without a key;
+  * a path_access_message() call outside health.py / PathAccessError — the
+    API must use path_access_error() (ApiError) instead. (#634 R1: a Windows
+    share login failure reached the UI through PathAccessError → str(exc).)
 
     python scripts/i18n_backend_keys.py           # print
     python scripts/i18n_backend_keys.py --write   # refresh the committed JSON
@@ -25,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "frontend" / "src" / "lib" / "i18n" / "backend-keys.json"
-SOURCES = ["reqopts.py", "webguard.py", "health.py", "settings.py"] + sorted(
+SOURCES = ["reqopts.py", "webguard.py", "health.py", "settings.py", "projects.py"] + sorted(
     str(p.relative_to(ROOT)) for p in (ROOT / "routers").glob("*.py"))
 CJK = re.compile(r"[㐀-鿿]")
 MSG_FIELDS = ("message", "error")
@@ -62,11 +67,34 @@ def _has_cjk(n):
                for x in ast.walk(n))
 
 
+def _bump(remaining, rel):
+    remaining[rel] = remaining.get(rel, 0) + 1
+
+
+def _path_access_ok(tree):
+    """ids of path_access_message calls that are allowed (the definition module's
+    own helpers, and PathAccessError.__init__ which keeps the OSError)."""
+    ok = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ClassDef) and n.name == "PathAccessError":
+            ok.update(id(x) for x in ast.walk(n))
+    return ok
+
+
 def scan():
     keys, remaining = set(EXTRA), {}
     for rel in SOURCES:
         tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
+        pa_ok = _path_access_ok(tree)
         for n in ast.walk(tree):
+            if (isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)
+                    and (getattr(n.exc.func, "id", None) or getattr(n.exc.func, "attr", None))
+                    not in ("HTTPException", "ApiError")
+                    and any(_has_cjk(a) and _const(a) is None for a in n.exc.args)):
+                _bump(remaining, rel)
+            if (isinstance(n, ast.Call) and getattr(n.func, "id", None) == "path_access_message"
+                    and rel != "health.py" and id(n) not in pa_ok):
+                _bump(remaining, rel)
             if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
                 name = n.targets[0].id
                 v = _const(n.value)
@@ -95,7 +123,7 @@ def scan():
                     if v is not None:
                         keys.add(v)
                     else:
-                        remaining[rel] = remaining.get(rel, 0) + 1
+                        _bump(remaining, rel)
                 del args
             if isinstance(n, ast.Dict):
                 for k, v in zip(n.keys, n.values):

@@ -80,7 +80,13 @@ def path_access_params(exc: OSError, action: str = "加入") -> dict:
 def path_access_error(status_code: int, exc: OSError, action: str = "加入"):
     """ApiError carrying path_access_message's text plus its key/params."""
     from apimsg import ApiError
-    return ApiError(status_code, PATH_ACCESS_KEY, **path_access_params(exc, action))
+    return ApiError(status_code, PATH_ACCESS_KEY, tr_params=PATH_ACCESS_TR_PARAMS,
+                    **path_access_params(exc, action))
+
+
+# `fm` (Finder / 檔案總管) and `action` (加入 / 匯入 …) are words we chose; `reason`
+# is the OS's own text and is shown verbatim.
+PATH_ACCESS_TR_PARAMS = ("fm", "action")
 
 
 def check(name: str, ok: bool, detail: str = "", required: bool = True):

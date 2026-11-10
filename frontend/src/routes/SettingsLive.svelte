@@ -18,7 +18,7 @@
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
-  import { localePref, t, apiText } from '../lib/i18n.js'
+  import { localePref, t, apiText, apiErrorText } from '../lib/i18n.js'
 
   import { VERSION } from '../lib/version.js'
   import { describeTier, readLicenceFile, rejectReason } from '../lib/licenceView.js'
@@ -76,13 +76,13 @@
   async function saveSetting(values) {
     settingsBusy = true; settingsMsg = ''
     try { await api.putSettings(values); await loadSettings(); settingsMsg = $t('已儲存 ✓') }
-    catch (e) { settingsMsg = $t('儲存失敗：{msg}', { msg: e?.body?.detail || e.message }) }
+    catch (e) { settingsMsg = $t('儲存失敗：{msg}', { msg: apiErrorText(e) }) }
     finally { settingsBusy = false }
   }
   async function resetSettingKey(key) {
     settingsBusy = true; settingsMsg = ''
     try { await api.resetSetting(key); await loadSettings(); settingsMsg = $t('已重設為預設 ✓') }
-    catch (e) { settingsMsg = $t('重設失敗：{msg}', { msg: e?.body?.detail || e.message }) }
+    catch (e) { settingsMsg = $t('重設失敗：{msg}', { msg: apiErrorText(e) }) }
     finally { settingsBusy = false }
   }
 

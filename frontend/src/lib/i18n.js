@@ -79,14 +79,16 @@ export function tr(s, params) {
 // (old clients, MCP callers and contract tests see no change); when the text
 // had values in it, it ALSO sends the template as `<field>_key` and the values
 // as `<field>_params` (apimsg.py). A fixed sentence is looked up as-is, a
-// template is translated then filled; string params are looked up too, so a
-// word the backend passes in (an action verb such as 匯出) reads in the same
-// language, while a path or OS reason — never a dictionary key — stays verbatim.
-export function trApi(text, key, params) {
+// template is translated then filled. Param values are user data (a project
+// name, a path, an OS reason) and are shown VERBATIM — a project literally
+// named 匯出 must not turn into "Export". Only the params the backend lists in
+// `<field>_tr_params` (words it chose itself, e.g. the action verb) are looked up.
+export function trApi(text, key, params, trParams) {
   if (typeof key === 'string' && key) {
-    const p = params && typeof params === 'object'
-      ? Object.fromEntries(Object.entries(params).map(([k, v]) => [k, typeof v === 'string' ? tr(v) : v]))
-      : undefined
+    let p = params && typeof params === 'object' ? { ...params } : undefined
+    if (p && Array.isArray(trParams)) {
+      for (const k of trParams) if (typeof p[k] === 'string') p[k] = tr(p[k])
+    }
     return tr(key, p)
   }
   return typeof text === 'string' ? tr(text) : text
@@ -96,5 +98,18 @@ export function trApi(text, key, params) {
 // for an error body. Non-objects pass through.
 export function apiText(body, field = 'message') {
   if (!body || typeof body !== 'object') return body
-  return trApi(body[field], body[field + '_key'], body[field + '_params'])
+  return trApi(body[field], body[field + '_key'], body[field + '_params'], body[field + '_tr_params'])
+}
+
+// The human sentence of a thrown ApiError, in the UI language: the backend's
+// own detail (plain, keyed, or a structured {code, message}) when there is one,
+// else the error's message. Replaces the raw `e.body?.detail || e.message`.
+export function apiErrorText(e) {
+  const b = e && e.body
+  if (b && typeof b === 'object') {
+    const d = b.detail
+    if (typeof d === 'string' && d) return apiText(b, 'detail')
+    if (d && typeof d === 'object' && typeof d.message === 'string' && d.message) return tr(d.message)
+  }
+  return (e && e.message) || String(e)
 }

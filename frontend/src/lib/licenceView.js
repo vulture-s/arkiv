@@ -40,5 +40,5 @@ export function rejectReason(e) {
   const raw = e?.code === 'licence_rejected' ? e.body?.detail?.message : null
   if (!raw) return e?.message || String(e)
   const hit = REASONS.find(([re]) => re.test(raw))
-  return hit ? hit[1]() : raw
+  return hit ? hit[1]() : tr(raw)
 }
