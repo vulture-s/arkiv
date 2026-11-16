@@ -27,7 +27,7 @@ nanoid>=2.0.0
 # (pandas removed — it was an unused ~70 MB dependency, imported nowhere.)
 
 # Media processing
-pillow>=12.3.0; python_version >= "3.10"
+pillow>=13.0.0; python_version >= "3.10"
 pillow>=11.3.0; python_version < "3.10"
 soundfile>=0.12
 # Phase 9.8b: Simplified→Traditional (Taiwan) transcript conversion. Whisper zh
