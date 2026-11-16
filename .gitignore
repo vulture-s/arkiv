@@ -90,6 +90,17 @@ src-tauri/backend/src/
 # Frontend (Svelte 4 + Vite) — deps + build + local audit artifacts
 frontend/node_modules/
 frontend/.audit/
+# Any other node_modules (root or a new package dir) — site/ has its own
+# .gitignore, but a package.json added elsewhere would otherwise be unguarded.
+node_modules/
+
+# Packaged installers / bundles from `cargo tauri build` and release scripts.
+# These belong on a GitHub Release, never in git (CI: scripts/check_large_files.py).
+*.dmg
+*.msi
+*.AppImage
+*.deb
+*.rpm
 
 # Local overnight work-order (ephemeral, mini-only)
 OVERNIGHT_UI_BUILD.md

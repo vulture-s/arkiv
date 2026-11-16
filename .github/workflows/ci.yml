@@ -428,3 +428,39 @@ jobs:
             exit 1
           fi
           echo "No credential shapes in tracked files."
+
+  large-file-guard:
+    name: large-file-guard
+    # Stops build output and oversized blobs from entering history. The six
+    # largest blobs ever committed here are src-tauri/target/debug/* compiler
+    # output (23-29 MB) — deleted from the tree long ago, still downloaded by
+    # every clone. History is intentionally not rewritten; this only stops the
+    # next one. Scans every blob NEW in this PR across all its commits (not
+    # just the final tree): merge commits are allowed, so an add-then-delete
+    # inside one PR would otherwise still land in main's history.
+    # Limit 5 MiB + rationale: see the docstring in scripts/check_large_files.py.
+    # Stdlib-only Python, no deps — runs in seconds on ubuntu.
+    # NOT a required check yet (branch protection is the owner's call).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # need the base branch's history to compute "new" blobs
+      - name: Check new blobs (build output paths + size limit)
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base="origin/$BASE_REF"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+          else
+            echo "No usable base for this push; checking the whole tracked tree instead."
+            python3 scripts/check_large_files.py --all
+            exit $?
+          fi
+          python3 scripts/check_large_files.py --base "$base"
