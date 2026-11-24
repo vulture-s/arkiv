@@ -22,6 +22,7 @@
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
@@ -287,13 +288,10 @@
 </script>
 
 <div class="artboard" data-theme={theme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">{VERSION}</Mono>
-    <div class="grow"></div>
-    <Mono dim style="font-size:11px;">ws://…/ws/ingest · <span class:on={conn === 'open'} class:off={conn !== 'open'}>{conn.toUpperCase()}</span></Mono>
-    <button class="ak-btn" on:click={() => push('/ingest-setup')}>New ingest →</button>
-  </div>
+  <PageBar title={$t('匯入')}>
+    <Mono dim style="font-size:11px;">{$t('即時連線')} · <span class:on={conn === 'open'} class:off={conn !== 'open'}>{conn === 'open' ? $t('已連線') : $t('未連線')}</span></Mono>
+    <button class="ak-btn" on:click={() => push('/ingest-setup')}>{$t('新的匯入 →')}</button>
+  </PageBar>
 
   {#if disconnected}
     <div class="dbanner">
@@ -319,8 +317,8 @@
     <div class="left">
       <div class="hero">
         <div class="herohead">
-          <Eyebrow>Ingest · live websocket</Eyebrow>
-          <Mono dim style="font-size:10.5px;">{#if startedAt}{elapsed} {joinedLate ? 'since joined' : 'elapsed'} · real /ws/ingest{:else}real /ws/ingest stream{/if}</Mono>
+          <Eyebrow>Ingest · live</Eyebrow>
+          <Mono dim style="font-size:10.5px;">{#if startedAt}{elapsed} {joinedLate ? $t('（自加入起）') : $t('已經過')}{/if}</Mono>
         </div>
 
         {#if active}
@@ -342,9 +340,10 @@
             <div class="trigger">
               <input class="ak-input pathinput" placeholder={$t('ingest 資料夾路徑（例 ~/Desktop/Test）')} bind:value={path} disabled={busy} />
               <div class="triggerrow">
-                <input class="ak-input limitinput" type="number" min="0" bind:value={limit} disabled={busy} title="limit (0=all)" />
-                <button class="ak-btn ak-btn--primary" on:click={trigger} disabled={busy || conn !== 'open'}>{busy ? 'running…' : 'Start ingest →'}</button>
-                <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title={$t('重建 ChromaDB 向量索引（背景執行）')}>{rebuilding ? $t('排入中…') : $t('重建索引')}</button>
+                <label class="limitlbl"><Mono dim style="font-size:10px;letter-spacing:0.08em;">{$t('上限')}</Mono>
+                <input class="ak-input limitinput" type="number" min="0" bind:value={limit} disabled={busy} title={$t('最多處理幾支（0 = 全部）')} aria-label={$t('最多處理幾支（0 = 全部）')} /></label>
+                <button class="ak-btn ak-btn--primary" on:click={trigger} disabled={busy || conn !== 'open'}>{busy ? $t('匯入中…') : $t('開始匯入 →')}</button>
+                <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title={$t('重建語意搜尋索引（背景執行）')}>{rebuilding ? $t('排入中…') : $t('重建索引')}</button>
               </div>
               {#if embedStatus && (embedStatus.stale_media || embedStatus.unindexed_media)}
                 <!-- Stale = text/tags changed after embedding; search on those clips is
@@ -354,7 +353,7 @@
             </div>
           </div>
         {/if}
-        {#if err}<Mono style="font-size:11px;color:var(--cyan);margin-top:8px;display:block;">{err}</Mono>{/if}
+        {#if err}<Mono style="font-size:11px;color:var(--ink);margin-top:8px;display:block;">⚠ {err}</Mono>{/if}
 
         {#if halted}
           <!-- The run was stopped by the server-side watchdog. This has to be
@@ -445,7 +444,6 @@
   .quiet { color: var(--quiet); }
   .on { color: var(--cyan); }
   .off { color: var(--quiet); }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; height: 52px; flex: 0 0 52px; }
   /* edge-state C1 — disconnect banner (B&W + dashed; not the red reserved for
      data-safety failures). ◇ glyph + ink top rule = the redesign's alert motif. */
   .dbanner { flex: 0 0 auto; display: flex; align-items: center; gap: 28px; padding: 14px 40px; border-top: 1px solid var(--ink); border-bottom: 1px dashed var(--rule-hi); background: var(--surface); }
@@ -457,13 +455,18 @@
   .herohead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
   .herobig { display: flex; align-items: baseline; gap: 18px; }
   .bignum { font-size: 80px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
+  /* idle placeholder: .bignum came after .quiet at equal weight and painted the
+     80px dash full ink — it looked like a broken widget */
+  .bignum.quiet { color: var(--quiet-2); }
   .herometa { flex: 1; }
   .trigger { flex: 1; display: flex; flex-direction: column; gap: 8px; align-self: center; }
   .pathinput { font-size: 12px; }
   .triggerrow { display: flex; gap: 8px; align-items: center; }
   .limitinput { width: 70px; font-size: 12px; }
-  .haltbox { margin-top: 10px; padding: 10px 12px; border-radius: 6px;
-             border: 1px solid var(--cyan); background: color-mix(in srgb, var(--cyan) 8%, transparent); }
+  .limitlbl { display: inline-flex; align-items: center; gap: 6px; }
+  /* a halt is an alert, not progress: square, ink rule on top (was the app's only
+     rounded box, tinted cyan) */
+  .haltbox { margin-top: 10px; padding: 10px 12px; border-top: 1px solid var(--ink); background: var(--surface); }
   .halthead { margin-bottom: 4px; }
   .aggwrap { margin-top: 22px; }
   .aggrow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }

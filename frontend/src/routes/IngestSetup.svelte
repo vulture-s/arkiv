@@ -14,6 +14,7 @@
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
@@ -202,16 +203,11 @@
 <svelte:window on:keydown={onKey} />
 
 <div class="artboard" data-theme={$resolvedTheme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">{VERSION}</Mono>
-    <div class="grow"></div>
-    <Mono dim style="font-size:11px;">ingest · setup</Mono>
-  </div>
+  <PageBar title={$t('匯入設定')} back={false} />
 
   <div class="dialog">
     <div class="dhead">
-      <Eyebrow>Step 1 / 1 · configure</Eyebrow>
+      <Eyebrow>Configure</Eyebrow>
       <div class="ak-display title">{total ? `Ingest ${fresh} files` : 'Ingest media'}{gb ? ` · ${gb} GB` : ''}</div>
       <button class="esc" on:click={() => push('/')}>ESC · CANCEL</button>
     </div>
@@ -224,7 +220,7 @@
           <div class="srcrow">
             <input class="ak-input" placeholder={$t('/Volumes/CARD/DCIM  或  ~/footage')} bind:value={path} spellcheck="false" on:keydown={(e)=>e.key==='Enter'&&scan()} />
             {#if canBrowse}
-              <button class="seg" on:click={browsePath} disabled={scanning} title={$t('選擇資料夾')}>⋯</button>
+              <button class="seg" on:click={browsePath} disabled={scanning} title={$t('選擇資料夾')} aria-label={$t('選擇資料夾')}>⋯</button>
             {/if}
             <button class="ak-btn" on:click={scan} disabled={scanning}>{scanning ? 'scanning…' : 'Scan'}</button>
           </div>
@@ -244,7 +240,7 @@
           <Eyebrow>Ingest options</Eyebrow>
           {#each TOGGLES as [key, label, hint]}
             <div class="optrow">
-              <button class="seg" class:on={opts[key]} on:click={() => opts[key] = !opts[key]}>{opts[key] ? 'ON' : 'OFF'}</button>
+              <button class="seg" class:on={opts[key]} aria-pressed={!!opts[key]} on:click={() => opts[key] = !opts[key]}>{opts[key] ? 'ON' : 'OFF'}</button>
               <div class="optlabel"><span>{label}</span><Mono dim style="font-size:10px;">{hint}</Mono></div>
             </div>
           {/each}
@@ -332,7 +328,7 @@
     </div>
 
     <div class="footer">
-      {#if err}<Mono style="font-size:11px;color:var(--cyan);">{err}</Mono>{:else if notice}<Mono dim style="font-size:11px;">{notice}</Mono>{/if}
+      {#if err}<Mono style="font-size:11px;color:var(--ink);">⚠ {err}</Mono>{:else if notice}<Mono dim style="font-size:11px;">{notice}</Mono>{/if}
       <div class="grow"></div>
       <button class="ak-btn" on:click={() => push('/')}>Cancel</button>
       <!-- Disabled only while a start is actually in flight; every other refusal
@@ -346,7 +342,6 @@
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
 
   /* Fit the window (was a fixed 1080px: the file list and the action row were clipped). */
   .dialog { margin: 40px auto; width: min(1080px, calc(100vw - 32px)); border: 1px solid var(--rule-hi); background: var(--surface); display: grid; grid-template-rows: auto 1fr auto; min-height: 0; max-height: calc(100dvh - 132px); }
@@ -361,12 +356,13 @@
 
   .field { display: flex; flex-direction: column; gap: 10px; }
   .srcrow { display: flex; gap: 10px; align-items: flex-end; }
-  .num { width: 80px; flex: 0 0 80px; }
+  /* same column as the 46px ON/OFF toggles above, so every option label starts
+     on one line (was 80px: the last two labels sat 34px right of the rest) */
+  .num { width: 46px; flex: 0 0 46px; text-align: center; }
   /* No `background` here on purpose: a class beats the bare `select` rule in
      app.css, so re-declaring `transparent` would put the grey-white default
      popup back. Colour comes from that global rule. */
-  .sel { flex: 0 0 196px; width: 196px; font-size: 11.5px; font-family: var(--ak-mono); color: var(--ink); border: 1px solid var(--rule-hi); border-radius: 0; padding: 6px 8px; cursor: pointer; }
-  .sel:focus { outline: none; border-color: var(--ink); }
+  .sel { flex: 0 0 196px; width: 196px; }
 
   .optrow { display: flex; align-items: center; gap: 14px; }
   .presetrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }

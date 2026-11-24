@@ -6,6 +6,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { push } from 'svelte-spa-router'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Mono from '../lib/Mono.svelte'
   import * as api from '../lib/api.js'
@@ -84,25 +85,22 @@
 </script>
 
 <div class="wiz">
-  <div class="topbar">
-    <ArkivLogo size={16} /><Mono dim style="font-size:11px;">first run · setup</Mono>
-    <div class="grow"></div>
+  <PageBar title={$t('首次設定')} home={false} back={false}>
     <button class="ak-btn" on:click={() => finish(true)}>{$t('略過，直接開始')}</button>
-  </div>
+  </PageBar>
 
   <div class="body">
     <div class="stepper">
       <Eyebrow style="margin-bottom:28px;">Setup · {step} of 3</Eyebrow>
       <div class="steps">
         {#each steps as s}
-          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-          <div class="step" on:click={() => (step = s.n)}>
+          <button class="step" aria-current={s.status === 'active' ? 'step' : undefined} on:click={() => (step = s.n)}>
             <span class="stepn" class:active={s.status === 'active'} class:done={s.status === 'done'}>{s.status === 'done' ? '✓' : s.n}</span>
-            <div>
-              <div class="ak-display steptitle" class:dim={s.status === 'pending'}>{s.title}</div>
+            <span class="stepbody">
+              <span class="ak-display steptitle" class:dim={s.status === 'pending'}>{s.title}</span>
               <Mono dim style="font-size:11px;margin-top:4px;display:block;">{s.sub}</Mono>
-            </div>
-          </div>
+            </span>
+          </button>
         {/each}
       </div>
       <div class="grow"></div>
@@ -116,7 +114,7 @@
       {:else if !setup}
         <Mono dim>{$t('檢查中…')}</Mono>
       {:else if step === 1}
-        <Eyebrow style="margin-bottom:10px;">Step 1 · {$t('這台電腦')}</Eyebrow>
+        <Eyebrow style="margin-bottom:10px;">Step 1 / 3 · {$t('這台電腦')}</Eyebrow>
         <div class="ak-display big">{$t('先看看你的')}<br />{$t('硬體。')}</div>
         <div class="grid2">
           <Mono dim>{$t('系統')}</Mono><Mono>{hw.os} · {hw.arch}</Mono>
@@ -135,7 +133,7 @@
         <div class="grow"></div>
         <div class="nav"><button class="ak-btn ak-btn--primary" on:click={() => (step = 2)}>{$t('下一步：AI 模型')}</button></div>
       {:else if step === 2}
-        <Eyebrow style="margin-bottom:10px;">Step 2 · {$t('AI 模型')}</Eyebrow>
+        <Eyebrow style="margin-bottom:10px;">Step 2 / 3 · {$t('AI 模型')}</Eyebrow>
         <div class="ak-display big">{$t('在本機跑的')}<br />{$t('模型。')}</div>
         {#if !setup.ollama.running}
           <div class="warn">
@@ -170,7 +168,7 @@
         <div class="grow"></div>
         <Mono dim style="font-size:10.5px;margin-top:16px;">{$t('想換模型：設定 → 系統。下載可以關掉這頁繼續在背景跑。')}</Mono>
       {:else}
-        <Eyebrow style="margin-bottom:10px;">Step 3 · {$t('加入素材')}</Eyebrow>
+        <Eyebrow style="margin-bottom:10px;">Step 3 / 3 · {$t('加入素材')}</Eyebrow>
         <div class="ak-display big">{$t('指給 arkiv')}<br />{$t('看你的素材。')}</div>
         <Mono dim style="font-size:13px;margin-top:14px;line-height:1.65;max-width:640px;display:block;">
           {$t('arkiv 不會搬動或複製你的檔案，只在原地建索引。NAS 上的資料夾請先在 Finder／檔案總管連上，再到匯入畫面選它。')}
@@ -187,12 +185,15 @@
 
 <style>
   .wiz { height: 100vh; display: grid; grid-template-rows: 52px 1fr; background: var(--bg); color: var(--ink); }
-  .topbar { display: flex; align-items: center; gap: 14px; padding: 0 24px; border-bottom: 1px solid var(--rule); }
   .grow { flex: 1; }
   .body { display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
   .stepper { border-right: 1px solid var(--rule); padding: 40px 32px; display: flex; flex-direction: column; }
   .steps { display: flex; flex-direction: column; gap: 22px; }
-  .step { display: grid; grid-template-columns: 32px 1fr; gap: 14px; align-items: baseline; cursor: pointer; }
+  .step { display: grid; grid-template-columns: 32px 1fr; gap: 14px; align-items: baseline; cursor: pointer;
+    /* a <button> now (keyboard-reachable): strip the UA button look */
+    background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; width: 100%; }
+  .stepbody { display: block; }
+  .stepbody .steptitle { display: block; }
   .stepn { font-family: var(--ak-mono); font-size: 11px; width: 24px; height: 24px; color: var(--quiet); border: 1px solid var(--rule); display: inline-flex; align-items: center; justify-content: center; }
   .stepn.done { color: var(--ink); border-color: var(--ink); }
   .stepn.active { background: var(--invert); color: var(--invert-ink); border: none; font-weight: 700; }

@@ -6,6 +6,7 @@
   import { onMount } from 'svelte'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Thumb from '../lib/Thumb.svelte'
@@ -112,13 +113,9 @@
 </script>
 
 <div class="artboard" data-theme={theme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">live · query builder</Mono>
-    <div class="grow"></div>
-    <a class="ak-btn" href="#/search-live">⌕ simple search</a>
-    <a class="ak-btn" href="#/main-live">← back to grid</a>
-  </div>
+  <PageBar title={$t('條件查詢')}>
+    <a class="ak-btn" href="#/search-live">{$t('⌕ 簡易搜尋')}</a>
+  </PageBar>
 
   <div class="main">
     <div class="builder">
@@ -173,18 +170,18 @@
                      on:keydown={(e) => e.key === 'Enter' && run()} spellcheck="false" />
             {/if}
 
-            <button class="cx" title={$t('移除')} on:click={() => removeCondition(i)} disabled={conditions.length === 1}>✕</button>
+            <button class="cx" title={$t('移除')} aria-label={$t('移除')} on:click={() => removeCondition(i)} disabled={conditions.length === 1}>✕</button>
           </div>
         {/each}
-        <button class="addclause" on:click={addCondition}>+ Add condition</button>
+        <button class="addclause" on:click={addCondition}>{$t('+ 新增條件')}</button>
       </div>
 
       <div class="brun">
         <button class="ak-btn ak-btn--primary" on:click={run} disabled={state === 'loading'}>
-          {state === 'loading' ? 'Running…' : 'Run query →'}
+          {state === 'loading' ? $t('查詢中…') : $t('執行查詢 →')}
         </button>
         {#if state === 'ok'}
-          <Mono dim style="font-size:10.5px;">{total} matches · {elapsedMs}ms</Mono>
+          <Mono dim style="font-size:10.5px;">{$t('{n} 筆符合', { n: total })} · {elapsedMs}ms</Mono>
         {:else if state === 'error'}
           <Mono style="font-size:10.5px;color:var(--ink);">⚠ ERROR: {err}</Mono>
         {:else if err}
@@ -223,7 +220,7 @@
                   </div>
                 </div>
                 {#if r.rating}<div class="rrating"><Mono dim style="font-size:9px;letter-spacing:0.08em;text-transform:uppercase;">{r.rating}</Mono></div>{/if}
-                <div class="raction"><span class="ak-btn openbtn">Open →</span></div>
+                <div class="raction"><span class="ak-btn openbtn">{$t('開啟 →')}</span></div>
               </a>
             {/each}
           </div>
@@ -236,9 +233,8 @@
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
   .main { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-  .builder { padding: 22px 64px 16px; border-bottom: 1px solid var(--rule); }
+  .builder { padding: 22px clamp(16px, 4vw, 64px) 16px; border-bottom: 1px solid var(--rule); }
   .matchrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .seg { display: flex; border: 1px solid var(--rule); width: fit-content; }
   .segsep { width: 1px; background: var(--rule); }
@@ -246,10 +242,13 @@
   .segbtn.on { background: var(--invert); color: var(--invert-ink); font-weight: 700; }
   .clauses { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
   .clause { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .cfield { min-width: 190px; }
-  .cop { min-width: 110px; }
+  /* one row: field | op | value (takes the slack) | ✕ — at 900px the fixed
+     190+110+240 min widths wrapped the value and ✕ onto their own lines */
+  .clause { flex-wrap: nowrap; }
+  .cfield { min-width: 150px; flex: 0 1 190px; }
+  .cop { min-width: 90px; flex: 0 1 110px; }
   .cop.static { font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.05em; color: var(--quiet); padding: 0 8px; min-width: 110px; }
-  .cvalue { min-width: 240px; }
+  .cvalue { min-width: 120px; flex: 1 1 240px; }
   .rangewrap { display: flex; align-items: center; gap: 8px; }
   .rangewrap .num { width: 110px; }
   .cx { background: transparent; border: 1px solid var(--rule); color: var(--quiet); cursor: pointer; width: 26px; height: 26px; line-height: 1; }

@@ -16,6 +16,7 @@
   import { vocabLoadState } from '../lib/vocabLoad.js'
   import { needsIngestHint, healthLabel, addedMessage, addErrorMessage } from '../lib/projectsFirstRun.js'
   import Mono from '../lib/Mono.svelte'
+  import ConfirmDialog from '../lib/ConfirmDialog.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { themePref, resolvedTheme, uiScale, SCALE_MIN, SCALE_MAX } from '../lib/prefs.js'
   import { localePref, t, apiText, apiErrorText } from '../lib/i18n.js'
@@ -90,6 +91,9 @@
   let projects = [] // [{name, path, added_at, last_indexed_at, tags, source}]
   let projHealth = {} // name -> status string ("ok" | …)
   let projMsg = ''
+  // Failure lines read like success lines (both dim) — flagged so they get ⚠ + ink.
+  let projErr = false
+  $: if (!projMsg) projErr = false
   // Settings → Projects → 授權: the buyer's way to install the licence file they
   // were sent, instead of copying it by hand into a hidden folder.
   let entitlement = null
@@ -136,20 +140,20 @@
       newName = ''; newPath = ''; newTags = ''
       await loadProjects()
       projMsg = addedMessage(name, projHealth[name])
-    } catch (e) { projMsg = addErrorMessage(e, name) }
+    } catch (e) { projMsg = addErrorMessage(e, name); projErr = true }
     finally { projBusy = false }
   }
   async function delProj(name) {
     if (projBusy) return
     projBusy = true; projMsg = ''
     try { await api.deleteProject(name); await loadProjects(); projMsg = $t('已移除 {name}', { name }) }
-    catch (e) { projMsg = $t('失敗: {msg}', { msg: e.message }) } finally { projBusy = false }
+    catch (e) { projMsg = $t('失敗: {msg}', { msg: e.message }); projErr = true } finally { projBusy = false }
   }
   async function syncProj() {
     if (projBusy) return
     projBusy = true; projMsg = ''
     try { await api.syncProjects(); await loadProjects(); projMsg = $t('已同步索引時間') }
-    catch (e) { projMsg = $t('失敗: {msg}', { msg: e.message }) } finally { projBusy = false }
+    catch (e) { projMsg = $t('失敗: {msg}', { msg: e.message }); projErr = true } finally { projBusy = false }
   }
 
   // System panel — real backend state.
@@ -225,21 +229,47 @@
     try { durLang = await api.durationByLang() } catch { durLang = null }
     try { sizeExt = await api.sizeByExt() } catch { sizeExt = null }
   }
+  // One confirm for the actions here that are costly or hard to undo. They used
+  // to run on the first click. `ask` = {title, message, label, danger, run}.
+  let ask = null
+  let askBusy = false
+  async function confirmAsk() {
+    if (!ask) return
+    askBusy = true
+    try { await ask.run() } finally { askBusy = false; ask = null }
+  }
+  function askClearAll() {
+    ask = { title: $t('清除全部快取？'), danger: true, label: $t('全部清除'),
+      message: $t('會刪掉所有縮圖與語意搜尋索引：格線會暫時沒有縮圖，語意搜尋要重建索引後才能用。原始檔不受影響。'),
+      run: () => runClearCache('all') }
+  }
+  function askDelProj(name) {
+    ask = { title: $t('從清單移除「{name}」？', { name }), danger: false, label: $t('移除'),
+      message: $t('只是從素材庫清單拿掉，資料夾與裡面的檔案都不會動，之後可以再加回來。'),
+      run: () => delProj(name) }
+  }
+  function askRetranscribeAll() {
+    ask = { title: $t('重新轉錄整個素材庫？'), danger: true, label: $t('開始重轉錄'),
+      message: $t('會用目前的模型重跑每一支的逐字稿並覆寫現有結果（含手動修正）。開始前會先備份，可以從備份還原。素材多時要跑很久。'),
+      run: () => runRetranscribeAll() }
+  }
+
   // Cache management (info + targeted clear)
   let cache = null // {caches:{name:{size_mb,count?}}, total_mb}
   let cacheMsg = ''
+  let cacheErr = false
   let cacheBusy = false
   async function loadCache() {
     try { cache = await api.cacheInfo() } catch { cache = null }
   }
   async function runClearCache(target) {
     if (cacheBusy) return
-    cacheBusy = true; cacheMsg = ''
+    cacheBusy = true; cacheMsg = ''; cacheErr = false
     try {
       const r = await api.clearCache(target)
       cacheMsg = apiText(r) || $t('已清除 {target}', { target })
       setTimeout(loadCache, 800)
-    } catch (e) { cacheMsg = $t('失敗: {msg}', { msg: e.message }) } finally { cacheBusy = false }
+    } catch (e) { cacheMsg = $t('失敗: {msg}', { msg: e.message }); cacheErr = true } finally { cacheBusy = false }
   }
 
   // Correction dictionary (Phase 9.6) — one per-project dictionary, two paths:
@@ -350,6 +380,7 @@
   // field has focus so Esc can still cancel an IME composition / clear a box.
   function onWinKey(e) {
     if (e.key !== 'Escape' || e.isComposing) return
+    if (ask) return // the open confirm owns Esc
     const tag = (e.target && e.target.tagName) || ''
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) { e.target.blur(); return }
     push('/')
@@ -357,6 +388,9 @@
 </script>
 
 <svelte:window on:keydown={onWinKey} />
+
+<ConfirmDialog open={!!ask} title={ask?.title} message={ask?.message || ''} confirmLabel={ask?.label}
+  danger={!!ask?.danger} busy={askBusy} on:cancel={() => (ask = null)} on:confirm={confirmAsk} />
 
 <div class="artboard" data-theme={$resolvedTheme}>
   <div class="scrim"></div>
@@ -390,7 +424,7 @@
                 <div class="seg">
                   {#each themeOpts as [id, label], i}
                     {#if i > 0}<div class="segsep"></div>{/if}
-                    <button class="segbtn" class:on={$themePref === id} on:click={() => themePref.set(id)}>{label}</button>
+                    <button class="segbtn" class:on={$themePref === id} aria-pressed={$themePref === id} on:click={() => themePref.set(id)}>{label}</button>
                   {/each}
                 </div>
               </div>
@@ -399,7 +433,7 @@
                 <div class="seg">
                   {#each localeOpts as [id, label], i}
                     {#if i > 0}<div class="segsep"></div>{/if}
-                    <button class="segbtn" class:on={$localePref === id} on:click={() => localePref.set(id)}>{label ?? $t('跟隨系統')}</button>
+                    <button class="segbtn" class:on={$localePref === id} aria-pressed={$localePref === id} on:click={() => localePref.set(id)}>{label ?? $t('跟隨系統')}</button>
                   {/each}
                 </div>
               </div>
@@ -428,7 +462,7 @@
                     <span class="setk" title={s.label}>{s.key}</span>
                     <span class="setv">{s.value === '' ? '—' : s.value}</span>
                     <span class="srctag" class:srcset={s.source !== 'default'}>{s.source}</span>
-                    <span>{#if s.source !== 'default'}<button class="vx" title={$t('重設為預設')} on:click={() => resetSettingKey(s.key)} disabled={settingsBusy}>↺</button>{/if}</span>
+                    <span>{#if s.source !== 'default'}<button class="vx" title={$t('重設為預設')} aria-label={$t('重設為預設')} on:click={() => resetSettingKey(s.key)} disabled={settingsBusy}>↺</button>{/if}</span>
                   </div>
                 {/each}
               </div>
@@ -452,7 +486,7 @@
                   </select>
                   <input class="vcb" type="checkbox" bind:checked={r.pre} title={$t('餵 hotword（轉錄前）')} />
                   <input class="vcb" type="checkbox" bind:checked={r.post} title={$t('套已存逐字稿（轉錄後）')} />
-                  <button class="vx" on:click={() => removeRule(i)} title={$t('移除')}>✕</button>
+                  <button class="vx" on:click={() => removeRule(i)} title={$t('移除')} aria-label={$t('移除')}>✕</button>
                 </div>
               {/each}
               {#if !rules.length}<div class="vempty">{$t('尚無規則 — 點下方「新增規則」。')}</div>{/if}
@@ -504,7 +538,7 @@
                   <option value={l.code}>{l.label} · {l.code}</option>
                 {/each}
               </select>
-              <button class="ak-btn" on:click={runRetranscribeAll} disabled={retr && retr.running}>{retr && retr.running ? $t('重轉錄中…') : $t('批次重轉錄')}</button>
+              <button class="ak-btn" on:click={askRetranscribeAll} disabled={retr && retr.running}>{retr && retr.running ? $t('重轉錄中…') : $t('批次重轉錄')}</button>
               {#if retr}
                 <Mono dim style="font-size:11px;">{$t('{done}/{total} 完成', { done: retr.done, total: retr.total })}{retr.failed ? ' · ' + $t('{n} 失敗', { n: retr.failed }) : ''}{retr.running ? '…' : ' · ' + $t('完成')}</Mono>
               {/if}
@@ -650,8 +684,8 @@
                 <div class="proxyctl">
                   <Mono style="font-size:12px;color:var(--ink);">{mb(cache?.total_mb)}</Mono>
                   <button class="ak-btn" on:click={() => runClearCache('app')} disabled={cacheBusy}>{$t('清 app 快取')}</button>
-                  <button class="ak-btn" on:click={() => runClearCache('all')} disabled={cacheBusy}>{$t('清全部')}</button>
-                  {#if cacheMsg}<Mono dim style="font-size:10.5px;">{cacheMsg}</Mono>{/if}
+                  <button class="ak-btn" on:click={askClearAll} disabled={cacheBusy}>{$t('清全部')}</button>
+                  {#if cacheMsg}<Mono dim={!cacheErr} style="font-size:10.5px;">{cacheErr ? '⚠ ' : ''}{cacheMsg}</Mono>{/if}
                 </div>
               </div>
             </div>
@@ -706,7 +740,7 @@
                   <span class="ppath" title={p.path}>{p.path}</span>
                   <Mono dim style="font-size:10.5px;">{shortDate(p.last_indexed_at)}</Mono>
                   <span class="phealth" class:ok={projHealth[p.name] === 'ok'} title={projHealth[p.name] || ''}>{healthLabel(projHealth[p.name])}</span>
-                  <button class="vx" on:click={() => delProj(p.name)} disabled={projBusy} title={$t('移除')}>✕</button>
+                  <button class="vx" on:click={() => askDelProj(p.name)} disabled={projBusy} title={$t('移除')} aria-label={$t('移除')}>✕</button>
                 </div>
               {/each}
               {#if !projects.length}<div class="vempty">{$t('還沒有登記其他素材庫。只用一個庫的話，這裡保持空白就好。')}</div>{/if}
@@ -724,7 +758,7 @@
             <div class="vctl">
               <button class="ak-btn" on:click={addProj} disabled={projBusy}>+ {$t('登記素材庫')}</button>
               <button class="ak-btn" on:click={syncProj} disabled={projBusy}>{$t('同步索引時間')}</button>
-              {#if projMsg}<Mono dim style="font-size:11px;">{projMsg}</Mono>{/if}
+              {#if projMsg}<Mono dim={!projErr} style="font-size:11px;">{projErr ? '⚠ ' : ''}{projMsg}</Mono>{/if}
             </div>
             <div class="paddnote">{$t('登記一個已經存在的 arkiv 素材庫資料夾（裡面要有 ')}<code>.arkiv/</code>{$t('）。一般的素材資料夾請用 ＋ INGEST 匯入。')}</div>
           </section>
@@ -755,8 +789,8 @@
               </div>
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Report a problem</Mono>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                  <button class="ak-btn" on:click={copyDiagnostic} disabled={diagBusy}>Copy diagnostic</button>
-                  <button class="ak-btn" on:click={downloadDiagnostic} disabled={diagBusy}>Download</button>
+                  <button class="ak-btn" on:click={copyDiagnostic} disabled={diagBusy}>{$t('複製診斷資訊')}</button>
+                  <button class="ak-btn" on:click={downloadDiagnostic} disabled={diagBusy}>{$t('下載')}</button>
                   {#if diagMsg}<Mono dim style="font-size:11.5px;">{diagMsg}</Mono>{/if}
                 </div>
               </div>
@@ -819,11 +853,12 @@
   .vhead span { text-align: center; }
   .vhead span:nth-child(1), .vhead span:nth-child(2) { text-align: left; }
   .vin { font-family: inherit; font-size: 13px; color: var(--ink); background: transparent; border: 1px solid var(--rule); padding: 6px 9px; outline: none; }
+  .vin:focus-visible, .vsel:focus-visible { border-color: var(--ink); }
   .vin:focus { border-color: var(--invert); }
   .vsel { font-family: var(--ak-mono); font-size: 10.5px; color: var(--ink); background: transparent; border: 1px solid var(--rule); padding: 5px 4px; outline: none; }
   .vcb { justify-self: center; accent-color: var(--invert); cursor: pointer; }
-  .vx { background: transparent; border: none; color: var(--quiet-2); cursor: pointer; font-size: 12px; padding: 4px; }
-  .vx:hover { color: var(--cyan); }
+  .vx { background: transparent; border: none; color: var(--quiet); cursor: pointer; font-size: 12px; padding: 4px; }
+  .vx:hover { color: var(--ink); }
   .vempty { font-size: 12px; color: var(--quiet); padding: 8px 2px; }
   .vctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
   .vchk { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-2); cursor: pointer; }

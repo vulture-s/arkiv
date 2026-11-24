@@ -20,7 +20,9 @@
   import { onDestroy } from 'svelte'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
+  import ConfirmDialog from '../lib/ConfirmDialog.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
   import { pickFolder, canPickFolder } from '../lib/pickFolder.js'
@@ -256,9 +258,16 @@
   // R5-17 (#45): stop a running offload. Aborting the fetch drops the HTTP
   // connection, which trips the server's terminate-on-disconnect; the per-source
   // state file is preserved so a later Run resumes from the last verified file.
+  // The confirm is the app's ConfirmDialog now (was the browser's native
+  // confirm()); answering no still leaves the transfer running.
+  let stopAsk = false
   function stopRun() {
     if (phase !== 'running' || !abortCtl) return
-    if (!confirm($t('轉存進行中，確定停止？已複製並校驗的檔案會保留，可稍後從中斷處續傳。'))) return
+    stopAsk = true
+  }
+  function doStop() {
+    stopAsk = false
+    if (phase !== 'running' || !abortCtl) return
     stopped = true
     abortCtl.abort()
   }
@@ -290,6 +299,9 @@
   }
   function onKey(e) {
     if (e.key !== 'Escape') return
+    // While the stop confirm is open, Esc is its Cancel. defaultPrevented covers
+    // the case where the dialog's window listener ran first and already closed it.
+    if (stopAsk || e.defaultPrevented) return
     if (e.metaKey || e.ctrlKey || e.altKey) return
     e.preventDefault()
     escAction()
@@ -304,13 +316,14 @@
 
 <svelte:window on:keydown={onKey} />
 
+<ConfirmDialog open={stopAsk} title={$t('停止轉存？')}
+  message={$t('已複製並校驗的檔案會保留，可稍後從中斷處續傳。')} confirmLabel={$t('停止')} cancelLabel={$t('繼續轉存')}
+  on:cancel={() => (stopAsk = false)} on:confirm={doStop} />
+
 <div class="artboard" data-theme={$resolvedTheme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">{VERSION}</Mono>
-    <div class="grow"></div>
-    <Mono dim style="font-size:11px;">dit · offload</Mono>
-  </div>
+  <!-- logo goes through escAction: mid-copy it asks before leaving (navigating
+       away aborts the copy). The dialog's own ESC · CANCEL is the back control. -->
+  <PageBar title={$t('卡片轉存')} onHome={escAction} back={false} />
 
   <div class="dialog">
     <div class="dhead">
@@ -327,9 +340,9 @@
           <div class="srcrow">
             <input class="ak-input" placeholder={$t('/Volumes/CARD/DCIM  或  ~/footage')} bind:value={src} spellcheck="false" on:keydown={(e) => e.key === 'Enter' && doPreview()} />
             {#if canBrowse}
-              <button class="seg" on:click={browseSrc} disabled={phase === 'running'} title={$t('選擇資料夾')}>⋯</button>
+              <button class="seg" on:click={browseSrc} disabled={phase === 'running'} title={$t('選擇資料夾')} aria-label={$t('選擇資料夾')}>⋯</button>
             {/if}
-            <button class="ak-btn" on:click={doPreview} disabled={phase === 'previewing' || phase === 'running'}>{phase === 'previewing' ? 'reading…' : 'Preview'}</button>
+            <button class="ak-btn" on:click={doPreview} disabled={phase === 'previewing' || phase === 'running'}>{phase === 'previewing' ? $t('讀取中…') : $t('預覽')}</button>
           </div>
         </div>
 
@@ -345,12 +358,12 @@
             <div class="dstrow">
               <input class="ak-input" placeholder={`/Volumes/Backup${i + 1}`} bind:value={dsts[i]} spellcheck="false" disabled={phase === 'running'} />
               {#if canBrowse}
-                <button class="seg" on:click={() => browseDst(i)} disabled={phase === 'running'} title={$t('選擇資料夾')}>⋯</button>
+                <button class="seg" on:click={() => browseDst(i)} disabled={phase === 'running'} title={$t('選擇資料夾')} aria-label={$t('選擇資料夾')}>⋯</button>
               {/if}
               {#if i === dsts.length - 1}
-                <button class="seg" on:click={addDst} disabled={phase === 'running'} title="add destination">+</button>
+                <button class="seg" on:click={addDst} disabled={phase === 'running'} title={$t('新增備份目的地')} aria-label={$t('新增備份目的地')}>+</button>
               {:else}
-                <button class="seg" on:click={() => removeDst(i)} disabled={phase === 'running'} title="remove">−</button>
+                <button class="seg" on:click={() => removeDst(i)} disabled={phase === 'running'} title={$t('移除此目的地')} aria-label={$t('移除此目的地')}>−</button>
               {/if}
             </div>
           {/each}
@@ -359,7 +372,7 @@
         <div class="field">
           <Eyebrow>Options</Eyebrow>
           <div class="optrow">
-            <button class="seg" class:on={includeHeic} on:click={() => includeHeic = !includeHeic} disabled={phase === 'running'}>{includeHeic ? 'ON' : 'OFF'}</button>
+            <button class="seg" class:on={includeHeic} aria-pressed={includeHeic} on:click={() => includeHeic = !includeHeic} disabled={phase === 'running'}>{includeHeic ? 'ON' : 'OFF'}</button>
             <div class="optlabel"><span>Include .heic</span><Mono dim style="font-size:10px;">{$t('連同 .heic 靜照一起轉存')}</Mono></div>
           </div>
         </div>
@@ -443,7 +456,7 @@
       {#if phase === 'running'}
         <button class="ak-btn stopbtn" on:click={stopRun}>{$t('停止')}</button>
       {:else}
-        <button class="ak-btn" on:click={() => push('/')}>{phase === 'done' ? 'Done' : 'Cancel'}</button>
+        <button class="ak-btn" on:click={() => push('/')}>{phase === 'done' ? $t('完成') : $t('取消')}</button>
       {/if}
       <!-- Disabled only while a copy is actually in flight. Every other refusal
            is a toast naming what is missing, so the button is never mutely dead. -->
@@ -464,9 +477,8 @@
 
 <style>
   /* error red — the LOCKED exception to the B&W palette, failures only */
-  .artboard { --danger: #e0563a; width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
+  .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
 
   /* Fit the window (was a fixed 1080 × 820: at 900px wide the Start button was off-screen). */
   .dialog { margin: 40px auto; width: min(1080px, calc(100vw - 32px)); border: 1px solid var(--rule-hi); background: var(--surface); display: grid; grid-template-rows: auto 1fr auto; min-height: 0; max-height: calc(100dvh - 132px); }
@@ -515,5 +527,6 @@
 
   .footer { display: flex; align-items: center; gap: 12px; padding: 16px 28px; border-top: 1px solid var(--rule); }
   .footer :global(.errtext) { color: var(--danger); }
-  .stopbtn { border-color: var(--cyan); color: var(--cyan); }
+  /* stop interrupts — ink outline, not cyan (cyan = progress, which the bar already shows) */
+  .stopbtn { border-color: var(--ink); color: var(--ink); }
 </style>

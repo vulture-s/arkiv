@@ -9,7 +9,9 @@
   import { onMount } from 'svelte'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
+  import ConfirmDialog from '../lib/ConfirmDialog.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Thumb from '../lib/Thumb.svelte'
   import { pushToast } from '../lib/toast.js'
@@ -19,6 +21,10 @@
 
   $: theme = $resolvedTheme
   let bins = []
+  // null = not loaded yet / loaded; string = the last load failed (shown in the
+  // list instead of 尚無精選集, which read as "you have none").
+  let loadErr = null
+  let delAsk = null // {id, name} while the delete confirm is open
   let activeId = null
   let detail = null // { id, name, item_count, reachable, items:[{project_name, media_id, filename, status}] }
   let loading = false
@@ -57,10 +63,11 @@
   async function loadBins() {
     try {
       const r = await api.getBins()
+      loadErr = null
       bins = r.bins || []
       if (!activeId && bins.length) select(bins[0].id)
       else if (activeId && !bins.find((b) => b.id === activeId)) { activeId = null; detail = null }
-    } catch (e) { pushToast($t('讀取精選集失敗: {msg}', { msg: e.message }), 'error') }
+    } catch (e) { loadErr = e.message; pushToast($t('讀取精選集失敗: {msg}', { msg: e.message }), 'error') }
   }
 
   async function select(id) {
@@ -194,27 +201,31 @@
     } catch (e) { pushToast($t('改名失敗: {msg}', { msg: e.message }), 'error') }
   }
 
-  async function del(id, name) {
-    if (!confirm($t('刪除精選集「{name}」？（只刪清單，不動任何原始素材）', { name }))) return
+  // Was the browser's native confirm() — the only one in an app that already has
+  // a styled ConfirmDialog.
+  function del(id, name) { delAsk = { id, name } }
+  async function doDel() {
+    const { id } = delAsk
     try {
       await api.deleteBin(id)
       if (activeId === id) { activeId = null; detail = null }
       await loadBins()
       pushToast($t('已刪除精選集'))
     } catch (e) { pushToast($t('刪除失敗: {msg}', { msg: e.message }), 'error') }
+    finally { delAsk = null }
   }
 
   onMount(loadBins)
 </script>
 
+<ConfirmDialog open={!!delAsk} danger title={$t('刪除精選集「{name}」？', { name: delAsk?.name || '' })}
+  message={$t('只刪這份清單，不動任何原始素材。')} confirmLabel={$t('刪除')}
+  on:cancel={() => (delAsk = null)} on:confirm={doDel} />
+
 <div class="artboard" data-theme={theme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">{$t('精選集')}</Mono>
-    <div class="grow"></div>
+  <PageBar title={$t('精選集')}>
     <a class="ak-btn" href="#/search-live">{$t('⌕ 搜尋加片')}</a>
-    <a class="ak-btn" href="#/main-live">← back to grid</a>
-  </div>
+  </PageBar>
 
   <div class="body">
     <!-- left: bin list + create -->
@@ -223,7 +234,7 @@
       <div class="createrow">
         <input class="ak-input newname" placeholder={$t('新精選集名稱…')} bind:value={newName}
                on:keydown={(e) => e.key === 'Enter' && create()} />
-        <button class="ak-btn" on:click={create}>＋</button>
+        <button class="ak-btn" on:click={create} title={$t('新建精選集')} aria-label={$t('新建精選集')}>＋</button>
       </div>
       <div class="binlist">
         {#each bins as b (b.id)}
@@ -232,7 +243,12 @@
             <Mono dim style="font-size:10px;">{b.item_count}</Mono>
           </button>
         {/each}
-        {#if !bins.length}
+        {#if loadErr}
+          <div class="loaderr">
+            <Mono style="font-size:10.5px;display:block;">⚠ {$t('讀取精選集失敗: {msg}', { msg: loadErr })}</Mono>
+            <button class="ak-btn retry" on:click={loadBins}>{$t('重試')}</button>
+          </div>
+        {:else if !bins.length}
           <Mono dim style="font-size:10.5px;display:block;padding:8px 2px;">{$t('尚無精選集 — 上方新建，或到搜尋頁把片加入')}</Mono>
         {/if}
       </div>
@@ -241,7 +257,7 @@
     <!-- right: active bin detail -->
     <main class="detail">
       {#if !detail}
-        <div class="empty">{$t('選一個精選集，或先建立一個')}</div>
+        <div class="empty">{bins.length ? $t('選一個精選集') : $t('精選集是跨素材庫的手動清單：在搜尋結果或格線選取片段後加入。')}</div>
       {:else}
         <div class="dhead">
           {#if renaming}
@@ -252,7 +268,7 @@
             <button class="ak-btn" on:click={saveRename}>{$t('存')}</button>
           {:else}
             <div class="ak-display dname">{detail.name}</div>
-            <button class="ak-btn renamebtn" title={$t('改名')} on:click={startRename}>✎</button>
+            <button class="ak-btn renamebtn" title={$t('改名')} aria-label={$t('改名')} on:click={startRename}>✎</button>
           {/if}
           <Mono dim style="font-size:10.5px;">{$t('{reachable}/{total} 可達', { reachable: detail.reachable, total: detail.item_count })}</Mono>
           <div class="grow"></div>
@@ -348,7 +364,7 @@
                               : it.status}>{bd.label}</span>
                     </div>
                     <div class="raction">
-                      <button class="ak-btn xbtn" title={$t('從精選集移除（不動原檔）')} on:click={() => removeItem(it)}>×</button>
+                      <button class="ak-btn xbtn" title={$t('從精選集移除（不動原檔）')} aria-label={$t('從精選集移除（不動原檔）')} on:click={() => removeItem(it)}>×</button>
                     </div>
                   </div>
                 {/each}
@@ -364,7 +380,6 @@
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
   .body { display: grid; grid-template-columns: 260px 1fr; min-height: 0; overflow: hidden; }
   .side { border-right: 1px solid var(--rule); padding: 18px 16px; overflow: auto; }
   .createrow { display: flex; gap: 6px; margin-bottom: 12px; }
@@ -392,11 +407,11 @@
   .badge { font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.05em; padding: 2px 6px; border: 1px solid var(--rule); white-space: nowrap; }
   .badge.ok { color: var(--ink-2); border-color: var(--rule-hi); }
   .badge.warn { color: var(--cyan); border-color: var(--cyan); }
-  .badge.bad { color: #e0533d; border-color: #e0533d; }
+  .badge.bad { color: var(--danger); border-color: var(--danger); }
   .raction { display: flex; justify-content: flex-end; }
   .xbtn { padding: 3px 8px; }
-  .danger { color: #e0533d; border-color: #e0533d; }
-  .danger:hover { background: #e0533d; color: #fff; }
+  .danger { color: var(--danger); border-color: var(--danger); }
+  .danger:hover { background: var(--danger); color: var(--danger-ink); }
   .copypanel { border: 1px solid var(--rule-hi); background: var(--surface-2); padding: 12px 14px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
   .cprow { display: flex; align-items: center; gap: 12px; }
   .radio { display: flex; align-items: center; gap: 5px; font-family: var(--ak-mono); font-size: 11px; color: var(--ink-2); cursor: pointer; }
@@ -404,4 +419,6 @@
   .cplog { max-height: 160px; overflow: auto; background: var(--bg); border: 1px solid var(--rule); padding: 6px 8px; font-family: var(--ak-mono); font-size: 10px; line-height: 1.5; color: var(--ink-2); }
   .cplogline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cpsummary { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+  .loaderr { display: flex; flex-direction: column; gap: 8px; padding: 8px 2px; }
+  .loaderr .retry { align-self: flex-start; font-size: 10.5px; padding: 3px 10px; }
 </style>

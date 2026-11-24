@@ -88,12 +88,12 @@
 <style>
   .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
   .modal { background: var(--bg); color: var(--ink); width: 760px; max-width: 100%; max-height: 90vh; padding: 20px; box-shadow: inset 0 0 0 1px var(--invert); display: flex; flex-direction: column; gap: 14px; }
-  .title { font-family: var(--ak-mono); font-size: 14px; font-weight: 600; color: var(--danger, #e0563a); }
+  .title { font-family: var(--ak-mono); font-size: 14px; font-weight: 600; color: var(--danger); }
   .sub { font-size: 12.5px; line-height: 1.55; color: var(--ink-2); margin-top: 6px; }
   .list { overflow: auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
   .row { border: 1px solid var(--rule-hi); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
   .row.done { border-style: dashed; opacity: 0.75; }
-  .row.skipped { border-color: var(--danger, #e0563a); }
+  .row.skipped { border-color: var(--danger); }
   .what { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
   .clip { font-family: var(--ak-mono); font-size: 12.5px; font-weight: 600; }
   .dim { font-size: 11px; color: var(--quiet); }
@@ -101,9 +101,9 @@
   .lbl { display: inline-block; min-width: 72px; color: var(--quiet); }
   .edit, .confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .edit .ak-input { flex: 1; min-width: 180px; }
-  .err, .warn { font-size: 11px; color: var(--danger, #e0563a); }
+  .err, .warn { font-size: 11px; color: var(--danger); }
   .ok { font-size: 11px; color: var(--ink); }
   .actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
-  .danger { background: #b3261e; color: #fff; border-color: #b3261e; }
+  .danger { background: var(--danger); color: var(--danger-ink); border-color: var(--danger); }
   .primary { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
 </style>
