@@ -21,7 +21,8 @@
   import Eyebrow from '../lib/Eyebrow.svelte'
   import ConfirmDialog from '../lib/ConfirmDialog.svelte'
   import TrashModal from '../lib/TrashModal.svelte'
-  import { resolvedTheme, shell, closePoolOverlay } from '../lib/prefs.js'
+  import { resolvedTheme, shell, closePoolOverlay, gridDensity, DENSITY_PX } from '../lib/prefs.js'
+  import DensityToggle from '../lib/DensityToggle.svelte'
   import { pushToast } from '../lib/toast.js'
   import { canSwitchLibrary, libraryState, switchLibrary, busyMessage, uniqueName, baseName, libraryRows } from '../lib/librarySwitch.js'
   import { pickFolder } from '../lib/pickFolder.js'
@@ -1316,6 +1317,7 @@
             </Mono>
           </div>
           <FilterRow bind:activeFilter bind:activeRating />
+          {#if view !== 'list'}<DensityToggle />{/if}
           <ViewToggle bind:view />
         </div>
         <div class="tr-sub">
@@ -1472,7 +1474,7 @@
             </tbody>
           </table>
         {:else}
-          <div class="mediagrid">
+          <div class="mediagrid" style="--card-min:{DENSITY_PX[$gridDensity]}px">
             {#each visible as m (m.id)}
               <MediaCard
                 {m}
@@ -1483,6 +1485,8 @@
                 selectable={true}
                 dragOut={canDragOut()}
                 checked={pickedSet.has(m.id)}
+                picking={picked.length > 0}
+                compact={$gridDensity === 's'}
                 on:toggle={(e) => togglePick(e.detail)}
                 on:click={() => (selectedId = m.id)}
                 on:mouseenter={() => (hoverId = m.id)}
@@ -1604,9 +1608,12 @@
   .tr-end { display: flex; align-items: center; gap: 8px 10px; margin-left: auto; }
   /* flex-basis 0 + ellipsis: the title block gives up width first, so the filters
      and view toggle stay on the title's line in a 780px center column. */
-  .proj { flex: 1 1 0; min-width: 120px; overflow: hidden; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+  /* The name keeps its width (up to 60% of the block); the stats line after it
+     is what ellipsizes when the filters crowd the row. */
+  .proj { flex: 1 1 0; min-width: 150px; overflow: hidden; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
   .proj :global(*) { overflow: hidden; text-overflow: ellipsis; }
-  .projname { font-family: var(--ak-sans); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); flex: 0 1 auto; min-width: 0; }
+  .projname { font-family: var(--ak-sans); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); flex: 0 0 auto; max-width: 60%; }
+  .proj :global(.ak-mono), .proj > :global(:last-child) { flex: 1 1 auto; min-width: 0; }
   /* min-width so the search shrinks then WRAPS rather than collapsing the buttons
      off-screen. */
   .tbtn { font-size: 10px; height: var(--tb-h); box-sizing: border-box; padding: 0 12px; display: inline-flex; align-items: center; white-space: nowrap; text-decoration: none; }
@@ -1635,7 +1642,8 @@
      repeat(4,1fr) ballooned cards on wide windows (310px @1920) and squeezed them on
      narrow (168px @1280). auto-fill holds the design rhythm and reflows column count;
      auto-fill (not auto-fit) so a sparse last row keeps card size instead of stretching. */
-  .mediagrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(198px, 1fr)); gap: 1px; padding: 22px; background: var(--rule); }
+  /* --card-min: S / M / L from the density toggle (prefs DENSITY_PX; M = 198). */
+  .mediagrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-min, 198px), 1fr)); gap: 1px; padding: 22px; background: var(--rule); }
 
   /* G1 list view — design 01a: 16:9 thumbs at 110px, mono throughout, values in
      the quiet tone with only the filename at full ink, selection as a 2px left bar

@@ -17,6 +17,7 @@ export default {
   '搜尋範圍': 'Search scope',
   '此庫': 'This library',
   '全部專案': 'All projects',
+  '卡片大小': 'Card size',
 
   // ── poolSort.js ──
   '匯入 新→舊': 'Ingest date · newest first',
