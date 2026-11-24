@@ -18,6 +18,13 @@
     if (open && !busy && e.key === 'Escape') { e.preventDefault(); dispatch('cancel') }
   }
   const autofocus = (node) => { node.focus() }
+  // Focus is inside the dialog (Cancel is autofocused), and keys typed here must
+  // not leak to the page's shortcuts — so this handler stops propagation, which
+  // also means the window listener above never sees Esc. Handle it here too.
+  function onModalKey(e) {
+    if (e.key === 'Escape' && open && !busy) { e.preventDefault(); dispatch('cancel') }
+    e.stopPropagation()
+  }
 </script>
 
 <svelte:window on:keydown={onWinKey} />
@@ -42,7 +49,7 @@
       aria-labelledby="confirm-title"
       tabindex="-1"
       on:click|stopPropagation
-      on:keydown={(e) => e.stopPropagation()}
+      on:keydown={onModalKey}
     >
       <div class="title" id="confirm-title">{title ?? $t('確認')}</div>
       {#if message}<div class="msg">{message}</div>{/if}

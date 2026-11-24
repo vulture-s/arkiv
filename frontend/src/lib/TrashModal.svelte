@@ -83,6 +83,12 @@
     if (open && !confirmPurgeAll && e.key === 'Escape') { e.preventDefault(); dispatch('close') }
   }
   const autofocus = (node) => { node.focus() }
+  // Focus starts inside the modal and its keydown stops propagation (page
+  // shortcuts must not fire), so the window listener never sees Esc from here.
+  function onModalKey(e) {
+    if (e.key === 'Escape' && open && !confirmPurgeAll) { e.preventDefault(); dispatch('close') }
+    e.stopPropagation()
+  }
 </script>
 
 <svelte:window on:keydown={onWinKey} />
@@ -108,7 +114,7 @@
       tabindex="-1"
       use:autofocus
       on:click|stopPropagation
-      on:keydown={(e) => e.stopPropagation()}
+      on:keydown={onModalKey}
     >
       <div class="head">
         <Eyebrow>{$t('回收桶 · Trash')}</Eyebrow>
