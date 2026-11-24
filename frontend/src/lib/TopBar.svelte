@@ -8,15 +8,20 @@
   import { cycleTheme, themePref, shell, togglePool, toggleInspector } from './prefs.js'
   import { t } from './i18n.js'
   export let crossProject = false
+  /** The search text. Bindable so the main screen shares one box with the top bar. */
+  export let query = ''
+  /** In-library search handler. When set (main screen) and the scope is 此庫,
+   *  Enter filters the grid in place; otherwise Enter opens the ranked screen. */
+  export let onSearch = null
   /** Show the pool / inspector toggles — only screens that have those panels. */
   export let panels = false
 
-  let query = ''
   let searchEl
   // Enter → ranked search screen; SearchLive reads ?q= (+ ?all=1) on mount, so the
   // "All projects" toggle here seeds federation mode over there.
   function runSearch() {
     const q = query.trim()
+    if (onSearch && !crossProject) { onSearch(q); return }
     const p = new URLSearchParams()
     if (q) p.set('q', q)
     if (crossProject) p.set('all', '1')
@@ -24,6 +29,11 @@
     push(qs ? `/search-live?${qs}` : '/search-live')
   }
   // ⌘K / Ctrl-K focuses the search box (the shortcut the hint advertises).
+  function clearSearch() {
+    query = ''
+    if (onSearch && !crossProject) onSearch('')
+    searchEl?.focus()
+  }
   function onGlobalKey(e) {
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
       e.preventDefault()
@@ -53,10 +63,18 @@
       bind:value={query}
       on:keydown={(e) => e.key === 'Enter' && runSearch()}
     />
-    <Mono dim style="font-size:10px;letter-spacing:0.06em;white-space:nowrap;">⌘K</Mono>
-    <button class="allproj" class:on={crossProject} on:click={() => (crossProject = !crossProject)}>
-      All projects {#if crossProject}·on{/if}
-    </button>
+    {#if query}
+      <button class="sclear" title={$t('清除搜尋')} aria-label={$t('清除搜尋')} on:click={clearSearch}>✕</button>
+    {:else}
+      <Mono dim style="font-size:10px;letter-spacing:0.06em;white-space:nowrap;">⌘K</Mono>
+    {/if}
+    <!-- Scope: 此庫 searches the open library (in the grid, on the main screen);
+         全部專案 is the cross-project ranked search. Replaces the lone
+         "All projects" toggle, whose off state didn't say what it was instead. -->
+    <div class="scope" role="group" aria-label={$t('搜尋範圍')}>
+      <button class="allproj" class:on={!crossProject} aria-pressed={!crossProject} on:click={() => (crossProject = false)}>{$t('此庫')}</button>
+      <button class="allproj" class:on={crossProject} aria-pressed={crossProject} on:click={() => (crossProject = true)}>{$t('全部專案')}</button>
+    </div>
   </div>
 
   <div class="actions">
@@ -103,6 +121,13 @@
     padding: 4px 8px; background: transparent; color: var(--ink-2);
     border: 1px solid var(--rule-hi); cursor: pointer; line-height: 1; white-space: nowrap;
   }
+  .scope { display: flex; }
+  .scope .allproj + .allproj { border-left: none; }
+  .sclear {
+    font-family: var(--ak-mono); font-size: 11px; line-height: 1; padding: 3px 5px;
+    background: transparent; color: var(--quiet); border: 1px solid transparent; cursor: pointer;
+  }
+  .sclear:hover { color: var(--ink); border-color: var(--rule-hi); }
   .allproj.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
   .actions {
     display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 16px;

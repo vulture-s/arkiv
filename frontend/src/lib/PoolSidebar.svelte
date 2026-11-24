@@ -18,7 +18,8 @@
   export let switching = false
   export let livePools = null // [[label, count], ...]
   export let liveTags = null // [{name, count}]
-  export let onTag = null // (name) => void; live tag-click → filter
+  export let onTag = null // (name) => void; live tag-click → exact tag filter (toggle)
+  export let activeTag = null // tag the grid is currently filtered to (chip highlight)
   export let liveCollections = null // [{key,title,count,items}]; null → section hidden
   export let onCollection = null // (collection) => void; click → filter to members
   export let activeCollection = null // currently-filtered collection key (row highlight)
@@ -221,7 +222,7 @@
     <div class="tags">
       {#each visibleTags as tag (tag.name)}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-        <span class="tag" class:clickable={onTag} class:folded={tag.aliases && tag.aliases.length}
+        <span class="tag" class:clickable={onTag} class:activetag={activeTag !== null && activeTag.toLowerCase() === tag.name.toLowerCase()} class:folded={tag.aliases && tag.aliases.length}
           title={tag.aliases && tag.aliases.length ? $t('含別名：{aliases}', { aliases: tag.aliases.join($t('、')) }) : null}
           on:click={() => onTag && onTag(tag.name)}>{tag.name} <span class="tagcount">{tag.count}</span></span>
       {/each}
@@ -309,6 +310,9 @@
   .tag.clickable:hover { border-color: var(--ink); color: var(--ink); }
   /* folded = absorbed near-synonyms via the alias map; subtle dotted underline. */
   .tag.folded { border-style: dashed; }
+  /* active = inverted, the system's one "selected" treatment (no colour) */
+  .tag.activetag { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
+  .tag.activetag :global(.tagcount) { color: inherit; opacity: 0.7; }
   .moretag {
     display: inline-block; margin-top: 8px; font-family: var(--ak-mono);
     font-size: 10.5px; color: var(--quiet); cursor: pointer;
