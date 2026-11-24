@@ -5,9 +5,11 @@
   import { push } from 'svelte-spa-router'
   import ArkivLogo from './ArkivLogo.svelte'
   import Mono from './Mono.svelte'
-  import { cycleTheme, themePref } from './prefs.js'
+  import { cycleTheme, themePref, shell, togglePool, toggleInspector } from './prefs.js'
   import { t } from './i18n.js'
   export let crossProject = false
+  /** Show the pool / inspector toggles — only screens that have those panels. */
+  export let panels = false
 
   let query = ''
   let searchEl
@@ -34,6 +36,10 @@
 
 <div class="topbar">
   <div class="logo">
+    {#if panels}
+      <button class="ptoggle" class:on={$shell.poolMode !== 'hidden'} aria-pressed={$shell.poolMode !== 'hidden'}
+        title={$t('側欄')} aria-label={$t('側欄')} on:click={togglePool}>◧</button>
+    {/if}
     <ArkivLogo size={16} />
     <Mono dim style="font-size:10px;letter-spacing:0.05em;">{VERSION}</Mono>
   </div>
@@ -58,6 +64,10 @@
     <button class="ak-btn" on:click={() => push('/chat-live')} title={$t('AI chat · 問你的素材庫')}>Chat</button>
     <button class="ak-btn" on:click={() => push('/offload')} title="DIT offload · card → backup">DIT</button>
     <div class="vrule"></div>
+    {#if panels}
+      <button class="ak-btn ptoggle-r" class:on={$shell.inspOpen} aria-pressed={$shell.inspOpen}
+        title={$t('檢視面板')} aria-label={$t('檢視面板')} on:click={toggleInspector}>◨</button>
+    {/if}
     <button class="ak-btn" title={`theme · ${$themePref}`} on:click={cycleTheme}>◐</button>
     <button class="ak-btn" title="settings" on:click={() => push('/settings')}>···</button>
   </div>
@@ -69,7 +79,10 @@
        body's inspector column below (was `auto`, which drifted). No padding on the
        bar itself: a right padding here shrinks the 1fr column and pushes that rule
        17px left of the inspector edge — the actions column carries its own. */
-    display: grid; grid-template-columns: 220px 1fr var(--inspector-w); align-items: center;
+    /* minmax(…, max-content): when a panel is hidden its column is 0, but the
+       logo / action buttons still need their own width. */
+    display: grid; grid-template-columns: minmax(var(--pool-w), max-content) 1fr minmax(var(--inspector-w), max-content);
+    align-items: center;
     border-bottom: 1px solid var(--rule); background: var(--bg);
   }
   /* The two rules belong to the OUTER cells, not the search box: the body below
@@ -95,5 +108,13 @@
     display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 16px;
     height: 100%; border-left: 1px solid var(--rule);
   }
+  .ptoggle {
+    font-family: var(--ak-mono); font-size: 13px; line-height: 1; padding: 3px 5px;
+    background: transparent; color: var(--quiet); border: 1px solid transparent; cursor: pointer;
+  }
+  .ptoggle:hover, .ptoggle.on { color: var(--ink); }
+  .ptoggle:hover { border-color: var(--rule-hi); }
+  .ptoggle-r { color: var(--quiet); }
+  .ptoggle-r.on { color: var(--ink); }
   .vrule { width: 1px; height: 18px; background: var(--rule); margin: 0 4px; }
 </style>

@@ -21,6 +21,10 @@ body { margin: 0; padding: 0; min-height: 100%; }
   /* Inspector column width — shared by the body grid and the top bar so their
      rules line up. 340 clipped the export row (字幕 MARKER ran off the edge). */
   --inspector-w: 400px;
+  /* Pool sidebar column. Both widths are defaults only: prefs.js `shell`
+     rewrites them on <html> from the window width (shellLayout.js) and sets
+     them to 0 when a panel is hidden or floats as a drawer. */
+  --pool-w: 220px;
   --ak-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
 
   /* ---------- Type scale ---------- */
