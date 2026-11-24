@@ -95,14 +95,13 @@
       <Eyebrow style="margin-bottom:28px;">Setup · {step} of 3</Eyebrow>
       <div class="steps">
         {#each steps as s}
-          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-          <div class="step" on:click={() => (step = s.n)}>
+          <button class="step" aria-current={s.status === 'active' ? 'step' : undefined} on:click={() => (step = s.n)}>
             <span class="stepn" class:active={s.status === 'active'} class:done={s.status === 'done'}>{s.status === 'done' ? '✓' : s.n}</span>
-            <div>
-              <div class="ak-display steptitle" class:dim={s.status === 'pending'}>{s.title}</div>
+            <span class="stepbody">
+              <span class="ak-display steptitle" class:dim={s.status === 'pending'}>{s.title}</span>
               <Mono dim style="font-size:11px;margin-top:4px;display:block;">{s.sub}</Mono>
-            </div>
-          </div>
+            </span>
+          </button>
         {/each}
       </div>
       <div class="grow"></div>
@@ -192,7 +191,11 @@
   .body { display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
   .stepper { border-right: 1px solid var(--rule); padding: 40px 32px; display: flex; flex-direction: column; }
   .steps { display: flex; flex-direction: column; gap: 22px; }
-  .step { display: grid; grid-template-columns: 32px 1fr; gap: 14px; align-items: baseline; cursor: pointer; }
+  .step { display: grid; grid-template-columns: 32px 1fr; gap: 14px; align-items: baseline; cursor: pointer;
+    /* a <button> now (keyboard-reachable): strip the UA button look */
+    background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; width: 100%; }
+  .stepbody { display: block; }
+  .stepbody .steptitle { display: block; }
   .stepn { font-family: var(--ak-mono); font-size: 11px; width: 24px; height: 24px; color: var(--quiet); border: 1px solid var(--rule); display: inline-flex; align-items: center; justify-content: center; }
   .stepn.done { color: var(--ink); border-color: var(--ink); }
   .stepn.active { background: var(--invert); color: var(--invert-ink); border: none; font-weight: 700; }

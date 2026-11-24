@@ -327,7 +327,7 @@
           <div class="srcrow">
             <input class="ak-input" placeholder={$t('/Volumes/CARD/DCIM  或  ~/footage')} bind:value={src} spellcheck="false" on:keydown={(e) => e.key === 'Enter' && doPreview()} />
             {#if canBrowse}
-              <button class="seg" on:click={browseSrc} disabled={phase === 'running'} title={$t('選擇資料夾')}>⋯</button>
+              <button class="seg" on:click={browseSrc} disabled={phase === 'running'} title={$t('選擇資料夾')} aria-label={$t('選擇資料夾')}>⋯</button>
             {/if}
             <button class="ak-btn" on:click={doPreview} disabled={phase === 'previewing' || phase === 'running'}>{phase === 'previewing' ? 'reading…' : 'Preview'}</button>
           </div>
@@ -345,12 +345,12 @@
             <div class="dstrow">
               <input class="ak-input" placeholder={`/Volumes/Backup${i + 1}`} bind:value={dsts[i]} spellcheck="false" disabled={phase === 'running'} />
               {#if canBrowse}
-                <button class="seg" on:click={() => browseDst(i)} disabled={phase === 'running'} title={$t('選擇資料夾')}>⋯</button>
+                <button class="seg" on:click={() => browseDst(i)} disabled={phase === 'running'} title={$t('選擇資料夾')} aria-label={$t('選擇資料夾')}>⋯</button>
               {/if}
               {#if i === dsts.length - 1}
-                <button class="seg" on:click={addDst} disabled={phase === 'running'} title="add destination">+</button>
+                <button class="seg" on:click={addDst} disabled={phase === 'running'} title={$t('新增備份目的地')} aria-label={$t('新增備份目的地')}>+</button>
               {:else}
-                <button class="seg" on:click={() => removeDst(i)} disabled={phase === 'running'} title="remove">−</button>
+                <button class="seg" on:click={() => removeDst(i)} disabled={phase === 'running'} title={$t('移除此目的地')} aria-label={$t('移除此目的地')}>−</button>
               {/if}
             </div>
           {/each}
@@ -359,7 +359,7 @@
         <div class="field">
           <Eyebrow>Options</Eyebrow>
           <div class="optrow">
-            <button class="seg" class:on={includeHeic} on:click={() => includeHeic = !includeHeic} disabled={phase === 'running'}>{includeHeic ? 'ON' : 'OFF'}</button>
+            <button class="seg" class:on={includeHeic} aria-pressed={includeHeic} on:click={() => includeHeic = !includeHeic} disabled={phase === 'running'}>{includeHeic ? 'ON' : 'OFF'}</button>
             <div class="optlabel"><span>Include .heic</span><Mono dim style="font-size:10px;">{$t('連同 .heic 靜照一起轉存')}</Mono></div>
           </div>
         </div>
@@ -464,7 +464,7 @@
 
 <style>
   /* error red — the LOCKED exception to the B&W palette, failures only */
-  .artboard { --danger: #e0563a; width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
+  .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
   .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
 

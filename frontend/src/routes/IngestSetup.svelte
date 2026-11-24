@@ -224,7 +224,7 @@
           <div class="srcrow">
             <input class="ak-input" placeholder={$t('/Volumes/CARD/DCIM  或  ~/footage')} bind:value={path} spellcheck="false" on:keydown={(e)=>e.key==='Enter'&&scan()} />
             {#if canBrowse}
-              <button class="seg" on:click={browsePath} disabled={scanning} title={$t('選擇資料夾')}>⋯</button>
+              <button class="seg" on:click={browsePath} disabled={scanning} title={$t('選擇資料夾')} aria-label={$t('選擇資料夾')}>⋯</button>
             {/if}
             <button class="ak-btn" on:click={scan} disabled={scanning}>{scanning ? 'scanning…' : 'Scan'}</button>
           </div>
@@ -244,7 +244,7 @@
           <Eyebrow>Ingest options</Eyebrow>
           {#each TOGGLES as [key, label, hint]}
             <div class="optrow">
-              <button class="seg" class:on={opts[key]} on:click={() => opts[key] = !opts[key]}>{opts[key] ? 'ON' : 'OFF'}</button>
+              <button class="seg" class:on={opts[key]} aria-pressed={!!opts[key]} on:click={() => opts[key] = !opts[key]}>{opts[key] ? 'ON' : 'OFF'}</button>
               <div class="optlabel"><span>{label}</span><Mono dim style="font-size:10px;">{hint}</Mono></div>
             </div>
           {/each}

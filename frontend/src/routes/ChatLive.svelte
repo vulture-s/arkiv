@@ -250,7 +250,7 @@
     </aside>
 
     <div class="chatmain">
-    <div class="thread" bind:this={scroller}>
+    <div class="thread" bind:this={scroller} aria-live="polite">
       {#if messages.length === 0}
         <div class="empty">
           <Eyebrow>arkiv chat</Eyebrow>

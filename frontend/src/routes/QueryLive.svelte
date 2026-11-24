@@ -173,7 +173,7 @@
                      on:keydown={(e) => e.key === 'Enter' && run()} spellcheck="false" />
             {/if}
 
-            <button class="cx" title={$t('移除')} on:click={() => removeCondition(i)} disabled={conditions.length === 1}>✕</button>
+            <button class="cx" title={$t('移除')} aria-label={$t('移除')} on:click={() => removeCondition(i)} disabled={conditions.length === 1}>✕</button>
           </div>
         {/each}
         <button class="addclause" on:click={addCondition}>+ Add condition</button>

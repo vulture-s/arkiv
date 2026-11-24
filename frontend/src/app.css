@@ -87,6 +87,10 @@ body { margin: 0; padding: 0; min-height: 100%; }
   --quiet-2:   #4a4a4e;
   --invert:    #f3f2ee;  /* used for selected outline + GOOD rating fill */
   --invert-ink:#0a0a0c;
+  /* The one destructive colour (delete / purge / failed). Was four hard-coded
+     reds (#e0533d, #e0563a, #b3261e, #d9534f) — one per file that needed it. */
+  --danger:    #e0563a;
+  --danger-ink:#ffffff;
 }
 
 /* ============================================================
@@ -105,6 +109,8 @@ body { margin: 0; padding: 0; min-height: 100%; }
   --quiet-2:   #a8a6a0;
   --invert:    #0a0a0c;
   --invert-ink:#f3f2ee;
+  --danger:    #b3261e;
+  --danger-ink:#ffffff;
 }
 
 /* ============================================================
@@ -253,6 +259,16 @@ select option {
   100% { transform: translateX(200%); opacity: 0; }
 }
 
-/* hide scrollbars inside screens (artboards) */
-.ak-root *::-webkit-scrollbar { display: none; }
-.ak-root * { scrollbar-width: none; }
+/* Thin hairline scrollbars. They were hidden outright, and at narrow widths
+   Settings, Bins details and the ingest log overflowed with no sign that
+   anything was below. 4px, rule-coloured: present, not decorative. */
+.ak-root *::-webkit-scrollbar { width: 4px; height: 4px; }
+.ak-root *::-webkit-scrollbar-track { background: transparent; }
+.ak-root *::-webkit-scrollbar-thumb { background: var(--rule-hi); }
+.ak-root *::-webkit-scrollbar-thumb:hover { background: var(--quiet); }
+.ak-root * { scrollbar-width: thin; scrollbar-color: var(--rule-hi) transparent; }
+
+/* Keyboard focus. Nothing in the app styled it, and several borderless buttons
+   (and every outline:none field) showed no focus at all. :focus-visible = only
+   for keyboard, so mouse clicks don't draw it. */
+.ak-root :focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }

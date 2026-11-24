@@ -78,6 +78,6 @@
   .title { font-family: var(--ak-mono); font-size: 14px; font-weight: 600; }
   .msg { font-size: 12.5px; line-height: 1.5; color: var(--ink-2); white-space: pre-line; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .danger { background: #b3261e; color: #fff; border-color: #b3261e; }
+  .danger { background: var(--danger); color: var(--danger-ink); border-color: var(--danger); }
   .primary { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); }
 </style>

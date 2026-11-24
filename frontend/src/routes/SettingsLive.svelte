@@ -390,7 +390,7 @@
                 <div class="seg">
                   {#each themeOpts as [id, label], i}
                     {#if i > 0}<div class="segsep"></div>{/if}
-                    <button class="segbtn" class:on={$themePref === id} on:click={() => themePref.set(id)}>{label}</button>
+                    <button class="segbtn" class:on={$themePref === id} aria-pressed={$themePref === id} on:click={() => themePref.set(id)}>{label}</button>
                   {/each}
                 </div>
               </div>
@@ -399,7 +399,7 @@
                 <div class="seg">
                   {#each localeOpts as [id, label], i}
                     {#if i > 0}<div class="segsep"></div>{/if}
-                    <button class="segbtn" class:on={$localePref === id} on:click={() => localePref.set(id)}>{label ?? $t('跟隨系統')}</button>
+                    <button class="segbtn" class:on={$localePref === id} aria-pressed={$localePref === id} on:click={() => localePref.set(id)}>{label ?? $t('跟隨系統')}</button>
                   {/each}
                 </div>
               </div>
@@ -428,7 +428,7 @@
                     <span class="setk" title={s.label}>{s.key}</span>
                     <span class="setv">{s.value === '' ? '—' : s.value}</span>
                     <span class="srctag" class:srcset={s.source !== 'default'}>{s.source}</span>
-                    <span>{#if s.source !== 'default'}<button class="vx" title={$t('重設為預設')} on:click={() => resetSettingKey(s.key)} disabled={settingsBusy}>↺</button>{/if}</span>
+                    <span>{#if s.source !== 'default'}<button class="vx" title={$t('重設為預設')} aria-label={$t('重設為預設')} on:click={() => resetSettingKey(s.key)} disabled={settingsBusy}>↺</button>{/if}</span>
                   </div>
                 {/each}
               </div>
@@ -452,7 +452,7 @@
                   </select>
                   <input class="vcb" type="checkbox" bind:checked={r.pre} title={$t('餵 hotword（轉錄前）')} />
                   <input class="vcb" type="checkbox" bind:checked={r.post} title={$t('套已存逐字稿（轉錄後）')} />
-                  <button class="vx" on:click={() => removeRule(i)} title={$t('移除')}>✕</button>
+                  <button class="vx" on:click={() => removeRule(i)} title={$t('移除')} aria-label={$t('移除')}>✕</button>
                 </div>
               {/each}
               {#if !rules.length}<div class="vempty">{$t('尚無規則 — 點下方「新增規則」。')}</div>{/if}
@@ -706,7 +706,7 @@
                   <span class="ppath" title={p.path}>{p.path}</span>
                   <Mono dim style="font-size:10.5px;">{shortDate(p.last_indexed_at)}</Mono>
                   <span class="phealth" class:ok={projHealth[p.name] === 'ok'} title={projHealth[p.name] || ''}>{healthLabel(projHealth[p.name])}</span>
-                  <button class="vx" on:click={() => delProj(p.name)} disabled={projBusy} title={$t('移除')}>✕</button>
+                  <button class="vx" on:click={() => delProj(p.name)} disabled={projBusy} title={$t('移除')} aria-label={$t('移除')}>✕</button>
                 </div>
               {/each}
               {#if !projects.length}<div class="vempty">{$t('還沒有登記其他素材庫。只用一個庫的話，這裡保持空白就好。')}</div>{/if}
@@ -819,11 +819,12 @@
   .vhead span { text-align: center; }
   .vhead span:nth-child(1), .vhead span:nth-child(2) { text-align: left; }
   .vin { font-family: inherit; font-size: 13px; color: var(--ink); background: transparent; border: 1px solid var(--rule); padding: 6px 9px; outline: none; }
+  .vin:focus-visible, .vsel:focus-visible { border-color: var(--ink); }
   .vin:focus { border-color: var(--invert); }
   .vsel { font-family: var(--ak-mono); font-size: 10.5px; color: var(--ink); background: transparent; border: 1px solid var(--rule); padding: 5px 4px; outline: none; }
   .vcb { justify-self: center; accent-color: var(--invert); cursor: pointer; }
-  .vx { background: transparent; border: none; color: var(--quiet-2); cursor: pointer; font-size: 12px; padding: 4px; }
-  .vx:hover { color: var(--cyan); }
+  .vx { background: transparent; border: none; color: var(--quiet); cursor: pointer; font-size: 12px; padding: 4px; }
+  .vx:hover { color: var(--ink); }
   .vempty { font-size: 12px; color: var(--quiet); padding: 8px 2px; }
   .vctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
   .vchk { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-2); cursor: pointer; }

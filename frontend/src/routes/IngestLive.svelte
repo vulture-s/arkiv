@@ -342,7 +342,8 @@
             <div class="trigger">
               <input class="ak-input pathinput" placeholder={$t('ingest 資料夾路徑（例 ~/Desktop/Test）')} bind:value={path} disabled={busy} />
               <div class="triggerrow">
-                <input class="ak-input limitinput" type="number" min="0" bind:value={limit} disabled={busy} title="limit (0=all)" />
+                <label class="limitlbl"><Mono dim style="font-size:10px;letter-spacing:0.08em;">{$t('上限')}</Mono>
+                <input class="ak-input limitinput" type="number" min="0" bind:value={limit} disabled={busy} title={$t('最多處理幾支（0 = 全部）')} aria-label={$t('最多處理幾支（0 = 全部）')} /></label>
                 <button class="ak-btn ak-btn--primary" on:click={trigger} disabled={busy || conn !== 'open'}>{busy ? 'running…' : 'Start ingest →'}</button>
                 <button class="ak-btn" on:click={rebuildIndex} disabled={rebuilding || busy} title={$t('重建 ChromaDB 向量索引（背景執行）')}>{rebuilding ? $t('排入中…') : $t('重建索引')}</button>
               </div>
@@ -462,6 +463,7 @@
   .pathinput { font-size: 12px; }
   .triggerrow { display: flex; gap: 8px; align-items: center; }
   .limitinput { width: 70px; font-size: 12px; }
+  .limitlbl { display: inline-flex; align-items: center; gap: 6px; }
   .haltbox { margin-top: 10px; padding: 10px 12px; border-radius: 6px;
              border: 1px solid var(--cyan); background: color-mix(in srgb, var(--cyan) 8%, transparent); }
   .halthead { margin-bottom: 4px; }

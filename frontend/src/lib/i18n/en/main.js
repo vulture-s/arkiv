@@ -1,5 +1,10 @@
 // English for the main area (#581). Keys = zh-TW source strings.
 export default {
+  '最多處理幾支（0 = 全部）': 'Max clips to process (0 = all)',
+  '上限': 'Limit',
+  '移除此目的地': 'Remove destination',
+  '新增備份目的地': 'Add destination',
+  '新建精選集': 'New bin',
   // ── shared bits ──
   '、': ', ',
   '素材庫': 'Library',

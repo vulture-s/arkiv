@@ -223,7 +223,7 @@
       <div class="createrow">
         <input class="ak-input newname" placeholder={$t('新精選集名稱…')} bind:value={newName}
                on:keydown={(e) => e.key === 'Enter' && create()} />
-        <button class="ak-btn" on:click={create}>＋</button>
+        <button class="ak-btn" on:click={create} title={$t('新建精選集')} aria-label={$t('新建精選集')}>＋</button>
       </div>
       <div class="binlist">
         {#each bins as b (b.id)}
@@ -252,7 +252,7 @@
             <button class="ak-btn" on:click={saveRename}>{$t('存')}</button>
           {:else}
             <div class="ak-display dname">{detail.name}</div>
-            <button class="ak-btn renamebtn" title={$t('改名')} on:click={startRename}>✎</button>
+            <button class="ak-btn renamebtn" title={$t('改名')} aria-label={$t('改名')} on:click={startRename}>✎</button>
           {/if}
           <Mono dim style="font-size:10.5px;">{$t('{reachable}/{total} 可達', { reachable: detail.reachable, total: detail.item_count })}</Mono>
           <div class="grow"></div>
@@ -348,7 +348,7 @@
                               : it.status}>{bd.label}</span>
                     </div>
                     <div class="raction">
-                      <button class="ak-btn xbtn" title={$t('從精選集移除（不動原檔）')} on:click={() => removeItem(it)}>×</button>
+                      <button class="ak-btn xbtn" title={$t('從精選集移除（不動原檔）')} aria-label={$t('從精選集移除（不動原檔）')} on:click={() => removeItem(it)}>×</button>
                     </div>
                   </div>
                 {/each}
@@ -392,11 +392,11 @@
   .badge { font-family: var(--ak-mono); font-size: 9.5px; letter-spacing: 0.05em; padding: 2px 6px; border: 1px solid var(--rule); white-space: nowrap; }
   .badge.ok { color: var(--ink-2); border-color: var(--rule-hi); }
   .badge.warn { color: var(--cyan); border-color: var(--cyan); }
-  .badge.bad { color: #e0533d; border-color: #e0533d; }
+  .badge.bad { color: var(--danger); border-color: var(--danger); }
   .raction { display: flex; justify-content: flex-end; }
   .xbtn { padding: 3px 8px; }
-  .danger { color: #e0533d; border-color: #e0533d; }
-  .danger:hover { background: #e0533d; color: #fff; }
+  .danger { color: var(--danger); border-color: var(--danger); }
+  .danger:hover { background: var(--danger); color: var(--danger-ink); }
   .copypanel { border: 1px solid var(--rule-hi); background: var(--surface-2); padding: 12px 14px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
   .cprow { display: flex; align-items: center; gap: 12px; }
   .radio { display: flex; align-items: center; gap: 5px; font-family: var(--ak-mono); font-size: 11px; color: var(--ink-2); cursor: pointer; }
