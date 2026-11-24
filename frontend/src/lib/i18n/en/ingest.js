@@ -267,4 +267,13 @@ export default {
   "Camera（機型）": "Camera",
   "Rating（評分）": "Rating",
   "Duration（秒）": "Duration (s)",
+  'HALTED · 已手動停止': 'HALTED · stopped by you',
+  '已要求停止匯入': 'Asked the server to stop the import',
+  '已結束 · 結束時連線中斷，結果請到素材庫查看': 'Finished · the connection was down when it ended; check the library for the result',
+  '停止中…': 'Stopping…',
+  '停止匯入': 'Stop import',
+  '匯入已停止 · 手動停止': 'Import stopped · stopped by you',
+  '你停止了這一批，處理中的那支沒有寫入。': 'You stopped this batch; the file being processed was not written.',
+  '停止匯入？': 'Stop the import?',
+  '會停止目前這一批。已完成的素材會留在素材庫，正在處理的那支不會寫入；之後重跑同一個資料夾會從中斷處接續。': 'This stops the current batch. Finished clips stay in the library; the one being processed is not written. Re-running the same folder picks up where it stopped.',
 }

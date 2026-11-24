@@ -128,6 +128,7 @@ NOT_EXPOSED = {
     "POST /api/ingest/scan": ("job", "ingest scan"),
     "POST /api/ingest/upload": ("job", "upload + ingest"),
     "POST /api/ingest/ws": ("job", "ingest with progress channel"),
+    "POST /api/ingest/cancel": ("job", "stop the running import (UI control for a live job)"),
     "GET /api/ingest/engines": ("job", "transcription engine choices for ingest"),
     "POST /api/media/{media_id}/reingest": ("job", "re-ingest one clip"),
     "POST /api/media/{media_id}/retranscribe": ("job", "re-transcribe one clip"),
