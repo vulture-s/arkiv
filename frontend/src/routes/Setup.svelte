@@ -6,6 +6,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { push } from 'svelte-spa-router'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Mono from '../lib/Mono.svelte'
   import * as api from '../lib/api.js'
@@ -84,11 +85,9 @@
 </script>
 
 <div class="wiz">
-  <div class="topbar">
-    <ArkivLogo size={16} /><Mono dim style="font-size:11px;">{$t('首次設定')}</Mono>
-    <div class="grow"></div>
+  <PageBar title={$t('首次設定')} home={false} back={false}>
     <button class="ak-btn" on:click={() => finish(true)}>{$t('略過，直接開始')}</button>
-  </div>
+  </PageBar>
 
   <div class="body">
     <div class="stepper">
@@ -186,7 +185,6 @@
 
 <style>
   .wiz { height: 100vh; display: grid; grid-template-rows: 52px 1fr; background: var(--bg); color: var(--ink); }
-  .topbar { display: flex; align-items: center; gap: 14px; padding: 0 24px; border-bottom: 1px solid var(--rule); }
   .grow { flex: 1; }
   .body { display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
   .stepper { border-right: 1px solid var(--rule); padding: 40px 32px; display: flex; flex-direction: column; }

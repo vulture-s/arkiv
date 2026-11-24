@@ -8,6 +8,7 @@
   import { VERSION } from '../lib/version.js'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
@@ -236,17 +237,13 @@
 </script>
 
 <div class="artboard" data-theme={theme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">{VERSION}</Mono>
-    <div class="grow"></div>
-    <Mono dim style="font-size:11px;">{$t('問你的素材庫')}</Mono>
+  <PageBar title={$t('對話')} back={false}>
     <!-- Same affordance the ingest and offload dialogs use, so Esc looks the same
          everywhere it works. The label is dynamic because Esc genuinely does two
          different things here: a static "返回素材庫" would be a lie mid-answer,
          when the key aborts instead of navigating. -->
     <button class="esc" on:click={() => (busy ? abort() : push('/main-live'))}>ESC · {busy ? $t('中斷回覆') : $t('返回素材庫')}</button>
-  </div>
+  </PageBar>
 
   <div class="body">
     <aside class="convs">
@@ -339,7 +336,6 @@
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
   /* Verbatim from the ingest/offload dialogs, minus their `margin-left: auto` —
      this topbar already pushes with .grow. Keeping the two in sync matters more
      than saving the duplication: Esc is one gesture and should not look like

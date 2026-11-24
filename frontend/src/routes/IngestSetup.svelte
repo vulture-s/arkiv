@@ -14,6 +14,7 @@
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
@@ -202,12 +203,7 @@
 <svelte:window on:keydown={onKey} />
 
 <div class="artboard" data-theme={$resolvedTheme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">{VERSION}</Mono>
-    <div class="grow"></div>
-    <Mono dim style="font-size:11px;">ingest · setup</Mono>
-  </div>
+  <PageBar title={$t('匯入設定')} back={false} />
 
   <div class="dialog">
     <div class="dhead">
@@ -346,7 +342,6 @@
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
 
   /* Fit the window (was a fixed 1080px: the file list and the action row were clipped). */
   .dialog { margin: 40px auto; width: min(1080px, calc(100vw - 32px)); border: 1px solid var(--rule-hi); background: var(--surface); display: grid; grid-template-rows: auto 1fr auto; min-height: 0; max-height: calc(100dvh - 132px); }

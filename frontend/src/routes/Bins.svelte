@@ -9,6 +9,7 @@
   import { onMount } from 'svelte'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
   import ConfirmDialog from '../lib/ConfirmDialog.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
@@ -222,13 +223,9 @@
   on:cancel={() => (delAsk = null)} on:confirm={doDel} />
 
 <div class="artboard" data-theme={theme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">{$t('精選集')}</Mono>
-    <div class="grow"></div>
+  <PageBar title={$t('精選集')}>
     <a class="ak-btn" href="#/search-live">{$t('⌕ 搜尋加片')}</a>
-    <a class="ak-btn" href="#/main-live">{$t('← 回到素材庫')}</a>
-  </div>
+  </PageBar>
 
   <div class="body">
     <!-- left: bin list + create -->
@@ -383,7 +380,6 @@
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
   .body { display: grid; grid-template-columns: 260px 1fr; min-height: 0; overflow: hidden; }
   .side { border-right: 1px solid var(--rule); padding: 18px 16px; overflow: auto; }
   .createrow { display: flex; gap: 6px; margin-bottom: 12px; }

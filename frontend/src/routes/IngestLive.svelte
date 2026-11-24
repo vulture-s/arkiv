@@ -22,6 +22,7 @@
   import { push } from 'svelte-spa-router'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
@@ -287,13 +288,10 @@
 </script>
 
 <div class="artboard" data-theme={theme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">{VERSION}</Mono>
-    <div class="grow"></div>
+  <PageBar title={$t('匯入')}>
     <Mono dim style="font-size:11px;">{$t('即時連線')} · <span class:on={conn === 'open'} class:off={conn !== 'open'}>{conn === 'open' ? $t('已連線') : $t('未連線')}</span></Mono>
-    <button class="ak-btn" on:click={() => push('/ingest-setup')}>New ingest →</button>
-  </div>
+    <button class="ak-btn" on:click={() => push('/ingest-setup')}>{$t('新的匯入 →')}</button>
+  </PageBar>
 
   {#if disconnected}
     <div class="dbanner">
@@ -446,7 +444,6 @@
   .quiet { color: var(--quiet); }
   .on { color: var(--cyan); }
   .off { color: var(--quiet); }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; height: 52px; flex: 0 0 52px; }
   /* edge-state C1 — disconnect banner (B&W + dashed; not the red reserved for
      data-safety failures). ◇ glyph + ink top rule = the redesign's alert motif. */
   .dbanner { flex: 0 0 auto; display: flex; align-items: center; gap: 28px; padding: 14px 40px; border-top: 1px solid var(--ink); border-bottom: 1px dashed var(--rule-hi); background: var(--surface); }

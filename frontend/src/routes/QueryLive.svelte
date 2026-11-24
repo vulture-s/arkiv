@@ -6,6 +6,7 @@
   import { onMount } from 'svelte'
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
+  import PageBar from '../lib/PageBar.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Thumb from '../lib/Thumb.svelte'
@@ -112,13 +113,9 @@
 </script>
 
 <div class="artboard" data-theme={theme}>
-  <div class="topbar">
-    <ArkivLogo size={16} />
-    <Mono dim style="font-size:10px;">{$t('條件查詢')}</Mono>
-    <div class="grow"></div>
-    <a class="ak-btn" href="#/search-live">⌕ simple search</a>
-    <a class="ak-btn" href="#/main-live">{$t('← 回到素材庫')}</a>
-  </div>
+  <PageBar title={$t('條件查詢')}>
+    <a class="ak-btn" href="#/search-live">{$t('⌕ 簡易搜尋')}</a>
+  </PageBar>
 
   <div class="main">
     <div class="builder">
@@ -236,7 +233,6 @@
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 52px 1fr; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
-  .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
   .main { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   .builder { padding: 22px clamp(16px, 4vw, 64px) 16px; border-bottom: 1px solid var(--rule); }
   .matchrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

@@ -1,5 +1,13 @@
 // English for the main area (#581). Keys = zh-TW source strings.
 export default {
+  '回到素材庫': 'Back to library',
+  '⌕ 簡易搜尋': '⌕ Simple search',
+  '搜尋': 'Search',
+  '⊞ 條件查詢': '⊞ Query builder',
+  '對話': 'Chat',
+  '新的匯入 →': 'New ingest →',
+  '卡片轉存': 'Card offload',
+  '匯入設定': 'Ingest setup',
   '預覽': 'Preview',
   '已連線': 'Connected',
   '未連線': 'Disconnected',
