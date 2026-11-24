@@ -356,7 +356,8 @@
   .msg.user { align-items: flex-end; }
   .msg.user .text { background: var(--surface-2); padding: 10px 14px; max-width: 80%; }
   .msg.assistant .text { color: var(--ink-2); line-height: 1.6; max-width: 80%; }
-  .msg.error .text { color: var(--cyan); }
+  /* errors: ink + rule, never cyan (cyan = progress/hover in this system) */
+  .msg.error .text { color: var(--ink); border-left: 2px solid var(--ink); padding-left: 8px; }
   .text { font-size: 13.5px; white-space: pre-wrap; }
   .scenes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; max-width: 560px; }
   .scene { display: flex; flex-direction: column; gap: 4px; }

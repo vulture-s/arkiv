@@ -77,7 +77,21 @@
   $: purgeAllBytes = items.reduce((a, it) => a + (it.size_bytes || 0), 0)
 
   const fmt = (s) => (s ? s.replace('T', ' ').slice(0, 16) : '—')
+  // Esc on the window (the modal's keydown stops propagation, so the backdrop
+  // never saw it). While the purge confirm is up, Esc belongs to that dialog.
+  function onWinKey(e) {
+    if (open && !confirmPurgeAll && e.key === 'Escape') { e.preventDefault(); dispatch('close') }
+  }
+  const autofocus = (node) => { node.focus() }
+  // Focus starts inside the modal and its keydown stops propagation (page
+  // shortcuts must not fire), so the window listener never sees Esc from here.
+  function onModalKey(e) {
+    if (e.key === 'Escape' && open && !confirmPurgeAll) { e.preventDefault(); dispatch('close') }
+    e.stopPropagation()
+  }
 </script>
+
+<svelte:window on:keydown={onWinKey} />
 
 {#if open}
   <div
@@ -86,7 +100,7 @@
     tabindex="-1"
     on:click={() => dispatch('close')}
     on:keydown={(e) => {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+      if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         dispatch('close')
       }
@@ -96,9 +110,11 @@
       class="modal"
       role="dialog"
       aria-modal="true"
+      aria-label={$t('回收桶 · Trash')}
       tabindex="-1"
+      use:autofocus
       on:click|stopPropagation
-      on:keydown={(e) => e.stopPropagation()}
+      on:keydown={onModalKey}
     >
       <div class="head">
         <Eyebrow>{$t('回收桶 · Trash')}</Eyebrow>
