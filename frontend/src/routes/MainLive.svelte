@@ -34,6 +34,7 @@
   import { createIdentityNamesLoader } from '../lib/identityNames.js'
   import { rateMany } from '../lib/bulkRating.js'
   import { t, apiText } from '../lib/i18n.js'
+  import { nextTagQuery, activeTagOf } from '../lib/tagQuery.js'
   import { POOL_SORTS, loadPoolSort, savePoolSort, nextColumnSort, columnArrow } from '../lib/poolSort.js'
 
   $: theme = $resolvedTheme
@@ -679,11 +680,12 @@
     activeRating || activeCamera || activeFilter !== 'all' || deepLinkSubset
   )
   $: subsetTotal = stats && state === 'ok' && isFiltered ? visible.length : null
-  // tag click → search that tag
+  // tag click → exact `tag:` filter (toggle); see tagQuery.js for why not free text
   function onTagClick(name) {
-    query = name
+    query = nextTagQuery(query, name)
     runSearch()
   }
+  $: activeTag = activeTagOf(query)
 
   async function runSearch() {
     if (!query.trim()) return load()
@@ -1288,7 +1290,7 @@
 <svelte:window on:keydown={(e) => e.key === 'Escape' && $shell.poolMode === 'overlay' && closePoolOverlay()} />
 
 <div class="artboard" data-theme={theme}>
-  <TopBar panels />
+  <TopBar panels bind:query onSearch={() => runSearch()} />
   <div class="body" class:overlay={$shell.poolMode === 'overlay'}>
     {#if $shell.poolMode === 'overlay'}
       <button class="pooldim" aria-label={$t('關閉側欄')} on:click={closePoolOverlay}></button>
@@ -1298,29 +1300,25 @@
          (a project, pool, tag…) closes the drawer so the result is visible. -->
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div class="poolslot" on:click={(e) => e.target.closest('.proj.switchable, .poolrow, .tag') && closePoolOverlay()}>
-    <PoolSidebar live {liveProjects} {entitlement} onProject={canSwitchLibrary() ? onProjectClick : null} onAddLibrary={canSwitchLibrary() ? onAddLibrary : null} {switching} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
+    <PoolSidebar live {liveProjects} {entitlement} onProject={canSwitchLibrary() ? onProjectClick : null} onAddLibrary={canSwitchLibrary() ? onAddLibrary : null} {switching} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} {activeTag} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
     </div>
     {/if}
 
     <main class="center">
       <div class="toolrow">
         <div class="tr-main">
-          <div class="proj">
-            <div class="ak-display projtitle">{projectName}</div>
-            <Mono dim style="font-size:11px;margin-top:5px;letter-spacing:0.04em;white-space:nowrap;">
-              {#if stats && subsetTotal !== null}{subsetTotal} / {stats.total} items · {$t('篩選中')}{:else if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB · live{:else}loading…{/if}
+          <!-- One line: the library name already sits in the sidebar's PROJECTS list
+               and the top-bar logo; a 28px display title here cost a whole row. -->
+          <div class="proj" title={projectName}>
+            <span class="projname">{projectName}</span>
+            <Mono dim style="font-size:11px;letter-spacing:0.04em;white-space:nowrap;">
+              · {#if stats && subsetTotal !== null}{subsetTotal} / {stats.total} items · {$t('篩選中')}{:else if stats}{stats.total} items · {Math.round(stats.total_duration_s || 0)}s · {Math.round(stats.total_size_mb || 0)} MB{:else}loading…{/if}
             </Mono>
           </div>
           <FilterRow bind:activeFilter bind:activeRating />
           <ViewToggle bind:view />
         </div>
         <div class="tr-sub">
-          <input
-            class="ak-input livesearch"
-            placeholder={$t('搜尋（語意 + 關鍵字）…')}
-            bind:value={query}
-            on:keydown={(e) => e.key === 'Enter' && runSearch()}
-          />
           <a
             class="ak-btn tbtn"
             href={query.trim() ? `#/search-live?q=${encodeURIComponent(query.trim())}` : '#/search-live'}
@@ -1606,12 +1604,11 @@
   .tr-end { display: flex; align-items: center; gap: 8px 10px; margin-left: auto; }
   /* flex-basis 0 + ellipsis: the title block gives up width first, so the filters
      and view toggle stay on the title's line in a 780px center column. */
-  .proj { flex: 1 1 0; min-width: 120px; overflow: hidden; }
+  .proj { flex: 1 1 0; min-width: 120px; overflow: hidden; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
   .proj :global(*) { overflow: hidden; text-overflow: ellipsis; }
-  .projtitle { font-size: 28px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
+  .projname { font-family: var(--ak-sans); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); flex: 0 1 auto; min-width: 0; }
   /* min-width so the search shrinks then WRAPS rather than collapsing the buttons
      off-screen. */
-  .livesearch { flex: 1 1 220px; min-width: 160px; max-width: 420px; font-size: 12px; height: var(--tb-h); box-sizing: border-box; }
   .tbtn { font-size: 10px; height: var(--tb-h); box-sizing: border-box; padding: 0 12px; display: inline-flex; align-items: center; white-space: nowrap; text-decoration: none; }
   /* A <select> is not covered by input.ak-input, so WKWebView drew its own rounded
      control; square it off to match the buttons beside it. */
