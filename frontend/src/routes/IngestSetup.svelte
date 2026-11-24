@@ -348,7 +348,8 @@
   .grow { flex: 1; }
   .topbar { display: flex; align-items: center; border-bottom: 1px solid var(--rule); padding: 0 16px; gap: 16px; }
 
-  .dialog { margin: 40px auto; width: 1080px; border: 1px solid var(--rule-hi); background: var(--surface); display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
+  /* Fit the window (was a fixed 1080px: the file list and the action row were clipped). */
+  .dialog { margin: 40px auto; width: min(1080px, calc(100vw - 32px)); border: 1px solid var(--rule-hi); background: var(--surface); display: grid; grid-template-rows: auto 1fr auto; min-height: 0; max-height: calc(100dvh - 132px); }
   .dhead { display: flex; align-items: baseline; gap: 20px; padding: 22px 28px; border-bottom: 1px solid var(--rule); }
   .title { font-size: 28px; letter-spacing: -0.03em; line-height: 1; }
   .esc { margin-left: auto; font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--quiet); background: none; border: none; cursor: pointer; }

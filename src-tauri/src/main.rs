@@ -449,6 +449,56 @@ fn switch_library(app: tauri::AppHandle, path: String) -> Result<String, String>
     }
 }
 
+/// Preferred and minimum first-window size, in logical pixels.
+const PREF_W: f64 = 1400.0;
+const PREF_H: f64 = 900.0;
+const MIN_W: f64 = 900.0;
+const MIN_H: f64 = 600.0;
+/// Share of the monitor's work area the first window may take.
+const WORK_AREA_SHARE: f64 = 0.9;
+
+/// First-window size in logical pixels: the preferred size, shrunk to fit
+/// `WORK_AREA_SHARE` of the monitor's work area (menu bar / Dock / taskbar
+/// excluded). Falls back to the preferred size when the monitor is unknown.
+fn initial_window_size(monitor: Option<tauri::Monitor>) -> (f64, f64) {
+    let Some(m) = monitor else { return (PREF_W, PREF_H) };
+    let scale = m.scale_factor();
+    let area = m.work_area().size;
+    fit_to_area(area.width as f64 / scale, area.height as f64 / scale)
+}
+
+fn fit_to_area(area_w: f64, area_h: f64) -> (f64, f64) {
+    if !(area_w > 0.0 && area_h > 0.0) {
+        return (PREF_W, PREF_H);
+    }
+    let max_w = area_w * WORK_AREA_SHARE;
+    let max_h = area_h * WORK_AREA_SHARE;
+    (PREF_W.min(max_w).floor(), PREF_H.min(max_h).floor())
+}
+
+#[cfg(test)]
+mod window_size_tests {
+    use super::*;
+
+    #[test]
+    fn large_screen_keeps_preferred_size() {
+        assert_eq!(fit_to_area(2560.0, 1415.0), (PREF_W, PREF_H));
+    }
+
+    #[test]
+    fn small_screen_shrinks_to_fit_work_area() {
+        // 13" MacBook Air default scaling: 1440×900 minus menu bar + Dock.
+        let (w, h) = fit_to_area(1440.0, 812.0);
+        assert!(w <= 1440.0 * WORK_AREA_SHARE && h <= 812.0 * WORK_AREA_SHARE);
+        assert_eq!((w, h), (1296.0, 730.0));
+    }
+
+    #[test]
+    fn unknown_area_falls_back() {
+        assert_eq!(fit_to_area(0.0, 0.0), (PREF_W, PREF_H));
+    }
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|info| {
         eprintln!("[arkiv-tauri panic] {}", info);
@@ -518,10 +568,16 @@ fn main() {
                 eprintln!("[arkiv-tauri] backend not ready after 45s on port {port} — opening anyway");
             }
             let url = format!("http://127.0.0.1:{port}");
+            // Size the first window from the screen it opens on, then centre it.
+            // A fixed 1400×900 with no `.center()` opened off-centre — and on a
+            // small or scaled display, partly off-screen — because the OS was
+            // left to place a window that did not fit its work area.
+            let (w, h) = initial_window_size(app.primary_monitor().ok().flatten());
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse().unwrap()))
                 .title("arkiv")
-                .inner_size(1400.0, 900.0)
-                .min_inner_size(900.0, 600.0)
+                .inner_size(w, h)
+                .min_inner_size(MIN_W.min(w), MIN_H.min(h))
+                .center()
                 .build()?;
 
             Ok(())

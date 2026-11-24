@@ -346,7 +346,17 @@
   }
   $: disk = stats?.disk ?? null
   $: cacheRows = cache?.caches ? Object.entries(cache.caches) : []
+  // The header advertises ESC · CLOSE; nothing listened for it. Skip while a
+  // field has focus so Esc can still cancel an IME composition / clear a box.
+  function onWinKey(e) {
+    if (e.key !== 'Escape' || e.isComposing) return
+    const tag = (e.target && e.target.tagName) || ''
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) { e.target.blur(); return }
+    push('/')
+  }
 </script>
+
+<svelte:window on:keydown={onWinKey} />
 
 <div class="artboard" data-theme={$resolvedTheme}>
   <div class="scrim"></div>
@@ -372,7 +382,7 @@
             <div class="fshead">
               <Eyebrow style="margin-bottom:4px;">THEME · INTERFACE</Eyebrow>
               <div class="ak-display fstitle">General</div>
-              <div class="fsdesc">vulture.s editorial. Theme applies across the whole app and persists. System follows your OS.</div>
+              <div class="fsdesc">Theme applies across the whole app and persists. System follows your OS.</div>
             </div>
             <div class="frows">
               <div class="frow">
@@ -400,10 +410,6 @@
                   <Mono style="font-size:11px;color:var(--ink);min-width:38px;">{Math.round($uiScale * 100)}%</Mono>
                   <button class="ak-btn" on:click={() => uiScale.set(1)} disabled={$uiScale === 1}>{$t('重設')}</button>
                 </div>
-              </div>
-              <div class="frow disabled">
-                <Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Type density</Mono>
-                <span class="pend">px-layout · spacing not reflowable yet</span>
               </div>
             </div>
           </section>
@@ -766,7 +772,7 @@
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); position: relative; overflow: hidden; margin: 0 auto; }
   .scrim { position: absolute; inset: 0; background: rgba(10, 10, 12, 0.55); }
 
-  .modal { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 960px; height: 640px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--invert); display: grid; grid-template-rows: 56px 1fr; }
+  .modal { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(960px, calc(100vw - 32px)); height: min(640px, calc(100dvh - 32px)); background: var(--bg); box-shadow: inset 0 0 0 1px var(--invert); display: grid; grid-template-rows: 56px 1fr; }
   .mhead { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--invert); padding: 0 24px; }
   .mtitle { display: flex; align-items: baseline; gap: 16px; }
   .mtitlebig { font-size: 22px; letter-spacing: -0.03em; line-height: 1; color: var(--ink); }
@@ -782,7 +788,6 @@
   .fsdesc { font-size: 11.5px; color: var(--quiet); margin-top: 3px; max-width: 460px; line-height: 1.5; }
   .frows { display: flex; flex-direction: column; gap: 12px; }
   .frow { display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 16px; }
-  .frow.disabled { opacity: 0.55; }
   .seg { display: flex; border: 1px solid var(--rule); width: fit-content; }
   .segsep { width: 1px; background: var(--rule); }
   .segbtn { font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 12px; background: transparent; color: var(--ink-2); border: none; cursor: pointer; line-height: 1; font-weight: 400; }
