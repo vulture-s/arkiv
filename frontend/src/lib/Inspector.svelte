@@ -977,7 +977,7 @@
           </select>
           <input bind:this={lutFile} type="file" accept=".cube" style="display:none" on:change={importPicked} />
         </div>
-        {#if cpMsg || lutErr}<span></span><Mono style="font-size:10px;color:#d9534f;">{cpMsg || lutErr}</Mono>{/if}
+        {#if cpMsg || lutErr}<span></span><Mono style="font-size:10px;color:var(--danger);">{cpMsg || lutErr}</Mono>{/if}
       {/if}
     </div>
   </div>
@@ -1323,8 +1323,8 @@
     border-bottom: 1px solid var(--rule);
   }
   .reveal { font-size: 11px; padding: 4px 10px; margin-top: 8px; width: 100%; }
-  .del { font-size: 11px; padding: 4px 10px; margin-top: 8px; width: 100%; color: #d9534f; border-color: #d9534f; }
-  .del:hover { background: #d9534f; color: #fff; }
+  .del { font-size: 11px; padding: 4px 10px; margin-top: 8px; width: 100%; color: var(--danger); border-color: var(--danger); }
+  .del:hover { background: var(--danger); color: var(--danger-ink); }
   /* ancillary export disclosure (成品輔助) — visually secondary to the primary row */
   .moreexp { display: inline-block; margin-top: 8px; font-size: 10.5px; color: var(--quiet); cursor: pointer; }
   .moreexp:hover { color: var(--ink); }
