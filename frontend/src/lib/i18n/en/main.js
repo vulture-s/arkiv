@@ -73,6 +73,10 @@ export default {
   '此庫': 'This library',
   '全部專案': 'All projects',
   '卡片大小': 'Card size',
+  '檢視面板分頁': 'Inspector tabs',
+  '資訊': 'Info',
+  '逐字稿': 'Transcript',
+  '場景': 'Scenes',
 
   // ── poolSort.js ──
   '匯入 新→舊': 'Ingest date · newest first',
