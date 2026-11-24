@@ -24,7 +24,9 @@ test('corner ticks hang off the card, outside the clipped thumbnail', () => {
 test('top bar carries no padding of its own, so its column rule meets the inspector edge', () => {
   const rule = topbar.match(/\.topbar\s*\{([^}]*)\}/)
   assert.ok(rule, '.topbar rule not found')
-  assert.match(rule[1], /grid-template-columns:\s*220px 1fr var\(--inspector-w\)/)
+  // Outer columns follow the body's (responsive) panel widths; max-content keeps
+  // the logo / actions usable when a panel is hidden and its column is 0.
+  assert.match(rule[1], /grid-template-columns:\s*minmax\(var\(--pool-w\), max-content\) 1fr minmax\(var\(--inspector-w\), max-content\)/)
   assert.doesNotMatch(rule[1].replace(/\/\*[\s\S]*?\*\//g, ''), /padding(-[a-z]+)?\s*:/)
 })
 

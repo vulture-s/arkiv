@@ -5,7 +5,8 @@
 // from the design mock are NOT wired — the app is px-based on a fixed 1400×900
 // artboard, so a root font-size / density class has no effect; faking them would
 // violate the evidence discipline. Settings shows them as deferred.)
-import { writable, derived } from 'svelte/store'
+import { writable, derived, get } from 'svelte/store'
+import { shellLayout, togglePanel } from './shellLayout.js'
 
 const THEME_KEY = 'arkiv.theme'
 const VALID = new Set(['dark', 'light', 'system'])
@@ -71,3 +72,59 @@ uiScale.subscribe((v) => {
   try { localStorage.setItem(SCALE_KEY, String(v)) } catch { /* private mode / quota */ }
   try { document.documentElement.style.zoom = String(v) } catch { /* SSR / no DOM */ }
 })
+
+// ── Responsive shell (pool sidebar / inspector) ──────────────────────────────
+// The breakpoint maths lives in shellLayout.js (pure, unit-tested). Here: the
+// live inputs (window width ÷ UI zoom, the user's panel toggles) and the CSS
+// vars the top bar reads so its rules stay on the body's column edges.
+
+const PANELS_KEY = 'arkiv.panels'
+const PANEL_VALUES = new Set(['auto', 'open', 'closed'])
+function readPanels() {
+  try {
+    const v = JSON.parse(localStorage.getItem(PANELS_KEY) || '{}')
+    return {
+      pool: PANEL_VALUES.has(v.pool) ? v.pool : 'auto',
+      insp: PANEL_VALUES.has(v.insp) ? v.insp : 'auto',
+    }
+  } catch {
+    return { pool: 'auto', insp: 'auto' }
+  }
+}
+export const panelPref = writable(readPanels())
+panelPref.subscribe((v) => {
+  try { localStorage.setItem(PANELS_KEY, JSON.stringify(v)) } catch { /* private mode / quota */ }
+})
+
+const winWidth = writable(typeof window === 'undefined' ? 0 : window.innerWidth)
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', () => winWidth.set(window.innerWidth))
+}
+
+export const shell = derived([winWidth, uiScale, panelPref], ([$w, $s, $p]) =>
+  shellLayout($w / ($s || 1), $p),
+)
+shell.subscribe((s) => {
+  try {
+    const st = document.documentElement.style
+    st.setProperty('--pool-w', `${s.poolCol}px`)
+    st.setProperty('--inspector-w', `${s.inspCol}px`)
+    document.documentElement.dataset.layout = s.layout
+  } catch { /* SSR / no DOM */ }
+})
+
+export function togglePool() {
+  const s = get(shell)
+  const shown = s.poolMode !== 'hidden'
+  // In narrow the drawer is transient: closing it goes back to 'auto' so the
+  // pool returns as a column once the window is widened again.
+  const next = s.layout === 'narrow' && shown ? 'auto' : togglePanel(shown)
+  panelPref.update((p) => ({ ...p, pool: next }))
+}
+export function closePoolOverlay() {
+  if (get(shell).poolMode === 'overlay') panelPref.update((p) => ({ ...p, pool: 'auto' }))
+}
+export function toggleInspector() {
+  const shown = get(shell).inspOpen
+  panelPref.update((p) => ({ ...p, insp: togglePanel(shown) }))
+}
