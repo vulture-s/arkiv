@@ -17,6 +17,11 @@
   // Multi-select for batch export. Off by default so mock screens are unchanged.
   export let selectable = false
   export let checked = false
+  // True while anything in the grid is picked: every box shows, so adding the
+  // next clip stays one click away. Otherwise a box appears only on hover.
+  export let picking = false
+  // Small-card density: drop the shoot date so name + rating + size still fit.
+  export let compact = false
   // 12.6: desktop-only native drag of the original file into Resolve / Finder.
   export let dragOut = false
   const dispatch = createEventDispatcher()
@@ -37,7 +42,7 @@
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-<div class="card" class:selected class:hover draggable={dragOut ? "true" : undefined} title={dragOut ? $t('可拖到剪輯軟體或 Finder') : undefined}
+<div class="card" class:selected class:hover class:picking draggable={dragOut ? "true" : undefined} title={dragOut ? $t('可拖到剪輯軟體或 Finder') : undefined}
   on:click on:mouseenter on:mouseenter={onEnter} on:mouseleave on:dragstart={onDragStart}>
   <div class="thumbarea">
     {#if thumbUrl && !imgFailed}
@@ -62,11 +67,13 @@
   <div class="meta">
     <div class="name" class:ng={m.rating === 'ng'}>{m.name}</div>
     <div class="row">
-      <Rating value={m.rating} />
+      <!-- Unrated is the default state (most of a fresh library): a "—" chip on
+           every card was noise, so only a real rating draws a mark. -->
+      {#if m.rating && m.rating !== 'none'}<Rating value={m.rating} />{:else}<span></span>{/if}
       <span class="tail">
         <!-- 拍攝日：讀不到就整個不顯示。列一個 fallback 到入庫時間的日期，
              會讓整格看起來很權威而且是錯的。 -->
-        {#if m.shot}<Mono dim style="font-size:10px;">{m.shot}</Mono>{/if}
+        {#if m.shot && !compact}<Mono dim style="font-size:10px;">{m.shot}</Mono>{/if}
         <Mono dim style="font-size:10px;">{m.size}</Mono>
       </span>
     </div>
@@ -100,6 +107,8 @@
     background: rgba(10, 10, 12, 0.7); color: #f3f2ee;
     border: 1px solid rgba(243, 242, 238, 0.5);
   }
+  .pick { opacity: 0; transition: opacity 80ms linear; }
+  .card:hover .pick, .card.picking .pick, .pick.on { opacity: 1; }
   .pick.on { background: var(--invert); color: var(--invert-ink); border-color: var(--invert); font-weight: 700; }
   .meta { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 4px; }
   .name {

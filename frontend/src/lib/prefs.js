@@ -128,3 +128,20 @@ export function toggleInspector() {
   const shown = get(shell).inspOpen
   panelPref.update((p) => ({ ...p, insp: togglePanel(shown) }))
 }
+
+// ── Grid density (card size) ─────────────────────────────────────────────────
+const DENSITY_KEY = 'arkiv.gridDensity'
+/** Card minimum width per density; 'm' is the design's 198px rhythm. */
+export const DENSITY_PX = { s: 150, m: 198, l: 280 }
+function readDensity() {
+  try {
+    const v = localStorage.getItem(DENSITY_KEY)
+    return v in DENSITY_PX ? v : 'm'
+  } catch {
+    return 'm'
+  }
+}
+export const gridDensity = writable(readDensity())
+gridDensity.subscribe((v) => {
+  try { localStorage.setItem(DENSITY_KEY, v) } catch { /* private mode / quota */ }
+})
