@@ -35,8 +35,12 @@ test('every 3-column shell reads the inspector width from one token', () => {
   // TopBar's search rule must line up with the body column; three literals drift.
   const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8')
   assert.match(css, /--inspector-w:\s*\d+px/)
+  assert.match(css, /--pool-w:\s*\d+px/)
+  // Both panel widths come from tokens (rewritten at runtime by prefs.js
+  // `shell`); a px literal for either column would drift from the top bar.
   for (const f of ['../src/lib/MainShell.svelte', '../src/routes/MainLive.svelte', '../src/lib/TopBar.svelte']) {
     const s = readFileSync(new URL(f, import.meta.url), 'utf8')
-    assert.match(s, /grid-template-columns: 220px 1fr var\(--inspector-w\)/, f)
+    assert.match(s, /grid-template-columns: [^;]*var\(--pool-w\)[^;]*1fr[^;]*var\(--inspector-w\)/, f)
+    assert.doesNotMatch(s, /grid-template-columns: 220px /, f)
   }
 })

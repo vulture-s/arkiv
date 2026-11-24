@@ -9,6 +9,11 @@ export default {
   '收合': 'Show less',
   '+{n} 更多': '+{n} more',
 
+  // ── responsive shell (TopBar / MainLive) ──
+  '側欄': 'Sidebar',
+  '檢視面板': 'Inspector',
+  '關閉側欄': 'Close sidebar',
+
   // ── poolSort.js ──
   '匯入 新→舊': 'Ingest date · newest first',
   '匯入 舊→新': 'Ingest date · oldest first',

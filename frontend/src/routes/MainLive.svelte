@@ -21,7 +21,7 @@
   import Eyebrow from '../lib/Eyebrow.svelte'
   import ConfirmDialog from '../lib/ConfirmDialog.svelte'
   import TrashModal from '../lib/TrashModal.svelte'
-  import { resolvedTheme } from '../lib/prefs.js'
+  import { resolvedTheme, shell, closePoolOverlay } from '../lib/prefs.js'
   import { pushToast } from '../lib/toast.js'
   import { canSwitchLibrary, libraryState, switchLibrary, busyMessage, uniqueName, baseName, libraryRows } from '../lib/librarySwitch.js'
   import { pickFolder } from '../lib/pickFolder.js'
@@ -1285,10 +1285,22 @@
   }
 </script>
 
+<svelte:window on:keydown={(e) => e.key === 'Escape' && $shell.poolMode === 'overlay' && closePoolOverlay()} />
+
 <div class="artboard" data-theme={theme}>
-  <TopBar />
-  <div class="body">
+  <TopBar panels />
+  <div class="body" class:overlay={$shell.poolMode === 'overlay'}>
+    {#if $shell.poolMode === 'overlay'}
+      <button class="pooldim" aria-label={$t('關閉側欄')} on:click={closePoolOverlay}></button>
+    {/if}
+    {#if $shell.poolMode !== 'hidden'}
+    <!-- Narrow window: the pool floats over the grid; picking anything in it
+         (a project, pool, tag…) closes the drawer so the result is visible. -->
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="poolslot" on:click={(e) => e.target.closest('.proj.switchable, .poolrow, .tag') && closePoolOverlay()}>
     <PoolSidebar live {liveProjects} {entitlement} onProject={canSwitchLibrary() ? onProjectClick : null} onAddLibrary={canSwitchLibrary() ? onAddLibrary : null} {switching} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
+    </div>
+    {/if}
 
     <main class="center">
       <div class="toolrow">
@@ -1493,7 +1505,7 @@
       </div>
     </main>
 
-    {#if inspectorMedia}
+    {#if inspectorMedia && $shell.inspOpen}
       <Inspector
         media={inspectorMedia}
         {theme}
@@ -1564,7 +1576,23 @@
 
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; position: relative; display: grid; grid-template-rows: 52px 1fr; background: var(--bg); color: var(--ink); overflow: hidden; margin: 0 auto; }
-  .body { display: grid; grid-template-columns: 220px 1fr var(--inspector-w); min-height: 0; }
+  /* Column widths come from prefs.js `shell` (window width → shellLayout.js).
+     Children are placed explicitly so a hidden panel (0-width column, element
+     not rendered) can't pull the grid into its slot. */
+  .body { display: grid; grid-template-columns: var(--pool-w) minmax(0, 1fr) var(--inspector-w); min-height: 0; position: relative; }
+  .poolslot { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .poolslot > :global(.pool) { flex: 1; }
+  .body > .center { grid-column: 2; grid-row: 1; }
+  .body > :global(.inspector) { grid-column: 3; grid-row: 1; }
+  /* Narrow: the pool is a drawer over the grid, with a dim layer to close it. */
+  .body.overlay .poolslot {
+    position: absolute; top: 0; left: 0; bottom: 0; z-index: 20; width: 260px;
+    background: var(--bg); box-shadow: 1px 0 0 var(--rule-hi);
+  }
+  .pooldim {
+    position: absolute; inset: 0; z-index: 19; border: 0; padding: 0; margin: 0;
+    background: color-mix(in srgb, var(--bg) 55%, transparent); cursor: pointer;
+  }
   .center { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   /* Row 1 is the design's tool row (01 / 01a): title + stats left, kind/rating
      filters + view toggle right. Row 2 holds what the design doesn't draw but the
