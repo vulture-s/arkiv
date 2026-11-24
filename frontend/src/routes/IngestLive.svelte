@@ -355,7 +355,7 @@
             </div>
           </div>
         {/if}
-        {#if err}<Mono style="font-size:11px;color:var(--cyan);margin-top:8px;display:block;">{err}</Mono>{/if}
+        {#if err}<Mono style="font-size:11px;color:var(--ink);margin-top:8px;display:block;">⚠ {err}</Mono>{/if}
 
         {#if halted}
           <!-- The run was stopped by the server-side watchdog. This has to be
@@ -458,14 +458,18 @@
   .herohead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
   .herobig { display: flex; align-items: baseline; gap: 18px; }
   .bignum { font-size: 80px; letter-spacing: -0.04em; line-height: 1; color: var(--ink); }
+  /* idle placeholder: .bignum came after .quiet at equal weight and painted the
+     80px dash full ink — it looked like a broken widget */
+  .bignum.quiet { color: var(--quiet-2); }
   .herometa { flex: 1; }
   .trigger { flex: 1; display: flex; flex-direction: column; gap: 8px; align-self: center; }
   .pathinput { font-size: 12px; }
   .triggerrow { display: flex; gap: 8px; align-items: center; }
   .limitinput { width: 70px; font-size: 12px; }
   .limitlbl { display: inline-flex; align-items: center; gap: 6px; }
-  .haltbox { margin-top: 10px; padding: 10px 12px; border-radius: 6px;
-             border: 1px solid var(--cyan); background: color-mix(in srgb, var(--cyan) 8%, transparent); }
+  /* a halt is an alert, not progress: square, ink rule on top (was the app's only
+     rounded box, tinted cyan) */
+  .haltbox { margin-top: 10px; padding: 10px 12px; border-top: 1px solid var(--ink); background: var(--surface); }
   .halthead { margin-bottom: 4px; }
   .aggwrap { margin-top: 22px; }
   .aggrow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }

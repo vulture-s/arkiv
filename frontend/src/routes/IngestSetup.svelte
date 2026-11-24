@@ -332,7 +332,7 @@
     </div>
 
     <div class="footer">
-      {#if err}<Mono style="font-size:11px;color:var(--cyan);">{err}</Mono>{:else if notice}<Mono dim style="font-size:11px;">{notice}</Mono>{/if}
+      {#if err}<Mono style="font-size:11px;color:var(--ink);">⚠ {err}</Mono>{:else if notice}<Mono dim style="font-size:11px;">{notice}</Mono>{/if}
       <div class="grow"></div>
       <button class="ak-btn" on:click={() => push('/')}>Cancel</button>
       <!-- Disabled only while a start is actually in flight; every other refusal

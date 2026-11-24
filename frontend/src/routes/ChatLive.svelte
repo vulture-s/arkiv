@@ -32,11 +32,14 @@
     try { const v = JSON.parse(json); return Array.isArray(v) ? v : [] } catch { return [] }
   }
 
+  // Non-fatal, but say so: an empty list on failure read as "no history".
+  let convErr = false
   async function loadConversations() {
     try {
       const r = await api.listConversations()
       conversations = r.conversations || []
-    } catch (e) { /* non-fatal — history sidebar just stays empty */ }
+      convErr = false
+    } catch (e) { convErr = true }
   }
 
   // Restore a past conversation: rebuild the thread from stored messages,
@@ -243,7 +246,9 @@
             <Mono dim style="font-size:9px;letter-spacing:0.04em;">{fmtTime(c.updated_at)}</Mono>
           </button>
         {/each}
-        {#if conversations.length === 0}
+        {#if convErr}
+          <button class="ak-btn" style="font-size:10.5px;margin:8px 2px;" on:click={loadConversations}>⚠ {$t('讀取紀錄失敗 · 重試')}</button>
+        {:else if conversations.length === 0}
           <Mono dim style="font-size:10.5px;padding:8px 2px;display:block;">{$t('尚無紀錄')}</Mono>
         {/if}
       </div>

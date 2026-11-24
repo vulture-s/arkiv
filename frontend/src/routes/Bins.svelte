@@ -10,6 +10,7 @@
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
+  import ConfirmDialog from '../lib/ConfirmDialog.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import Thumb from '../lib/Thumb.svelte'
   import { pushToast } from '../lib/toast.js'
@@ -19,6 +20,10 @@
 
   $: theme = $resolvedTheme
   let bins = []
+  // null = not loaded yet / loaded; string = the last load failed (shown in the
+  // list instead of 尚無精選集, which read as "you have none").
+  let loadErr = null
+  let delAsk = null // {id, name} while the delete confirm is open
   let activeId = null
   let detail = null // { id, name, item_count, reachable, items:[{project_name, media_id, filename, status}] }
   let loading = false
@@ -57,10 +62,11 @@
   async function loadBins() {
     try {
       const r = await api.getBins()
+      loadErr = null
       bins = r.bins || []
       if (!activeId && bins.length) select(bins[0].id)
       else if (activeId && !bins.find((b) => b.id === activeId)) { activeId = null; detail = null }
-    } catch (e) { pushToast($t('讀取精選集失敗: {msg}', { msg: e.message }), 'error') }
+    } catch (e) { loadErr = e.message; pushToast($t('讀取精選集失敗: {msg}', { msg: e.message }), 'error') }
   }
 
   async function select(id) {
@@ -194,18 +200,26 @@
     } catch (e) { pushToast($t('改名失敗: {msg}', { msg: e.message }), 'error') }
   }
 
-  async function del(id, name) {
-    if (!confirm($t('刪除精選集「{name}」？（只刪清單，不動任何原始素材）', { name }))) return
+  // Was the browser's native confirm() — the only one in an app that already has
+  // a styled ConfirmDialog.
+  function del(id, name) { delAsk = { id, name } }
+  async function doDel() {
+    const { id } = delAsk
     try {
       await api.deleteBin(id)
       if (activeId === id) { activeId = null; detail = null }
       await loadBins()
       pushToast($t('已刪除精選集'))
     } catch (e) { pushToast($t('刪除失敗: {msg}', { msg: e.message }), 'error') }
+    finally { delAsk = null }
   }
 
   onMount(loadBins)
 </script>
+
+<ConfirmDialog open={!!delAsk} danger title={$t('刪除精選集「{name}」？', { name: delAsk?.name || '' })}
+  message={$t('只刪這份清單，不動任何原始素材。')} confirmLabel={$t('刪除')}
+  on:cancel={() => (delAsk = null)} on:confirm={doDel} />
 
 <div class="artboard" data-theme={theme}>
   <div class="topbar">
@@ -232,7 +246,12 @@
             <Mono dim style="font-size:10px;">{b.item_count}</Mono>
           </button>
         {/each}
-        {#if !bins.length}
+        {#if loadErr}
+          <div class="loaderr">
+            <Mono style="font-size:10.5px;display:block;">⚠ {$t('讀取精選集失敗: {msg}', { msg: loadErr })}</Mono>
+            <button class="ak-btn retry" on:click={loadBins}>{$t('重試')}</button>
+          </div>
+        {:else if !bins.length}
           <Mono dim style="font-size:10.5px;display:block;padding:8px 2px;">{$t('尚無精選集 — 上方新建，或到搜尋頁把片加入')}</Mono>
         {/if}
       </div>
@@ -241,7 +260,7 @@
     <!-- right: active bin detail -->
     <main class="detail">
       {#if !detail}
-        <div class="empty">{$t('選一個精選集，或先建立一個')}</div>
+        <div class="empty">{bins.length ? $t('選一個精選集') : $t('精選集是跨素材庫的手動清單：在搜尋結果或格線選取片段後加入。')}</div>
       {:else}
         <div class="dhead">
           {#if renaming}
@@ -404,4 +423,6 @@
   .cplog { max-height: 160px; overflow: auto; background: var(--bg); border: 1px solid var(--rule); padding: 6px 8px; font-family: var(--ak-mono); font-size: 10px; line-height: 1.5; color: var(--ink-2); }
   .cplogline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cpsummary { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+  .loaderr { display: flex; flex-direction: column; gap: 8px; padding: 8px 2px; }
+  .loaderr .retry { align-self: flex-start; font-size: 10.5px; padding: 3px 10px; }
 </style>

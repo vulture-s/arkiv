@@ -21,6 +21,7 @@
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import Mono from '../lib/Mono.svelte'
+  import ConfirmDialog from '../lib/ConfirmDialog.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
   import { pickFolder, canPickFolder } from '../lib/pickFolder.js'
@@ -256,9 +257,16 @@
   // R5-17 (#45): stop a running offload. Aborting the fetch drops the HTTP
   // connection, which trips the server's terminate-on-disconnect; the per-source
   // state file is preserved so a later Run resumes from the last verified file.
+  // The confirm is the app's ConfirmDialog now (was the browser's native
+  // confirm()); answering no still leaves the transfer running.
+  let stopAsk = false
   function stopRun() {
     if (phase !== 'running' || !abortCtl) return
-    if (!confirm($t('轉存進行中，確定停止？已複製並校驗的檔案會保留，可稍後從中斷處續傳。'))) return
+    stopAsk = true
+  }
+  function doStop() {
+    stopAsk = false
+    if (phase !== 'running' || !abortCtl) return
     stopped = true
     abortCtl.abort()
   }
@@ -290,6 +298,9 @@
   }
   function onKey(e) {
     if (e.key !== 'Escape') return
+    // While the stop confirm is open, Esc is its Cancel. defaultPrevented covers
+    // the case where the dialog's window listener ran first and already closed it.
+    if (stopAsk || e.defaultPrevented) return
     if (e.metaKey || e.ctrlKey || e.altKey) return
     e.preventDefault()
     escAction()
@@ -303,6 +314,10 @@
 </script>
 
 <svelte:window on:keydown={onKey} />
+
+<ConfirmDialog open={stopAsk} title={$t('停止轉存？')}
+  message={$t('已複製並校驗的檔案會保留，可稍後從中斷處續傳。')} confirmLabel={$t('停止')} cancelLabel={$t('繼續轉存')}
+  on:cancel={() => (stopAsk = false)} on:confirm={doStop} />
 
 <div class="artboard" data-theme={$resolvedTheme}>
   <div class="topbar">
@@ -515,5 +530,6 @@
 
   .footer { display: flex; align-items: center; gap: 12px; padding: 16px 28px; border-top: 1px solid var(--rule); }
   .footer :global(.errtext) { color: var(--danger); }
-  .stopbtn { border-color: var(--cyan); color: var(--cyan); }
+  /* stop interrupts — ink outline, not cyan (cyan = progress, which the bar already shows) */
+  .stopbtn { border-color: var(--ink); color: var(--ink); }
 </style>
