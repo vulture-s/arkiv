@@ -41,7 +41,7 @@ export default {
   '只刪這份清單，不動任何原始素材。': 'Deletes only this list — no source media is touched.',
   '已複製並校驗的檔案會保留，可稍後從中斷處續傳。': 'Files already copied and verified are kept; a later run resumes where this one stopped.',
   '精選集是跨素材庫的手動清單：在搜尋結果或格線選取片段後加入。': 'Bins are hand-picked lists across libraries: select clips in search results or the grid, then add them.',
-  '只是從素材庫清單拿掉，資料夾與裡面的檔案都不會動，之後可以再加回來。': 'Only removes it from the library list — the folder and its files are untouched, and you can add it back later.',
+  '只是從素材庫清單拿掉，資料夾與裡面的檔案都不會動，之後可以再加回來。移除後，精選集裡來自這個庫的項目會顯示「未登記」，直到再加回來。': 'Only removes it from the library list — the folder and its files are untouched, and you can add it back later. Bin items from this library will show as “unregistered” until you add it back.',
   '會刪掉所有縮圖與語意搜尋索引：格線會暫時沒有縮圖，語意搜尋要重建索引後才能用。原始檔不受影響。': 'Deletes every thumbnail and the semantic search index: the grid shows no thumbnails until they regenerate, and semantic search needs an index rebuild. Source files are not affected.',
   '會用目前的模型重跑每一支的逐字稿並覆寫現有結果（含手動修正）。開始前會先備份，可以從備份還原。素材多時要跑很久。': 'Re-runs every clip\'s transcript with the current model and overwrites the existing ones (manual corrections included). A backup is taken first and can be restored. Takes a long time on a large library.',
   '讀取紀錄失敗 · 重試': 'Couldn\'t load history · Retry',
@@ -283,4 +283,5 @@ export default {
   '目前沒有過期的項目': 'Nothing in the Trash has expired yet',
   '清空過期項目？': 'Purge expired items?',
   '將永久刪除 {n} 個已過保留期限的原始檔（共 {size}），無法復原。': 'This permanently deletes {n} original file(s) past their retention period ({size} total). It cannot be undone.',
+  '從清單移除「{name}」': 'Remove “{name}” from the list',
 }

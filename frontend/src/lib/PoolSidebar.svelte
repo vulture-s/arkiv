@@ -15,6 +15,7 @@
   export let entitlement = null // /api/entitlements; null -> the line is omitted entirely
   export let onProject = null // desktop only (#561): (row) => switch library; null → rows are plain text
   export let onAddLibrary = null // desktop only: ＋ 新增素材庫; null → button hidden
+  export let onRemoveLibrary = null // (row) => void; ✕ on registered, non-open rows; null → hidden
   export let switching = false
   export let livePools = null // [[label, count], ...]
   export let liveTags = null // [{name, count}]
@@ -100,6 +101,14 @@
             <span class="projname" class:activename={p.active}>{p.name}</span>
             {#if p.count != null}
               <Mono dim style="font-size:10px;flex:0 0 auto;">{p.count}</Mono>
+            {/if}
+            <!-- Remove sits next to ＋ 新增素材庫 instead of only in Settings. Only
+                 registry rows that are not open: the open library is what this
+                 screen is showing, and the synthesised rows are not in the list. -->
+            {#if onRemoveLibrary && !p.active && String(p.id).startsWith('reg:')}
+              <button class="projx" disabled={switching} title={$t('從清單移除「{name}」', { name: p.name })}
+                aria-label={$t('從清單移除「{name}」', { name: p.name })}
+                on:click|stopPropagation={() => onRemoveLibrary(p)}>✕</button>
             {/if}
           </div>
           {#if p.health}
@@ -331,4 +340,9 @@
   }
   .addlib:hover:not(:disabled) { opacity: 1; }
   .addlib:disabled { cursor: default; opacity: 0.4; }
+  .projx { flex: 0 0 auto; margin-left: auto; background: none; border: none; padding: 0 2px; cursor: pointer;
+    color: var(--ink-2); font-size: 10px; line-height: 1; opacity: 0; }
+  .proj:hover .projx, .projx:focus-visible { opacity: 0.7; }
+  .projx:hover { opacity: 1; color: var(--danger); }
+  .projx:disabled { cursor: default; opacity: 0; }
 </style>
