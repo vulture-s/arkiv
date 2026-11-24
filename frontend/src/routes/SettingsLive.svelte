@@ -146,7 +146,9 @@
   async function delProj(name) {
     if (projBusy) return
     projBusy = true; projMsg = ''
-    try { await api.deleteProject(name); await loadProjects(); projMsg = $t('已移除 {name}', { name }) }
+    // Refresh stats too: the 「目前開啟」 line reads stats.project_registered_name,
+    // which goes stale (no 未登記 badge) when the open library is the one removed.
+    try { await api.deleteProject(name); await loadProjects(); api.getStats().then((st) => { stats = st }).catch(() => {}); projMsg = $t('已移除 {name}', { name }) }
     catch (e) { projMsg = $t('失敗: {msg}', { msg: e.message }); projErr = true } finally { projBusy = false }
   }
   async function syncProj() {
@@ -325,11 +327,23 @@
       vocabMsg = $t('已套用：更新 {n} 筆、{hits} 處替換', { n: applyResult.media_updated, hits: applyResult.total_hits })
     } catch (e) { vocabMsg = $t('套用失敗: {msg}', { msg: e.message }) } finally { vocabBusy = false }
   }
-  async function runRevert() {
+  // Reverting rewrites transcripts in place, so it confirms — naming the backup it
+  // will use, and then passing exactly that name, so what the dialog promised is
+  // what runs even if a new backup lands in between. The list also holds the
+  // backups a library-wide retranscribe makes, so "the latest" is not always the
+  // last vocabulary apply.
+  function askRevert() {
+    const name = backups[0]
+    if (!name || vocabBusy) return
+    ask = { title: $t('從備份還原逐字稿？'), danger: true, label: $t('還原'),
+      message: $t('會用備份「{name}」覆寫裡面記錄到的每一支逐字稿，之後做的修改（含手動修正）會被蓋掉。', { name }),
+      run: () => runRevert(name) }
+  }
+  async function runRevert(name = null) {
     if (vocabBusy) return
     vocabBusy = true; vocabMsg = ''
     try {
-      const r = await api.recorrectRevert()
+      const r = await api.recorrectRevert(name)
       applyResult = null
       vocabMsg = r.error ? $t('還原失敗: {msg}', { msg: r.error }) : $t('已還原 {n} 筆（{backup}）', { n: r.restored, backup: r.backup })
       backups = (await api.getRecorrectBackups()).backups || []
@@ -507,7 +521,7 @@
               <button class="ak-btn" on:click={runPreview} disabled={vocabBusy}>{$t('預覽命中')}</button>
               <label class="vchk"><input class="vcb" type="checkbox" bind:checked={doRebuild} /> {$t('套用後重建向量索引')}</label>
               <button class="ak-btn" on:click={runApply} disabled={vocabBusy || !preview || !preview.total_hits}>{$t('套用校正')}</button>
-              {#if backups.length}<button class="ak-btn" on:click={runRevert} disabled={vocabBusy}>{$t('還原最近一次')}</button>{/if}
+              {#if backups.length}<button class="ak-btn" on:click={askRevert} disabled={vocabBusy}>{$t('還原最近一次')}</button>{/if}
             </div>
 
             {#if preview}

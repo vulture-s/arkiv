@@ -72,6 +72,10 @@
 
   async function select(id) {
     activeId = id
+    // A rename in progress belongs to the bin it was started on. Left set, it
+    // carried over: ✎ on bin A, click bin B, Enter → B was renamed to A's name.
+    renaming = false
+    renameVal = ''
     detail = null
     loading = true
     try {
