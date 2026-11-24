@@ -1628,8 +1628,8 @@
     background-position: calc(100% - 12px) 50%, calc(100% - 8px) 50%;
     background-size: 4px 4px; background-repeat: no-repeat;
   }
-  .expbtn.danger { color: #d9534f; border-color: #d9534f; }
-  .expbtn.danger:hover { background: #d9534f; color: #fff; }
+  .expbtn.danger { color: var(--danger); border-color: var(--danger); }
+  .expbtn.danger:hover { background: var(--danger); color: var(--danger-ink); }
   .gridwrap { flex: 1; overflow: auto; position: relative; }
   /* A1: pre-built sample demo bar — flags the seeded clips as demo + one-click remove */
   .samplebar {
