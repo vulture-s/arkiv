@@ -247,7 +247,7 @@
   }
   function askDelProj(name) {
     ask = { title: $t('從清單移除「{name}」？', { name }), danger: false, label: $t('移除'),
-      message: $t('只是從素材庫清單拿掉，資料夾與裡面的檔案都不會動，之後可以再加回來。'),
+      message: $t('只是從素材庫清單拿掉，資料夾與裡面的檔案都不會動，之後可以再加回來。移除後，精選集裡來自這個庫的項目會顯示「未登記」，直到再加回來。'),
       run: () => delProj(name) }
   }
   function askRetranscribeAll() {
@@ -742,7 +742,7 @@
             <div class="pactive">
               <span class="pactlabel">{$t('目前開啟')}</span>
               <span class="pactname">{stats?.project_registered_name || stats?.project || '—'}</span>
-              {#if stats && !stats.project_registered_name}<span class="pactwarn" title={$t('目前開啟的這個庫還沒登記在下表；不影響使用')}>{$t('未登記')}</span>{/if}
+              {#if stats && !stats.project_registered_name}<span class="pactwarn" title={$t('目前開啟的這個庫還沒登記在下表：瀏覽與搜尋照常，但不能把這裡的素材加入精選集')}>{$t('未登記')}</span>{/if}
             </div>
             <div class="pacthint">{$t('這是 arkiv 目前在用的素材庫。在下表新增或移除，不會改變這一行。')}</div>
 

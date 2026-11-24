@@ -659,6 +659,13 @@
   // → switch to it. The backend creates `.arkiv/` there on first start.
   async function onAddLibrary() {
     if (switching) return
+    // Busy check BEFORE registering: the switch below refuses while an import
+    // runs, and registering first left an entry (using a free-tier slot) that the
+    // user never got to open — and that the sidebar did not even show.
+    try {
+      const msg = busyMessage(await api.libraryBusy())
+      if (msg) return pushToast(msg, 'error')
+    } catch { /* the shell checks again before it stops anything */ }
     const path = await pickFolder()
     if (!path) return
     const names = (registryProjects || []).map((r) => r.name)
@@ -671,7 +678,33 @@
         return pushToast(addErrorMessage(e, name), 'error')
       }
     }
+    // Refresh the list before switching: if the switch is refused or fails, the
+    // new entry is still registered and must be visible (and removable) here.
+    await refreshRegistry()
     await onProjectClick({ name, path, active: false })
+  }
+  async function refreshRegistry() {
+    try { registryProjects = (await api.getProjects())?.projects ?? registryProjects } catch { /* keep the old list */ }
+  }
+
+  // ✕ on a sidebar library row → unregister it (Settings has the same action).
+  // Only takes it off the list: the folder and its .arkiv/ stay on disk.
+  let removeLib = null // row pending confirmation
+  let removeLibBusy = false
+  async function confirmRemoveLibrary() {
+    if (!removeLib) return
+    const name = removeLib.name
+    removeLibBusy = true
+    try {
+      await api.deleteProject(name)
+      pushToast($t('已移除 {name}', { name }))
+      await refreshRegistry()
+    } catch (e) {
+      pushToast($t('移除失敗: {error}', { error: e.message }), 'error')
+    } finally {
+      removeLibBusy = false
+      removeLib = null
+    }
   }
   // real disk usage for the sidebar Storage footer (replaces the mock placeholder)
   $: liveStorage = stats?.disk ?? null
@@ -1324,7 +1357,7 @@
          (a project, pool, tag…) closes the drawer so the result is visible. -->
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div class="poolslot" on:click={(e) => e.target.closest('.proj.switchable, .poolrow, .tag') && closePoolOverlay()}>
-    <PoolSidebar live {liveProjects} {entitlement} onProject={canSwitchLibrary() ? onProjectClick : null} onAddLibrary={canSwitchLibrary() ? onAddLibrary : null} {switching} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} {activeTag} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
+    <PoolSidebar live {liveProjects} {entitlement} onProject={canSwitchLibrary() ? onProjectClick : null} onAddLibrary={canSwitchLibrary() ? onAddLibrary : null} onRemoveLibrary={(p) => (removeLib = p)} {switching} {livePools} {liveTags} {liveCollections} {liveStorage} {liveCameras} {liveShotYears} onTag={onTagClick} {activeTag} onCollection={onCollectionClick} {activeCollection} onCamera={onCameraClick} {activeCamera} onShotYear={onShotYearClick} {activeShotYear} onShotDate={onShotDateClick} {activeShotDate} onPool={onPoolClick} {activePool} liveBins={binList} onBin={() => (window.location.hash = '#/bins')} />
     </div>
     {/if}
 
@@ -1594,6 +1627,16 @@
     busy={delBusy}
     on:confirm={confirmDelete}
     on:cancel={() => (confirmDel = null)}
+  />
+
+  <ConfirmDialog
+    open={!!removeLib}
+    title={removeLib ? $t('從清單移除「{name}」？', { name: removeLib.name }) : null}
+    message={$t('只是從素材庫清單拿掉，資料夾與裡面的檔案都不會動，之後可以再加回來。移除後，精選集裡來自這個庫的項目會顯示「未登記」，直到再加回來。')}
+    confirmLabel={$t('移除')}
+    busy={removeLibBusy}
+    on:confirm={confirmRemoveLibrary}
+    on:cancel={() => (removeLib = null)}
   />
 
   <TrashModal open={trashOpen} on:close={() => (trashOpen = false)} />

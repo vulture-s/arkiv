@@ -186,7 +186,7 @@ export default {
   "。註冊表讓跨庫搜尋與精選集能以名稱指認片段，不是素材庫的切換器——一個伺服器行程只服務一個素材庫；要改開別的庫，得用該路徑重新啟動後端（": ". The registry lets cross-library search and bins refer to clips by name; it is not a library switcher — one server process serves one library. To open a different one, restart the backend with that path (",
   "）。": ").",
   "目前開啟": "Currently open",
-  "目前開啟的這個庫還沒登記在下表；不影響使用": "The open library is not registered in the table below; this does not affect normal use",
+  "目前開啟的這個庫還沒登記在下表：瀏覽與搜尋照常，但不能把這裡的素材加入精選集": "The open library is not registered in the table below: browsing and search work as usual, but its clips cannot be added to bins",
   "這是 arkiv 目前在用的素材庫。在下表新增或移除，不會改變這一行。": "This is the library arkiv is using now. Adding or removing entries below does not change this row.",
   "目前開啟中": "Currently open",
   "還沒有登記其他素材庫。只用一個庫的話，這裡保持空白就好。": "No other libraries registered. If you only use one, leave this empty.",
