@@ -13,6 +13,10 @@ export default {
   '側欄': 'Sidebar',
   '檢視面板': 'Inspector',
   '關閉側欄': 'Close sidebar',
+  '清除搜尋': 'Clear search',
+  '搜尋範圍': 'Search scope',
+  '此庫': 'This library',
+  '全部專案': 'All projects',
 
   // ── poolSort.js ──
   '匯入 新→舊': 'Ingest date · newest first',
@@ -161,7 +165,6 @@ export default {
   '未評分': 'Unrated',
   'IN/OUT 寫入失敗: {error}': 'Failed to save IN/OUT: {error}',
   '篩選中': 'filtered',
-  '搜尋（語意 + 關鍵字）…': 'Search (semantic + keyword)…',
   '排名檢視（score + 摘要）': 'Ranked view (score + summary)',
   '排名 →': 'Ranked →',
   '排序（搜尋結果依相關度；沒有拍攝日期的排最後）': 'Sort (search results by relevance; clips without a shoot date go last)',
