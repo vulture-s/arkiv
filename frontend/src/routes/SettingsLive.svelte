@@ -789,8 +789,8 @@
               </div>
               <div class="frow"><Mono dim style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">Report a problem</Mono>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                  <button class="ak-btn" on:click={copyDiagnostic} disabled={diagBusy}>Copy diagnostic</button>
-                  <button class="ak-btn" on:click={downloadDiagnostic} disabled={diagBusy}>Download</button>
+                  <button class="ak-btn" on:click={copyDiagnostic} disabled={diagBusy}>{$t('複製診斷資訊')}</button>
+                  <button class="ak-btn" on:click={downloadDiagnostic} disabled={diagBusy}>{$t('下載')}</button>
                   {#if diagMsg}<Mono dim style="font-size:11.5px;">{diagMsg}</Mono>{/if}
                 </div>
               </div>

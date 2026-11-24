@@ -308,7 +308,7 @@
     <div class="grow"></div>
     <a class="ak-btn" href="#/query-live">⊞ query builder</a>
     <a class="ak-btn" href="#/bins">★ {$t('精選集')}</a>
-    <a class="ak-btn" href="#/main-live">← back to grid</a>
+    <a class="ak-btn" href="#/main-live">{$t('← 回到素材庫')}</a>
   </div>
 
   <div class="main">
@@ -455,7 +455,7 @@
                     {/if}
                   </div>
                   <div class="raction">
-                    {#if g.openable}<span class="ak-btn openbtn">Open →</span>{/if}
+                    {#if g.openable}<span class="ak-btn openbtn">{$t('開啟 →')}</span>{/if}
                   </div>
                 </svelte:element>
               {/each}

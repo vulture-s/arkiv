@@ -344,7 +344,7 @@
             {#if canBrowse}
               <button class="seg" on:click={browseSrc} disabled={phase === 'running'} title={$t('選擇資料夾')} aria-label={$t('選擇資料夾')}>⋯</button>
             {/if}
-            <button class="ak-btn" on:click={doPreview} disabled={phase === 'previewing' || phase === 'running'}>{phase === 'previewing' ? 'reading…' : 'Preview'}</button>
+            <button class="ak-btn" on:click={doPreview} disabled={phase === 'previewing' || phase === 'running'}>{phase === 'previewing' ? $t('讀取中…') : $t('預覽')}</button>
           </div>
         </div>
 
@@ -458,7 +458,7 @@
       {#if phase === 'running'}
         <button class="ak-btn stopbtn" on:click={stopRun}>{$t('停止')}</button>
       {:else}
-        <button class="ak-btn" on:click={() => push('/')}>{phase === 'done' ? 'Done' : 'Cancel'}</button>
+        <button class="ak-btn" on:click={() => push('/')}>{phase === 'done' ? $t('完成') : $t('取消')}</button>
       {/if}
       <!-- Disabled only while a copy is actually in flight. Every other refusal
            is a toast naming what is missing, so the button is never mutely dead. -->

@@ -245,6 +245,18 @@ select {
   background-color: var(--surface-2);
   color: var(--ink);
 }
+/* Every <select class="ak-input">: square, mono, hairline, own chevron.
+   Query Builder's selects were drawn by the OS (rounded, system font). */
+select.ak-input {
+  appearance: none; -webkit-appearance: none; border-radius: 0;
+  font-family: var(--ak-mono); font-size: 11.5px; color: var(--ink);
+  border: 1px solid var(--rule-hi); background-color: transparent;
+  padding: 6px 24px 6px 8px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-2) 50%), linear-gradient(135deg, var(--ink-2) 50%, transparent 50%);
+  background-position: calc(100% - 12px) 50%, calc(100% - 8px) 50%;
+  background-size: 4px 4px; background-repeat: no-repeat;
+}
+select.ak-input:focus { outline: none; border-color: var(--ink); }
 select option {
   background-color: var(--surface-2);
   color: var(--ink);

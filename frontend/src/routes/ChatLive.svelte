@@ -14,6 +14,7 @@
   import { pushToast } from '../lib/toast.js'
   import { createExportGuard, downloadedMsg } from '../lib/exportFeedback.js'
   import { t } from '../lib/i18n.js'
+  import Thumb from '../lib/Thumb.svelte'
 
   $: theme = $resolvedTheme
   let messages = [] // {role:'user'|'assistant', text, intent?, scenes?:[{id,name,thumb}]}
@@ -75,7 +76,20 @@
   }
 
   // Honest phrasing — chat finds candidate clips, it does NOT cut a final video.
-  const suggestions = ['找生肉切割的鏡頭', '找店內空景的畫面', '哪些素材有餐廳'] // i18n-ignore sample queries sent to the chat backend as-is
+  // Sample prompts come from this library's own top tags — the old fixed three
+  // (生肉切割 / 店內空景 / 餐廳) only made sense for one restaurant library.
+  // Generic prompts until /api/tags answers (or if it has nothing).
+  let topTags = []
+  async function loadTopTags() {
+    try {
+      const r = await api.getTags()
+      const list = Array.isArray(r) ? r : (r.tags || [])
+      topTags = list.slice().sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 3).map((x) => x.name).filter(Boolean)
+    } catch { topTags = [] }
+  }
+  $: suggestions = topTags.length
+    ? topTags.map((name) => $t('找有「{tag}」的鏡頭', { tag: name }))
+    : [$t('找室外的空景'), $t('有人在講話的片段'), $t('最近拍的素材有哪些')]
   const EXPORTS = ['edl', 'fcpxml', 'srt']
   // Authenticated download — a plain <a href> can't carry the Bearer token, so
   // exports would 401 on a tokened backend (Codex review P2 pattern).
@@ -215,6 +229,7 @@
   onMount(() => {
     loadMediaIndex()
     loadConversations()
+    loadTopTags()
     window.addEventListener('keydown', onGlobalKey)
   })
   onDestroy(() => window.removeEventListener('keydown', onGlobalKey))
@@ -225,7 +240,7 @@
     <ArkivLogo size={16} />
     <Mono dim style="font-size:10px;">{VERSION}</Mono>
     <div class="grow"></div>
-    <Mono dim style="font-size:11px;">chat · 5-intent · vector + LLM</Mono>
+    <Mono dim style="font-size:11px;">{$t('問你的素材庫')}</Mono>
     <!-- Same affordance the ingest and offload dialogs use, so Esc looks the same
          everywhere it works. The label is dynamic because Esc genuinely does two
          different things here: a static "返回素材庫" would be a lie mid-answer,
@@ -261,7 +276,7 @@
           <Eyebrow>arkiv chat</Eyebrow>
           <div class="ak-display emptytitle">{$t('問你的素材庫。')}</div>
           <Mono dim style="font-size:12px;line-height:1.6;max-width:440px;">
-            {$t('用中文問。例如「幫我把生肉切割的鏡頭剪成一段」→ 自動分類意圖 + 語意搜尋 + 回答 + 列出符合的片段。')}
+            {$t('直接用一句話問，例如「找有人在講話的片段」→ 判斷意圖、語意搜尋、回答，並列出符合的片段。')}
           </Mono>
           <div class="suggest">
             {#each suggestions as s}
@@ -284,7 +299,7 @@
                 <div class="scene">
                   <a class="scenelink" href={`#/main-live?ids=${m.scenes.map((s) => s.id).join(',')}&sel=${sc.id}`} title={$t('在素材庫開啟（grid 過濾成這批相關素材）')}>
                     <div class="scenethumb">
-                      {#if sc.thumb}<img src={sc.thumb} alt={sc.name} loading="lazy" />{/if}
+                      {#if sc.thumb}<img src={sc.thumb} alt={sc.name} loading="lazy" />{:else}<Thumb seed={sc.id} kind="video" {theme} />{/if}
                     </div>
                     <Mono dim style="font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">{sc.name}</Mono>
                   </a>
@@ -364,7 +379,7 @@
   /* errors: ink + rule, never cyan (cyan = progress/hover in this system) */
   .msg.error .text { color: var(--ink); border-left: 2px solid var(--ink); padding-left: 8px; }
   .text { font-size: 13.5px; white-space: pre-wrap; }
-  .scenes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; max-width: 560px; }
+  .scenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 6px; max-width: 640px; }
   .scene { display: flex; flex-direction: column; gap: 4px; }
   .scenelink { display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: inherit; cursor: pointer; }
   .scenelink:hover .scenethumb { box-shadow: inset 0 0 0 1px var(--ink); }
@@ -372,8 +387,8 @@
   .scenethumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .exports { display: flex; gap: 4px; margin-top: 2px; }
   .exp {
-    font-family: var(--ak-mono); font-size: 8.5px; letter-spacing: 0.06em;
-    color: var(--quiet); text-decoration: none; padding: 1px 4px;
+    font-family: var(--ak-mono); font-size: 10px; letter-spacing: 0.06em;
+    color: var(--quiet); text-decoration: none; padding: 3px 6px;
     border: 1px solid var(--rule); line-height: 1.3;
     background: transparent; cursor: pointer; appearance: none;
   }

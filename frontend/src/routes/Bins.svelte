@@ -227,7 +227,7 @@
     <Mono dim style="font-size:10px;">{$t('精選集')}</Mono>
     <div class="grow"></div>
     <a class="ak-btn" href="#/search-live">{$t('⌕ 搜尋加片')}</a>
-    <a class="ak-btn" href="#/main-live">← back to grid</a>
+    <a class="ak-btn" href="#/main-live">{$t('← 回到素材庫')}</a>
   </div>
 
   <div class="body">

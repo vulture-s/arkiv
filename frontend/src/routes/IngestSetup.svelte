@@ -211,7 +211,7 @@
 
   <div class="dialog">
     <div class="dhead">
-      <Eyebrow>Step 1 / 1 · configure</Eyebrow>
+      <Eyebrow>Configure</Eyebrow>
       <div class="ak-display title">{total ? `Ingest ${fresh} files` : 'Ingest media'}{gb ? ` · ${gb} GB` : ''}</div>
       <button class="esc" on:click={() => push('/')}>ESC · CANCEL</button>
     </div>
@@ -361,12 +361,13 @@
 
   .field { display: flex; flex-direction: column; gap: 10px; }
   .srcrow { display: flex; gap: 10px; align-items: flex-end; }
-  .num { width: 80px; flex: 0 0 80px; }
+  /* same column as the 46px ON/OFF toggles above, so every option label starts
+     on one line (was 80px: the last two labels sat 34px right of the rest) */
+  .num { width: 46px; flex: 0 0 46px; text-align: center; }
   /* No `background` here on purpose: a class beats the bare `select` rule in
      app.css, so re-declaring `transparent` would put the grey-white default
      popup back. Colour comes from that global rule. */
-  .sel { flex: 0 0 196px; width: 196px; font-size: 11.5px; font-family: var(--ak-mono); color: var(--ink); border: 1px solid var(--rule-hi); border-radius: 0; padding: 6px 8px; cursor: pointer; }
-  .sel:focus { outline: none; border-color: var(--ink); }
+  .sel { flex: 0 0 196px; width: 196px; }
 
   .optrow { display: flex; align-items: center; gap: 14px; }
   .presetrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
