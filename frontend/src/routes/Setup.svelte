@@ -133,7 +133,7 @@
           </div>
         {/if}
         <div class="grow"></div>
-        <div class="nav"><button class="ak-btn primary" on:click={() => (step = 2)}>{$t('下一步：AI 模型')}</button></div>
+        <div class="nav"><button class="ak-btn ak-btn--primary" on:click={() => (step = 2)}>{$t('下一步：AI 模型')}</button></div>
       {:else if step === 2}
         <Eyebrow style="margin-bottom:10px;">Step 2 · {$t('AI 模型')}</Eyebrow>
         <div class="ak-display big">{$t('在本機跑的')}<br />{$t('模型。')}</div>
@@ -159,12 +159,12 @@
           {#if missing.length}
             <Mono>{$t('還缺 {n} 個模型。可以現在下載，或等第一次匯入時再自動下載。', { n: missing.length })}</Mono>
             <div class="grow"></div>
-            <button class="ak-btn primary" disabled={pulling} on:click={startPull}>{pulling ? $t('下載中…') : $t('現在下載')}</button>
+            <button class="ak-btn ak-btn--primary" disabled={pulling} on:click={startPull}>{pulling ? $t('下載中…') : $t('現在下載')}</button>
             <button class="ak-btn" on:click={() => (step = 3)}>{$t('等匯入時再下載')}</button>
           {:else}
             <Mono>{$t('模型都已就緒。')}</Mono>
             <div class="grow"></div>
-            <button class="ak-btn primary" on:click={() => (step = 3)}>{$t('下一步：加入素材')}</button>
+            <button class="ak-btn ak-btn--primary" on:click={() => (step = 3)}>{$t('下一步：加入素材')}</button>
           {/if}
         </div>
         <div class="grow"></div>
@@ -178,7 +178,7 @@
         <div class="grow"></div>
         <div class="nav">
           <button class="ak-btn" on:click={() => finish(true)}>{$t('先看範例片')}</button>
-          <button class="ak-btn primary" on:click={() => finish(false)}>{$t('前往匯入')}</button>
+          <button class="ak-btn ak-btn--primary" on:click={() => finish(false)}>{$t('前往匯入')}</button>
         </div>
       {/if}
     </div>

@@ -186,11 +186,11 @@
         {#if state === 'ok'}
           <Mono dim style="font-size:10.5px;">{total} matches · {elapsedMs}ms</Mono>
         {:else if state === 'error'}
-          <Mono style="font-size:10.5px;color:var(--cyan);">ERROR: {err}</Mono>
+          <Mono style="font-size:10.5px;color:var(--ink);">⚠ ERROR: {err}</Mono>
         {:else if err}
           <Mono dim style="font-size:10.5px;">{err}</Mono>
         {/if}
-        {#if degraded}<Mono style="font-size:10px;color:var(--cyan);">⚠ {degraded}</Mono>{/if}
+        {#if degraded}<Mono style="font-size:10px;color:var(--ink);">⚠ {degraded}</Mono>{/if}
       </div>
     </div>
 
