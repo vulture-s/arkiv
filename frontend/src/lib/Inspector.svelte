@@ -14,6 +14,7 @@
   import { canDragOut, prepare, ready, startDragOut, sourceKey } from './dragOut.js'
   import { keyAction, shuttleNext, KEY_HINTS } from './transport.js'
   import { t, apiText } from './i18n.js'
+  import ConfirmDialog from './ConfirmDialog.svelte'
   export let media
   export let theme = 'dark'
   // 360 footage (.insv / .360): the preview thumbnail is an equirectangular frame,
@@ -623,6 +624,26 @@
       playerEl.cancelVideoFrameCallback(rvfcId)
       rvfcId = 0
     }
+  }
+  // Retranscribe and full rebuild overwrite this clip's transcript (manual fixes
+  // included) / every derived layer, and neither can be stopped once running —
+  // so they confirm first, like the library-wide retranscribe in Settings does.
+  // The cheap, additive actions (retry vision, proxies) still run on click.
+  let reAsk = null
+  function askReprocess(action) {
+    if (!onReprocess || reBusy) return
+    if (action === 'retranscribe') {
+      reAsk = { action, title: $t('重新轉錄這支素材？'), label: $t('開始重轉錄'),
+        message: $t('會用目前的模型重跑這支的逐字稿並覆寫現有結果，包括手動修正過的地方。開始後無法中途停止。') }
+    } else if (action === 'reingest') {
+      reAsk = { action, title: $t('完整重建這支素材？'), label: $t('開始重建'),
+        message: $t('會重跑這支的轉錄、視覺分析與索引，覆寫現有結果（包括手動修正的逐字稿）。開始後無法中途停止。') }
+    } else doReprocess(action)
+  }
+  function confirmReprocess() {
+    const a = reAsk && reAsk.action
+    reAsk = null
+    if (a) doReprocess(a)
   }
   async function doReprocess(action) {
     if (!onReprocess || reBusy) return
@@ -1258,7 +1279,7 @@
             <option value={l.code}>{l.label || l.code}</option>
           {/each}
         </select>
-        <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('retranscribe')}>
+        <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => askReprocess('retranscribe')}>
           {reBusy === 'retranscribe' ? (reProgress ? $t('轉錄中… {progress}', { progress: reProgress }) : $t('轉錄中…')) : $t('重轉錄')}
         </button>
       </div>
@@ -1266,7 +1287,7 @@
         <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('retry-vision')}>
           {reBusy === 'retry-vision' ? (reProgress ? $t('分析中… {progress}', { progress: reProgress }) : $t('分析中…')) : $t('重試視覺')}
         </button>
-        <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => doReprocess('reingest')}>
+        <button class="ak-btn rebtn" disabled={!!reBusy} on:click={() => askReprocess('reingest')}>
           {reBusy === 'reingest' ? $t('重建中…') : $t('完整重建')}
         </button>
       </div>
@@ -1287,6 +1308,16 @@
   </div>
 
 </aside>
+
+<ConfirmDialog
+  open={!!reAsk}
+  danger
+  title={reAsk ? reAsk.title : null}
+  message={reAsk ? reAsk.message : ''}
+  confirmLabel={reAsk ? reAsk.label : null}
+  on:confirm={confirmReprocess}
+  on:cancel={() => (reAsk = null)}
+/>
 
 <style>
   .inspector {

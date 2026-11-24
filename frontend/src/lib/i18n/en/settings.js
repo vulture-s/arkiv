@@ -199,4 +199,6 @@ export default {
   "登記一個已經存在的 arkiv 素材庫資料夾（裡面要有 ": "Register an existing arkiv library folder (it must contain ",
   "）。一般的素材資料夾請用 ＋ INGEST 匯入。": "). Ingest ordinary footage folders with ＋ INGEST.",
   "重新執行設定精靈": "Run setup wizard again",
+  "從備份還原逐字稿？": "Restore transcripts from a backup?",
+  "會用備份「{name}」覆寫裡面記錄到的每一支逐字稿，之後做的修改（含手動修正）會被蓋掉。": "This overwrites every transcript recorded in backup “{name}”. Changes made since then, including manual fixes, will be lost.",
 }

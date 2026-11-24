@@ -75,6 +75,16 @@
       : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB'
       : Math.max(0, Math.round((n || 0) / 1024)) + ' KB'
   $: purgeAllBytes = items.reduce((a, it) => a + (it.size_bytes || 0), 0)
+  // 「清空過期」 is just as permanent as 「清空全部」 for the files it hits, so it
+  // confirms too, with the count. "Expired" mirrors the backend's cutoff
+  // (deleted_at older than the TTL ≈ expires_at already passed).
+  let confirmPurgeExpired = false
+  $: expiredItems = items.filter((it) => it.expires_at && Date.parse(it.expires_at) <= Date.now())
+  $: purgeExpiredBytes = expiredItems.reduce((a, it) => a + (it.size_bytes || 0), 0)
+  function askPurgeExpired() {
+    if (!expiredItems.length) { msg = $t('目前沒有過期的項目'); return }
+    confirmPurgeExpired = true
+  }
 
   const fmt = (s) => (s ? s.replace('T', ' ').slice(0, 16) : '—')
   // Esc on the window (the modal's keydown stops propagation, so the backdrop
@@ -119,7 +129,7 @@
       <div class="head">
         <Eyebrow>{$t('回收桶 · Trash')}</Eyebrow>
         <div class="head-actions">
-          <button class="ak-btn" on:click={() => purge(null)} disabled={busyId === 'purge' || !items.length} title={$t('清空過期項（依 TTL）')}>{$t('清空過期')}</button>
+          <button class="ak-btn" on:click={askPurgeExpired} disabled={busyId === 'purge' || !items.length} title={$t('清空過期項（依 TTL）')}>{$t('清空過期')}</button>
           <button class="ak-btn danger" on:click={() => (confirmPurgeAll = true)} disabled={busyId === 'purge' || !items.length} title={$t('立即清空全部')}>{$t('清空全部')}</button>
           <button class="ak-btn" on:click={() => dispatch('close')}>{$t('關閉')}</button>
         </div>
@@ -158,6 +168,17 @@
   busy={busyId === 'purge'}
   on:cancel={() => (confirmPurgeAll = false)}
   on:confirm={async () => { await purge(0); confirmPurgeAll = false }}
+/>
+
+<ConfirmDialog
+  open={confirmPurgeExpired}
+  danger
+  title={$t('清空過期項目？')}
+  message={$t('將永久刪除 {n} 個已過保留期限的原始檔（共 {size}），無法復原。', { n: expiredItems.length, size: fmtBytes(purgeExpiredBytes) })}
+  confirmLabel={$t('永久刪除')}
+  busy={busyId === 'purge'}
+  on:cancel={() => (confirmPurgeExpired = false)}
+  on:confirm={async () => { await purge(null); confirmPurgeExpired = false }}
 />
 
 <style>

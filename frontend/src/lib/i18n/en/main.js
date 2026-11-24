@@ -275,4 +275,12 @@ export default {
   '原始檔會保留 30 天，可從回收桶還原；': 'The originals are kept for 30 days and can be restored from the Trash;',
   '但標籤、評分／備註、IN/OUT、手改逐字稿不會隨還原回來。': 'but tags, ratings/notes, IN/OUT points and manually edited transcripts are not restored.',
   '移至回收桶': 'Move to Trash',
+  '重新轉錄這支素材？': 'Re-transcribe this clip?',
+  '會用目前的模型重跑這支的逐字稿並覆寫現有結果，包括手動修正過的地方。開始後無法中途停止。': 'This re-runs the transcript with the current model and overwrites the existing one, including manual fixes. It cannot be stopped once started.',
+  '完整重建這支素材？': 'Fully rebuild this clip?',
+  '開始重建': 'Start rebuild',
+  '會重跑這支的轉錄、視覺分析與索引，覆寫現有結果（包括手動修正的逐字稿）。開始後無法中途停止。': 'This re-runs transcription, vision analysis and indexing for this clip and overwrites the existing results (including manually fixed transcripts). It cannot be stopped once started.',
+  '目前沒有過期的項目': 'Nothing in the Trash has expired yet',
+  '清空過期項目？': 'Purge expired items?',
+  '將永久刪除 {n} 個已過保留期限的原始檔（共 {size}），無法復原。': 'This permanently deletes {n} original file(s) past their retention period ({size} total). It cannot be undone.',
 }

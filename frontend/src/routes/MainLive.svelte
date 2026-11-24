@@ -48,6 +48,17 @@
   // in flight left the sidebar highlighting the collection and the grid showing the
   // search. Each of them now carries a generation token across its awaits.
   const viewGen = createViewGen()
+  // Every path that REPLACES the grid (search, pool, collection, year, deep link,
+  // reload) claims a new generation here — and drops the multi-selection with it
+  // (in-browser filters are handled by the `visible` intersection further down).
+  // Picks used to survive a view change, so a bulk delete / rating / timeline
+  // export could act on clips no longer on screen: pick 3, search, pick 2, and
+  // "delete 5" removed 3 you could not see. Paging (loadMore) extends the view and
+  // does not come through here, so it keeps the selection.
+  function beginView() {
+    picked = []
+    return viewGen.begin()
+  }
   // R5-20 (#37): the grid used to cap at 500 with no indicator — clips 501+ were
   // unreachable from browse. `total` is the server-side pool count; `moreParams`
   // holds the request to re-issue with an incrementing offset (null = fully
@@ -258,6 +269,10 @@
       // remove only the rows that are actually gone; a hard per-item error keeps its card
       const gone = new Set(out.removeIds)
       items = items.filter((m) => !gone.has(m.id))
+      // The sidebar counts and "N / total" come from stats/total, not from items —
+      // refresh them too, or the library still claims the deleted clips.
+      total = Math.max(0, total - gone.size)
+      if (gone.size) api.getStats().then((st) => { stats = st }).catch(() => {})
       if (confirmDel.kind === 'single' && selectedId === ids[0]) selectedId = null
       clearPicks()
       confirmDel = null
@@ -389,7 +404,7 @@
     // Clearing here rather than in each caller keeps the highlight honest on
     // every path back out (search cleared, pool picked, initial mount).
     activeCollection = null
-    const gen = viewGen.begin()
+    const gen = beginView()
     state = 'loading'
     readyState = 'checking'
     const ready = await checkReady()
@@ -569,7 +584,7 @@
     // This writer is synchronous — the members are already in hand from
     // /api/collections — so without claiming a generation it would be the one path a
     // slow in-flight search could still overwrite a moment later.
-    viewGen.begin()
+    beginView()
     activeCollection = col.key
     items = (col.items || []).map((it) => ({
       id: it.id,
@@ -695,7 +710,7 @@
     // claiming a collection is active while the grid shows search results.
     activeCollection = null
     deepLinkSubset = false // searching replaces a ?ids= subset with a real query
-    const gen = viewGen.begin()
+    const gen = beginView()
     state = 'loading'
     try {
       // Same-DB search via /api/media?q= → {items, total, search:true}.
@@ -737,7 +752,7 @@
   // Chat deep-link: #/main-live?ids=2,5,9 shows exactly that relevant subset
   // (not the full library) via the backend's ?ids= filter.
   async function loadIds(ids) {
-    const gen = viewGen.begin()
+    const gen = beginView()
     state = 'loading'
     try {
       // Load the sidebar data (stats/tags/collections) too — otherwise the
@@ -843,6 +858,14 @@
     if (activeCamera && camCategory(m._raw && m._raw.camera_model) !== activeCamera) return false
     return true
   })
+  // The selection only ever covers clips on screen. The pool / rating / type /
+  // camera filters narrow `visible` in the browser without replacing the view, so
+  // beginView() never sees them — this drops any pick they hide, so a bulk action
+  // can't reach a clip the user can no longer see.
+  $: {
+    const onScreen = new Set(visible.map((m) => m.id))
+    if (picked.some((id) => !onScreen.has(id))) picked = picked.filter((id) => onScreen.has(id))
+  }
   // Camera categories present in the current pool, for the sidebar 機型 browser.
   $: liveCameras = (() => {
     const c = {}
