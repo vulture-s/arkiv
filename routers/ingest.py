@@ -692,6 +692,10 @@ async def ws_ingest(ws: WebSocket):
 # held or the task can be GC'd mid-run and its exceptions silently dropped; the
 # flag also serializes ingests so concurrent runs don't hammer the same SQLite DB.
 _ingest_ws_tasks: set = set()
+# The run the UI can stop: {"proc", "halted"} while a WS ingest is live, else
+# None. Only the WS path (the import screen) is cancellable — the synchronous
+# REST ingest and per-clip reingest return in the same request.
+_active_ws_run: Optional[dict] = None
 def _on_ingest_ws_done(task: "asyncio.Task") -> None:
     _ingest_ws_tasks.discard(task)
     _release_ingest_slot()  # audit H3 — shared single-flight guard
@@ -801,6 +805,8 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
             })
             return
 
+    global _active_ws_run
+    _active_ws_run = {"proc": proc, "halted": halted}
     watchdog = asyncio.create_task(_watchdog())
 
     ok, skipped, failed = 0, 0, 0
@@ -904,6 +910,7 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
         await proc.wait()
     finally:
         watchdog.cancel()
+        _active_ws_run = None
         if proc.returncode is None:  # audit M3: loop exited abnormally — reap child
             _kill_ingest_tree(proc)
             await proc.wait()
@@ -922,6 +929,25 @@ async def _run_ingest_with_ws(target: Path, limit: int, opts: Optional[list] = N
         # short rather than read a partial result as a finished one.
         "halted": halted["reason"],
     })
+
+
+@router.post("/api/ingest/cancel")
+async def cancel_ingest_ws(_tok: dict = Depends(require_scopes("ingest_write"))):
+    """Stop the running import (the one started from the import screen).
+
+    There was no way to stop one: a large import held the single-flight slot
+    until it finished, so library switching and new imports were refused for the
+    whole run. Same kill as the watchdog — the whole process tree — and the run
+    ends through the normal path, so `complete` still arrives (halted="cancelled")
+    and files already finished stay in the library.
+    """
+    run = _active_ws_run
+    if not run or run["proc"].returncode is not None:
+        raise ApiError(409, "目前沒有進行中的匯入")
+    run["halted"]["reason"] = "cancelled"
+    _kill_ingest_tree(run["proc"])
+    await ingest_ws.broadcast({"type": "halted", "reason": "cancelled"})
+    return {"ok": True, **api_msg("已停止匯入")}
 
 
 @router.post("/api/ingest/ws")

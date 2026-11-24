@@ -23,6 +23,7 @@
   import * as api from '../lib/api.js'
   import ArkivLogo from '../lib/ArkivLogo.svelte'
   import PageBar from '../lib/PageBar.svelte'
+  import ConfirmDialog from '../lib/ConfirmDialog.svelte'
   import Mono from '../lib/Mono.svelte'
   import Eyebrow from '../lib/Eyebrow.svelte'
   import { resolvedTheme } from '../lib/prefs.js'
@@ -44,7 +45,16 @@
   // Set when the server's watchdog stopped the run. Two kinds, and they need
   // different words: 'stall' = no output for the threshold, probably wedged;
   // 'budget' = still talking but past the estimated cap, probably just slow.
-  let halted = null // {reason, idle_s, elapsed_s, stall_s, budget_s}
+  let halted = null // {reason, idle_s, elapsed_s, stall_s, budget_s}; reason ∈ stall | budget | cancelled
+  // Is an import running on the server right now? Set by the stream's own events
+  // and reconciled against /api/library/busy on every (re)connect — the server
+  // sends no snapshot on connect, so a 'complete' that fired while the socket was
+  // down never arrived and `busy` stayed true for good (the start button sat on
+  // 「匯入中…」 until you left the page).
+  let serverRunning = false
+  let triggering = false // POST /api/ingest/ws in flight: don't reconcile under it
+  let stopAsk = false
+  let stopping = false
   let log = [] // [{t, stage, text}]
   let busy = false
   let rebuilding = false
@@ -127,12 +137,13 @@
       err = String(e)
       return
     }
-    ws.onopen = () => { conn = 'open'; retry = 0; reconnectAt = 0 }
+    ws.onopen = () => { conn = 'open'; retry = 0; reconnectAt = 0; reconcileBusy() }
     ws.onclose = () => { conn = 'closed'; retry += 1; scheduleReconnect() }
     ws.onerror = () => { conn = 'closed' }
     ws.onmessage = (ev) => {
       let msg
       try { msg = JSON.parse(ev.data) } catch { return }
+      if (msg.type === 'start' || msg.type === 'file' || msg.type === 'stage') serverRunning = true
       if (msg.type === 'start') {
         total = msg.total || 0
         files = {}
@@ -160,12 +171,14 @@
         pushLog(`${msg.filename}`, msg.stage)
       } else if (msg.type === 'halted') {
         halted = msg
-        pushLog(msg.reason === 'stall'
+        pushLog(msg.reason === 'cancelled' ? $t('HALTED · 已手動停止')
+          : msg.reason === 'stall'
           ? $t('HALTED · 已 {idle} 分鐘沒有進度（門檻 {stall} 分）', { idle: Math.round(msg.idle_s / 60), stall: Math.round(msg.stall_s / 60) })
           : $t('HALTED · 已跑 {elapsed} 分，超過上限 {budget} 分', { elapsed: Math.round(msg.elapsed_s / 60), budget: Math.round(msg.budget_s / 60) }))
       } else if (msg.type === 'complete') {
         complete = { ok: msg.ok, skipped: msg.skipped, failed: msg.failed }
         busy = false
+        serverRunning = false
         // A late-joining client never saw the 'halted' event; without this it
         // would read a cut-short run as a finished one.
         if (msg.halted && !halted) halted = { reason: msg.halted }
@@ -175,10 +188,42 @@
     }
   }
 
+  async function reconcileBusy() {
+    if (triggering) return
+    let b
+    try { b = await api.libraryBusy() } catch { return } // unknown → leave the view as it is
+    if (triggering) return
+    const running = !!(b && b.busy && (b.jobs || []).includes('ingest'))
+    serverRunning = running
+    if (!running && busy) {
+      // The run ended while we were not listening. Its tallies are gone with the
+      // missed event, so say that instead of inventing numbers.
+      busy = false
+      if (!complete && !halted) complete = { missed: true }
+    }
+  }
+
+  async function stopIngest() {
+    if (stopping) return
+    stopping = true
+    try {
+      await api.cancelIngest()
+      pushLog($t('已要求停止匯入'))
+    } catch (e) {
+      err = e.message
+      // 409 = nothing running: the run ended on its own; re-sync the view.
+      reconcileBusy()
+    } finally {
+      stopping = false
+      stopAsk = false
+    }
+  }
+
   async function trigger() {
     if (!path.trim()) { err = $t('請填要 ingest 的資料夾路徑'); return }
     err = ''
     busy = true
+    triggering = true
     files = {}
     stageCounts = {}
     halted = null
@@ -188,10 +233,13 @@
       // /api/ingest/ws requires ingest_write; a raw fetch would 401 on a tokened
       // remote backend.
       await api.ingestWs(path.trim(), Number(limit) || 0)
+      serverRunning = true
       pushLog(`triggered ingest: ${path} (limit ${limit})`)
     } catch (e) {
       err = e.message
       busy = false
+    } finally {
+      triggering = false
     }
   }
 
@@ -328,9 +376,15 @@
               <Mono dim style="font-size:11px;letter-spacing:0.05em;">FILES PROCESSED</Mono>
               <Mono style="font-size:13px;font-weight:500;display:block;margin-top:4px;">{path || '— folder import in progress —'}</Mono>
               <Mono dim style="font-size:10.5px;display:block;margin-top:2px;">
-                {#if complete}done · ok={complete.ok} skip={complete.skipped} fail={complete.failed}
+                {#if complete && complete.missed}{$t('已結束 · 結束時連線中斷，結果請到素材庫查看')}
+                {:else if complete}done · ok={complete.ok} skip={complete.skipped} fail={complete.failed}
                 {:else}{remaining} queued · {rows.length} seen{/if}
               </Mono>
+              {#if serverRunning && !complete && !halted}
+                <button class="ak-btn stopbtn" on:click={() => (stopAsk = true)} disabled={stopping}>
+                  {stopping ? $t('停止中…') : $t('停止匯入')}
+                </button>
+              {/if}
             </div>
           </div>
         {:else}
@@ -362,11 +416,14 @@
           <div class="haltbox" role="alert">
             <div class="halthead">
               <Mono style="font-size:11px;font-weight:600;">
-                {halted.reason === 'stall' ? $t('匯入已停止 · 研判卡住') : $t('匯入已停止 · 超過預估上限')}
+                {halted.reason === 'cancelled' ? $t('匯入已停止 · 手動停止')
+                  : halted.reason === 'stall' ? $t('匯入已停止 · 研判卡住') : $t('匯入已停止 · 超過預估上限')}
               </Mono>
             </div>
             <Mono dim style="font-size:10.5px;line-height:1.65;display:block;">
-              {#if halted.reason === 'stall'}
+              {#if halted.reason === 'cancelled'}
+                {$t('你停止了這一批，處理中的那支沒有寫入。')}
+              {:else if halted.reason === 'stall'}
                 {$t('已 {idle} 分鐘沒有任何進度輸出（門檻 {stall} 分鐘），整個處理程序已被停止。', { idle: Math.round((halted.idle_s || 0) / 60), stall: Math.round((halted.stall_s || 0) / 60) })}
                 {$t('可能是 ffmpeg 或視覺模型沒有回應 —— 先確認 ollama 還活著再重跑。')}
               {:else}
@@ -438,6 +495,17 @@
   </div>
 </div>
 
+<ConfirmDialog
+  open={stopAsk}
+  danger
+  title={$t('停止匯入？')}
+  message={$t('會停止目前這一批。已完成的素材會留在素材庫，正在處理的那支不會寫入；之後重跑同一個資料夾會從中斷處接續。')}
+  confirmLabel={$t('停止匯入')}
+  busy={stopping}
+  on:confirm={stopIngest}
+  on:cancel={() => (stopAsk = false)}
+/>
+
 <style>
   .artboard { width: 100%; max-width: 1920px; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); display: flex; flex-direction: column; overflow: hidden; margin: 0 auto; }
   .grow { flex: 1; }
@@ -499,4 +567,5 @@
   .logt { color: var(--quiet); flex: 0 0 64px; }
   .logstage { color: var(--quiet); flex: 0 0 64px; text-transform: uppercase; letter-spacing: 0.05em; }
   .logmsg { color: var(--ink-2); flex: 1; word-break: break-word; }
+  .stopbtn { margin-top: 8px; }
 </style>

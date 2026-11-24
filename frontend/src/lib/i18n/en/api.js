@@ -120,4 +120,6 @@ export default {
   '找不到這個模型名稱——檢查設定裡的模型名稱': 'Model name not found — check the model name in Settings',
   '連不到下載伺服器——確認網路後再試一次': 'Cannot reach the download server — check the network and try again',
   '磁碟空間不足': 'Not enough disk space',
+  '目前沒有進行中的匯入': 'No import is running',
+  '已停止匯入': 'Import stopped',
 }

@@ -43,6 +43,7 @@ def test_router_owns_exactly_the_ingest_routes():
         ("/api/media/{media_id}/reingest", "POST"),
         ("/ws/ingest", "WS"),
         ("/api/ingest/ws", "POST"),
+        ("/api/ingest/cancel", "POST"),
     }
 
 

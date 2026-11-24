@@ -270,6 +270,8 @@ export const activateTranscript = (id, lang, opts) =>
 // the backend defaults. Requires ingest_write (token-free on loopback; the dev
 // proxy injects the header). Goes through req() so a setToken() token is attached
 // in direct remote deployments — a raw fetch here would 401 once auth was required.
+// Stop the running import-screen ingest (409 when nothing is running).
+export const cancelIngest = (opts) => req('/api/ingest/cancel', { method: 'POST', ...opts })
 export const ingestWs = (path, limit = 0, options = {}, opts) =>
   req('/api/ingest/ws', { method: 'POST', body: { path, limit, ...options }, ...opts })
 
