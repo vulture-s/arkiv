@@ -791,6 +791,10 @@
   let _corrMid = null
   $: if ((media && media.id) !== _corrMid) { _corrMid = media && media.id; corr = null }
   $: if (!onCorrect) corr = null
+  // Inspector tabs (below Rate). Kept across selections on purpose: someone
+  // reviewing transcripts clip after clip shouldn't be bounced back to 資訊.
+  const INSP_TABS = [['info', '資訊'], ['av', '逐字稿'], ['scenes', '場景']] // i18n-ignore: labels go through $t() where rendered
+  let tab = 'info'
 </script>
 
 <svelte:window on:keydown={onWinKey} on:mousedown={onDocMouseDown} />
@@ -932,6 +936,17 @@
     {/if}
   </div>
 
+  <!-- Below Rate/export: three tabs instead of one long scroll. Panes are hidden,
+       not unmounted, so the waveform, transcript edits and scroll state survive a
+       tab switch and the player's keyboard shortcuts keep working. -->
+  <div class="tabs" role="tablist" aria-label={$t('檢視面板分頁')}>
+    {#each INSP_TABS as [key, label]}
+      <button class="tab" role="tab" class:on={tab === key} aria-selected={tab === key}
+        on:click={() => (tab = key)}>{$t(label)}</button>
+    {/each}
+  </div>
+
+  <div class="pane" role="tabpanel" hidden={tab !== 'info'}>
   <div class="block">
     <Eyebrow style="margin-bottom:8px;">Metadata</Eyebrow>
     <div class="metagrid">
@@ -1066,6 +1081,9 @@
     </div>
   {/if}
 
+  </div>
+
+  <div class="pane" role="tabpanel" hidden={tab !== 'av'}>
   <div class="block">
     <div class="blockhead">
       <Eyebrow>Waveform</Eyebrow>
@@ -1184,6 +1202,9 @@
     {/if}
   </div>
 
+  </div>
+
+  <div class="pane" role="tabpanel" hidden={tab !== 'scenes'}>
   {#if frameScenes && frameScenes.length}
     <div class="block">
       <div class="blockhead">
@@ -1263,6 +1284,7 @@
       {#if reMsg}<Mono dim style="font-size:10px;line-height:1.45;display:block;">{reMsg}</Mono>{/if}
     </div>
   {/if}
+  </div>
 
 </aside>
 
@@ -1280,8 +1302,24 @@
     font-family: var(--ak-mono); font-size: 13px; font-weight: 500;
     letter-spacing: 0.005em; line-height: 1.3; color: var(--ink); word-break: break-all;
   }
+  /* Fixed 16:9 box, capped at 42% of the window height. aspect-ratio alone is
+     only a preferred size: a portrait clip's <video> (2160×3840) grew the box to
+     its own height and pushed Rate below the fold. overflow:hidden turns off the
+     content-based minimum, so the box holds and the player letterboxes. */
+  .tabs { display: flex; border-bottom: 1px solid var(--rule); padding: 0 18px; gap: 0; flex-shrink: 0; }
+  .tab {
+    font-family: var(--ak-mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 10px 12px 9px; background: transparent; color: var(--quiet); border: none; cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab:first-child { padding-left: 0; }
+  .tab:hover { color: var(--ink); }
+  .tab.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+  .pane { display: contents; }
+  .pane[hidden] { display: none; }
   .preview {
-    position: relative; aspect-ratio: 16 / 9; background: var(--surface-2);
+    position: relative; aspect-ratio: 16 / 9; max-height: 42vh; max-height: 42dvh;
+    overflow: hidden; flex-shrink: 0; background: var(--surface-2);
     border-bottom: 1px solid var(--rule);
   }
   .reveal { font-size: 11px; padding: 4px 10px; margin-top: 8px; width: 100%; }
