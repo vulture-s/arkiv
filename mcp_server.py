@@ -33,7 +33,32 @@ from pathres import _display_path
 # Logging goes to stderr (never stdout — stdout is the MCP stdio channel).
 LOGGER = logging.getLogger(__name__)
 
-mcp = FastMCP("arkiv")
+#: Sent to MCP clients at initialize, ahead of any tool description. It carries
+#: what no single tool can: what this server may do, and where each kind of
+#: field comes from — the layers differ a lot in how far they can be trusted.
+INSTRUCTIONS = (
+    "arkiv is the user's local media library (video, audio, images). This server "
+    "is read-only: it searches and reads the library, it never ingests, edits or "
+    "deletes. Paths it returns are relative to the project root.\n"
+    "Say where a claim comes from, because the fields have different sources:\n"
+    "- Transcripts are machine speech-to-text (Whisper by default, or another "
+    "configured ASR engine), not human captions. Names and jargon can be "
+    "misheard; a correction dictionary may have rewritten known terms.\n"
+    "- Scene descriptions, content_type, atmosphere, focus_score and the other "
+    "vision fields are written by a local vision model from one keyframe per "
+    "scene: present them as the model's reading, not as fact.\n"
+    "- `people` and `who:` filters are human-entered labels, never face "
+    "recognition. `camera_motion` is measured from the frames.\n"
+    "- Absent or null means not produced for that clip (not analysed, not "
+    "measured), not that the clip lacks it. If search returns "
+    "`search_degraded: true`, results came from a text fallback; say so."
+)
+
+mcp = FastMCP("arkiv", instructions=INSTRUCTIONS)
+
+#: Upper bound for `media_ids` on the per-clip tools. Scenes and transcripts are
+#: the heavy payloads here; a cap keeps one call from swamping the context.
+_BATCH_MAX = 10
 
 
 # ── readiness ───────────────────────────────────────────────────────────────
@@ -474,6 +499,30 @@ def exposure_report_impl(terms: Any, filters: str = "", group_by: str = "",
 # ── MCP tools ─────────────────────────────────────────────────────────────────
 # Tools return JSON strings (ensure_ascii=False keeps Chinese readable, matching
 # export.py) — an unambiguous, version-stable contract across MCP SDK releases.
+def _one_or_many(impl, media_id: Optional[int], media_ids: Optional[List[int]], **kw) -> Any:
+    """Single id -> the impl's own shape (object or null), unchanged for existing
+    callers. media_ids -> {items, missing}: unknown ids are listed in `missing`
+    instead of dropped, so "not found" stays distinguishable from "fewer clips"."""
+    if (media_id is None) == (media_ids is None):
+        raise ValueError("pass exactly one of media_id or media_ids")
+    if media_ids is None:
+        return impl(int(media_id), **kw)
+    ids = [int(i) for i in media_ids]
+    if not ids:
+        raise ValueError("media_ids is empty")
+    if len(ids) > _BATCH_MAX:
+        raise ValueError("media_ids takes at most %d ids per call (got %d)" % (_BATCH_MAX, len(ids)))
+    items: List[Any] = []
+    missing: List[int] = []
+    for mid in ids:
+        rec = impl(mid, **kw)
+        if rec is None:
+            missing.append(mid)
+        else:
+            items.append(rec)
+    return {"items": items, "missing": missing}
+
+
 def _j(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, default=str)
 
@@ -522,8 +571,12 @@ def get_media(media_id: int) -> str:
 
 
 @mcp.tool()
-def get_scenes(media_id: int) -> str:
+def get_scenes(media_id: Optional[int] = None, media_ids: Optional[List[int]] = None) -> str:
     """Timecoded scene breakdown for one media item — what happens, and when.
+
+    Pass `media_id` for one clip, or `media_ids` (up to 10) to compare several in
+    one call — batch rather than calling once per clip. With `media_ids` the
+    result is {items: [<object below>, ...], missing: [ids not found]}.
 
     Use this to decide WHICH PART of a clip to use: search_media/get_media answer
     "which clip", this answers "which seconds of it". Each scene is one
@@ -578,12 +631,20 @@ def get_scenes(media_id: int) -> str:
     library's own language (typically Chinese).
     """
     _require_ready()
-    return _j(get_scenes_impl(media_id))
+    return _j(_one_or_many(get_scenes_impl, media_id, media_ids))
 
 
 @mcp.tool()
-def get_transcript(media_id: int, include_words: bool = False) -> str:
+def get_transcript(
+    media_id: Optional[int] = None,
+    include_words: bool = False,
+    media_ids: Optional[List[int]] = None,
+) -> str:
     """Speech transcript for one media item, with per-segment timecodes.
+
+    Pass `media_id` for one clip, or `media_ids` (up to 10) for several in one
+    call — batch rather than calling once per clip. With `media_ids` the result
+    is {items: [<object below>, ...], missing: [ids not found]}.
 
     Use `segments` to locate a quote in time: the flat `transcript` string tells
     you WHAT was said, `segments` tells you WHEN — which is what you need in order
@@ -611,7 +672,7 @@ def get_transcript(media_id: int, include_words: bool = False) -> str:
     none just returns [].
     """
     _require_ready()
-    return _j(get_transcript_impl(media_id, include_words=include_words))
+    return _j(_one_or_many(get_transcript_impl, media_id, media_ids, include_words=include_words))
 
 
 @mcp.tool()

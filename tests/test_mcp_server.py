@@ -581,3 +581,35 @@ async def test_tools_registered():
     assert {"search_media", "get_media", "get_transcript",
             "list_recent", "library_stats", "list_tags",
             "get_scenes"} <= names
+
+
+# ── server instructions + media_ids batch (MCP design checklist S1 / S8) ──────
+def test_server_sends_instructions():
+    assert m.mcp.instructions == m.INSTRUCTIONS
+    for phrase in ("read-only", "vision model", "human-entered", "search_degraded"):
+        assert phrase in m.INSTRUCTIONS
+
+
+def test_batch_ids_keep_single_shape_and_report_missing(monkeypatch):
+    fake = {1: {"id": 1, "transcript": "a"}, 2: {"id": 2, "transcript": "b"}}
+    monkeypatch.setattr(m, "get_transcript_impl",
+                        lambda mid, include_words=False: fake.get(mid))
+    assert json.loads(m.get_transcript(1)) == fake[1]          # unchanged single shape
+    assert json.loads(m.get_transcript(404)) is None
+    out = json.loads(m.get_transcript(media_ids=[2, 404, 1]))
+    assert [r["id"] for r in out["items"]] == [2, 1]           # request order kept
+    assert out["missing"] == [404]                             # not silently dropped
+
+
+def test_batch_ids_scenes(monkeypatch):
+    monkeypatch.setattr(m, "get_scenes_impl", lambda mid: {"media_id": mid} if mid < 3 else None)
+    out = json.loads(m.get_scenes(media_ids=[1, 2, 3]))
+    assert out == {"items": [{"media_id": 1}, {"media_id": 2}], "missing": [3]}
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"media_id": 1, "media_ids": [1]},
+                                    {"media_ids": []}, {"media_ids": list(range(11))}])
+def test_batch_ids_bad_arguments_raise(monkeypatch, kwargs):
+    monkeypatch.setattr(m, "get_scenes_impl", lambda mid: {"media_id": mid})
+    with pytest.raises(ValueError):
+        m.get_scenes(**kwargs)
