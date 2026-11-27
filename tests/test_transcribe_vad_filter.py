@@ -343,3 +343,32 @@ def test_every_segment_window_contains_audio_energy(
         assert len(window), "segment {0} points past the end of the audio".format(seg)
         peak = float(np.max(np.abs(window)))
         assert peak > 0.1, "segment {0} points at silence (peak {1:.3f})".format(seg, peak)
+
+
+# ── a cue whose end runs a hair past its chunk must not swallow the silence ───
+
+def test_segment_end_slightly_past_its_chunk_is_clamped_to_that_chunk():
+    """`再滑回去` 0.14–10.84: end overshoots chunk 0 by 0.1 s in gapless time.
+
+    Remapped independently it lands in chunk 1 (8.1 s in the media), so the cue
+    would hold through the 4 s of silence VAD removed. It must end where chunk 0
+    ends in the media (4.0 s).
+    """
+    segs = [{"start": 0.2, "end": 1.1, "text": "x"}]
+    words = [{"start": 0.8, "end": 1.1, "word": "x"}]
+    _t, _l, out_segs, out_words = transcribe._remap_result_times("x", "zh", segs, words, _MAP)
+    assert out_segs[0]["start"] == pytest.approx(3.2)
+    assert out_segs[0]["end"] == pytest.approx(4.0)
+    assert out_segs[0]["end"] <= _MAP[0][2] + (_MAP[0][1] - _MAP[0][0])
+    # the last word follows the same rule, so midpoint containment still holds
+    mid = (out_words[0]["start"] + out_words[0]["end"]) / 2
+    assert out_segs[0]["start"] <= mid <= out_segs[0]["end"]
+
+
+def test_segment_that_really_spans_two_chunks_is_not_clamped():
+    """Overshoot well beyond the pad is real speech in the next chunk: keep it."""
+    big_map = [(0.0, 1.0, 3.0), (1.0, 4.0, 8.0)]
+    segs = [{"start": 0.2, "end": 3.0, "text": "x"}]   # 2 s into chunk 1
+    _t, _l, out_segs, _w = transcribe._remap_result_times("x", "zh", segs, [], big_map)
+    assert out_segs[0]["start"] == pytest.approx(3.2)
+    assert out_segs[0]["end"] == pytest.approx(10.0)
