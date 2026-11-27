@@ -339,18 +339,37 @@ jobs:
           # to skip. Revisit when torch ships fixes, or if arkiv ever calls
           # torch.load / jit.script directly — the guard for that is the grep above,
           # which is why the call sites are named here rather than summarised.
-          pip-audit -r requirements.txt -r requirements-dev.txt \
-            --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c \
-            --ignore-vuln CVE-2026-45830 --ignore-vuln GHSA-2wm9-hf6c-p5cr \
-            --ignore-vuln CVE-2026-45831 --ignore-vuln GHSA-xph7-9rjv-w5fr \
-            --ignore-vuln CVE-2026-45833 --ignore-vuln GHSA-36p7-vc44-83pf \
-            --ignore-vuln PYSEC-2026-139 --ignore-vuln CVE-2026-4538 \
-            --ignore-vuln PYSEC-2025-194 --ignore-vuln CVE-2025-3000 \
-            --ignore-vuln GHSA-rrmf-rvhw-rf47 \
-            --ignore-vuln PYSEC-2025-195 --ignore-vuln CVE-2025-3001 \
-            --ignore-vuln GHSA-qfhq-4f3w-5fph \
-            --ignore-vuln PYSEC-2026-2286 --ignore-vuln PYSEC-2026-1856 \
+          IGNORES=(
+            --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c
+            --ignore-vuln CVE-2026-45830 --ignore-vuln GHSA-2wm9-hf6c-p5cr
+            --ignore-vuln CVE-2026-45831 --ignore-vuln GHSA-xph7-9rjv-w5fr
+            --ignore-vuln CVE-2026-45833 --ignore-vuln GHSA-36p7-vc44-83pf
+            --ignore-vuln PYSEC-2026-139 --ignore-vuln CVE-2026-4538
+            --ignore-vuln PYSEC-2025-194 --ignore-vuln CVE-2025-3000
+            --ignore-vuln GHSA-rrmf-rvhw-rf47 --ignore-vuln PYSEC-2025-195
+            --ignore-vuln CVE-2025-3001 --ignore-vuln GHSA-qfhq-4f3w-5fph
+            --ignore-vuln PYSEC-2026-2286 --ignore-vuln PYSEC-2026-1856
             --ignore-vuln CVE-2026-24747 --ignore-vuln GHSA-63cw-57p8-fm3p
+          )
+          # Two audits (2026-11-27):
+          # 1) The PINNED set — constraints.txt is what every install path and both
+          #    release legs actually install (`-r requirements.txt -c constraints.txt`).
+          #    Auditing the requirement *ranges* resolved fresh (2) picks the newest
+          #    allowed versions, so a pinned-but-vulnerable version could ship while
+          #    this gate stayed green — on 2026-11-27 that was 6 packages (pillow
+          #    12.3.0 ×42 advisories, filelock, certifi, oauthlib, opentelemetry-api,
+          #    setuptools). The markers are evaluated for each SHIPPED target
+          #    (scripts/pins_for.py), not for this ubuntu runner, which would skip
+          #    every darwin-/win32-only pin (torch, setuptools on darwin).
+          # 2) The free resolution, kept so nothing constraints leaves unpinned on a
+          #    platform (torch on Linux/Windows CUDA) drops out of the audit.
+          for target in darwin win32; do
+            python scripts/pins_for.py "$target" > "pins-$target.txt"
+            echo "== pinned set: $target ($(wc -l < "pins-$target.txt") pins)"
+            pip-audit -r "pins-$target.txt" --no-deps --disable-pip "${IGNORES[@]}"
+          done
+          echo "== free resolution of requirement ranges"
+          pip-audit -r requirements.txt -r requirements-dev.txt "${IGNORES[@]}"
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
