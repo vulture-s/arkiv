@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### 內部
+- **發版流程：兩個平台平行建置，最後一個 `publish` job 統一建 Release**（arkiv-ops todo）：macOS／Windows 兩腿只上傳 workflow artifact、不再各自寫同一個 GitHub Release，Windows 腿拿掉 `needs: release` 序列化；任一腿失敗就不發布，不會再出現只有一半檔案的 Release。dry-run 的 artifact 名稱改為 `arkiv-macos`／`arkiv-windows`。
+
 ## v1.9.0 - 2026-11-11
 
 **英文介面：在「設定 → General」切換語言，連後端回來的錯誤訊息也一起翻。**

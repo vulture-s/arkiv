@@ -259,11 +259,15 @@ from `main` by tag:
 4. The tag-triggered `release.yml` workflow builds the `.app`/`.dmg` on a macOS-arm runner. It
    **stamps the version from the tag**, so the bundle can't drift from the tag; signs +
    notarizes if the Apple secrets are configured (else builds unsigned — the app already ships
-   with a documented right-click→Open Gatekeeper step); and uploads the artifact to the Release.
-5. A second job, `release-windows`, then builds the Windows `.exe`/`.msi` on `windows-latest`
-   and attaches them to the same Release. It runs **after** the macOS job, so expect the
-   Windows artifacts a few minutes behind the `.dmg`. Both legs stamp the version identically.
-6. The website (`site/`, served at vulture-s.github.io/arkiv) redeploys by itself: merging the
+   with a documented right-click→Open Gatekeeper step); and uploads the `.dmg` as a workflow
+   artifact.
+5. In parallel, `release-windows` builds the Windows `.exe`/`.msi` on `windows-latest` and
+   uploads them as a workflow artifact. Both legs stamp the version identically. Neither leg
+   touches the GitHub Release.
+6. A third job, `publish`, runs only after **both** legs succeed: it downloads both artifacts
+   and creates the Release with the body and all assets in one call. If either build fails,
+   nothing is published.
+7. The website (`site/`, served at vulture-s.github.io/arkiv) redeploys by itself: merging the
    release commit touches `CHANGELOG.md`, which triggers `site.yml` on `main`. Check that the
    live changelog page (`/arkiv/changelog.html`) shows the new version; if it does not, run
    `site.yml` by hand (`gh workflow run site.yml --ref main`).
@@ -279,9 +283,9 @@ from `main` by tag:
 The Windows leg needs a packaging venv with **CPU-only torch**; the workflow builds one
 (`.venv-pack`) rather than reusing `.venv`, because on a machine with an NVIDIA card
 `pip install -r requirements.txt` resolves silero-vad's torch to the `+cuXXX` build — 4.2 GB
-against ~520 MB, all of it inside the installer. It runs `needs: release`, serialized behind
-the macOS leg so the two don't race on the same GitHub Release, and only the macOS leg passes
-a release `body` (action-gh-release replaces it wholesale). Windows builds are **unsigned**:
+against ~520 MB, all of it inside the installer. It runs in parallel with the macOS leg; only
+the `publish` job writes to the GitHub Release, so there is a single writer and a single
+`body` (action-gh-release replaces it wholesale). Windows builds are **unsigned**:
 SmartScreen shows "Windows protected your PC" once, the same shape as the unsigned macOS
 right-click → Open step. Authenticode signing can follow the existing all-or-nothing Apple
 preflight pattern when a certificate exists.
