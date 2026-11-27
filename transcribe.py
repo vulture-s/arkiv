@@ -249,6 +249,12 @@ def _vad_filter(wav_path: str, sample_rate: int = 16000):
     return out, offset_map
 
 
+# How far past its own chunk a segment's end may run (in gapless time) and still
+# be read as padding rather than speech. Twice the VAD `speech_pad_ms` (150 ms):
+# the pad is added on both sides of every kept chunk.
+_REMAP_END_OVERSHOOT_S = 0.3
+
+
 def _remap_vad_time(t: float, offset_map, ends) -> float:
     """One gapless-speech second → the second it came from in the source media.
 
@@ -282,10 +288,26 @@ def _remap_result_times(text, lang, segments, words, offset_map):
     ends = [o[1] for o in offset_map]
 
     def _fix(item):
+        t_start = float(item.get("start", 0) or 0)
+        t_end = float(item.get("end", 0) or 0)
+        new_end = _remap_vad_time(t_end, offset_map, ends)
+        # start and end are remapped independently, so an end that runs a hair past
+        # its chunk lands in the NEXT kept chunk — and every second of silence VAD
+        # removed between the two is silently added to the cue (`再滑回去` 0.14–10.84:
+        # a one-second line held on screen for ten). A small overshoot is the speech
+        # pad, not speech, so the end goes back to where its own chunk ends in the
+        # media. A large one is a sentence that genuinely spans both chunks and keeps
+        # the remapped end. Words get the same rule so `_postprocess`'s midpoint
+        # containment still holds for the last word of a clamped segment.
+        i = min(bisect.bisect_left(ends, t_start), len(offset_map) - 1)
+        if (bisect.bisect_left(ends, t_end) > i
+                and t_end - ends[i] <= _REMAP_END_OVERSHOOT_S):
+            trimmed_start, trimmed_end, original_start = offset_map[i]
+            new_end = original_start + (trimmed_end - trimmed_start)
         return {
             **item,
-            "start": round(_remap_vad_time(float(item.get("start", 0) or 0), offset_map, ends), 3),
-            "end": round(_remap_vad_time(float(item.get("end", 0) or 0), offset_map, ends), 3),
+            "start": round(_remap_vad_time(t_start, offset_map, ends), 3),
+            "end": round(new_end, 3),
         }
 
     return text, lang, [_fix(s) for s in segments or []], [_fix(w) for w in words or []]
