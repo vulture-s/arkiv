@@ -9,6 +9,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # Floors in requirements*.txt say what the code NEEDS; pins live in constraints.txt.
+    # The default strategy raised floors whenever a new release came out, and three of
+    # those raises landed on versions that require Python >=3.10 — breaking the 3.9 floor
+    # (see the marker splits in requirements.txt). Only touch a requirement when the new
+    # version falls outside its range; pinned versions still get bumped as before.
+    versioning-strategy: increase-if-necessary
 
   - package-ecosystem: "npm"          # frontend/package.json + package-lock.json
     directory: "/frontend"
@@ -31,3 +37,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # The UI build stage tracks the Node LTS in .nvmrc (22). Digest refreshes and
+      # minor/patch tags still come through; a major jump (e.g. #296, node 26) is a
+      # deliberate move done together with .nvmrc, not a weekly bot PR.
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

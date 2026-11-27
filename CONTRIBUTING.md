@@ -190,6 +190,11 @@ upstream changelog and a one-click rollback:
   install / build / audit), and skim the changelog for breaking changes. Add a
   `CHANGELOG.md` entry for anything user-facing.
 - **Rollback** = revert the bump PR (that's why bumps stay one-per-PR, not batched).
+- **What dependabot is told to skip** (`.github/dependabot.yml`): pip uses
+  `versioning-strategy: increase-if-necessary`, so it no longer raises floors in
+  `requirements*.txt` just because a newer release exists (three such raises broke the
+  Python 3.9 floor); pins in `constraints.txt` still move. The docker `node` image ignores
+  major versions — the UI stage follows `.nvmrc` (22 LTS) and a major jump is done by hand.
 - **Base-image digests**: `Dockerfile` and `docker-compose.yml` pin images by `@sha256` for
   reproducible rebuilds; dependabot's `docker` ecosystem refreshes those digests — merge the
   dependabot PR rather than hand-editing (or run `docker buildx imagetools inspect <image>`
