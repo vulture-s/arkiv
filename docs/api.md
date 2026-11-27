@@ -76,3 +76,30 @@ curl -X POST http://localhost:8501/api/chat -H "Authorization: Bearer $ARKIV_TOK
 ```
 
 Read history with `GET /api/chat/history/{conversation_id}` and list conversations with `GET /api/chat/conversations` (both need `chat_read`).
+
+## MCP over the LAN
+
+The default MCP server speaks **stdio**, which needs a local process and local access to
+the database — neither of which crosses a network. `mcp_http_server.py` serves the same
+read-only tools over **HTTP/SSE** so a client on another machine can query the library:
+
+```bash
+ARKIV_MCP_BIND=0.0.0.0 \
+ARKIV_MCP_ALLOWED_HOSTS=192.168.1.50:8502 \
+python mcp_http_server.py            # or: the arkiv-mcp service in docker compose
+```
+
+With docker compose, the ports are published on `127.0.0.1` by default. Start it with
+`ARKIV_BIND_HOST=0.0.0.0 docker compose up -d` to make them reachable from other machines.
+
+Point your MCP client at `http://<host>:8502/sse` with an `Authorization: Bearer <token>`
+header. Tokens are the same ones the REST API uses, so revoking one revokes it everywhere.
+
+> 🔴 **`ARKIV_MCP_ALLOWED_HOSTS` is not optional for LAN use.** The MCP SDK ships DNS
+> rebinding protection with a loopback-only allow-list, so a request arriving as
+> `Host: 192.168.1.50:8502` is refused with **421 Misdirected Request** before arkiv sees
+> it. List the address your clients dial. Values are *added* to the loopback defaults, so
+> `localhost` keeps working; `*` switches the host check off entirely.
+>
+> The bind address defaults to `127.0.0.1` — publishing an MCP endpoint to the network is
+> a decision, not a default.

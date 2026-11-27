@@ -76,3 +76,27 @@ curl -X POST http://localhost:8501/api/chat -H "Authorization: Bearer $ARKIV_TOK
 ```
 
 用 `GET /api/chat/history/{conversation_id}` 讀回歷史、`GET /api/chat/conversations` 列出對話（都需要 `chat_read`）。
+
+## MCP over the LAN（區網連線）
+
+預設的 MCP server 走 **stdio**，需要本機行程、也要能直接讀資料庫，兩者都過不了網路。
+`mcp_http_server.py` 用 **HTTP/SSE** 提供同一組唯讀工具，讓另一台機器上的 client 也能查素材庫：
+
+```bash
+ARKIV_MCP_BIND=0.0.0.0 \
+ARKIV_MCP_ALLOWED_HOSTS=192.168.1.50:8502 \
+python mcp_http_server.py            # 或：docker compose 裡的 arkiv-mcp 服務
+```
+
+用 docker compose 時，連接埠預設只開在 `127.0.0.1`。要讓其他機器連得到，用
+`ARKIV_BIND_HOST=0.0.0.0 docker compose up -d` 啟動。
+
+MCP client 指向 `http://<host>:8502/sse`，帶 `Authorization: Bearer <token>` 標頭。
+token 跟 REST API 用的是同一組，撤銷一個就全部失效。
+
+> 🔴 **區網使用時 `ARKIV_MCP_ALLOWED_HOSTS` 不能省。** MCP SDK 內建 DNS rebinding 防護，
+> 預設只允許 loopback，所以 `Host: 192.168.1.50:8502` 的請求會在進到 arkiv 之前就被回
+> **421 Misdirected Request**。把 client 實際連的位址列進去即可；這些值是**加在** loopback
+> 預設值上，`localhost` 照樣能用；設成 `*` 則整個關掉 host 檢查。
+>
+> 綁定位址預設是 `127.0.0.1` —— 把 MCP 端點開到網路上是一個決定，不是預設值。
