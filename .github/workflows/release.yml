@@ -41,6 +41,8 @@ env:
 jobs:
   release:
     runs-on: macos-latest   # Apple Silicon — assemble-backend.sh bundles an aarch64-apple-darwin Python
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -205,32 +207,24 @@ jobs:
           APPLE_SIGNING_IDENTITY: "-"   # ad-hoc; unnotarized (documented right-click->Open on download)
         run: cargo tauri build
 
-      - name: Attach artifacts to the GitHub Release (tag only)
-        if: ${{ github.ref_type == 'tag' }}
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            src-tauri/target/release/bundle/dmg/*.dmg
-          fail_on_unmatched_files: false
-          # This is the ONLY job that sets `body` — action-gh-release replaces it
-          # wholesale, so a second job passing its own would erase this one. The
-          # Windows leg attaches files without a body.
-          body: |
-            arkiv ${{ steps.ver.outputs.version }} — macOS (Apple Silicon) + Windows (x64).
-
-            Both builds are unsigned:
-            - **macOS**: right-click -> Open once to clear Gatekeeper (see `docs/quickstart-mac.md`).
-            - **Windows**: SmartScreen shows "Windows protected your PC" -> **More info** -> **Run anyway** (see `docs/quickstart-windows.md`).
-
-            The Windows artifacts are attached by a second job and land a few minutes after the macOS ones.
-
-      - name: Upload dry-run artifact (workflow_dispatch)
-        if: ${{ github.ref_type != 'tag' }}
+      # Upload only. Publishing to the Release happens ONCE, in the `publish`
+      # job below, after both legs have finished. Before that job existed the
+      # two legs each called action-gh-release against the same Release, and the
+      # Windows leg had to be serialized behind this one (`needs: release`) so
+      # their create-or-update calls could not race — release wall-clock was the
+      # SUM of both builds. Now they run in parallel and never touch the Release.
+      #
+      # Same step on tag and dry-run: a workflow_dispatch run just has no
+      # `publish` job to consume it, so the artifact is the dry-run output.
+      - name: Upload macOS bundle as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: arkiv-dryrun-dmg
+          name: arkiv-macos
           path: src-tauri/target/release/bundle/dmg/*.dmg
-          if-no-files-found: warn
+          # tag: a missing .dmg must fail HERE, not ship a Windows-only Release.
+          # dry-run: keep the old lenient behaviour.
+          if-no-files-found: ${{ github.ref_type == 'tag' && 'error' || 'warn' }}
+          retention-days: 7
 
   # ── Windows (x86_64) ─────────────────────────────────────────────────────
   # Mirrors the macOS job above. UNSIGNED for now: there is no Authenticode
@@ -239,13 +233,10 @@ jobs:
   # A conditional signing leg can be added later on the HAS_APPLE_CERT pattern.
   release-windows:
     runs-on: windows-latest
-    # Serialized behind the macOS job on purpose. On a tag BOTH legs call
-    # action-gh-release against the same Release, and two concurrent
-    # create-or-update calls race. This costs wall-clock and buys determinism.
-    # The cleaner shape — both legs upload artifacts, a third job publishes once
-    # — would mean reworking the already-verified macOS path, so it is a
-    # follow-up rather than a prerequisite.
-    needs: release
+    # Runs in PARALLEL with the macOS leg. Neither leg touches the GitHub
+    # Release; both upload workflow artifacts and the `publish` job attaches
+    # them in a single action-gh-release call (see the note on the macOS
+    # upload step). Previously serialized with `needs: release`.
     steps:
       - uses: actions/checkout@v7
 
@@ -446,25 +437,51 @@ jobs:
         working-directory: src-tauri
         run: cargo tauri build
 
-      - name: Attach artifacts to the GitHub Release (tag only)
-        if: ${{ github.ref_type == 'tag' }}
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            src-tauri/target/release/bundle/nsis/*-setup.exe
-            src-tauri/target/release/bundle/msi/*.msi
-          fail_on_unmatched_files: false
-          # No `body:` here on purpose. action-gh-release REPLACES the release
-          # body when given one, and this job runs after the macOS leg has
-          # already written it — passing a Windows-only body would erase the
-          # macOS notes. The combined text lives in the macOS job instead.
-
-      - name: Upload dry-run artifact (workflow_dispatch)
-        if: ${{ github.ref_type != 'tag' }}
+      - name: Upload Windows installers as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: arkiv-dryrun-windows
+          name: arkiv-windows
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: warn
+          if-no-files-found: ${{ github.ref_type == 'tag' && 'error' || 'warn' }}
+          retention-days: 7
+
+  # ── Publish (tag only) ───────────────────────────────────────────────────
+  # The ONLY job that writes to the GitHub Release. One action-gh-release call
+  # creates the Release, sets the body and attaches every asset, so there is no
+  # second writer to race with and no "second job must not pass `body:` or it
+  # erases the first" rule to remember.
+  #
+  # `needs` both legs: if either build fails, nothing is published — no more
+  # half-populated Release (macOS assets up, Windows leg red) to clean up by hand.
+  publish:
+    if: ${{ github.ref_type == 'tag' }}
+    needs: [release, release-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download both legs' artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          # arkiv-macos/ and arkiv-windows/ subdirs; names are fixed above.
+          pattern: arkiv-*
+
+      - name: List what will be published
+        run: find dist -type f -print | sort
+
+      - name: Create the GitHub Release and attach all assets
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/arkiv-macos/*.dmg
+            dist/arkiv-windows/*-setup.exe
+            dist/arkiv-windows/*.msi
+          fail_on_unmatched_files: true
+          body: |
+            arkiv ${{ needs.release.outputs.version }} — macOS (Apple Silicon) + Windows (x64).
+
+            Both builds are unsigned:
+            - **macOS**: right-click -> Open once to clear Gatekeeper (see `docs/quickstart-mac.md`).
+            - **Windows**: SmartScreen shows "Windows protected your PC" -> **More info** -> **Run anyway** (see `docs/quickstart-windows.md`).
+
