@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### 文件
+- **README 對外版收尾**：「MCP 區網連線」細節從 README 移到 `docs/api.md`／`docs/api.zh-TW.md`，README 只留連結；中文版 README 補上 Windows 安裝檔、內建範例素材、Docker 掛素材資料夾與分機部署（Ollama 在另一台）——原本中文版還寫著「Windows 目前沒有預建 app」。
+
 ## v1.9.0 - 2026-11-11
 
 **英文介面：在「設定 → General」切換語言，連後端回來的錯誤訊息也一起翻。**

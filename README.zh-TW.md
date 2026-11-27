@@ -142,20 +142,35 @@ Web UI 只是其中一個使用者 —— 你可以用腳本、自動化流程�
 
 → **[API 驗證、token scopes、素材庫 Chat（RAG）問答完整說明：docs/api.zh-TW.md](docs/api.zh-TW.md)**
 
+→ **[MCP 區網連線（HTTP/SSE、`ARKIV_MCP_ALLOWED_HOSTS`）：docs/api.zh-TW.md](docs/api.zh-TW.md#mcp-over-the-lan區網連線)**
+
 ## 快速開始
 
-### 下載應用程式（macOS, Apple Silicon）
+### 下載應用程式（macOS Apple Silicon · Windows x64）
 
-不想碰 Python 環境的最快路徑。`.dmg` 已打包 Python 後端與 ML 套件（torch、mlx-whisper、chromadb…），可略過下面的 venv/pip。但你**仍需 FFmpeg 與 Ollama**（負責抽幀、嵌入、視覺）：
+不想碰 Python 環境的最快路徑。安裝檔已打包 Python 後端與 ML 套件（torch、whisper、chromadb…），可略過下面的 venv/pip。但你**仍需 FFmpeg 與 Ollama**（負責抽幀、嵌入、視覺）。
+
+**macOS（Apple Silicon）**
 
 ```bash
 brew install ffmpeg ollama
 ollama pull bge-m3 && ollama pull qwen2.5vl:7b && ollama pull qwen2.5:14b
 ```
 
-到 [最新 release](https://github.com/vulture-s/arkiv/releases/latest) 下載 **`arkiv_<version>_aarch64.dmg`**，打開後把 **arkiv** 拖進「應用程式」。首次啟動因未簽名會被 macOS Gatekeeper 擋 —— **右鍵 → 打開** 一次即可（或執行 `xattr -dr com.apple.quarantine /Applications/arkiv.app`），之後正常開啟。
+到 [最新 release](https://github.com/vulture-s/arkiv/releases/latest) 下載 **`arkiv_<version>_aarch64.dmg`**，打開後把 **arkiv** 拖進「應用程式」。首次啟動因未簽名會被 macOS Gatekeeper 擋 —— **右鍵 → 打開** 一次即可（或執行 `xattr -dr com.apple.quarantine /Applications/arkiv.app`），之後正常開啟。完整步驟：[`docs/quickstart-mac.md`](docs/quickstart-mac.md)。
 
-> Intel Mac / Windows 目前沒有預建 app（bundle 內是 aarch64 Python + mlx-whisper）。請改用下面的原始碼安裝。
+**Windows（x64）**
+
+```powershell
+winget install Gyan.FFmpeg Ollama.Ollama
+ollama pull bge-m3; ollama pull qwen2.5vl:7b; ollama pull qwen2.5:14b
+```
+
+到 [最新 release](https://github.com/vulture-s/arkiv/releases/latest) 下載 **`arkiv_<version>_x64-setup.exe`** 執行即可，裝在使用者目錄、不需要管理員權限。因為未簽名，SmartScreen 第一次會顯示「Windows 已保護您的電腦」：點 **其他資訊** → **仍要執行**。另有 `.msi` 給管理員／GPO 部署。完整步驟：[`docs/quickstart-windows.md`](docs/quickstart-windows.md)。
+
+全新的空素材庫，兩個版本都會載入一份**已建好索引**的範例（四支 CC-BY 授權的 Blender 片段），一打開就能瀏覽、搜尋，第一眼不用跑 pipeline、也不用先下載模型。
+
+> Intel Mac 與 Linux 沒有預建 app，請改用下面的原始碼安裝。macOS 版內含 `aarch64` Python＋`mlx-whisper`；Windows 版內含純 CPU 的 `faster-whisper`。
 
 ---
 
@@ -218,11 +233,31 @@ $env:PYTHONUTF8=1; python health.py
 ```bash
 git clone https://github.com/vulture-s/arkiv.git
 cd arkiv
-docker compose up -d
+
+# ARKIV_MEDIA_DIR 指向你的素材 —— NAS 共用資料夾、外接硬碟都可以。
+# 它在 container 裡掛在 /media，新增素材庫時填的就是這個路徑。預設是 ./media。
+ARKIV_MEDIA_DIR=/path/to/your/footage docker compose up -d
 # 開啟 http://localhost:8501
 ```
 
 > 模型會在 Ollama container 首次啟動時自動下載（可能需要幾分鐘）。
+
+從網頁介面上傳的檔案會落在主機的 `./media-in`。這個資料夾和你的素材庫都是 bind mount，
+加進去的東西不會只存在 container 裡。
+
+#### 分機部署：arkiv 在這台，Ollama 在有 GPU 的那台
+
+預設的檔案把 arkiv 和 Ollama 跑在一起。如果有 GPU 的是區網裡的另一台機器，改用旁邊那份檔案；
+那台的 Ollama 要先設 `OLLAMA_HOST=0.0.0.0`，模型也要先拉好：
+
+```bash
+ARKIV_OLLAMA_URL=http://192.168.1.50:11434 \
+ARKIV_MEDIA_DIR=/Volumes/footage \
+docker compose -f docker-compose.remote-ollama.yml up -d
+```
+
+完整說明（包括為什麼是另一份檔案而不是 override）寫在
+[`docker-compose.remote-ollama.yml`](docker-compose.remote-ollama.yml) 檔頭。
 
 <details>
 <summary>從舊版升級（v0.3.0 → v0.3.1 的儲存 layout 遷移）</summary>
